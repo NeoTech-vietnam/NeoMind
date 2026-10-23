@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { closeSync, fstatSync, lstatSync, openSync, readSync, readdirSync } from 'node:fs';
 import { agentProfiles, type AgentProfileId } from './agent-profiles.js';
+import { isNativeExecutionMode } from './execution-mode.js';
 import { nativeWorkflowRecord, strictRecord } from './engineering.js';
 import { atomicWrite, getRecord, now, readConfig, safePath, withLock, withOperationLock } from './storage.js';
 import type { NativeRole } from './routing.js';
@@ -62,11 +63,11 @@ function entry(path: string): ReturnType<typeof lstatSync> | null {
 function workflow(root: string, id: string): ProjectRecord {
   const record = getRecord(root, id), data = record.meta.data;
   const native = record.meta.type === 'knowledge' && data.kind === 'manager-workflow' &&
-    data.execution_mode === 'copilot-native' && data.routing_required === false && nativeWorkflowRecord(root, record);
+    isNativeExecutionMode(data.execution_mode) && data.routing_required === false && nativeWorkflowRecord(root, record);
   // createRecord currently stamps lightweight records routing_required when a routing
   // policy exists; the exact saved kind/mode/backend/assurance establish this branch.
   const lightweight = record.meta.type === 'knowledge' && data.kind === 'lightweight-workflow' &&
-    data.execution_mode === 'lightweight' && data.backend === 'copilot-native' && data.assurance === 'unsigned-native-report' &&
+    data.execution_mode === 'lightweight' && isNativeExecutionMode(data.backend) && data.assurance === 'unsigned-native-report' &&
     data.workflow_id === undefined && data.intake_workflow_id === undefined &&
     record.meta.links.every(link => !strictRecord(root, getRecord(root, link.target)));
   if (!native && !lightweight) throw new Error('Unsigned activity requires a saved native or lightweight workflow.');

@@ -100,7 +100,9 @@ export function setRoleModel(root: string, input: {
 }
 
 export function modelControlStatus(root: string) {
+  const config = readConfig(root);
   return {
+    native_routing: { platforms: config.platforms, codex: config.codex_routing ?? 'inherit' },
     roles: roles.map(role => ({ ...roleModelPolicy(root, role) })),
     agent_profiles: agentProfiles.map(profile => ({ id: profile.id, name: profile.name,
       roles: [...profile.roles], model_role: profile.modelRole, description: profile.duty,

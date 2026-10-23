@@ -9,12 +9,14 @@
   if (!persisted || typeof persisted !== 'object' || Array.isArray(persisted)) persisted = {};
   let selected = persisted.selectedId ?? persisted.selected ?? null;
   let motionEnabled = typeof persisted.motionEnabled === 'boolean' ? persisted.motionEnabled : !reduced.matches;
+  let showHistory = persisted.showHistory === true;
   let focusOpen = false, focusSpace = null;
   let map = null, configuredRoles = [], nodesById = new Map(), rolesById = new Map();
   let unavailable = true, controlUnavailable = true, activeCount = null, routerConfigured = false, errorReason = '';
   let selectionNote = '', search = '';
   const roleRows = new Map(), nodeRows = new Map(), evidenceRows = new Map(), activityRows = new Map(), selectedActivityRows = new Map(), liveRows = new Map();
   let profiles = [], groups = {};
+  let nativeRouting = null;
   const value = (text, fallback = 'Not recorded') => typeof text === 'string' && text.trim() ? text : fallback;
   const title = role => role.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
   const roleTitle = role => {
@@ -31,6 +33,7 @@
     const node = element('button', text, className); node.type = 'button'; node.addEventListener('click', action); return node;
   };
   const sourceLabel = item => item.source === 'signed-receipt' ? 'Signed local receipt'
+    : item.source === 'native-hook' ? 'Native lifecycle hook (unsigned)'
     : item.source === 'native-activity' ? 'Reported native activity (unsigned)'
     : item.source === 'project-record' ? item.kind === 'agent' ? 'Reported native contribution' : 'Saved project record' : 'Source unavailable';
   const timestamp = raw => {
@@ -41,7 +44,7 @@
   function persist() {
     let latest;
     try { latest = vscode.getState?.(); } catch {}
-    persisted = { ...(latest && typeof latest === 'object' && !Array.isArray(latest) ? latest : persisted), selectedId: selected, motionEnabled };
+    persisted = { ...(latest && typeof latest === 'object' && !Array.isArray(latest) ? latest : persisted), selectedId: selected, motionEnabled, showHistory };
     try { vscode.setState?.(persisted); } catch {}
   }
   function changeBlocked() {
@@ -125,7 +128,7 @@
     row.root.title = `${value(node.source_id, node.id)} · ${timestamp(node.updated_at)}`;
   }
   function communicationEdges() {
-    return (map?.edges ?? []).filter(edge => ['handoff', 'report', 'contribution'].includes(edge.kind))
+    return (map?.edges ?? []).filter(edge => ['handoff', 'report', 'contribution'].includes(edge.kind) || edge.source === 'native-hook')
       .slice().sort((a, b) => value(b.at, '').localeCompare(value(a.at, '')));
   }
   function makeActivity() {
@@ -135,25 +138,25 @@
     return { root, heading, route, evidence };
   }
   function updateActivity(row, edge) {
-    setText(row.heading, `${edge.source === 'native-activity' ? 'Reported' : 'Recorded'} ${edge.kind}`);
+    setText(row.heading, `${edge.source === 'native-hook' ? 'Lifecycle' : edge.source === 'native-activity' ? 'Reported' : 'Recorded'} ${edge.kind}`);
     setText(row.route, `${value(nodesById.get(edge.from)?.label, edge.from)} → ${value(nodesById.get(edge.to)?.label, edge.to)}`);
-    setText(row.evidence, `${edge.source === 'signed-receipt' ? 'Signed local receipt' : edge.source === 'native-activity' ? 'Unsigned activity report' : 'Saved project record'} · ${value(edge.evidence_id)} · ${timestamp(edge.at)}`);
+    setText(row.evidence, `${sourceLabel(edge)} · ${value(edge.evidence_id)} · ${timestamp(edge.at)}`);
   }
   function updateInteractions() {
     const candidates = (map?.nodes ?? []).filter(node => node.kind === 'agent' &&
-      (node.source === 'native-activity' || node.source === 'signed-receipt') &&
+      ['native-activity', 'signed-receipt', 'native-hook'].includes(node.source) &&
       (['running', 'waiting', 'blocked'].includes(node.state) || node.expired));
     const active = candidates.filter(node => !node.expired && node.reported_state !== 'dispatched' && ['running', 'waiting'].includes(node.state));
     setText(byId('live-summary'), unavailable ? 'Activity unavailable; displayed assignments are last known reports.' : candidates.length
-      ? `${active.length} active assignments · unsigned reports expire after five minutes without an update.`
-      : 'No current activity reports. Existing Copilot chats are not automatically observed; use updated profiles and restart the NeoMind MCP server.');
+      ? `${active.filter(node => node.source === 'native-hook').length} running hook observations · ${active.filter(node => node.source === 'native-activity').length} reported active assignments · ${active.filter(node => node.source === 'signed-receipt').length} signed sessions. Sources may describe the same agent; unsigned updates expire after five minutes.`
+      : 'No current activity observations. Update integration, enable trusted native hooks and start a new chat. Clients that omit agent identity can still report assignment progress through NeoMind.');
     reconcile(byId('live-agents'), liveRows, candidates.slice(0, 12), node => {
       const root = button('', 'live-agent', () => select(node.id, true));
       const name = element('strong'), detail = element('span'), time = element('small'); root.append(name, detail, time);
       return { root, name, detail, time };
     }, (row, node) => {
       setText(row.name, value(node.label, roleTitle(node.role ?? 'unknown')));
-      setText(row.detail, `${node.source === 'native-activity' ? 'Reported' : 'Signed observation'} ${node.reported_state === 'dispatched' && !node.expired ? 'dispatch attempted' : node.expired ? 'unknown · update expired' : value(node.state)}${node.activity_summary ? ` · ${node.activity_summary}` : ''}`);
+      setText(row.detail, `${node.source === 'native-hook' ? 'Hook observation' : node.source === 'native-activity' ? 'Reported' : 'Signed observation'} ${node.reported_state === 'dispatched' && !node.expired ? 'dispatch attempted' : node.expired ? 'unknown · update expired' : value(node.state)}${node.activity_summary ? ` · ${node.activity_summary}` : ''}`);
       setText(row.time, `Updated ${timestamp(node.updated_at)} · ${sourceLabel(node)}`);
       row.root.dataset.state = unavailable || node.expired ? 'unknown' : node.state;
     });
@@ -191,9 +194,12 @@
   function groupGuidance(role) {
     const group = groups[role];
     if (!group) return 'Model policy applies to the next invocation; it does not confirm execution or a responding backend.';
-    return group[1] === role
+    const codex = nativeRouting?.platforms?.includes('codex') ? nativeRouting.codex === '9router'
+      ? ' Codex uses the same controlling role through its configured 9router Responses provider on the next invocation.'
+      : ' Codex currently inherits its parent model/provider; choose Codex 9router routing to apply these role policies.' : '';
+    return (group[1] === role
       ? `Native Copilot uses this role's model for ${group[0]}. Strict bridge mode selects this role independently. Changes apply to the next invocation.`
-      : `Native Copilot groups this role in ${group[0]} and uses the ${group[1]} model policy. This role's independent model choice applies to strict bridge invocations.`;
+      : `Native Copilot groups this role in ${group[0]} and uses the ${group[1]} model policy. This role's independent model choice applies to strict bridge invocations.`) + codex;
   }
   function updateSelection() {
     if (!inspector) return;
@@ -216,7 +222,7 @@
       relatedIds = new Set([node.id, node.workflow_id, node.task_id, ...direct.flatMap(edge => [edge.from, edge.to])].filter(Boolean));
       attached = (map?.nodes ?? []).filter(item => item.id !== node.id && relatedIds.has(item.id));
       setText(inspector.name, value(node.label, node.id)); setText(inspector.source, sourceLabel(node));
-      setText(inspector.description, node.source === 'native-activity' ? 'Unsigned assignment progress reported by the native agents. A dispatch is an attempt; expired updates become unknown. This does not attest model inference or task acceptance.' : unavailable ? 'Last saved evidence. Current state is unavailable; animation is not a live heartbeat.'
+      setText(inspector.description, node.source === 'native-hook' ? 'Native client lifecycle metadata with an explicit session and agent identity. Parent links follow that identity; no workflow is guessed. A stopped turn does not mean accepted work. This unsigned observation does not prove model inference.' : node.source === 'native-activity' ? 'Unsigned assignment progress reported by the native agents. A dispatch is an attempt; expired updates become unknown. This does not attest model inference or task acceptance.' : unavailable ? 'Last saved evidence. Current state is unavailable; animation is not a live heartbeat.'
         : 'Saved evidence and recorded relationships. A signed local receipt is not provider-issued proof or task acceptance.');
       const fields = [
         ['Kind', value(node.kind)], ['Saved state', `${unavailable ? 'Last known: ' : ''}${value(node.state, 'unknown')}`],
@@ -285,12 +291,13 @@
     const signed = agents.filter(node => node.source === 'signed-receipt').length;
     const reported = agents.filter(node => node.source === 'project-record').length;
     const running = agents.filter(node => node.source === 'native-activity' && !node.expired && node.state === 'running').length;
-    const records = (map?.nodes.length ?? 0) - agents.length;
+    const hooks = agents.filter(node => node.source === 'native-hook' && !node.expired && node.state === 'running').length;
+    const records = (map?.nodes ?? []).filter(node => node.kind !== 'agent' && node.source !== 'native-hook').length;
     const omitted = Object.values(map?.diagnostics ?? {}).reduce((sum, count) => sum + (Number.isSafeInteger(count) && count > 0 ? count : 0), 0);
     const controls = changeBlocked();
     const graphicsNotice = graphicsUnavailable ? ' · Universe graphics unavailable; use the lists and model controls.' : '';
     setText(status, (unavailable ? `Saved state unavailable${map ? '; displaying the last snapshot' : ''}. ${errorReason}`
-      : `${signed} signed receipts · ${running} reported running · ${reported} reported contributions · ${records} saved work items${omitted ? ` · ${omitted} invalid or omitted items` : ''}${controls ? ` · ${controls}` : ''}`) + graphicsNotice);
+      : `${signed} signed receipts · ${hooks} running hook observations · ${running} reported running · ${reported} historical contributions · ${records} saved work items${omitted ? ` · ${omitted} invalid or omitted items` : ''}${controls ? ` · ${controls}` : ''}`) + graphicsNotice);
     setText(byId('project-name'), value(map?.project?.name, 'NeoMind workspace'));
     setText(byId('router-status'), unavailable || controlUnavailable ? 'Routing status unavailable' : routerConfigured ? '9router configured · access not verified' : 'VS Code model routing');
     const observed = byId('observed-summary');
@@ -312,12 +319,14 @@
       setText(motion, graphicsUnavailable ? 'Orbits unavailable' : reduced.matches ? 'Reduced motion' : motionEnabled ? 'Pause orbits' : 'Resume orbits');
       motion.setAttribute('aria-pressed', String(!motionEnabled));
       motion.title = graphicsUnavailable ? 'Universe graphics are unavailable; the lists remain usable.'
-        : reduced.matches ? 'Your reduced-motion preference is respected.' : unavailable ? 'Motion is paused while saved state is unavailable.' : 'Planet motion is decorative; communications replay recorded events.';
+        : reduced.matches ? 'Your reduced-motion preference is respected.' : unavailable ? 'Motion is paused while saved state is unavailable.' : 'Planet motion is decorative. Pulses indicate fresh activity observations; history stays static.';
     }
     const reset = byId('reset-view'); if (reset) reset.disabled = graphicsUnavailable;
   }
   function publishScene() {
-    if (map) universe?.setData({ map: { ...map, stale: unavailable },
+    const history = byId('show-history');
+    if (history) { history.setAttribute('aria-pressed', String(showHistory)); setText(history, showHistory ? 'Hide history' : 'Show history'); }
+    if (map) universe?.setData({ map: { ...map, stale: unavailable }, showHistory,
       roles: configuredRoles.map(role => ({ ...role, display_name: roleTitle(role.role) })) });
     universe?.setSelected(selected); updateMotion();
   }
@@ -336,6 +345,7 @@
     activeCount = Number.isSafeInteger(message.active_count) && message.active_count >= 0 ? message.active_count : null;
     routerConfigured = message.router_configured === true;
     if (!controlUnavailable) {
+      nativeRouting = message.native_routing ?? null;
       profiles = Array.isArray(message.agent_profiles) ? message.agent_profiles.filter(profile => profile &&
         typeof profile.name === 'string' && typeof profile.model_role === 'string' && Array.isArray(profile.roles)) : [];
       groups = {};
@@ -359,6 +369,7 @@
   });
   byId('refresh')?.addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
   byId('motion')?.addEventListener('click', () => { motionEnabled = !motionEnabled; persist(); updateMotion(); });
+  byId('show-history')?.addEventListener('click', () => { showHistory = !showHistory; persist(); publishScene(); });
   byId('reset-view')?.addEventListener('click', () => universe?.resetView());
   byId('focus-selection')?.addEventListener('click', () => { if (selected) universe?.focus(selected); });
   byId('role-search')?.addEventListener('input', event => { search = event.target.value.trim().toLowerCase(); updateLists(); });

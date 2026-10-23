@@ -74,7 +74,7 @@ export async function dispatchKnowledgeCommand(
       'Use knowledge discover|search --data JSON, knowledge research WORKFLOW --data JSON, or knowledge publish CANDIDATE --upstream OWNER/REPO.',
     );
   }
-  if (group === 'note' || group === 'cornell') {
+  if (group === 'note' || group === 'cornell' && ['create', 'revise', 'validate'].includes(command ?? '')) {
     if (command === 'create')
       return { handled: true, result: createCornellNote(root, data as unknown as CornellInput) };
     if (command === 'validate' && id)

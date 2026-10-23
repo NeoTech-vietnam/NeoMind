@@ -1,0 +1,27 @@
+name: Self-hosted Linux verification
+
+# Explicit operator dispatch only. Fork pull requests never select a persistent runner.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: [self-hosted, linux, x64, neomind-ci]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install locked project dependencies
+        run: npm ci
+      - name: Build and run the repository tests
+        run: npm test
+      - name: Verify the installed runtime lifecycle
+        run: npm run package:smoke

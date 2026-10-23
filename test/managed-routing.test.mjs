@@ -162,7 +162,7 @@ test('gateway never grants a simulated caller publication and pins explicit role
   assert.equal(roleCapabilities('check-executor').operations.includes('check_run'), true);
   assert.deepEqual(
     toolCatalog.map((tool) => tool.version),
-    ['1.6.2', '4.3.0', '0.0.83'],
+    ['6.7.0', '1.6.2', '4.3.0', '0.0.83'],
   );
   for (const tool of toolCatalog) assert.match(tool.integrity, /^sha512-[A-Za-z0-9+/]+=*$/);
 });

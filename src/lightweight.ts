@@ -1,6 +1,7 @@
 import { coordinatorAgentName, nativeActivityInstructions } from './agent-profiles.js';
 import { randomUUID } from 'node:crypto';
-import { createRecord, getRecord, loadRecords, resolveManagedRoot, updateRecord, withOperationLock } from './storage.js';
+import { createRecord, getRecord, loadRecords, readConfig, resolveManagedRoot, updateRecord, withOperationLock } from './storage.js';
+import { isNativeExecutionMode, nativeClientForMode } from './execution-mode.js';
 import type { ProjectRecord } from './types.js';
 import type { WorkflowInput } from './manager.js';
 
@@ -47,7 +48,11 @@ export function lightweightRun(root: string, input: WorkflowInput & { workflow_i
   workflow: LightweightStatus;
   handoff?: { agent: string; prompt: string };
 } {
-  return withOperationLock(root, 'lightweight-intake', () => {
+  // Share intake serialization with full workflows so one request cannot be
+  // created concurrently under two execution modes.
+  return withOperationLock(root, 'manager-intake', () => {
+    if (input.native_client !== undefined && !['copilot', 'codex'].includes(input.native_client))
+      throw new Error('Native client must be copilot or codex.');
     let record: ProjectRecord | undefined;
     if (input.workflow_id) {
       record = getRecord(root, input.workflow_id);
@@ -71,13 +76,24 @@ export function lightweightRun(root: string, input: WorkflowInput & { workflow_i
           throw new Error('Request ID already belongs to a different requirement.');
       }
     }
+    const config = readConfig(root);
+    const backend = record?.meta.data.backend;
+    if (backend !== undefined && !isNativeExecutionMode(backend))
+      throw new Error('Saved lightweight backend is invalid; it cannot be changed.');
+    const client = record
+      ? backend === undefined ? 'copilot' : nativeClientForMode(backend)
+      : input.native_client ?? (config.platforms.includes('codex') && !config.platforms.includes('copilot') ? 'codex' : 'copilot');
+    if (record && input.native_client !== undefined && input.native_client !== client)
+      throw new Error('Saved lightweight backend/client is immutable; create a new increment.');
+    if (!record && !config.platforms.includes(client))
+      throw new Error(`The ${client} native client is not configured for this project.`);
     if (!record) {
       // Requirements are validated above before creating a new record.
       record = createRecord(root, {
         type: 'knowledge', owner: 'manager', status: 'in-progress',
         title: `Lightweight: ${text(input.title ?? requirements![0]!.slice(0, 100), 'Title', 256)}`,
         data: {
-          kind, execution_mode: 'lightweight', backend: 'copilot-native',
+          kind, execution_mode: 'lightweight', backend: `${client}-native`,
           assurance: 'unsigned-native-report', request_id: requestId,
           original_requirements: requirements, continuations: message ? [message] : [], phase: 'execution',
           plan: [], changed_files: [], checks: [], limitations: [], risk: 'unassessed',
@@ -98,8 +114,8 @@ export function lightweightRun(root: string, input: WorkflowInput & { workflow_i
     return {
       workflow: lightweightStatus(record),
       handoff: {
-        agent: coordinatorAgentName,
-        prompt: `Continue lightweight workflow ${record.meta.id}. Read ${resolveManagedRoot(root)}/guides/lightweight.md and the saved record. Execute within the original user authorization and saved continuations; continuations clarify or narrow scope, not expand it. Checkpoint plan, actual checks, changed paths and limitations. Do not call manager_run recursively or resume unrelated strict workflows.\n${nativeActivityInstructions}\nOriginal requirement batch:\n${JSON.stringify(record.meta.data.original_requirements, null, 2)}\nUser clarifications or continuations (in order):\n${JSON.stringify(continuations, null, 2)}`,
+        agent: client === 'codex' ? 'neomind-coordinator' : coordinatorAgentName,
+        prompt: `Continue lightweight workflow ${record.meta.id}. Read ${resolveManagedRoot(root)}/guides/lightweight.md${client === 'codex' ? ' and .neomind/guides/codex-native.md; Codex delegation uses spawn_agent with the exact neomind-<profile> agent_type' : ''} and the saved record. Execute within the original user authorization and saved continuations; continuations clarify or narrow scope, not expand it. Checkpoint plan, actual checks, changed paths and limitations. Do not call manager_run recursively or resume unrelated strict workflows.\n${nativeActivityInstructions}\nOriginal requirement batch:\n${JSON.stringify(record.meta.data.original_requirements, null, 2)}\nUser clarifications or continuations (in order):\n${JSON.stringify(continuations, null, 2)}`,
       },
     };
   });

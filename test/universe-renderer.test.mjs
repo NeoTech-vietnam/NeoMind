@@ -6,16 +6,45 @@ const universe = createRequire(import.meta.url)('../extensions/vscode-model-brid
 const roles = ['manager', 'architect', 'developer', 'reviewer'].map(role => ({ role, models: ['top-models'], provider: '9router' }));
 const node = (id, kind, role, state = 'completed') => ({ id, kind, role, label: id, state, source: 'project-record', source_id: `source:${id}` });
 
+test('current view shows one active implementer while completed agents and saved links remain optional static history', () => {
+  const historical = ['explorer', 'planner', 'reviewer'].map(role => node(role, 'agent', role, 'completed'));
+  const active = { ...node('impl', 'agent', 'developer', 'running'), source: 'native-hook' };
+  const session = { ...node('session', 'workflow', null, 'running'), source: 'native-hook' };
+  const map = { nodes: [...historical, active, session], edges: [
+    { id: 'active', from: 'session', to: 'impl', source: 'native-hook', animated: true },
+    { id: 'old', from: 'explorer', to: 'planner', source: 'project-record', animated: true },
+  ] };
+  const current = universe.buildScene({ roles, map });
+  assert.deepEqual(current.bodies.filter(body => body.kind === 'agent').map(body => body.id), ['impl']);
+  assert.equal(current.edges.length, 1); assert.equal(current.edges[0].animated, true);
+  const history = universe.buildScene({ roles, map, showHistory: true });
+  assert.equal(history.bodies.filter(body => body.kind === 'agent').length, 4);
+  assert.equal(history.edges.find(edge => edge.id === 'old').animated, false);
+  const stopped = universe.buildScene({ roles, map: { ...map, nodes: [...historical, { ...active, state: 'idle' }, { ...session, state: 'idle' }] } });
+  assert.equal(stopped.counts.recorded_agents, 0); assert.equal(stopped.edges.length, 0);
+});
+
 test('configured planets never fabricate recorded identities or active agents', () => {
-  const scene = universe.buildScene({ roles, map: { nodes: [], edges: [] } });
+  const scene = universe.buildScene({ roles, showHistory: true, map: { nodes: [], edges: [] } });
   assert.deepEqual(scene.planets.map(body => body.id).sort(), roles.map(role => `role:${role.role}`).sort());
   assert.ok(scene.planets.every(body => body.state === 'configured' && body.evidence_count === 0));
   assert.deepEqual(scene.counts, { configured_roles: 4, recorded_agents: 0, running_agents: 0, tasks: 0, workflows: 0 });
   assert.equal(scene.edges.length, 0);
 });
 
+test('a stopped actual parent remains static context for its still-running hook child', () => {
+  const parent = { ...node('coordinator', 'agent', 'manager', 'idle'), source: 'native-hook' };
+  const child = { ...node('child', 'agent', 'developer', 'running'), source: 'native-hook' };
+  const scene = universe.buildScene({ roles, map: { nodes: [parent, child], edges: [
+    { id: 'actual-parent', from: parent.id, to: child.id, source: 'native-hook', kind: 'coordinates', animated: true },
+  ] } });
+  assert.ok(scene.bodies.some(body => body.id === parent.id && body.state === 'idle'));
+  assert.ok(scene.edges.some(edge => edge.id === 'actual-parent'));
+  assert.equal(scene.planets.find(body => body.role === 'manager').state, 'idle');
+});
+
 test('saved identities and task moons retain IDs/provenance and attach to their actual role', () => {
-  const scene = universe.buildScene({ roles, map: { nodes: [node('WF-1', 'workflow', 'manager', 'running'), { ...node('agent:one', 'agent', 'developer', 'running'), source: 'signed-receipt' }, node('TASK-1', 'task', 'developer')], edges: [] } });
+  const scene = universe.buildScene({ roles, showHistory: true, map: { nodes: [node('WF-1', 'workflow', 'manager', 'running'), { ...node('agent:one', 'agent', 'developer', 'running'), source: 'signed-receipt' }, node('TASK-1', 'task', 'developer')], edges: [] } });
   const agent = scene.bodies.find(body => body.id === 'agent:one');
   assert.equal(agent.parentId, 'role:developer');
   assert.equal(agent.source, 'signed-receipt');
@@ -28,24 +57,24 @@ test('saved identities and task moons retain IDs/provenance and attach to their 
 });
 
 test('unsigned contribution planets summarize saved evidence without claiming active or finished work', () => {
-  const scene = universe.buildScene({ roles, map: { nodes: [node('reported:A', 'agent', 'developer', 'completed'), node('TASK-1', 'task', 'developer', 'running')], edges: [] } });
+  const scene = universe.buildScene({ roles, showHistory: true, map: { nodes: [node('reported:A', 'agent', 'developer', 'completed'), node('TASK-1', 'task', 'developer', 'running')], edges: [] } });
   assert.equal(scene.planets.find(body => body.role === 'developer').state, 'recorded');
   assert.equal(scene.bodies.find(body => body.id === 'reported:A').state, 'completed');
   assert.equal(scene.counts.running_agents, 0);
 });
 
-test('communication curves use only represented recorded edges and preserve replay intent', () => {
+test('communication curves use only represented recorded edges and keep saved history static', () => {
   const edge = { id: 'recorded', from: 'A', to: 'B', kind: 'report', source: 'project-record', evidence_id: 'KNW-1', at: '2026-10-23', animated: true };
   const still = { ...edge, id: 'still', animated: false };
-  const scene = universe.buildScene({ roles, map: { nodes: [node('A', 'agent', 'developer'), node('B', 'task', 'developer')], edges: [edge, still, { ...edge, id: 'missing', to: 'absent' }] } });
-  assert.deepEqual(scene.edges, [edge, still]);
-  assert.equal(scene.edges.filter(value => value.animated).length, 1);
+  const scene = universe.buildScene({ roles, showHistory: true, map: { nodes: [node('A', 'agent', 'developer'), node('B', 'task', 'developer')], edges: [edge, still, { ...edge, id: 'missing', to: 'absent' }] } });
+  assert.deepEqual(scene.edges, [{ ...edge, animated: false }, still]);
+  assert.equal(scene.edges.filter(value => value.animated).length, 0);
   assert.equal(scene.edges.some(value => value.from.startsWith('role:')), false);
 });
 
 test('poll order and unrelated additions do not change existing orbital positions', () => {
-  const original = { roles, map: { nodes: [node('A', 'agent', 'developer')], edges: [] } };
-  const changed = { roles: [...roles].reverse(), map: { nodes: [node('EXTRA', 'task', 'reviewer'), ...original.map.nodes], edges: [] } };
+  const original = { roles, showHistory: true, map: { nodes: [node('A', 'agent', 'developer')], edges: [] } };
+  const changed = { roles: [...roles].reverse(), showHistory: true, map: { nodes: [node('EXTRA', 'task', 'reviewer'), ...original.map.nodes], edges: [] } };
   const first = universe.projectScene(universe.buildScene(original), { width: 1000, height: 700, time: 31 });
   const second = universe.projectScene(universe.buildScene(changed), { width: 1000, height: 700, time: 31 });
   for (const body of first) {
@@ -56,7 +85,7 @@ test('poll order and unrelated additions do not change existing orbital position
 });
 
 test('projection supports zoom/pan and hit testing chooses the visible small moon', () => {
-  const scene = universe.buildScene({ roles, map: { nodes: [node('A', 'agent', 'developer')], edges: [] } });
+  const scene = universe.buildScene({ roles, showHistory: true, map: { nodes: [node('A', 'agent', 'developer')], edges: [] } });
   const regular = universe.projectScene(scene, { width: 1000, height: 700, time: 0 });
   const zoomed = universe.projectScene(scene, { width: 1000, height: 700, time: 0, zoom: 2, panX: 10, panY: -20 });
   const moon = regular.find(body => body.id === 'A');
@@ -98,7 +127,7 @@ test('curved trails join exact endpoints and retain a bowed midpoint', () => {
 test('scene bounds hostile oversized inputs without inventing omitted relationships', () => {
   const nodes = Array.from({ length: 800 }, (_, index) => node(`A${index}`, 'task', 'developer'));
   const edges = Array.from({ length: 2000 }, (_, index) => ({ id: `E${index}`, from: 'A0', to: 'A1', animated: index % 2 === 0, source: 'project-record', evidence_id: `R${index}` }));
-  const scene = universe.buildScene({ roles, map: { nodes, edges } });
+  const scene = universe.buildScene({ roles, showHistory: true, map: { nodes, edges } });
   assert.ok(scene.bodies.length <= 256 + 64);
   assert.ok(scene.edges.length <= 512);
   assert.equal(scene.omitted.nodes, 544);
@@ -152,7 +181,7 @@ test('selecting a role draws its stationary label once rather than duplicating i
 test('renderer polling retains focus, selection and clock while hidden/reduced modes pause and destroy cleans up', () => {
   const env = environment(), selected = [];
   const renderer = universe.create(env.canvas, { onSelect: id => selected.push(id) });
-  const data = { roles: roles.slice(0, 1), map: { nodes: [node('A', 'task', 'manager')], edges: [] } };
+  const data = { roles: roles.slice(0, 1), showHistory: true, map: { nodes: [node('A', 'task', 'manager')], edges: [] } };
   renderer.setData(data);
   env.advance(1000); env.advance(1030);
   renderer.focus('role:manager');

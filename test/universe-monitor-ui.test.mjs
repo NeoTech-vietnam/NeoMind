@@ -11,7 +11,7 @@ test('preview fixtures retain all role and source identities without creating li
   const snapshot = createPreviewSnapshot();
   assert.equal(snapshot.roles.length, 12);
   assert.ok(snapshot.roles.every(role => role.provider === '9Router' && role.models.every(id => id.startsWith('demo/'))));
-  const scene = universe.buildScene(snapshot);
+  const scene = universe.buildScene({ ...snapshot, showHistory: true });
   assert.equal(scene.planets.length, 12);
   assert.equal(scene.counts.tasks, 12);
   assert.equal(scene.counts.recorded_agents, 12);
@@ -102,7 +102,7 @@ function matches(node, selector) {
 }
 function controller(options = {}) {
   const ids = ['field', 'status', 'roles', 'nodes', 'selection', 'project-name', 'router-status', 'observed-summary',
-    'focus-selection', 'reset-view', 'motion', 'empty-state', 'activity', 'live-summary', 'live-agents', 'roles-count', 'nodes-count', 'profiles-summary', 'refresh'];
+    'focus-selection', 'reset-view', 'show-history', 'motion', 'empty-state', 'activity', 'live-summary', 'live-agents', 'roles-count', 'nodes-count', 'profiles-summary', 'refresh'];
   const document = { hidden: false, activeElement: null, listeners: new Map(),
     createElement: tag => new Element(tag, document), getElementById: id => elements.get(id),
     addEventListener(type, callback) { this.listeners.set(type, callback); } };
@@ -134,6 +134,27 @@ function changeButton(ui, role) {
 }
 function roleOption(ui, role) { return changeButton(ui, role).parentElement.querySelector('.role-option'); }
 const inspectorButton = ui => ui.elements.get('selection').querySelector('.model-change');
+
+test('history is explicit and persisted while the default scene remains current-only', () => {
+  const ui = controller(); ui.message(createPreviewSnapshot());
+  assert.equal(ui.calls.data.at(-1).showHistory, false);
+  ui.elements.get('show-history').click();
+  assert.equal(ui.calls.data.at(-1).showHistory, true);
+  assert.equal(ui.saved.showHistory, true);
+  assert.equal(ui.elements.get('show-history').getAttribute('aria-pressed'), 'true');
+  ui.elements.get('show-history').click();
+  assert.equal(ui.calls.data.at(-1).showHistory, false);
+  assert.equal(ui.saved.showHistory, false);
+});
+
+test('Codex model guidance distinguishes inherited routing from explicit 9router control', () => {
+  const ui = controller(), snapshot = createPreviewSnapshot('empty');
+  ui.message({ ...snapshot, native_routing: { platforms: ['codex'], codex: 'inherit' } });
+  assert.match(ui.elements.get('selection').textContent, /Codex currently inherits its parent/);
+  ui.message({ ...snapshot, native_routing: { platforms: ['codex'], codex: '9router' } });
+  assert.match(ui.elements.get('selection').textContent, /Codex uses the same controlling role/);
+  assert.doesNotMatch(ui.elements.get('selection').textContent, /Codex currently inherits/);
+});
 
 test('configured-only roles select exact model messages and preserve focused keyed controls across polling', () => {
   const ui = controller(), initial = createPreviewSnapshot('empty');
@@ -210,7 +231,7 @@ test('profile names reach visible role labels, accessibility names and the rende
 test('interactions show reported running work, dispatch attempts, direction and expired updates without signed claims', () => {
   const ui = controller(), snapshot = createPreviewSnapshot('activity'); ui.message(snapshot);
   assert.match(ui.elements.get('status').textContent, /2 reported running/);
-  assert.match(ui.elements.get('live-summary').textContent, /2 active assignments/);
+  assert.match(ui.elements.get('live-summary').textContent, /2 reported active assignments/);
   const live = ui.elements.get('live-agents').textContent;
   assert.match(live, /NeoMind Explorer Agent/);
   assert.match(live, /Reported running/);

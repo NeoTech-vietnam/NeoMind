@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { isNativeExecutionMode } from './execution-mode.js';
 import {
   existsSync,
   mkdirSync,
@@ -123,6 +124,7 @@ function validateConfig(config: ProjectConfig): void {
     config.platforms.some((p) => !['codex', 'claude', 'copilot'].includes(p)) ||
     new Set(config.platforms).size !== config.platforms.length ||
     (config.copilot_integration !== undefined && config.copilot_integration !== 'local') ||
+    (config.codex_routing !== undefined && !['inherit', '9router'].includes(config.codex_routing)) ||
     !Number.isSafeInteger(config.max_workers) ||
     config.max_workers < 1 ||
     config.max_workers > 3 ||
@@ -161,6 +163,7 @@ export function initialize(root: string, options: Partial<ProjectConfig> = {}): 
     profile: options.profile ?? 'basic',
     platforms: options.platforms ?? ['copilot'],
     ...(options.copilot_integration ? { copilot_integration: options.copilot_integration } : {}),
+    ...(options.codex_routing ? { codex_routing: options.codex_routing } : {}),
     models: options.models ?? { economy: null, balanced: null, strong: null },
     max_workers: options.max_workers ?? 3,
     repair_attempts: 1,
@@ -487,11 +490,11 @@ export function createRecord(root: string, input: CreateRecord): ProjectRecord {
       );
     const nativeWorkflow = records.find((candidate) =>
       candidate.meta.data.kind === 'manager-workflow' &&
-      candidate.meta.data.execution_mode === 'copilot-native' &&
+      isNativeExecutionMode(candidate.meta.data.execution_mode) &&
       candidate.meta.data.routing_required !== true &&
       [input.data?.workflow_id, input.data?.intake_workflow_id].includes(candidate.meta.id));
     const nativeIntake = input.type === 'knowledge' && input.data?.kind === 'manager-workflow' &&
-      input.data.execution_mode === 'copilot-native' && input.data.routing_required === false;
+      isNativeExecutionMode(input.data.execution_mode) && input.data.routing_required === false;
     const native = nativeIntake || nativeWorkflow !== undefined;
     const record: ProjectRecord = {
       meta: {

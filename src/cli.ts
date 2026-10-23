@@ -11,6 +11,8 @@ import {
   loadRecords,
   now,
   safePath,
+  atomicWrite,
+  withOperationLock,
 } from './storage.js';
 import { rebuildIndex, searchMemory } from './indexing.js';
 import {
@@ -63,6 +65,13 @@ import { workspaceWrite } from './workspace.js';
 import { probeRouter } from './router-probe.js';
 import { readAgentMap } from './agent-map.js';
 import { reportAgentActivity } from './agent-activity.js';
+import { observeNativeHook, readNativeHooks } from './agent-hooks.js';
+import { readCodexRouting } from './codex-routing.js';
+import { configureRea, reaStatus, probeRea } from './rea.js';
+import { cornellResearchSchema, compileCornellResearch, prepareCornellResearch, readCornellDestination,
+  configureCornellDestination, prepareCornellExport, applyCornellExport } from './cornell-workflow.js';
+import { prepareCornellPublication, publishCornellExport } from './cornell-publication.js';
+import { validatePlatform } from './platform-validation.js';
 import { modelControlStatus, setRoleModel, configureRouter, routerHealth, routerModels, routerProbe } from './model-control.js';
 import { listUpstreams, discoverUpstreams, trackUpstream, checkUpstream, cloneUpstream, adoptUpstreamUpdate, readUpstreamInstructions, watchUpstreams } from './upstreams.js';
 import { checkpointLightweight, type LightweightCheckpoint } from './lightweight.js';
@@ -73,6 +82,7 @@ const help = `NeoMind engineering workflow (Node.js 24+)
 Usage: neomind <command> [action] [id] [options]
   init --name NAME --profile basic|software|embedded --platforms codex,claude,copilot [--local]
   doctor | update [--local] (persist separately ignorable Copilot integration)
+  validate (read-only integration, activity, upstream and reusable-procedure inspection)
   upgrade --to VERSION_OR_TAG_OR_LOCAL_TGZ (uninstall old package, install new, refresh integration)
   workflow begin --requirement TEXT [--title TITLE] [--request-id ID]
   workflow run --requirement TEXT | --data '{"requirements":["..."],"execution_mode":"copilot-native"}'
@@ -100,6 +110,11 @@ Usage: neomind <command> [action] [id] [options]
   router probe --url URL --alias MODEL (diagnostic only; no native receipt)
   map (bounded saved agent activity and communication snapshot)
   activity report --data JSON (unsigned native dispatch/progress/completion; never signed proof)
+  activity hooks | activity hook --provider codex|copilot --event EVENT (hook JSON on stdin)
+  codex status | codex configure --data '{"mode":"inherit|9router"}' (regenerate integration)
+  rea status|configure|probe --data JSON (explicit pinned optional MCP integration)
+  cornell compile|prepare --data-file FILE (validated research input and reusable recipe)
+  cornell destination|configure|export-plan|export-apply|publish-plan|publish --data JSON
   models status | models set --role ROLE --model MODEL [--provider PROVIDER] [--effort low|medium|high]
   router configure --base-url URL [--api-key-env ENV] [--catalog-provider NAME]
   router health|models|probe [--model MODEL] (configured 9router; diagnostics only)
@@ -131,6 +146,7 @@ async function main(): Promise<void> {
       'title',
       'owner',
       'data',
+      'data-file',
       'body',
       'type',
       'requires',
@@ -186,7 +202,8 @@ async function main(): Promise<void> {
   const root = resolve(String(o.project ?? process.cwd()));
   const json = (value: unknown) => JSON.stringify(value, null, 2);
   const data = (): Record<string, unknown> => {
-    const value = o.data ? JSON.parse(String(o.data)) : {};
+    if (o.data && o['data-file']) throw new Error('Use --data or --data-file, not both.');
+    const value = o['data-file'] ? JSON.parse(readFileSync(resolve(String(o['data-file'])), 'utf8')) : o.data ? JSON.parse(String(o.data)) : {};
     if (!value || typeof value !== 'object' || Array.isArray(value))
       throw new Error('--data must be a JSON object.');
     return value;
@@ -217,9 +234,49 @@ async function main(): Promise<void> {
     return;
   }
   switch (command) {
+    case 'validate': result = validatePlatform(root); break;
+    case 'codex': {
+      if (action === 'status') result = readCodexRouting(root);
+      else if (action === 'configure') {
+        const mode = data().mode;
+        if (mode !== 'inherit' && mode !== '9router') throw new Error('Codex mode must be inherit or 9router.');
+        const routing = withOperationLock(root, 'native-dispatch', () => withOperationLock(root, 'routing-policy', () => {
+          if (modelControlStatus(root).active_invocations.length) throw new Error('Stop active signed invocations before changing Codex routing.');
+          const selected = readCodexRouting(root, mode), config = readConfig(root);
+          atomicWrite(safePath(root, '.neomind/config.json'), JSON.stringify({ ...config, codex_routing: mode }, null, 2) + '\n');
+          return selected;
+        }));
+        result = { routing, integration: updateProject(root) };
+      } else throw new Error('Use codex status|configure.');
+      break;
+    }
+    case 'rea':
+      if (action === 'status') result = reaStatus(root);
+      else if (action === 'probe') result = await probeRea(root);
+      else if (action === 'configure') {
+        const configured = await configureRea(root, data() as never);
+        result = { configured, integration: updateProject(root) };
+      } else throw new Error('Use rea status|configure|probe.');
+      break;
+    case 'cornell':
+      if (action === 'compile') result = compileCornellResearch(root, cornellResearchSchema.parse(data()));
+      else if (action === 'prepare') result = prepareCornellResearch(root, cornellResearchSchema.parse(data()));
+      else if (action === 'destination') result = readCornellDestination(root);
+      else if (action === 'configure') result = configureCornellDestination(root, data());
+      else if (action === 'export-plan') result = prepareCornellExport(root, data() as never);
+      else if (action === 'export-apply') result = applyCornellExport(root, data() as never);
+      else if (action === 'publish-plan') result = prepareCornellPublication(root, data() as never);
+      else if (action === 'publish') result = publishCornellExport(root, data() as never);
+      else throw new Error('Use cornell compile|prepare|destination|configure|export-plan|export-apply|publish-plan|publish.');
+      break;
     case 'activity':
-      if (action !== 'report') throw new Error('Unknown activity action.');
-      result = reportAgentActivity(root, data() as never);
+      if (action === 'report') result = reportAgentActivity(root, data() as never);
+      else if (action === 'hooks') result = readNativeHooks(root);
+      else if (action === 'hook') {
+        const chunks: Buffer[] = []; let size = 0;
+        for await (const chunk of process.stdin) { size += chunk.length; if (size > 65536) throw new Error('Hook payload exceeds 64 KiB.'); chunks.push(Buffer.from(chunk)); }
+        result = observeNativeHook(root, String(o.provider) as 'copilot' | 'codex', JSON.parse(Buffer.concat(chunks).toString('utf8')), o.event as string | undefined);
+      } else throw new Error('Use activity report|hook|hooks.');
       break;
     case 'map':
       result = readAgentMap(root);

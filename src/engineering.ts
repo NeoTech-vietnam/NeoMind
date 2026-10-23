@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isNativeExecutionMode } from './execution-mode.js';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, relative } from 'node:path';
@@ -55,7 +56,7 @@ export function strictRecord(
   return walk(record);
 }
 /**
- * A record belongs to a `copilot-native` increment: full engineering discipline with an
+ * A record belongs to a native-client increment: full engineering discipline with an
  * honest unsigned assurance, never the signed bridge. A strict ancestor (routing_required)
  * always wins, so an existing strict increment can never be reclassified as native by a
  * downstream marker. Returns false whenever any reachable ancestor is strict.
@@ -72,7 +73,7 @@ export function nativeWorkflowRecord(
     if (item.meta.data.routing_required === true) return { strict: true, native: false };
     let native =
       item.meta.data.kind === 'manager-workflow' &&
-      item.meta.data.execution_mode === 'copilot-native';
+      isNativeExecutionMode(item.meta.data.execution_mode);
     let strict = false;
     for (const id of [
       item.meta.data.workflow_id,

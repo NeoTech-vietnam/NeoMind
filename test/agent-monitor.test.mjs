@@ -231,7 +231,8 @@ test('pure renderer keeps inline state out of the webview and exposes previewabl
   assert.match(html, /src="monitor.js"/);
   assert.match(html, /href="monitor.css"/);
   assert.match(html, /nonce="testnonce"/);
-  assert.match(html, /replay of recorded/);
+  assert.match(html, /Show history reveals static saved links/);
+  assert.match(html, /Pulses indicate observed activity/);
   assert.equal(html.includes('unsafe-inline'), false);
   // Executable resources stay nonce protected; both views load before
   // before the controller and neither may embed project snapshots or handlers.

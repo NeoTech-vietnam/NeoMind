@@ -30,14 +30,14 @@ const npmCli = [
 if (!npmCli) throw new Error('Run npm run package:smoke so the npm executable path is available.');
 // The installed upgrade CLI and its detached runner must resolve the same real npm.
 process.env.npm_execpath = resolve(npmCli);
-function run(args, cwd = repository) {
+function run(args, cwd = repository, timeout = 120000) {
   const result = spawnSync(process.execPath, args, {
     cwd,
     env: process.env,
     shell: false,
     encoding: 'utf8',
     windowsHide: true,
-    timeout: 120000,
+    timeout,
     maxBuffer: 4 * 1024 * 1024,
   });
   assert.equal(result.status, 0, result.error?.message ?? result.stderr);
@@ -113,6 +113,12 @@ try {
     12,
   );
   assert.equal(core.listRecipes().length, 3);
+  assert.equal(core.validatePlatform(workspace).cornell_destination.value.directory, '00_note/NeoMind');
+  assert.equal(readdirSync(join(workspace, '.codex/agents')).filter(path => path.endsWith('.toml')).length, 9);
+  assert.match(readFileSync(join(workspace, '.codex/agents/neomind-coordinator.toml'), 'utf8'), /name = "neomind-coordinator"/);
+  assert.doesNotMatch(readFileSync(join(workspace, '.codex/agents/neomind-explorer.toml'), 'utf8'), /\[mcp_servers|sandbox_mode|model_provider/);
+  assert.ok(existsSync(join(workspace, '.agents/skills/neomind-validate/SKILL.md')));
+  assert.ok(JSON.parse(readFileSync(join(workspace, '.codex/hooks.json'), 'utf8')).hooks.SubagentStart);
   assert.equal(core.readRoutingPolicy(workspace).strong_model, 'claude-opus-4.6');
   assert.deepEqual(core.readRoutingPolicy(workspace).worker_models, ['gpt-5.4']);
   assert.match(
@@ -550,7 +556,7 @@ try {
   // Explicitly target the initialized npm workspace, NOT the nested legacy project.
   const upgrade = JSON.parse(run([
     cli, 'upgrade', '--to', tarball, '--project', workspace, '--json',
-  ], workspace));
+  ], workspace, 300000)); // Upgrade stages, uninstalls, reinstalls, verifies and regenerates all platforms.
   rmSync(join(workspace, '.npmrc'));
   const recoveryPath = upgrade.recovery_path;
   assert.equal(upgrade.schema_version, 1);

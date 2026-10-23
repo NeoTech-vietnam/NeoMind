@@ -1,4 +1,5 @@
-import { agentDelegation, coordinatorAgentName, nativeActivityInstructions } from './agent-profiles.js';
+import { agentDelegation, agentProfiles, coordinatorAgentName, nativeActivityInstructions } from './agent-profiles.js';
+import { executionModes, isNativeExecutionMode, nativeClientForMode, savedWorkflowExecutionMode } from './execution-mode.js';
 import {
   beginWorkflow,
   bindManagerInvocation,
@@ -19,7 +20,7 @@ import {
   routingConfigurationHashes,
   type NativeReceipt,
 } from './routing.js';
-import { getRecord, updateRecord, hash, safePath } from './storage.js';
+import { getRecord, loadRecords, updateRecord, hash, safePath } from './storage.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolveCapabilities, type ProviderId } from './tools.js';
 import { lightweightRun } from './lightweight.js';
@@ -44,26 +45,22 @@ export async function managedRun(
   input = normalizeWorkflowInput(input);
   const policy = readAutomationPolicy(root);
   if (!policy.manager_enabled) throw new Error('The project manager entrypoint is disabled.');
-  if (input.execution_mode !== undefined && !['strict', 'lightweight', 'copilot-native'].includes(input.execution_mode))
+  if (input.execution_mode !== undefined && !executionModes.includes(input.execution_mode))
     throw new Error('Invalid workflow execution mode.');
-  const saved = input.workflow_id ? getRecord(root, input.workflow_id) : undefined;
-  const savedMode =
-    saved?.meta.data.kind === 'lightweight-workflow'
-      ? 'lightweight'
-      : saved?.meta.data.execution_mode === 'copilot-native'
-        ? 'copilot-native'
-        : saved
-          ? 'strict'
-          : undefined;
+  // An idempotent request is a resumption too: a later default-policy change
+  // cannot duplicate it in another mode or select a different native backend.
+  const saved = input.workflow_id ? getRecord(root, input.workflow_id)
+    : typeof input.request_id === 'string' ? loadRecords(root).find(record =>
+      ['manager-workflow', 'lightweight-workflow'].includes(String(record.meta.data.kind)) &&
+      record.meta.data.request_id === input.request_id!.trim()) : undefined;
+  const savedMode = saved ? savedWorkflowExecutionMode(saved.meta.data) : undefined;
   if (saved && input.execution_mode && input.execution_mode !== savedMode)
     throw new Error('Saved workflow mode cannot be changed; create a new increment.');
   const mode = savedMode ?? input.execution_mode ?? policy.execution_mode ?? 'strict';
   if (mode === 'lightweight') {
-    if (readRoutingPolicy(root)?.platform !== 'copilot')
-      throw new Error('Lightweight native execution currently requires Copilot routing.');
     return lightweightRun(root, input);
   }
-  if (mode === 'copilot-native') return nativeRun(root, input);
+  if (isNativeExecutionMode(mode)) return nativeRun(root, { ...input, execution_mode: mode });
   const parent = input.workflow_id
     ? getRecord(root, input.workflow_id)
     : beginWorkflow(root, input);
@@ -191,19 +188,24 @@ export async function managedRun(
 }
 
 /**
- * Copilot-native increment: start or resume a full engineering workflow and hand off to the
+ * Native-client increment: start or resume a full engineering workflow and hand off to the
  * visible manager subagent. There is no signed bridge, no native receipt, and no fabricated
  * worker identity; the subagent drives the lifecycle with honest user-reported invocation IDs.
  * The increment's assurance is an unsigned native report, explicitly distinct from strict mode,
  * and this path can never reclassify a saved strict increment.
  */
 export function nativeRun(root: string, input: ManagedRunInput): ManagedRunResult {
-  const parent = input.workflow_id
-    ? getRecord(root, input.workflow_id)
-    : beginWorkflow(root, { ...input, execution_mode: 'copilot-native' });
+  const saved = input.workflow_id ? getRecord(root, input.workflow_id) : undefined;
+  const mode = input.execution_mode ?? (saved ? savedWorkflowExecutionMode(saved.meta.data) : 'copilot-native');
+  if (!isNativeExecutionMode(mode))
+    throw new Error('Native execution requires copilot-native or codex-native mode.');
+  const client = nativeClientForMode(mode);
+  if (input.native_client !== undefined && input.native_client !== client)
+    throw new Error('Saved native client is immutable and must match the execution mode.');
+  const parent = saved ?? beginWorkflow(root, { ...input, execution_mode: mode });
   if (parent.meta.type !== 'knowledge' || parent.meta.data.kind !== 'manager-workflow')
     throw new Error('Native resumption requires an existing manager workflow.');
-  if (parent.meta.data.execution_mode !== 'copilot-native' || parent.meta.data.routing_required === true)
+  if (parent.meta.data.execution_mode !== mode || parent.meta.data.routing_required === true)
     throw new Error('Saved workflow mode cannot be changed; create a new increment.');
   const originals = parent.meta.data.original_requirements ?? [parent.meta.data.original_requirement];
   if (input.workflow_id && (input.requirement !== undefined || input.requirements !== undefined)) {
@@ -229,7 +231,10 @@ export function nativeRun(root: string, input: ManagedRunInput): ManagedRunResul
       updateRecord(root, parent.meta.id, { data: { continuations: messages } });
     }
   }
-  const prompt = `Continue directly as NeoMind Coordinator Agent for the existing NeoMind increment ${parent.meta.id} in copilot-native mode. This is the returned manager handoff.prompt and workflow: do not call manager_run again or launch NeoMind Coordinator Agent (yourself). Delegate bounded assignments through the standard VS Code agent tool by exact display name: ${agentDelegation} Use the specialists applicable to the authorized scope; record at least two separate specialist contributions. Manager may coordinate, consolidate and research, but must never perform production implementation or independent self-review. Wait for real delegate results and collect each actual invocation ID and seven-section assignment_report ID before consolidation; task producers also submit their task work record. Inline role impersonation, a proposed handoff or manager-authored specialist reports are not executed delegation. If a delegate cannot launch or its result/report is missing, report the blocker and next action rather than substituting inline work.
+  const delegation = client === 'codex' ? agentProfiles.filter(profile => profile.id !== 'coordinator')
+    .map(profile => `neomind-${profile.id} (${profile.name}): ${profile.duty}`).join(' ') : agentDelegation;
+  const dispatch = client === 'codex' ? 'Codex spawn_agent tool by exact agent_type' : 'standard VS Code agent tool by exact display name';
+  const prompt = `Continue directly as NeoMind Coordinator Agent for the existing NeoMind increment ${parent.meta.id} in ${mode} mode. This is the returned manager handoff.prompt and workflow: do not call manager_run again or launch NeoMind Coordinator Agent (yourself). Delegate bounded assignments through the ${dispatch}: ${delegation} Use the specialists applicable to the authorized scope; record at least two separate specialist contributions. Manager may coordinate, consolidate and research, but must never perform production implementation or independent self-review. Wait for real delegate results and collect each actual invocation ID and seven-section assignment_report ID before consolidation; task producers also submit their task work record. Inline role impersonation, a proposed handoff or manager-authored specialist reports are not executed delegation. If a delegate cannot launch or its result/report is missing, report the blocker and next action rather than substituting inline work.
 For engineering changes preserve every ASPICE/V-model gate: refine measurable requirements, define and independently review design and verification plans, dispatch bounded implementation tasks, collect real check evidence with immutable input capture, obtain an independent acceptance review by a different owner and invocation, write substantive seven-section documentation, and curate qualified knowledge. Analysis/research-only requests still require bounded specialist contributions and a meaningful saved Cornell note with sources, findings, rationale, limitations and applicable verification; do not invent production changes, builds, code reviews or SIL runs. Full engineering gates remain unchanged; any unsatisfied closure gates must remain explicit blockers, not be bypassed.
 Resume this workflow under the current automation.json network_policy without changing its saved execution mode or publication route. New native policies default to local-only and automatic_pr: false; a missing network_policy retains legacy remote behavior. Under local-only make zero remote discovery, publication or archive requests; explicit remote tools reject. Inspect actual workspace evidence and local Cornell notes, search verified cache through knowledge_search, and save required knowledge_research inside the project before planning. Scope a local no-match explicitly as 'upstream not searched'; never describe a 401 or other failed request as no-match. Remote failures block that remote operation, not authorized local research; integrity failures still block reuse. Save research and Cornell locally and report remote work as deferred. Later publication requires user opt-in to remote-enabled plus independent current public-safety review and sanitization; automatic publication additionally requires automatic_pr: true. This deferral never waives checks, review or acceptance.
 Before manager_finish and before the substantive user answer, save an evidence-linked Cornell note with note.workflow_id=${parent.meta.id} and requirement_ids from this workflow, using only same-workflow record references. Older external notes belong in historical source context, not current evidence or cross-workflow record bindings. Confirm its returned note ID and saved path, then deliver that note ID/path and meaningful Cornell findings alongside actual test reports. If saving fails, report the blocker without claiming Cornell delivery or closure. Run manager_finish only when its gates are satisfied; human release approval remains pending.
@@ -238,6 +243,7 @@ This mode is an unsigned native report: use honest reported invocation IDs for e
   }\nOriginal requirement batch:\n${JSON.stringify(originals, null, 2)}`;
   return {
     workflow: current,
-    handoff: { agent: coordinatorAgentName, prompt: `${prompt}\n\n${nativeActivityInstructions}` },
+    handoff: { agent: client === 'codex' ? 'neomind-coordinator' : coordinatorAgentName,
+      prompt: `${client === 'codex' ? 'Read .neomind/guides/codex-native.md. Reuse existing source, local knowledge and applicable reviewed skills before new implementation.\n' : ''}${prompt}\n\n${nativeActivityInstructions}` },
   };
 }

@@ -101,6 +101,10 @@ import { workspaceWrite } from './workspace.js';
 import { checkpointLightweight } from './lightweight.js';
 import { validateEvidenceInputs, type EvidenceInputSnapshot } from './evidence-inputs.js';
 import { readAgentMap } from './agent-map.js';
+import { isNativeExecutionMode } from './execution-mode.js';
+import { cornellResearchSchema, compileCornellResearch } from './cornell-workflow.js';
+import { reaStatus } from './rea.js';
+import { validatePlatform } from './platform-validation.js';
 import { listUpstreams, discoverUpstreams, trackUpstream, checkUpstream, cloneUpstream, adoptUpstreamUpdate, readUpstreamInstructions } from './upstreams.js';
 
 const cornellNoteSchema = z
@@ -182,6 +186,8 @@ const cornellNoteSchema = z
           .array(z.string())
           .optional()
           .describe('Executable and individual arguments for runnable practice.'),
+        mode: z.enum(['runnable', 'manual']).optional(),
+        procedure: z.array(z.string()).optional(),
         solution_path: z
           .string()
           .optional()
@@ -197,6 +203,9 @@ const cornellNoteSchema = z
       })
       .strict(),
     summary: z.string(),
+    research: z.object({ schema_version: z.literal(1), input_hash: z.string(), requirement_id: z.string(),
+      requirement_revision: z.number().int().positive(), requirement_fingerprint: z.string(), abstract: z.string(),
+      learning_objectives: z.array(z.object({ id: z.string(), text: z.string() }).strict()) }).strict().optional(),
     requirement_ids: z.array(z.string()).optional(),
     problem_ids: z.array(z.string()).optional(),
     workflow_id: z.string().optional().describe(
@@ -616,10 +625,10 @@ export function assertGenericRecordMutation(
  */
 function nativeWorkflowMutation(root: string, name: string, input: Record<string, unknown>): boolean {
   if (name.startsWith('upstream_'))
-    return readAutomationPolicy(root).execution_mode === 'copilot-native';
+    return isNativeExecutionMode(readAutomationPolicy(root).execution_mode);
   if (name === 'manager_begin')
-    return input.execution_mode === 'copilot-native' ||
-      (input.execution_mode === undefined && readAutomationPolicy(root).execution_mode === 'copilot-native');
+    return isNativeExecutionMode(input.execution_mode) ||
+      (input.execution_mode === undefined && isNativeExecutionMode(readAutomationPolicy(root).execution_mode));
   if (name.startsWith('native_') || name === 'task_file_write' || name.startsWith('capability_'))
     return false;
   if (name === 'record_create') {
@@ -789,6 +798,15 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     () => doctor(root),
   );
   tool('agent_map', 'Read bounded saved agent activity, with provenance for each node and relationship.', {}, () => readAgentMap(root));
+  tool('rea_status', 'Inspect pinned REA configuration and saved handshake observations without starting a server or downloading code.', {}, () => reaStatus(root));
+  tool('platform_validate', 'Read-only local integration and reuse inspection. Separates configuration from actual observations and missing prerequisites.', {}, () => validatePlatform(root));
+  tool('cornell_research_compile', 'Validate research against its current requirement and compile the consistent note, practice and answer format. Returns recipe_input for the existing recipe_prepare and recipe_run lifecycle; writes nothing.',
+    { input: cornellResearchSchema }, i => {
+      const receipt = bound();
+      for (const id of [i.input.requirement_id, i.input.workflow_id, i.input.task_id,
+        ...i.input.sources.map((source: { record_id?: string }) => source.record_id), ...(i.input.worked_example.evidence_ids ?? [])].filter((id): id is string => !!id)) scopedRecord(root, receipt, id);
+      return compileCornellResearch(root, i.input);
+    });
   tool('agent_activity', 'Report unsigned native workflow dispatch, progress or completion for the universe. Does not run an agent, attest inference or change workflow gates.', {
     workflow_id: z.string().min(1), assignment_id: z.string().min(1).max(160),
     profile_id: z.enum(agentProfiles.map(profile => profile.id)),
@@ -840,7 +858,8 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
         .optional()
         .describe('A requirement batch. Use null or omit when supplying requirement.'),
       workflow_id: z.string().nullable().optional(),
-      execution_mode: z.enum(['strict', 'lightweight', 'copilot-native']).nullable().optional(),
+      execution_mode: z.enum(['strict', 'lightweight', 'copilot-native', 'codex-native']).nullable().optional(),
+      native_client: z.enum(['copilot', 'codex']).nullable().optional(),
       message: z.string().nullable().optional(),
       title: z.string().nullable().optional(),
       request_id: z.string().nullable().optional(),
@@ -861,7 +880,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     {
       requirement: z.string().nullable().optional(),
       requirements: z.array(z.string()).nullable().optional(),
-      execution_mode: z.enum(['strict', 'copilot-native']).nullable().optional(),
+      execution_mode: z.enum(['strict', 'copilot-native', 'codex-native']).nullable().optional(),
       title: z.string().nullable().optional(),
       invocation_id: z.string().nullable().optional(),
       request_id: z.string().nullable().optional(),
@@ -1563,7 +1582,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     },
     false,
   );
-  const provider = z.enum(['codegraph', 'context7', 'playwright']);
+  const provider = z.enum(['codegraph', 'context7', 'playwright', 'rea']);
   tool(
     'capability_describe',
     'Inspect role-specific approved tools, required capabilities, and enforcement limits.',

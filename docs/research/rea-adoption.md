@@ -2,6 +2,8 @@
 
 Inspected on 23 October 2026 (Asia/Saigon). This is source research, not a claim that REA has executed inside NeoMind.
 
+Implementation update, 24 October 2026: the optional pinned stdio integration, original published skill/reference bundle and candidate-check workflows are now implemented. A genuine isolated REA static-analysis/session-isolation smoke passed; see [REA integration and its verification limits](../rea.md). The inspection findings below retain their original date and provenance.
+
 ## What REA supplies
 
 REA is a local reverse engineering tool server and CLI, published as `rea-agents`. It exposes artifact, binary, JavaScript/Electron, managed-code and runtime inspection capabilities through MCP. It complements an existing coding agent; it does not supply NeoMind's manager, task lifecycle or model router. The official entry points are [morluto/rea](https://github.com/morluto/rea) and [rea.tools](https://rea.tools/). Its [workflow skill](https://github.com/morluto/rea/blob/e073f64be0a5a30c32d8b3cec23f9bd411080903/.agents/skills/reverse-engineer-anything/SKILL.md) explicitly routes ordinary source-repository architecture work to normal repository tools.

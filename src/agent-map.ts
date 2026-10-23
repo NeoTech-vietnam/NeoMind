@@ -3,10 +3,11 @@ import { readConfig, loadRecords, safePath, now } from './storage.js';
 import { readInvocation, ownerIsAlive, strongRoles, workerRoles, type NativeReceipt } from './routing.js';
 import { readAgentActivity, type AgentActivityState } from './agent-activity.js';
 import { agentProfiles } from './agent-profiles.js';
+import { readNativeHooks, hookTtlMs } from './agent-hooks.js';
 import type { ProjectRecord } from './types.js';
 
 export type AgentMapState = 'running' | 'waiting' | 'blocked' | 'idle' | 'completed' | 'failed' | 'unknown';
-export type AgentMapSource = 'signed-receipt' | 'project-record' | 'native-activity';
+export type AgentMapSource = 'signed-receipt' | 'project-record' | 'native-activity' | 'native-hook';
 export interface AgentMapNode {
   id: string;
   kind: 'agent' | 'workflow' | 'task';
@@ -48,7 +49,7 @@ export interface AgentMapSnapshot {
   nodes: AgentMapNode[];
   edges: AgentMapEdge[];
   diagnostics: { invalid_receipts: number; omitted_receipts: number; omitted_records: number; omitted_edges: number;
-    invalid_activity: number; omitted_activity: number };
+    invalid_activity: number; omitted_activity: number; invalid_hooks?: number; omitted_hooks?: number };
 }
 export const agentMapLimits = { receipts: 128, records: 128, edges: 512 } as const;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
@@ -145,10 +146,9 @@ export function readAgentMap(root: string): AgentMapSnapshot {
   // Progress is a separate self-reported observation, never a model receipt or task acceptance.
   const progressId = (workflow: string, assignment: string) => `progress:${workflow}:${assignment}`;
   const coordinators = new Map<string, string>();
-  let agents = receipts.size;
   const progress = activity.latest.filter(entry => {
     const profile = agentProfiles.find(profile => profile.id === entry.profile_id);
-    if (!profile || nodes.get(entry.workflow_id)?.kind !== 'workflow' || agents >= agentMapLimits.receipts) {
+    if (!profile || nodes.get(entry.workflow_id)?.kind !== 'workflow') {
       diagnostics.omitted_activity++; return false;
     }
     const id = progressId(entry.workflow_id, entry.assignment_id);
@@ -160,7 +160,6 @@ export function readAgentMap(root: string): AgentMapSnapshot {
       profile_id: entry.profile_id, assignment_id: entry.assignment_id, reported_at: entry.observed_at,
       expires_at: entry.expires_at, expired: entry.expired, reported_state: entry.reported_state,
       activity_summary: text(entry.summary, 240) ?? '' });
-    agents++;
     if (entry.profile_id === 'coordinator') coordinators.set(entry.workflow_id, id);
     return true;
   });
@@ -173,10 +172,37 @@ export function readAgentMap(root: string): AgentMapSnapshot {
     // One allocation curve per assignment; repeated progress reports are not new messages.
     const allocation = events.find(event => event.state === 'dispatched') ??
       [...events].reverse().find(event => event.state === 'running');
-    if (allocation) edge(hub, id, 'handoff', 'native-activity', allocation.id, allocation.observed_at, !entry.expired);
+    if (allocation) edge(hub, id, 'handoff', 'native-activity', allocation.id, allocation.observed_at, !entry.expired && entry.state === 'running');
     const returned = events.find(event => ['completed', 'blocked', 'failed'].includes(event.state));
-    if (returned) edge(id, hub, 'report', 'native-activity', returned.id, returned.observed_at);
+    if (returned) edge(id, hub, 'report', 'native-activity', returned.id, returned.observed_at, false);
     if (entry.task_id) edge(id, entry.task_id, 'works-on', 'native-activity', entry.id, entry.observed_at, false);
+  }
+  // Runtime lifecycle links use their actual parent session. They are never
+  // attached to a saved workflow merely because a matching role exists there.
+  let hooks: ReturnType<typeof readNativeHooks>;
+  try { hooks = readNativeHooks(root); } catch { hooks = { observations: [], invalid: 1, omitted: 0 }; }
+  if (hooks.invalid) snapshot.diagnostics.invalid_hooks = hooks.invalid;
+  if (hooks.omitted) snapshot.diagnostics.omitted_hooks = hooks.omitted;
+  for (const observation of hooks.observations) {
+    const session = `native-session:${observation.session}`, id = `native-hook:${observation.id}`;
+    const active = !observation.expired && observation.state === 'running';
+    if (!nodes.has(session)) nodes.set(session, { id: session, kind: 'workflow',
+      label: `${observation.client === 'codex' ? 'Codex' : 'Copilot'} parent session`, role: null, state: 'idle',
+      source: 'native-hook', source_id: observation.session, invocation_id: null, workflow_id: null, task_id: null,
+      requested_model: null, confirmed_model: null, provider: null, execution_mode: 'unsigned-native-hook', updated_at: observation.observed_at });
+    if (active) nodes.get(session)!.state = 'running';
+    nodes.set(id, { id, kind: 'agent', label: agentProfiles.find(profile => profile.id === observation.profile_id)!.name,
+      role: observation.role, state: observation.expired ? 'unknown' : observation.state,
+      source: 'native-hook', source_id: observation.id, invocation_id: null, workflow_id: null, task_id: null,
+      requested_model: null, confirmed_model: null, provider: null, execution_mode: 'unsigned-native-hook',
+      profile_id: observation.profile_id, updated_at: observation.observed_at, reported_at: observation.observed_at,
+      expires_at: new Date(Date.parse(observation.observed_at) + hookTtlMs).toISOString(), expired: observation.expired,
+      activity_summary: observation.event === 'stop' ? 'Native turn stopped; work acceptance is separate.' : 'Observed through a native lifecycle hook.' });
+  }
+  for (const observation of hooks.observations) {
+    const id = `native-hook:${observation.id}`, parent = observation.parent_agent ? `native-hook:${observation.parent_agent}` : '';
+    edge(nodes.has(parent) ? parent : `native-session:${observation.session}`, id, 'coordinates', 'native-hook',
+      observation.id, observation.observed_at, !observation.expired && observation.state === 'running');
   }
   for (const receipt of receipts.values()) {
     const agent = `agent:${receipt.id}`;
@@ -233,6 +259,24 @@ export function readAgentMap(root: string): AgentMapSnapshot {
       }
     }
   }
-  snapshot.nodes = [...nodes.values()];
+  // Bound the combined sources after ranking current observations ahead of history.
+  const current = (node: AgentMapNode) => node.expired !== true && node.source !== 'project-record' &&
+    ['running', 'waiting', 'blocked'].includes(node.state);
+  const sortedAgents = [...nodes.values()].filter(node => node.kind === 'agent').sort((a, b) =>
+    Number(current(b)) - Number(current(a)) || b.updated_at.localeCompare(a.updated_at) || a.id.localeCompare(b.id));
+  for (const node of sortedAgents.slice(agentMapLimits.receipts)) {
+    nodes.delete(node.id);
+    if (node.source === 'signed-receipt') diagnostics.omitted_receipts++;
+    else if (node.source === 'native-activity') diagnostics.omitted_activity++;
+    else if (node.source === 'native-hook') snapshot.diagnostics.omitted_hooks = (snapshot.diagnostics.omitted_hooks ?? 0) + 1;
+    else diagnostics.omitted_records++;
+  }
+  const currentIds = new Set(sortedAgents.slice(0, agentMapLimits.receipts).filter(current).map(node => node.id));
+  const related = new Set(snapshot.edges.filter(edge => currentIds.has(edge.from) || currentIds.has(edge.to)).flatMap(edge => [edge.from, edge.to]));
+  const otherNodes = [...nodes.values()].filter(node => node.kind !== 'agent').sort((a, b) =>
+    Number(related.has(b.id)) - Number(related.has(a.id)) || b.updated_at.localeCompare(a.updated_at));
+  for (const node of otherNodes.slice(agentMapLimits.records)) { nodes.delete(node.id); diagnostics.omitted_records++; }
+  snapshot.nodes = [...sortedAgents.slice(0, agentMapLimits.receipts), ...otherNodes.slice(0, agentMapLimits.records)];
+  snapshot.edges = snapshot.edges.filter(edge => nodes.has(edge.from) && nodes.has(edge.to));
   return snapshot;
 }

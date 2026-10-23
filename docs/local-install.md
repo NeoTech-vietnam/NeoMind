@@ -9,7 +9,7 @@ neomind update --project D:\workspace\MyProject
 
 `--local` selects the Copilot integration layout. It is separate from the saved execution mode and `network_policy: "local-only"`; review those policies independently.
 
-Local Copilot mode writes `.github/instructions/neomind.instructions.md` with a description and `applyTo: "**"`, the six NeoMind agent files, hooks and skills. It preserves existing `.github/copilot-instructions.md`, `.vscode/mcp.json` and `.mcp.json`, including historically managed entries. Warnings identify that an older integration may still need review; local mode does not silently disable it.
+Local Copilot mode writes `.github/instructions/neomind.instructions.md` with a description and `applyTo: "**"`, nine NeoMind expert agent files, hooks and skills. It preserves existing `.github/copilot-instructions.md`, `.vscode/mcp.json` and `.mcp.json`, including historically managed entries. Warnings identify that an older integration may still need review; local mode does not silently disable it.
 
 The installer emits **no discoverable workspace MCP configuration**. `.neomind/mcp-server.json` is an example for registering the external runtime in VS Code's user-profile MCP configuration. Its `--project` argument contains the absolute path of the installed project, so startup does not depend on an open VS Code folder or workspace-variable resolution. Review and copy its `servers.neomind` entry through the supported user-profile MCP setup. The example itself does not register or start a server. VS Code distinguishes user-profile `mcp.json` (`servers`) from portable workspace `.mcp.json` (`mcpServers`). [Official MCP configuration reference](https://code.visualstudio.com/docs/agents/reference/mcp-configuration).
 

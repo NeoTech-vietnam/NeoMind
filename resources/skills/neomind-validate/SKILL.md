@@ -1,0 +1,19 @@
+---
+name: neomind-validate
+description: Validate NeoMind agent integrations, activity visibility, upstream reuse, Cornell export, or automation readiness. Choose an existing repeatable procedure before starting similar work.
+license: MIT
+---
+
+# Validate capability and reuse
+
+Run `neomind validate --project PROJECT --json` or `platform_validate` first. Inspect each requested capability separately: configured files, actual observations, and missing prerequisites. Record the test input, command, result and limits. A configured endpoint, scheduled workflow file or agent profile does not prove execution.
+
+For missing agent interactions, compare `activity hooks` with `map`. Native hooks need a new trusted client session and explicit session/agent IDs. Unknown or expired observations remain unknown. Static history is available through Show history. Signed invocations retain their receipt and acceptance gates.
+
+For upstream analysis, use `rea status`, then the original installed `reverse-engineer-anything` skill only when REA is ready. Use `rea probe` for a real handshake; run a small authorized target through the observed tools before claiming analysis support. Read `.neomind/guides/upstream-watch.md` when reviewing candidates. Popularity ranks candidates; the reviewed commit, license, integrity and tool contract decide adoption.
+
+For repeated outputs, inspect `recipe list`, existing scripts, templates and prior successful inputs. If the user has not already specified a tool preference, ask once whether an existing tool should be reused. Match input schema, requirement revision, constraints and expected artifact type before selecting a recipe. A similar title alone is insufficient.
+
+Use the existing Cornell research compiler and recipe for research notes; follow `neomind-cornell`. Exact validated inputs can reuse a prepared instance. Changed requirements, sources, inputs or generator versions require a fresh preparation and validation. Keep practice, answers and actual evidence distinct.
+
+When no procedure fits, perform one bounded representative case, inspect its output, then extract a deterministic script with a versioned schema and regression fixture. Workers run that script for subsequent matching inputs. Route changed scope or failed validation back to the coordinator; preserve the previous procedure and evidence. Never claim an automation is active until its real run is observed.

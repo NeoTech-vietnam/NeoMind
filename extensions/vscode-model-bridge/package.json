@@ -2,7 +2,7 @@
   "name": "neomind-model-bridge",
   "displayName": "NeoMind Agent Monitor",
   "publisher": "neomind",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "An agent universe with Earth FocusSpace, calendar planning, weather, ambient sound, YouTube and guarded 9router model controls.",
   "engines": {
     "vscode": "^1.109.0"

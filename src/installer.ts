@@ -356,9 +356,22 @@ function installOutput(
       targetHash = hash(output.content.trimEnd());
       proposed =
         state.start === undefined
-          ? `${current?.trimEnd() ?? ''}${current ? '\n\n' : ''}${block}\n`
+          ? output.placement === 'preamble' ? `${current?.startsWith('\uFEFF') ? '\uFEFF' : ''}${block}\n\n${current?.replace(/^\uFEFF/, '') ?? ''}`
+            : `${current?.trimEnd() ?? ''}${current ? '\n\n' : ''}${block}\n`
           : `${current!.slice(0, state.start)}${block}${current!.slice(state.end)}`;
-      const serverName = output.key === 'codegraph' ? 'codegraph' : 'neomind';
+      const outside = state.start === undefined ? current ?? ''
+        : current!.slice(0, state.start) + current!.slice(state.end);
+      if (output.placement === 'preamble' && state.start !== undefined && /^\s*\[/m.test(current!.slice(0, state.start)))
+        reason = 'A root TOML setting cannot be installed below an existing table.';
+      for (const key of output.rootKeys ?? [])
+        if (new RegExp(`^\\s*(?:${key}|"${key}"|'${key}')\\s*=`, 'm').test(outside))
+          reason = `An authored ${key} setting already exists; review the parent provider selection.`;
+      if (output.key === 'codex-routing-provider' && state.start === undefined &&
+          (/^\s*(?:\[\s*model_providers\s*\.\s*(?:neomind_9router|"neomind_9router"|'neomind_9router')\s*(?:\.|\])|model_providers\s*\.\s*(?:neomind_9router|"neomind_9router"|'neomind_9router')\s*(?:\.|=))/m.test(outside) ||
+           /^\s*(?:neomind_9router|"neomind_9router"|'neomind_9router')\s*(?:\.|=)/m.test(
+             /^\s*\[\s*model_providers\s*\]([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(outside)?.[1] ?? '')))
+        reason = 'A user-owned neomind_9router provider table already exists.';
+      const serverName = output.key === 'codegraph' ? 'codegraph' : output.key === 'rea' ? 'rea' : 'neomind';
       const serverKey = `(?:${serverName}|"${serverName}"|'${serverName}')`;
       const table = new RegExp(
         `^\\s*\\[\\s*mcp_servers\\s*\\.\\s*${serverKey}\\s*(?:\\.|\\])`,
@@ -371,6 +384,7 @@ function installOutput(
       const child = new RegExp(`^\\s*${serverKey}\\s*(?:\\.|=)`, 'm');
       if (
         output.path.endsWith('.toml') &&
+        ['mcp', 'codegraph', 'rea'].includes(output.key ?? '') &&
         state.start === undefined &&
         current &&
         (table.test(current) || dotted.test(current) || (parent && child.test(parent)))
@@ -489,8 +503,11 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
   if (config.copilot_integration !== undefined && config.copilot_integration !== 'local')
     throw new Error('Unsupported Copilot integration mode in project configuration.');
   const policyExists = existsSync(safePath(root, '.neomind/automation.json'));
+  const selectedPlatforms = options.platforms ?? config.platforms;
   if (!policyExists && resolveManagedRoot(root) === '.neomind')
-    save(safePath(root, '.neomind/automation.json'), JSON.stringify(nativeAutomationPolicy(), null, 2) + '\n');
+    save(safePath(root, '.neomind/automation.json'), JSON.stringify(nativeAutomationPolicy(
+      selectedPlatforms.includes('codex') && !selectedPlatforms.includes('copilot') ? 'codex' : 'copilot',
+    ), null, 2) + '\n');
   ensureAutomationPolicy(root);
   const policyPaths = [
     '.neomind/routing.json',
@@ -606,16 +623,37 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
       const oldServer = entry.kind === 'json' && ['servers.verythinker', 'servers.taskforces'].includes(entry.key ?? '') && entry.path === '.vscode/mcp.json';
       const duplicateServer = entry.kind === 'json' && entry.path === '.mcp.json' &&
         (['mcpServers.verythinker', 'mcpServers.taskforces'].includes(entry.key ?? '') || (entry.key === 'mcpServers.neomind' && !config.platforms.includes('claude')));
-      const retiredSquadAgent = entry.kind === 'file' && /^\.github\/agents\/neomind-[^/]+\.agent\.md$/.test(entry.path);
-      if (currentIds.has(id) || (!renamed && !oldServer && !duplicateServer && !retiredSquadAgent)) continue;
+      const retiredSquadAgent = entry.kind === 'file' && (
+        /^\.github\/agents\/neomind-[^/]+\.agent\.md$/.test(entry.path) ||
+        /^\.codex\/agents\/neomind-[^/]+\.toml$/.test(entry.path));
+      const retiredCodexProvider = entry.kind === 'block' && entry.path === '.codex/config.toml' &&
+        ['codex-routing-root', 'codex-routing-provider'].includes(entry.key ?? '');
+      const retiredCodexHook = entry.kind === 'json' && entry.path === '.codex/hooks.json' &&
+        entry.key === 'hooks.SessionStart';
+      const retiredRea = (entry.kind === 'block' && entry.path === '.codex/config.toml' && entry.key === 'rea') ||
+        (entry.kind === 'json' && ((entry.path === '.vscode/mcp.json' && entry.key === 'servers.rea') ||
+          (entry.path === '.mcp.json' && entry.key === 'mcpServers.rea'))) ||
+        (entry.kind === 'file' && /^\.(?:agents|claude|github)\/skills\/reverse-engineer-anything\//.test(entry.path));
+      if (currentIds.has(id) || (!renamed && !oldServer && !duplicateServer && !retiredSquadAgent && !retiredCodexProvider && !retiredCodexHook && !retiredRea)) continue;
       const path = safePath(root, entry.path);
       const source = text(path);
       if (source === undefined) { delete manifest.files[id]; continue; }
+      // An edited root block remains user-owned. Keep its provider usable until
+      // that selection is reviewed instead of leaving a dangling reference.
+      if (retiredCodexProvider && entry.key === 'codex-routing-provider' &&
+          /^\s*(?:model_provider|"model_provider"|'model_provider')\s*=\s*["']neomind_9router["']/m.test(source)) {
+        report.warnings.push('The NeoMind 9router provider is still referenced by a preserved parent selection; review both Codex provider blocks manually.');
+        continue;
+      }
       let owned = false;
       let updated: string | undefined;
       try {
         if (entry.kind === 'file') owned = hash(source) === entry.hash;
-        else {
+        else if (entry.kind === 'block') {
+          const state = blockState(source, { path: entry.path, key: entry.key, kind: 'block', content: '' });
+          owned = !state.malformed && state.value !== undefined && hash(state.value) === entry.hash;
+          if (owned) updated = source.slice(0, state.start) + source.slice(state.end);
+        } else {
           const keys = entry.key!.split('.');
           const value = jsonValue(parseJSON(source), keys);
           owned = value !== undefined && hash(JSON.stringify(value)) === entry.hash;

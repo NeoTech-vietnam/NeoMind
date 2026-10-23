@@ -527,6 +527,64 @@ export function readUpstreamInstructions(root: string, id: string) {
   return { id: source.id, role: source.role, provenance, instructions, prompt };
 }
 
+/** Materialize original Markdown references and license from the same verified Git commit. */
+export function readUpstreamSkillBundle(root: string, id: string, skillPath?: string) {
+  const source = sourceById(root, id);
+  readUpstreamInstructions(root, id); // Verify the adopted selected instruction hashes first.
+  const candidates = source.instruction_paths.filter(path => path === 'SKILL.md' || path.endsWith('/SKILL.md'));
+  const selected = skillPath ?? (candidates.length === 1 ? candidates[0] : undefined);
+  if (!selected || !candidates.includes(selected)) throw new Error('Select one adopted SKILL.md for the upstream bundle.');
+  if (!source.metadata.license || source.metadata.license === 'NOASSERTION') throw new Error('Inspect the upstream license before materializing a skill.');
+  const folder = selected === 'SKILL.md' ? '' : selected.slice(0, -'/SKILL.md'.length);
+  const prefix = folder ? folder + '/' : '';
+  const bare = verifyCache(root, source, {});
+  const tree = runGit(['--git-dir', bare, 'ls-tree', '-r', '-z', source.commit], bare).toString('utf8').split('\0').filter(Boolean).map(row => {
+    const tab = row.indexOf('\t');
+    const [mode, type, sha] = row.slice(0, tab).split(' ');
+    return { path: row.slice(tab + 1), mode, type, sha };
+  });
+  const selectedFiles = tree.filter(file => file.path.startsWith(prefix) && file.path.endsWith('.md'));
+  const license = ['LICENSE', 'LICENSE.md', 'LICENSE.txt'].map(path => tree.find(file => file.path === path)).find(Boolean);
+  if (!license) throw new Error('Upstream license notice is missing.');
+  let total = 0;
+  const read = (file: (typeof tree)[number]) => {
+    if (file.type !== 'blob' || !['100644', '100755'].includes(String(file.mode))) throw new Error('Upstream bundle must contain regular Git blobs.');
+    const sha = commitSha(file.sha);
+    const size = Number(runGit(['--git-dir', bare, 'cat-file', '-s', sha], bare).toString('utf8').trim());
+    total += size;
+    if (!Number.isSafeInteger(size) || size < 0 || size > maxInstructionBytes || total > 1024 * 1024) throw new Error('Upstream bundle exceeds size limits.');
+    const bytes = runGit(['--git-dir', bare, 'cat-file', 'blob', sha], bare);
+    if (bytes.length !== size || gitObjectHash('blob', bytes) !== sha) throw new Error('Upstream bundle Git blob integrity mismatch.');
+    return { content: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes), sha256: hash(bytes) };
+  };
+  if (selectedFiles.length > 64) throw new Error('Upstream bundle exceeds the 64 Markdown file limit.');
+  const files = selectedFiles.map(file => {
+    const path = file.path.slice(prefix.length);
+    if (!/^[A-Za-z0-9_./-]+\.md$/.test(path) || path.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('Upstream bundle contains an unsafe relative path.');
+    return { path, ...read(file) };
+  });
+  const byPath = new Set(files.map(file => file.path));
+  for (const file of files) for (const match of file.content.matchAll(/\]\(([^\s)]+\.md)(?:#[^)]*)?\)/g)) {
+    const link = match[1]!;
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(link)) continue;
+    if (link.startsWith('/') || link.includes('\\')) throw new Error('Upstream Markdown reference escapes its skill folder.');
+    const parts = [...file.path.split('/').slice(0, -1), ...link.split('/')];
+    const normalized: string[] = [];
+    for (const part of parts) {
+      if (part === '..') { if (!normalized.length) throw new Error('Upstream Markdown reference escapes its skill folder.'); normalized.pop(); }
+      else if (part && part !== '.') normalized.push(part);
+    }
+    if (!byPath.has(normalized.join('/'))) throw new Error('Upstream Markdown reference is missing from the verified skill folder.');
+  }
+  files.push({ path: 'LICENSE', ...read(license) });
+  const provenance = { repository: source.repository, commit: source.commit, license: source.metadata.license };
+  const origin = JSON.stringify({ ...provenance, files: files.map(({ path, sha256 }) => ({ path, sha256 })) }, null, 2) + '\n';
+  files.push({ path: 'ORIGIN.json', content: origin, sha256: hash(origin) });
+  const name = folder.split('/').at(-1) || source.id;
+  identifier(name);
+  return { name, files, provenance };
+}
+
 /** Bounded supplemental prompt data; imported source never grants capabilities. */
 export function readRoleUpstreamInstructions(root: string, role: string): string {
   identifier(role);

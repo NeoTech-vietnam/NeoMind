@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { executionModes, isNativeExecutionMode, savedWorkflowExecutionMode,
+  type ExecutionMode, type NativeClient } from './execution-mode.js';
 import { lightweightStatus } from './lightweight.js';
 import {
   atomicWrite,
@@ -39,7 +41,9 @@ import {
 } from './archives.js';
 
 export interface WorkflowInput {
-  execution_mode?: 'strict' | 'lightweight' | 'copilot-native';
+  execution_mode?: ExecutionMode;
+  /** Native client for a new lightweight increment; saved backends are immutable. */
+  native_client?: NativeClient;
   requirement?: string | null;
   requirements?: string[] | null;
   title?: string;
@@ -75,7 +79,7 @@ export interface AutomationPolicy {
   knowledge_research_required?: boolean;
   cornell_publication?: 'project-branch' | 'draft-pr';
   manager_enabled: boolean;
-  execution_mode?: 'strict' | 'lightweight' | 'copilot-native';
+  execution_mode?: ExecutionMode;
   documentation_required: true;
   automatic_pr: boolean;
   upstream: string | null;
@@ -108,8 +112,8 @@ export function defaultAutomationPolicy(): AutomationPolicy {
  * New-project default: full engineering with honest unsigned native assurance. Existing
  * saved policies are never rewritten, so a configured strict or default project is preserved.
  */
-export function nativeAutomationPolicy(): AutomationPolicy {
-  return { ...basePolicy(), execution_mode: 'copilot-native',
+export function nativeAutomationPolicy(client: NativeClient = 'copilot'): AutomationPolicy {
+  return { ...basePolicy(), execution_mode: client === 'codex' ? 'codex-native' : 'copilot-native',
     network_policy: 'local-only', automatic_pr: false,
     knowledge_research_required: true, cornell_publication: 'project-branch' };
 }
@@ -125,7 +129,7 @@ export function readAutomationPolicy(root: string): AutomationPolicy {
     (policy.network_policy !== undefined &&
       !['local-only', 'remote-enabled'].includes(policy.network_policy)) ||
     (policy.execution_mode !== undefined &&
-      !['strict', 'lightweight', 'copilot-native'].includes(policy.execution_mode)) ||
+      !executionModes.includes(policy.execution_mode)) ||
     policy.documentation_required !== true ||
     (policy.knowledge_research_required !== undefined && typeof policy.knowledge_research_required !== 'boolean') ||
     (policy.cornell_publication !== undefined && !['project-branch', 'draft-pr'].includes(policy.cornell_publication)) ||
@@ -161,10 +165,10 @@ function workflow(root: string, id: string): ProjectRecord {
     throw new Error('Provide a manager workflow ID.');
   return record;
 }
-/** A copilot-native increment: full engineering, honest unsigned assurance, never the bridge. */
+/** A native-client increment: full engineering, honest unsigned assurance, never the bridge. */
 function isNativeWorkflow(parent: ProjectRecord): boolean {
   return (
-    parent.meta.data.execution_mode === 'copilot-native' &&
+    isNativeExecutionMode(parent.meta.data.execution_mode) &&
     parent.meta.data.routing_required !== true
   );
 }
@@ -193,19 +197,20 @@ function beginWorkflowClaimed(root: string, input: WorkflowInput): ProjectRecord
   const requestId = text(input.request_id ?? randomUUID(), 'Request ID', 256);
   const title = text(input.title ?? requirement.slice(0, 100), 'Title', 256);
   const requestedMode = input.execution_mode ?? policy.execution_mode ?? 'strict';
-  if (!['strict', 'lightweight', 'copilot-native'].includes(requestedMode))
+  if (!executionModes.includes(requestedMode))
     throw new Error('Invalid workflow execution mode.');
   if (requestedMode === 'lightweight')
     throw new Error(
       'Lightweight increments use the native-client checkpoint flow, not manager intake.',
     );
-  const native = requestedMode === 'copilot-native';
+  const native = isNativeExecutionMode(requestedMode);
   let parent = loadRecords(root).find(
-    (r) => r.meta.data.kind === 'manager-workflow' && r.meta.data.request_id === requestId,
+    (r) => ['manager-workflow', 'lightweight-workflow'].includes(String(r.meta.data.kind)) && r.meta.data.request_id === requestId,
   );
   if (parent) {
-    const savedMode =
-      parent.meta.data.execution_mode === 'copilot-native' ? 'copilot-native' : 'strict';
+    if (parent.meta.data.kind !== 'manager-workflow')
+      throw new Error('Saved lightweight workflow mode is immutable; resume its native-client checkpoint flow.');
+    const savedMode = savedWorkflowExecutionMode(parent.meta.data);
     if (input.execution_mode !== undefined && input.execution_mode !== savedMode)
       throw new Error(
         'Saved workflow mode is immutable; create a new increment for a different execution mode.',
@@ -237,7 +242,7 @@ function beginWorkflowClaimed(root: string, input: WorkflowInput): ProjectRecord
         knowledge_research_required: policy.knowledge_research_required === true,
         cornell_publication: policy.cornell_publication ?? 'draft-pr',
         ...(native
-          ? { execution_mode: 'copilot-native', assurance: 'unsigned-native-report' }
+          ? { execution_mode: requestedMode, assurance: 'unsigned-native-report' }
           : {}),
         invocation_id: input.invocation_id ?? randomUUID(),
         phase: 'intake',
@@ -788,9 +793,9 @@ export function workflowStatus(root: string, id?: string): unknown {
     requirement_ids: parent.meta.data.requirement_ids ?? [parent.meta.data.requirement_id],
     increment_id: parent.meta.data.increment_id ?? null,
     change_type: parent.meta.data.change_type ?? 'feature',
-    execution_mode: parent.meta.data.execution_mode === 'copilot-native' ? 'copilot-native' : 'strict',
+    execution_mode: savedWorkflowExecutionMode(parent.meta.data),
     assurance:
-      parent.meta.data.execution_mode === 'copilot-native'
+      isNativeWorkflow(parent)
         ? 'unsigned-native-report'
         : parent.meta.data.routing_required === true
           ? 'signed-native-routing'

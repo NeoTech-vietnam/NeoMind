@@ -9,6 +9,7 @@ import { canonicalJson } from '../dist/routing.js';
 import { readAgentMap, agentMapLimits } from '../dist/agent-map.js';
 import { reportAgentActivity, agentActivityTtlMs } from '../dist/agent-activity.js';
 import { lightweightRun } from '../dist/lightweight.js';
+import { observeNativeHook } from '../dist/agent-hooks.js';
 
 function setup(t) {
   const root = mkdtempSync(join(tmpdir(), 'neomind-map-'));
@@ -50,6 +51,17 @@ function inventory(root, directory = '') {
       return item.isDirectory() ? inventory(root, path) : [[path, hash(readFileSync(join(root, path)))]];
     });
 }
+
+test('bounded receipt history does not suppress a fresh native hook observation', t => {
+  const { root, receipt } = setup(t);
+  for (let index = 0; index < agentMapLimits.receipts; index++) receipt({ state: 'completed' });
+  const observed = observeNativeHook(root, 'codex', { session_id: 'current-session', agent_id: 'current-agent',
+    agent_type: 'neomind-explorer', cwd: root }, 'SubagentStart');
+  const map = readAgentMap(root);
+  assert.ok(map.nodes.some(node => node.id === `native-hook:${observed.observation.id}` && node.state === 'running'));
+  assert.ok(map.nodes.filter(node => node.kind === 'agent').length <= agentMapLimits.receipts);
+  assert.ok(map.diagnostics.omitted_receipts > 0, 'Displaced history remains explicitly counted.');
+});
 
 test('native progress appears before assignment reports with unsigned provenance and a read-only projection', t => {
   const { root } = setup(t), workflow = nativeWorkflow(root);
@@ -155,9 +167,9 @@ test('native progress shares the existing agent cap and surfaces invalid or omit
   for (let index = 0; index < agentMapLimits.receipts; index++) receipt({ state: 'completed' });
   const before = inventory(root), map = readAgentMap(root);
   assert.equal(map.nodes.filter(node => node.kind === 'agent').length, agentMapLimits.receipts);
-  assert.equal(map.nodes.some(node => node.source === 'native-activity'), false);
+  assert.equal(map.nodes.some(node => node.source === 'native-activity'), true);
   assert.equal(map.diagnostics.invalid_activity, 1);
-  assert.ok(map.diagnostics.omitted_activity >= 1);
+  assert.ok(map.diagnostics.omitted_receipts >= 1, 'Fresh assignment progress takes precedence over completed receipt history.');
   assert.deepEqual(inventory(root), before);
 });
 

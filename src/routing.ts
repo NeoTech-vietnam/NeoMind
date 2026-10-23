@@ -226,6 +226,8 @@ export function routingConfigurationHashes(root: string): Record<string, string>
   // Preserve old receipt hash maps when no router configuration exists.
   const routerPath = '.neomind/router.json';
   if (existsSync(safePath(root, routerPath))) hashes[routerPath] = hash(readFileSync(safePath(root, routerPath)));
+  const reaPath = '.neomind/rea.json';
+  if (existsSync(safePath(root, reaPath))) hashes[reaPath] = hash(readFileSync(safePath(root, reaPath)));
   if (existsSync(safePath(root, '.neomind/upstreams.json'))) {
     const registry = listUpstreams(root);
     hashes['upstream-instructions'] = hash(canonicalJson({

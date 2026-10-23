@@ -85,7 +85,7 @@ test('installation preserves instructions and JSONC/TOML siblings, then is idemp
   assert.equal(parse(read(root, '.mcp.json')).extra, true);
   assert.match(read(root, '.codex/config.toml'), /model = "user-model"/);
   assert.match(read(root, '.codex/config.toml'), /\[mcp_servers.existing\]/);
-  assert.equal(readdirSync(join(root, '.codex/agents')).length, 12);
+  assert.equal(readdirSync(join(root, '.codex/agents')).length, 9);
   assert.match(
     read(root, '.github/agents/neomind-coordinator.agent.md'),
     /model: "claude-opus-4.6"/,
@@ -161,7 +161,7 @@ test('ordinary engineering intent automatically routes to the manager on every n
   for (const path of ['AGENTS.md', 'CLAUDE.md', '.github/copilot-instructions.md']) {
     const instructions = read(root, path);
     assert.match(instructions, /new requirement, feature, fix/);
-    assert.match(instructions, path === '.github/copilot-instructions.md' ? /Generic intake only/ : /automatically act as the NeoMind manager/);
+    assert.match(instructions, path === 'AGENTS.md' ? /Generic intake.*calls manager_run once/ : path === '.github/copilot-instructions.md' ? /Generic intake only/ : /automatically act as the NeoMind manager/);
     assert.match(instructions, path === '.github/copilot-instructions.md' ? /Launch exactly NeoMind Coordinator Agent/ : /neomind-manager/);
     assert.match(instructions, /automation\.json/);
     assert.match(instructions, /agent-operated.*CLI.*fallback/);
@@ -172,7 +172,11 @@ test('ordinary engineering intent automatically routes to the manager on every n
     assert.match(skill, new RegExp(`^---\\r?\\nname: ${name}\\r?\\n`));
     assert.match(skill, /description: Manage a user's engineering requirement/);
     assert.doesNotMatch(skill, /disable-model-invocation: true/);
-    assert.match(skill, prefix === '.github' ? /neomind\/manager_run/ : /manager_begin/);
+    assert.match(skill, prefix === '.github' ? /neomind\/manager_run/ : prefix === '.agents' ? /manager_run/ : /manager_begin/);
+    if (prefix === '.agents') {
+      assert.match(skill, /guides\/codex-native\.md/);
+      assert.match(skill, /spawn_agent.*handoff\.agent/);
+    }
     if (prefix === '.github') {
       assert.match(skill, /guides\/copilot-native\.md/);
       assert.doesNotMatch(skill, /Complete the increment through actual core operations and signed native invocations/);
@@ -335,14 +339,14 @@ test('sibling changes remain editable and managed instructions edits produce a f
     '.mcp.json',
     read(root, '.mcp.json').replace('{', '{\n // Later user note\n "other": 5,'),
   );
-  write(root, 'AGENTS.md', read(root, 'AGENTS.md').replace('Use English', 'Use custom English'));
+  write(root, 'AGENTS.md', read(root, 'AGENTS.md').replace('Reuse first:', 'Use custom English before reuse:'));
   const report = updateProject(root);
   assert.match(read(root, '.mcp.json'), /Later user note/);
   assert.equal(parse(read(root, '.mcp.json')).other, 5);
   assert.match(read(root, 'AGENTS.md'), /Use custom English/);
   const conflict = report.conflicts.find((item) => item.path === 'AGENTS.md#instructions');
   assert.ok(conflict);
-  assert.match(read(root, conflict.candidate), /Use English/);
+  assert.match(read(root, conflict.candidate), /Reuse first:/);
 });
 
 test('native hook commands and model metadata are generated without claiming live execution', (t) => {
@@ -351,8 +355,8 @@ test('native hook commands and model metadata are generated without claiming liv
   const codex = parse(read(root, '.codex/hooks.json'));
   const claude = parse(read(root, '.claude/settings.json'));
   const copilot = parse(read(root, '.github/hooks/neomind.json'));
-  assert.match(codex.hooks.SessionStart[0].hooks[0].command, /--event.*session-start/);
-  assert.match(codex.hooks.Stop[0].hooks[0].commandWindows, /^& /);
+  assert.match(codex.hooks.SubagentStart[0].hooks[0].command, /codex\.cjs.*SubagentStart/);
+  assert.match(codex.hooks.Stop[0].hooks[0].commandWindows, /^powershell\.exe /);
   assert.equal(claude.hooks.SessionStart[0].hooks[0].command, process.execPath);
   assert.ok(claude.hooks.SessionStart[0].hooks[0].args.includes('--project'));
   const hook = claude.hooks.SessionStart[0].hooks[0];
@@ -365,8 +369,8 @@ test('native hook commands and model metadata are generated without claiming liv
   assert.equal(result.status, 0, result.stderr);
   assert.match(JSON.parse(result.stdout).hookSpecificOutput.additionalContext, /TEST-PROJECT/);
   assert.equal(copilot.version, 1);
-  assert.ok(copilot.hooks.sessionStart);
-  assert.ok(copilot.hooks.agentStop);
+  assert.ok(copilot.hooks.SubagentStart);
+  assert.ok(copilot.hooks.SubagentStop);
   const report = doctor(root);
   assert.equal(report.codegraph.version, '1.6.2');
   assert.equal(report.codegraph.enabled, false);
@@ -416,7 +420,7 @@ test('routing policy is authoritative while legacy mappings and historical recor
     read(root, '.neomind/records/legacy.md'),
     'Historical accepted record retained byte for byte.\n',
   );
-  assert.match(read(root, '.codex/agents/neomind-manager.toml'), /model = "claude-opus-4.6"/);
+  assert.doesNotMatch(read(root, '.codex/agents/neomind-coordinator.toml'), /^model =/m);
   assert.match(
     read(root, '.github/agents/neomind-coordinator.agent.md'),
     /model: "claude-opus-4.6"/,
@@ -791,36 +795,19 @@ test('concurrent installers allocate one persistent increment identity for pendi
   assert.equal(getRecord(root, pending.meta.id).meta.data.increment_id, first);
 });
 
-test('strict roles and gateway tool declarations preserve reviewer independence', (t) => {
+test('native profiles retain reviewer independence without unsupported Codex enforcement', (t) => {
   const root = project(t);
   installProject(root);
-  for (const role of [
-    'manager',
-    'requirements',
-    'architect',
-    'component-owner',
-    'verifier',
-    'reviewer',
-  ]) {
-    const file = read(root, `.codex/agents/neomind-${role}.toml`);
-    assert.match(file, /model = "claude-opus-4.6"/);
-    assert.match(file, /model_reasoning_effort = "high"/);
-    assert.match(file, /sandbox_mode = "read-only"/);
+  for (const [profile] of copilotProfiles) {
+    const file = read(root, `.codex/agents/neomind-${profile}.toml`);
+    assert.doesNotMatch(file, /^model =|^sandbox_mode =|^approval_policy =|\[mcp_servers\./m);
+    assert.match(file, /parent.*permissions.*provider.*MCP/i);
   }
-  for (const role of [
-    'researcher',
-    'codebase-analyst',
-    'curator',
-    'developer',
-    'check-executor',
-    'release',
-  ])
-    assert.match(read(root, `.codex/agents/neomind-${role}.toml`), /model = "gpt-5.4"/);
   const reviewer = read(root, '.codex/agents/neomind-reviewer.toml');
-  const enabled = JSON.parse(/^enabled_tools = (.+)$/m.exec(reviewer)[1]);
-  assert.ok(enabled.includes('task_review'));
-  assert.ok(!enabled.includes('task_submit'));
-  assert.ok(!enabled.includes('record_update'));
+  const instructions = JSON.parse(/^developer_instructions = (.+)$/m.exec(reviewer)[1]);
+  assert.match(instructions, /Review in a separate invocation from the producer/);
+  assert.match(instructions, /this profile performs no production edits or terminal execution/);
+  assert.match(instructions, /Core record roles: reviewer/);
   const claude = read(root, '.claude/agents/neomind-reviewer.md');
   const toolLine = /^tools: (.+)$/m.exec(claude)[1].split(', ');
   assert.ok(toolLine.includes('Read'));

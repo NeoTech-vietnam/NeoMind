@@ -15,6 +15,7 @@ import {
   withOperationLock,
 } from './storage.js';
 import type { ProjectRecord } from './types.js';
+import { evidenceRecordFingerprint } from './evidence-inputs.js';
 
 export const cornellQuote =
   '<p align="center"><strong><em>"DO NOT JUST TALK ABOUT IT — SHOW IT"</em></strong></p>';
@@ -63,6 +64,17 @@ export interface CornellInput {
     command?: string[];
     solution_path?: string;
     starter?: string;
+    mode?: 'runnable' | 'manual';
+    procedure?: string[];
+  };
+  research?: {
+    schema_version: 1;
+    input_hash: string;
+    requirement_id: string;
+    requirement_revision: number;
+    requirement_fingerprint: string;
+    abstract: string;
+    learning_objectives: { id: string; text: string }[];
   };
   summary: string;
   requirement_ids?: string[];
@@ -458,9 +470,37 @@ function writeCornellNote(
   text(input.demonstration.expected, 'Expected result');
   practiceExercise(input.practice.exercise, input.practice.exercise_path);
   text(input.practice.answer, 'Practice answer');
-  if (!input.practice.command)
-    throw new Error('Practice needs an explicit runnable argument vector.');
-  command(input.practice.command);
+  if (input.practice.mode && !['runnable', 'manual'].includes(input.practice.mode))
+    throw new Error('Practice mode must be runnable or manual.');
+  if (input.practice.mode === 'manual') {
+    if (!input.research || input.practice.command || !input.practice.procedure?.length)
+      throw new Error('Manual research practice needs explicit procedure steps and no runnable command.');
+    input.practice.procedure.forEach((step) => text(step, 'Manual practice step'));
+  } else {
+    if (!input.practice.command)
+      throw new Error('Practice needs an explicit runnable argument vector.');
+    command(input.practice.command);
+  }
+  let researchHeader = '';
+  if (input.research) {
+    const research = input.research;
+    if (research.schema_version !== 1 || !/^[a-f0-9]{64}$/.test(research.input_hash) ||
+      !/^[a-f0-9]{64}$/.test(research.requirement_fingerprint) || !research.learning_objectives?.length)
+      throw new Error('Research metadata needs a supported schema, input/requirement hashes and objectives.');
+    const requirement = getRecord(root, research.requirement_id);
+    if (requirement.meta.type !== 'requirement' || requirement.meta.revision !== research.requirement_revision ||
+      evidenceRecordFingerprint(requirement) !== research.requirement_fingerprint ||
+      !input.requirement_ids?.includes(requirement.meta.id))
+      throw new Error('Research requirement revision or binding changed.');
+    text(research.abstract, 'Research abstract');
+    if (new Set(research.learning_objectives.map((item) => item.id)).size !== research.learning_objectives.length)
+      throw new Error('Learning objective IDs must be distinct.');
+    for (const objective of research.learning_objectives) {
+      if (!/^O[1-9][0-9]*$/.test(objective.id)) throw new Error('Learning objectives require O1-style IDs.');
+      text(objective.text, 'Learning objective');
+    }
+    researchHeader = `\n## Abstract\n\n${research.abstract}\n\n## Learning Objectives\n\n${research.learning_objectives.map((item) => `- **${item.id}**: ${item.text}`).join('\n')}\n`;
+  }
   if (input.demonstration.observed) text(input.demonstration.observed, 'Observed result');
   const evidenceIds = input.demonstration.evidence_ids ?? [];
   if (input.demonstration.observed && !evidenceIds.length)
@@ -543,7 +583,10 @@ function writeCornellNote(
         `- [${source.id}] ${source.title}; ${source.uri}; retrieved ${source.retrieved_at}; locator: ${source.locator ?? 'whole source'}${source.sha256 ? `; SHA-256: ${source.sha256}` : ''}`,
     )
     .join('\n');
-  const body = `# Cornell Notes\n\n## Topic: ${input.topic}\n\n## Date: ${date}\n\n${cornellQuote}\n\n## Context and Constraints\n\n${input.context}\n\n${input.constraints.map((item) => `- ${item}`).join('\n')}\n\n## Cue Column\n\n${input.cues.map((item) => `- ${item}`).join('\n')}\n\n## Main Notes\n\n${input.main_notes}\n\n## Demonstration\n\n${input.demonstration.body}\n\n${command(input.demonstration.command)}\n\n### Expected Result\n\n[expected] ${input.demonstration.expected}\n\n### Observed Result\n\n${input.demonstration.observed ? `[observed] ${input.demonstration.observed}\nEvidence: ${evidenceIds.join(', ')}` : '[expected] The demonstration has not been executed; no observed result is claimed.'}\n\n## Failure Cases\n\n${input.failure_cases.map((item) => `- ${item}`).join('\n')}\n\n## Practice\n\n[Exercise](${link(exercisePath)}) · [Answer](${link(answerPath)})${solutionPath ? ` · [Your solution](${link(solutionPath)})` : ''}\n\n${command(input.practice.command)}\n${cause}\n## Summary\n\n${input.summary}\n\n## Sources\n\n${sourceBody}\n`;
+  const practiceProcedure = input.practice.mode === 'manual'
+    ? `Manual practice procedure (completion is not claimed):\n\n${input.practice.procedure!.map((step, index) => `${index + 1}. ${step}`).join('\n')}`
+    : command(input.practice.command);
+  const body = `# Cornell Notes\n\n## Topic: ${input.topic}\n\n## Date: ${date}\n\n${cornellQuote}\n${researchHeader}\n## Context and Constraints\n\n${input.context}\n\n${input.constraints.map((item) => `- ${item}`).join('\n')}\n\n## Cue Column\n\n${input.cues.map((item) => `- ${item}`).join('\n')}\n\n## Main Notes\n\n${input.main_notes}\n\n## Demonstration\n\n${input.demonstration.body}\n\n${command(input.demonstration.command)}\n\n### Expected Result\n\n[expected] ${input.demonstration.expected}\n\n### Observed Result\n\n${input.demonstration.observed ? `[observed] ${input.demonstration.observed}\nEvidence: ${evidenceIds.join(', ')}` : '[expected] The demonstration has not been executed; no observed result is claimed.'}\n\n## Failure Cases\n\n${input.failure_cases.map((item) => `- ${item}`).join('\n')}\n\n## Practice\n\n[Exercise](${link(exercisePath)}) · [Answer](${link(answerPath)})${solutionPath ? ` · [Your solution](${link(solutionPath)})` : ''}\n\n${practiceProcedure}\n${cause}\n## Summary\n\n${input.summary}\n\n## Sources\n\n${sourceBody}\n`;
   const citationErrors = sourceLinks(body, sources);
   if (citationErrors.length) throw new Error(citationErrors.join(' '));
   return withOperationLock(root, `cornell-${hash(path).slice(0, 32)}`, () => {
@@ -578,11 +621,13 @@ function writeCornellNote(
       artifact_hashes: artifacts,
       sources,
       demonstration: input.demonstration,
+      ...(input.research ? { research: input.research } : {}),
       practice: {
         exercise_path: exercisePath,
         answer_path: answerPath,
         solution_path: solutionPath,
         command: input.practice.command ?? null,
+        ...(input.practice.mode ? { mode: input.practice.mode, procedure: input.practice.procedure ?? null } : {}),
       },
       source_review: 'structural-only',
     };
@@ -781,6 +826,18 @@ export function validateCornellNote(
   }
   try {
     const body = readFileSync(safePath(root, path), 'utf8');
+    if (data.research) {
+      const research = data.research as NonNullable<CornellInput['research']>;
+      try {
+        const requirement = getRecord(root, research.requirement_id);
+        if (requirement.meta.type !== 'requirement' || requirement.meta.revision !== research.requirement_revision ||
+          evidenceRecordFingerprint(requirement) !== research.requirement_fingerprint ||
+          !record.meta.links.some((link) => link.type === 'documents' && link.target === requirement.meta.id))
+          problems.push('Research requirement revision or binding changed.');
+      } catch { problems.push('Research requirement cannot be resolved.'); }
+      for (const section of ['Abstract', 'Learning Objectives', 'Methods', 'Results', 'Discussion', 'Research Questions'])
+        if (!new RegExp(`^#{2,3} ${section}\\s*$`, 'm').test(body)) problems.push(`Research section is missing: ${section}`);
+    }
     if (!body.includes(cornellQuote))
       problems.push('Cornell note is missing the exact demonstration quote.');
     for (const section of [

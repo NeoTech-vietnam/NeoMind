@@ -71,6 +71,8 @@ export interface ProjectConfig {
   platforms: Platform[];
   /** Keep Copilot integration in separately ignorable local files. */
   copilot_integration?: 'local';
+  /** Codex inherits its parent provider unless the configured 9router is explicitly selected. */
+  codex_routing?: 'inherit' | '9router';
   models: Record<
     'economy' | 'balanced' | 'strong',
     string | null | Partial<Record<Platform, string>>
@@ -102,11 +104,11 @@ export interface CreateRecord {
  * Increment execution mode.
  * - `strict`: signed native bridge; every engineering act carries a verified receipt.
  * - `lightweight`: single native-client increment with risk-based review, no signed acceptance.
- * - `copilot-native`: full ASPICE/V-model engineering with honest user-reported invocation
+ * - `copilot-native` / `codex-native`: full engineering with honest user-reported invocation
  *   identities and no signed bridge. Its assurance is an unsigned native report, explicitly
  *   distinct from the signed strict bridge; it never downgrades a strict increment.
  */
-export type ExecutionMode = 'strict' | 'lightweight' | 'copilot-native';
+export type { ExecutionMode } from './execution-mode.js';
 /** Archive assurance label recorded on a frozen manifest. */
 export type ArchiveAssurance =
   | 'signed-native-routing'

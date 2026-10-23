@@ -14,8 +14,15 @@ import {
   withOperationLock,
 } from './storage.js';
 import { readInvocation, assertRouting, roleModelPolicy } from './routing.js';
+import { reaPin, reaToolAllowlist, reaConfigured, connectRea, callReaTool, type ReaConnection } from './rea.js';
 
 export const toolCatalog = [
+  {
+    id: 'rea',
+    ...reaPin,
+    tools: reaToolAllowlist,
+    capability: 'static-artifact-investigation',
+  },
   {
     id: 'codegraph',
     package: '@colbymchenry/codegraph',
@@ -89,6 +96,8 @@ const common = [
   'pack_list',
   'pack_suggest',
   'upstream_list',
+  'rea_status',
+  'platform_validate',
 ];
 const writeRecords = [
   'record_create',
@@ -97,6 +106,7 @@ const writeRecords = [
   'note_validate',
   'recipe_list',
   'recipe_prepare',
+  'cornell_research_compile',
 ];
 const submit = ['task_start', 'task_resume', 'task_submit', 'task_repair', 'evidence_archive'];
 const roles: Record<string, Omit<RoleCapabilities, 'role'>> = {
@@ -218,7 +228,7 @@ const roles: Record<string, Omit<RoleCapabilities, 'role'>> = {
       'upstream_clone',
       'upstream_instructions',
     ],
-    providers: ['codegraph', 'context7'],
+    providers: ['codegraph', 'context7', 'rea'],
     required: ['source-retrieval'],
     optional: ['code-analysis', 'library-documentation'],
     native_tools: ['read', 'search', 'web', 'edit-assigned-documents'],
@@ -232,7 +242,7 @@ const roles: Record<string, Omit<RoleCapabilities, 'role'>> = {
       'capability_resolve',
       'capability_invoke',
     ],
-    providers: ['codegraph', 'context7'],
+    providers: ['codegraph', 'context7', 'rea'],
     required: ['source-retrieval'],
     optional: ['code-analysis', 'library-documentation'],
     native_tools: ['read', 'search', 'web', 'edit-assigned-documents'],
@@ -257,6 +267,7 @@ const roles: Record<string, Omit<RoleCapabilities, 'role'>> = {
       ...common,
       ...submit,
       'note_create',
+      'cornell_research_compile',
       'note_validate',
       'recipe_list',
       'recipe_run',
@@ -277,6 +288,7 @@ const roles: Record<string, Omit<RoleCapabilities, 'role'>> = {
       'check_inspect',
       'recipe_run',
       'note_create',
+      'cornell_research_compile',
       'note_validate',
       'capability_resolve',
       'capability_invoke',
@@ -338,11 +350,15 @@ export function ensureToolPolicy(root: string): ToolPolicy {
     const policy: ToolPolicy = {
       schema_version: 1,
       automatic_install: true,
-      approved_providers: toolCatalog.map((tool) => tool.id),
+      approved_providers: toolCatalog.filter((tool) => tool.id !== 'rea').map((tool) => tool.id),
     };
     atomicWrite(safePath(root, '.neomind/tools.json'), JSON.stringify(policy, null, 2) + '\n');
     return policy;
   });
+}
+function assertProviderApproved(root: string, id: ProviderId): void {
+  if (!readToolPolicy(root)?.approved_providers.includes(id))
+    throw new Error(`Provider is outside the approved catalog: ${id}`);
 }
 export function authorizeOperation(
   root: string,
@@ -375,7 +391,8 @@ function npmScript(): string {
     throw new Error('npm CLI script is unavailable for isolated approved-tool installation.');
   return script;
 }
-function installProvider(root: string, id: ProviderId): string {
+export function installProvider(root: string, id: ProviderId): string {
+  if (id === 'rea' && !reaConfigured(root)) throw new Error('Configure the pinned REA integration before installation.');
   const provider = toolCatalog.find((tool) => tool.id === id)!;
   const policy = readToolPolicy(root);
   if (!policy || !policy.approved_providers.includes(id))
@@ -386,6 +403,11 @@ function installProvider(root: string, id: ProviderId): string {
   const metadata = join(base, 'node_modules', provider.package, 'package.json');
   return withOperationLock(root, `provider-${id}`, () => {
     if (!existsSync(metadata)) {
+      if (id === 'rea') {
+        const automation = safePath(root, '.neomind/automation.json');
+        if (existsSync(automation) && JSON.parse(readFileSync(automation, 'utf8')).network_policy === 'local-only')
+          throw new Error('Local-only policy disables REA package downloads.');
+      }
       if (!policy.automatic_install)
         throw new Error(`Provider ${id} is missing and automatic installation is disabled.`);
       mkdirSync(base, { recursive: true });
@@ -412,6 +434,7 @@ function installProvider(root: string, id: ProviderId): string {
           '--ignore-scripts',
           '--no-audit',
           '--no-fund',
+          ...(id === 'rea' ? ['--registry=https://registry.npmjs.org', '--save-exact'] : []),
           ...(recovering ? [] : [`${provider.package}@${provider.version}`]),
         ],
         { windowsHide: true, encoding: 'utf8', timeout: 120000, maxBuffer: 2 * 1024 * 1024 },
@@ -514,7 +537,12 @@ const providerEnvironment = () =>
 async function connectProvider(
   root: string,
   id: ProviderId,
-): Promise<{ client: Client; launch: { command: string; args: string[] } }> {
+): Promise<{ client: Client; launch: { command: string; args: string[] }; rea?: ReaConnection }> {
+  assertProviderApproved(root, id);
+  if (id === 'rea') {
+    const rea = await connectRea(root);
+    return { client: rea.client, launch: rea.launch, rea };
+  }
   const base = installProvider(root, id);
   const launch = providerLaunch(root, id, base);
   if (id === 'codegraph') {
@@ -653,6 +681,7 @@ export async function invokeCapability(
     !(provider.tools as readonly string[]).includes(input.tool)
   )
     throw new Error('Tool is outside the approved role/provider contract.');
+  assertProviderApproved(root, input.provider);
   if (scope.task_id) {
     const task = getRecord(root, scope.task_id);
     const required = task.meta.data.required_tools;
@@ -678,7 +707,7 @@ export async function invokeCapability(
     args.projectPath = root;
   }
   const sessionKey = `${resolve(root)}:${input.invocation_id}:${input.provider}`;
-  const persistent = input.provider === 'playwright';
+  const persistent = input.provider === 'playwright' || input.provider === 'rea';
   const connection =
     persistent && capabilitySessions.has(sessionKey)
       ? capabilitySessions.get(sessionKey)!
@@ -688,7 +717,8 @@ export async function invokeCapability(
     const names = (await connection.client.listTools()).tools.map((tool) => tool.name);
     if (!names.includes(input.tool))
       throw new Error('Selected tool was not observed in provider discovery.');
-    const result = await connection.client.callTool(
+    assertProviderApproved(root, input.provider);
+    const result = connection.rea ? await callReaTool(root, connection.rea, input.tool, args) : await connection.client.callTool(
       { name: input.tool, arguments: args },
       undefined,
       { timeout: 60000 },

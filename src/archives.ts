@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isNativeExecutionMode } from './execution-mode.js';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, dirname, relative, resolve, sep } from 'node:path';
@@ -227,7 +228,7 @@ function workflow(root: string, id: string): ProjectRecord {
   return parent;
 }
 function accepted(root: string, parent: ProjectRecord): void {
-  const native = parent.meta.data.execution_mode === 'copilot-native' && parent.meta.data.routing_required !== true;
+  const native = isNativeExecutionMode(parent.meta.data.execution_mode) && parent.meta.data.routing_required !== true;
   if (
     readRoutingPolicy(root) &&
     parent.meta.data.routing_required !== true &&
@@ -893,7 +894,7 @@ export function prepareArchive(
       increment_id: String(parent.meta.data.increment_id),
       disposition,
       assurance:
-        parent.meta.data.execution_mode === 'copilot-native' && parent.meta.data.routing_required !== true
+        isNativeExecutionMode(parent.meta.data.execution_mode) && parent.meta.data.routing_required !== true
           ? 'unsigned-native-report'
           : parent.meta.data.routing_required === true
             ? 'signed-native-routing'

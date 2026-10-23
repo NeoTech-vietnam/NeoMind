@@ -37,7 +37,7 @@ function renderMonitorHtml({ cspSource, script, style, universe = 'universe.js',
 <div class="telemetry"><p id="status" role="status">Loading local project state…</p><span id="observed-summary"></span></div>
 <main class="observatory">
   <section class="universe-stage" aria-label="Agent universe">
-    <div class="stage-toolbar"><span class="eyebrow"><span class="tiny-orbit" aria-hidden="true">◎</span> ORBITAL VIEW</span><div class="view-actions"><button id="focus-selection" type="button" class="button subtle">Focus</button><button id="reset-view" type="button" class="button subtle">Reset view</button><button id="motion" type="button" class="button subtle" aria-pressed="false">Pause orbits</button></div></div>
+    <div class="stage-toolbar"><span class="eyebrow"><span class="tiny-orbit" aria-hidden="true">◎</span> ORBITAL VIEW</span><div class="view-actions"><button id="focus-selection" type="button" class="button subtle">Focus</button><button id="reset-view" type="button" class="button subtle">Reset view</button><button id="show-history" type="button" class="button subtle" aria-pressed="false">Show history</button><button id="motion" type="button" class="button subtle" aria-pressed="false">Pause orbits</button></div></div>
     <canvas id="field" role="img" aria-label="Universe of configured role planets, saved task moons and recorded communication. Select items using the lists below."></canvas>
     <div id="empty-state" class="scene-notice" hidden></div>
     <div class="scene-footer"><div class="state-legend"><span><i class="state-dot running"></i>Working</span><span><i class="state-dot waiting"></i>Waiting</span><span><i class="state-dot blocked"></i>Blocked</span><span><i class="state-dot completed"></i>Complete</span><span><i class="state-dot configured"></i>Configured</span></div><span class="scene-hint">Scroll to zoom · Drag to explore</span></div>
@@ -47,7 +47,7 @@ function renderMonitorHtml({ cspSource, script, style, universe = 'universe.js',
     <section class="activity-panel panel"><div class="panel-heading"><h2>Agent interactions</h2><span class="replay-label">LOCAL REPORTS</span></div><p id="live-summary" class="activity-summary">Waiting for assignment activity.</p><div id="live-agents"></div><h3 class="timeline-heading">Dispatch and report history</h3><div id="activity"><p class="empty">Reported dispatches and saved handoffs will appear here.</p></div></section>
   </aside>
 </main>
-<p class="provenance-note">Planets represent configured roles and profiles. Moons and stations show saved work and reported assignments. Trails are a replay of recorded dispatch/report events, not a live message stream of arbitrary Copilot chat. Unsigned activity expires after five minutes without a report; signed receipts retain their separate provenance.</p>
+<p class="provenance-note">Planets show configured roles. Current view shows fresh native lifecycle hooks, assignment reports and signed sessions; these sources may describe the same agent. Pulses indicate observed activity, not individual messages. Show history reveals static saved links. Unsigned observations expire after five minutes; a stopped turn does not mean accepted work. Native hooks require client support and trust.</p>
 <section class="role-section"><div class="section-heading"><div><span class="eyebrow">MODEL ROUTING</span><h2>Role constellation <span id="roles-count" class="count"></span></h2></div><p>Choose a role to inspect its 9router or VS Code model policy.</p></div><p id="profiles-summary" class="routing-note">Reading native expert profiles.</p><div id="roles" class="role-grid"></div><p class="routing-note">Model changes apply to new invocations. Native profiles can share core roles; the inspector identifies each profile's controlling model policy. The strict bridge selects each core role independently.</p></section>
 <details class="saved-records panel"><summary>Saved agents &amp; work <span id="nodes-count" class="count"></span><span class="summary-hint">Inspect source records</span></summary><div id="nodes"></div></details>
 </div>${renderFocusSpace()}<script nonce="${nonce}" src="${universe}"></script><script nonce="${nonce}" src="${focusScript}"></script><script nonce="${nonce}" src="${script}"></script></body></html>`;
@@ -102,6 +102,7 @@ function activateMonitor(vscode, context, loadRuntime) {
             provider: role.provider, reasoning_effort: role.reasoning_effort, strong: role.strong }));
           await current.webview.postMessage({ type: 'snapshot', map, roles,
             agent_profiles: control.agent_profiles ?? [],
+            native_routing: control.native_routing ?? null,
             router_configured: Boolean(control.router), active_count: controlUnavailable ? null : control.active_invocations.length,
             control_unavailable: controlUnavailable });
         } catch {

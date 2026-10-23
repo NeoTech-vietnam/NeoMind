@@ -27,15 +27,28 @@
       t ^= t + Math.imul(t ^ t >>> 7, 61 | t); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
   }
   const pretty = role => role.split('-').map(part => part[0]?.toUpperCase() + part.slice(1)).join(' ');
+  const isCurrent = node => node && node.expired !== true &&
+    ['signed-receipt', 'native-activity', 'native-hook'].includes(node.source) &&
+    ['running', 'waiting', 'blocked'].includes(node.state);
 
   /** Configuration creates planets, never invocation identities or communication evidence. */
   function buildScene(input = {}) {
     const map = input.map || {}, supplied = Array.isArray(map.nodes) ? map.nodes : [];
+    const showHistory = input.showHistory === true;
+    const currentIds = new Set(supplied.filter(isCurrent).map(node => node.id));
+    const relatedIds = new Set(currentIds);
+    const parentIds = new Set();
+    for (const edge of Array.isArray(map.edges) ? map.edges : []) {
+      if (currentIds.has(edge.from) || currentIds.has(edge.to)) { relatedIds.add(edge.from); relatedIds.add(edge.to); }
+      if (edge.source === 'native-hook' && currentIds.has(edge.to)) parentIds.add(edge.from);
+    }
     const nodes = [], ids = new Set();
     for (const node of supplied) {
       if (nodes.length >= limits.nodes) break;
       if (!node || typeof node.id !== 'string' || !node.id || node.id.startsWith('role:') || ids.has(node.id) ||
         !['agent', 'workflow', 'task'].includes(node.kind)) continue;
+      if (!showHistory && !(isCurrent(node) || node.kind !== 'agent' && relatedIds.has(node.id) ||
+        node.source === 'native-hook' && parentIds.has(node.id))) continue;
       nodes.push(node); ids.add(node.id);
     }
     const configured = new Map();
@@ -49,7 +62,7 @@
     const names = [...roleNames].sort((a, b) => a.localeCompare(b));
     const planets = names.map(role => {
       const config = configured.get(role), related = nodes.filter(node => node.role === role), agents = related.filter(node => node.kind === 'agent');
-      const observed = agents.filter(node => node.source === 'signed-receipt' || node.source === 'native-activity');
+      const observed = agents.filter(node => ['signed-receipt', 'native-activity', 'native-hook'].includes(node.source));
       const activity = agents.filter(node => node.source === 'native-activity');
       const states = ['running', 'waiting', 'blocked', 'failed', 'completed', 'idle', 'unknown'];
       const state = observed.length ? states.find(state => observed.some(node => node.state === state)) || 'recorded'
@@ -82,7 +95,9 @@
       if (edges.length >= limits.edges) break;
       if (!edge || !represented.has(edge.from) || !represented.has(edge.to) || edge.from === edge.to || edgeIds.has(edge.id)) continue;
       edges.push({ id: edge.id, from: edge.from, to: edge.to, kind: edge.kind, source: edge.source,
-        evidence_id: edge.evidence_id, at: edge.at, animated: edge.animated === true });
+        evidence_id: edge.evidence_id, at: edge.at, animated: edge.animated === true &&
+          ['signed-receipt', 'native-activity', 'native-hook'].includes(edge.source) &&
+          (currentIds.has(edge.from) || currentIds.has(edge.to)) && map.stale !== true });
       edgeIds.add(edge.id);
     }
     return { planets, bodies, edges, stale: map.stale === true,
