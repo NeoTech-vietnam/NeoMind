@@ -1,8 +1,9 @@
 // Package the extension from source; no prior VSIX, publishing account or root dependency is required.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -31,11 +32,34 @@ if (!readFileSync(join(extension, 'LICENSE.txt')).equals(readFileSync(join(repos
   throw new Error('Extension LICENSE.txt must match the root LICENSE.');
 }
 mkdirSync(dirname(output), { recursive: true });
-const result = spawnSync(process.execPath, [resolve(npmCli), 'exec', '--yes', '--no-audit', '--no-fund',
-  '--registry=https://registry.npmjs.org', '--package=@vscode/vsce@4.0.0', '--',
-  'vsce', 'package', '--no-dependencies', '--out', output,
-], { cwd: extension, env: { ...process.env, SOURCE_DATE_EPOCH: epoch },
-  shell: false, windowsHide: true, stdio: 'inherit', timeout: 180_000 });
+// Normalize file modes in an isolated source copy so Windows/Unix permissions do
+// not change the archive. Only exact manifest entries can enter this copy.
+if (!Array.isArray(manifest.files)) throw new Error('Extension manifest requires an explicit files list.');
+const temporaryRoot = resolve(tmpdir());
+const staging = mkdtempSync(join(temporaryRoot, 'neomind-vsix-'));
+let result;
+try {
+  for (const name of new Set(['package.json', ...manifest.files])) {
+    if (typeof name !== 'string' || /[*?\[\]{}]/.test(name)) throw new Error('Extension files must be exact file paths.');
+    const source = resolve(extension, name), child = relative(extension, source);
+    if (!child || isAbsolute(child) || child === '..' || child.startsWith(`..${sep}`) ||
+        !lstatSync(source).isFile() || lstatSync(source).isSymbolicLink()) {
+      throw new Error('Extension files must be regular files within its source directory.');
+    }
+    const target = join(staging, child);
+    mkdirSync(dirname(target), { recursive: true });
+    copyFileSync(source, target);
+    chmodSync(target, 0o644);
+  }
+  result = spawnSync(process.execPath, [resolve(npmCli), 'exec', '--yes', '--no-audit', '--no-fund',
+    '--registry=https://registry.npmjs.org', '--package=@vscode/vsce@4.0.0', '--',
+    'vsce', 'package', '--no-dependencies', '--out', output,
+  ], { cwd: staging, env: { ...process.env, SOURCE_DATE_EPOCH: epoch, TZ: 'UTC' },
+    shell: false, windowsHide: true, stdio: 'inherit', timeout: 180_000 });
+} finally {
+  const child = relative(temporaryRoot, staging);
+  if (!isAbsolute(child) && /^neomind-vsix-[^\\/]+$/.test(child)) rmSync(staging, { recursive: true, force: true });
+}
 if (result.error) throw new Error(`Extension packaging failed: ${result.error.message}`);
 if (result.status !== 0) process.exit(result.status ?? 1);
 const sha256 = createHash('sha256').update(readFileSync(output)).digest('hex');
