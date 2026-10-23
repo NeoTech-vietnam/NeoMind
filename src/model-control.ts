@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 import { resolveCatalogModel } from './model-catalog.js';
+import { agentProfiles } from './agent-profiles.js';
 import {
   hash, atomicWrite, readConfig, safePath, withOperationLock,
 } from './storage.js';
@@ -101,6 +102,9 @@ export function setRoleModel(root: string, input: {
 export function modelControlStatus(root: string) {
   return {
     roles: roles.map(role => ({ ...roleModelPolicy(root, role) })),
+    agent_profiles: agentProfiles.map(profile => ({ id: profile.id, name: profile.name,
+      roles: [...profile.roles], model_role: profile.modelRole, description: profile.duty,
+      native_tools: [...profile.nativeTools] })),
     active_invocations: activeInvocations(root),
     router: readRouterConfiguration(root),
   };

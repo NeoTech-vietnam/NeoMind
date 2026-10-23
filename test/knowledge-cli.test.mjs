@@ -315,8 +315,9 @@ test('installer copies the knowledge reuse skill for every adapter without a sev
     if (prefix !== '.github') assert.equal(installed, resource);
   }
   assert.deepEqual(readdirSync(join(work.root, '.github/agents')).sort(), [
-    'neomind-fnd.agent.md', 'neomind-manager.agent.md', 'neomind-p-res.agent.md',
-    'neomind-reviewer.agent.md', 'neomind-swsd.agent.md', 'neomind-tester.agent.md',
+    'neomind-architect.agent.md', 'neomind-coordinator.agent.md', 'neomind-debugger.agent.md',
+    'neomind-explorer.agent.md', 'neomind-implementer.agent.md', 'neomind-planner.agent.md',
+    'neomind-researcher.agent.md', 'neomind-reviewer.agent.md', 'neomind-verifier.agent.md',
   ]);
   assert.equal(readdirSync(join(work.root, '.claude/agents')).length, 12);
   assert.equal(readdirSync(join(work.root, '.codex/agents')).length, 12);

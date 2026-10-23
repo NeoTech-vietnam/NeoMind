@@ -2,8 +2,8 @@
   "name": "neomind-model-bridge",
   "displayName": "NeoMind Agent Monitor",
   "publisher": "neomind",
-  "version": "0.1.0",
-  "description": "Animated agent activity map, per-role model controls, 9router diagnostics and optional signed VS Code model bridge.",
+  "version": "0.4.0",
+  "description": "An agent universe with Earth FocusSpace, calendar planning, weather, ambient sound, YouTube and guarded 9router model controls.",
   "engines": {
     "vscode": "^1.109.0"
   },
@@ -16,6 +16,24 @@
   },
   "extensionKind": [
     "workspace"
+  ],
+  "categories": [
+    "Visualization",
+    "Machine Learning"
+  ],
+  "files": [
+    "extension.cjs",
+    "monitor.cjs",
+    "focus-host.cjs",
+    "focus-location.cjs",
+    "focus-space.cjs",
+    "resources/monitor/monitor.js",
+    "resources/monitor/monitor.css",
+    "resources/monitor/universe.js",
+    "resources/monitor/focus-space.js",
+    "resources/monitor/focus-space.css",
+    "README.md",
+    "LICENSE.txt"
   ],
   "contributes": {
     "commands": [

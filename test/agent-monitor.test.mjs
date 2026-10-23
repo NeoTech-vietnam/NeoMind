@@ -215,10 +215,19 @@ test('closing monitor while a model picker is pending cannot mutate routing', as
 });
 
 test('pure renderer keeps inline state out of the webview and exposes previewable assets', () => {
-  const html = _test.renderMonitorHtml({ cspSource: 'https://example.test', script: 'monitor.js', style: 'monitor.css', nonce: 'testnonce' });
+  const html = _test.renderMonitorHtml({ cspSource: 'https://example.test', script: 'monitor.js', style: 'monitor.css', universe: 'universe.js', nonce: 'testnonce' });
   assert.match(html, /src="monitor.js"/);
   assert.match(html, /href="monitor.css"/);
   assert.match(html, /nonce="testnonce"/);
   assert.match(html, /replay of recorded/);
   assert.equal(html.includes('unsafe-inline'), false);
+  // Executable resources stay nonce protected; both views load before
+  // before the controller and neither may embed project snapshots or handlers.
+  const scripts = [...html.matchAll(/<script\s+nonce="([^"]+)"\s+src="([^"]+)"><\/script>/g)];
+  assert.deepEqual(scripts.map(match => [match[1], match[2]]), [['testnonce', 'universe.js'], ['testnonce', 'focus-space.js'], ['testnonce', 'monitor.js']]);
+  assert.match(html, /id="enter-focus-space"/);
+  assert.match(html, /id="focus-space"/);
+  assert.match(html, /frame-src https:\/\/www.youtube.com https:\/\/www.youtube-nocookie.com/);
+  assert.match(html, /default-src 'none'/);
+  assert.doesNotMatch(html, /\son(?:click|load|error)\s*=/i);
 });

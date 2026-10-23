@@ -62,6 +62,7 @@ import { upgradeProject } from './upgrade.js';
 import { workspaceWrite } from './workspace.js';
 import { probeRouter } from './router-probe.js';
 import { readAgentMap } from './agent-map.js';
+import { reportAgentActivity } from './agent-activity.js';
 import { modelControlStatus, setRoleModel, configureRouter, routerHealth, routerModels, routerProbe } from './model-control.js';
 import { listUpstreams, discoverUpstreams, trackUpstream, checkUpstream, cloneUpstream, adoptUpstreamUpdate, readUpstreamInstructions, watchUpstreams } from './upstreams.js';
 import { checkpointLightweight, type LightweightCheckpoint } from './lightweight.js';
@@ -98,6 +99,7 @@ Usage: neomind <command> [action] [id] [options]
   native run --data JSON | native status [ID] | native wait|interrupt|resume ID
   router probe --url URL --alias MODEL (diagnostic only; no native receipt)
   map (bounded saved agent activity and communication snapshot)
+  activity report --data JSON (unsigned native dispatch/progress/completion; never signed proof)
   models status | models set --role ROLE --model MODEL [--provider PROVIDER] [--effort low|medium|high]
   router configure --base-url URL [--api-key-env ENV] [--catalog-provider NAME]
   router health|models|probe [--model MODEL] (configured 9router; diagnostics only)
@@ -215,6 +217,10 @@ async function main(): Promise<void> {
     return;
   }
   switch (command) {
+    case 'activity':
+      if (action !== 'report') throw new Error('Unknown activity action.');
+      result = reportAgentActivity(root, data() as never);
+      break;
     case 'map':
       result = readAgentMap(root);
       break;

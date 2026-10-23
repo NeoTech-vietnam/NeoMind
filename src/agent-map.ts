@@ -1,10 +1,12 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { readConfig, loadRecords, safePath, now } from './storage.js';
 import { readInvocation, ownerIsAlive, strongRoles, workerRoles, type NativeReceipt } from './routing.js';
+import { readAgentActivity, type AgentActivityState } from './agent-activity.js';
+import { agentProfiles } from './agent-profiles.js';
 import type { ProjectRecord } from './types.js';
 
 export type AgentMapState = 'running' | 'waiting' | 'blocked' | 'idle' | 'completed' | 'failed' | 'unknown';
-export type AgentMapSource = 'signed-receipt' | 'project-record';
+export type AgentMapSource = 'signed-receipt' | 'project-record' | 'native-activity';
 export interface AgentMapNode {
   id: string;
   kind: 'agent' | 'workflow' | 'task';
@@ -21,6 +23,13 @@ export interface AgentMapNode {
   provider: string | null;
   execution_mode: string | null;
   updated_at: string;
+  profile_id?: string;
+  assignment_id?: string;
+  reported_at?: string;
+  expires_at?: string | null;
+  expired?: boolean;
+  reported_state?: AgentActivityState;
+  activity_summary?: string;
 }
 export interface AgentMapEdge {
   id: string;
@@ -38,7 +47,8 @@ export interface AgentMapSnapshot {
   observed_at: string;
   nodes: AgentMapNode[];
   edges: AgentMapEdge[];
-  diagnostics: { invalid_receipts: number; omitted_receipts: number; omitted_records: number; omitted_edges: number };
+  diagnostics: { invalid_receipts: number; omitted_receipts: number; omitted_records: number; omitted_edges: number;
+    invalid_activity: number; omitted_activity: number };
 }
 export const agentMapLimits = { receipts: 128, records: 128, edges: 512 } as const;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
@@ -66,10 +76,12 @@ function receiptState(receipt: NativeReceipt): AgentMapState {
 /** A bounded, read-only projection. Receipt signatures establish provenance, not task acceptance. */
 export function readAgentMap(root: string): AgentMapSnapshot {
   const config = readConfig(root), records = loadRecords(root);
-  const diagnostics = { invalid_receipts: 0, omitted_receipts: 0, omitted_records: 0, omitted_edges: 0 };
+  const observedAt = now(), activity = readAgentActivity(root, { now: observedAt });
+  const diagnostics = { invalid_receipts: 0, omitted_receipts: 0, omitted_records: 0, omitted_edges: 0,
+    invalid_activity: activity.invalid, omitted_activity: activity.omitted };
   const snapshot: AgentMapSnapshot = {
     schema_version: 1, project: { id: config.project_id, name: text(config.name)! },
-    observed_at: now(), nodes: [], edges: [], diagnostics,
+    observed_at: observedAt, nodes: [], edges: [], diagnostics,
   };
   const nodes = new Map<string, AgentMapNode>(), receipts = new Map<string, NativeReceipt>();
   const directory = safePath(root, '.neomind/native/receipts');
@@ -94,11 +106,21 @@ export function readAgentMap(root: string): AgentMapSnapshot {
       } catch { diagnostics.invalid_receipts++; }
     }
   }
-  const visibleRecords = records.filter(record => record.meta.type === 'task' || record.meta.data.kind === 'manager-workflow')
+  const visibleRecords = records.filter(record => record.meta.type === 'task' ||
+    ['manager-workflow', 'lightweight-workflow'].includes(String(record.meta.data.kind)))
     .sort((a, b) => b.meta.updated_at.localeCompare(a.meta.updated_at) || a.meta.id.localeCompare(b.meta.id));
-  // Keep current receipt bindings ahead of unrelated historical records.
-  const bound = new Set([...receipts.values()].flatMap(receipt => [receipt.workflow_id, receipt.task_id]).filter(Boolean));
-  visibleRecords.sort((a, b) => Number(bound.has(b.meta.id)) - Number(bound.has(a.meta.id)));
+  // Keep fresh activity/receipt bindings ahead of unrelated or completed history.
+  const bound = new Map<string, number>();
+  const bind = (id: string | null | undefined, priority: number) => { if (id) bound.set(id, Math.max(bound.get(id) ?? 0, priority)); };
+  for (const receipt of receipts.values()) {
+    const priority = ['starting', 'running', 'waiting-native-permission'].includes(receipt.state) ? 3 : 2;
+    bind(receipt.workflow_id, priority); bind(receipt.task_id, priority);
+  }
+  for (const entry of activity.latest) {
+    const priority = ['dispatched', 'running', 'waiting'].includes(entry.state) ? 3 : 1;
+    bind(entry.workflow_id, priority); bind(entry.task_id, priority);
+  }
+  visibleRecords.sort((a, b) => (bound.get(b.meta.id) ?? 0) - (bound.get(a.meta.id) ?? 0));
   diagnostics.omitted_records = Math.max(0, visibleRecords.length - agentMapLimits.records);
   for (const record of visibleRecords.slice(0, agentMapLimits.records)) {
     const kind = record.meta.type === 'task' ? 'task' : 'workflow';
@@ -111,14 +133,50 @@ export function readAgentMap(root: string): AgentMapSnapshot {
     });
   }
   const edgeIds = new Set<string>();
-  function edge(from: string, to: string, kind: AgentMapEdge['kind'], source: AgentMapSource, evidence: string, at: string): void {
+  function edge(from: string, to: string, kind: AgentMapEdge['kind'], source: AgentMapSource, evidence: string, at: string,
+    animated = kind === 'report' || kind === 'contribution' || kind === 'handoff'): void {
     if (from === to || !nodes.has(from) || !nodes.has(to)) return;
     const id = `${kind}:${from}:${to}:${evidence}`;
     if (edgeIds.has(id)) return;
     edgeIds.add(id);
     if (snapshot.edges.length >= agentMapLimits.edges) { diagnostics.omitted_edges++; return; }
-    snapshot.edges.push({ id, from, to, kind, source, evidence_id: evidence, at,
-      animated: kind === 'report' || kind === 'contribution' || kind === 'handoff' });
+    snapshot.edges.push({ id, from, to, kind, source, evidence_id: evidence, at, animated });
+  }
+  // Progress is a separate self-reported observation, never a model receipt or task acceptance.
+  const progressId = (workflow: string, assignment: string) => `progress:${workflow}:${assignment}`;
+  const coordinators = new Map<string, string>();
+  let agents = receipts.size;
+  const progress = activity.latest.filter(entry => {
+    const profile = agentProfiles.find(profile => profile.id === entry.profile_id);
+    if (!profile || nodes.get(entry.workflow_id)?.kind !== 'workflow' || agents >= agentMapLimits.receipts) {
+      diagnostics.omitted_activity++; return false;
+    }
+    const id = progressId(entry.workflow_id, entry.assignment_id);
+    nodes.set(id, { id, kind: 'agent', label: profile.name, role: entry.role,
+      state: entry.state === 'dispatched' ? 'waiting' : entry.state,
+      source: 'native-activity', source_id: entry.id, invocation_id: text(entry.invocation_id, 256),
+      workflow_id: entry.workflow_id, task_id: text(entry.task_id, 256), requested_model: null, confirmed_model: null,
+      provider: null, execution_mode: 'unsigned-native-progress', updated_at: entry.observed_at,
+      profile_id: entry.profile_id, assignment_id: entry.assignment_id, reported_at: entry.observed_at,
+      expires_at: entry.expires_at, expired: entry.expired, reported_state: entry.reported_state,
+      activity_summary: text(entry.summary, 240) ?? '' });
+    agents++;
+    if (entry.profile_id === 'coordinator') coordinators.set(entry.workflow_id, id);
+    return true;
+  });
+  for (const entry of progress) {
+    const id = progressId(entry.workflow_id, entry.assignment_id);
+    const coordinator = coordinators.get(entry.workflow_id);
+    const hub = coordinator && coordinator !== id ? coordinator : entry.workflow_id;
+    const events = activity.events.filter(event => event.workflow_id === entry.workflow_id &&
+      event.assignment_id === entry.assignment_id && event.profile_id === entry.profile_id);
+    // One allocation curve per assignment; repeated progress reports are not new messages.
+    const allocation = events.find(event => event.state === 'dispatched') ??
+      [...events].reverse().find(event => event.state === 'running');
+    if (allocation) edge(hub, id, 'handoff', 'native-activity', allocation.id, allocation.observed_at, !entry.expired);
+    const returned = events.find(event => ['completed', 'blocked', 'failed'].includes(event.state));
+    if (returned) edge(id, hub, 'report', 'native-activity', returned.id, returned.observed_at);
+    if (entry.task_id) edge(id, entry.task_id, 'works-on', 'native-activity', entry.id, entry.observed_at, false);
   }
   for (const receipt of receipts.values()) {
     const agent = `agent:${receipt.id}`;

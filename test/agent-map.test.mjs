@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { initialize, createRecord, hash } from '../dist/storage.js';
 import { canonicalJson } from '../dist/routing.js';
 import { readAgentMap, agentMapLimits } from '../dist/agent-map.js';
+import { reportAgentActivity, agentActivityTtlMs } from '../dist/agent-activity.js';
+import { lightweightRun } from '../dist/lightweight.js';
 
 function setup(t) {
   const root = mkdtempSync(join(tmpdir(), 'neomind-map-'));
@@ -35,6 +37,129 @@ function setup(t) {
   }
   return { root, receipt };
 }
+
+function nativeWorkflow(root) {
+  return createRecord(root, { type: 'knowledge', title: 'Native activity increment', owner: 'manager', status: 'in-progress',
+    data: { kind: 'manager-workflow', execution_mode: 'copilot-native', routing_required: false,
+      assurance: 'unsigned-native-report', phase: 'intake' }, body: 'PRIVATE WORKFLOW BODY' });
+}
+function inventory(root, directory = '') {
+  return readdirSync(join(root, directory), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))
+    .flatMap(item => {
+      const path = join(directory, item.name);
+      return item.isDirectory() ? inventory(root, path) : [[path, hash(readFileSync(join(root, path)))]];
+    });
+}
+
+test('native progress appears before assignment reports with unsigned provenance and a read-only projection', t => {
+  const { root } = setup(t), workflow = nativeWorkflow(root);
+  const event = reportAgentActivity(root, { workflow_id: workflow.meta.id, assignment_id: 'explore-entrypoints',
+    profile_id: 'explorer', state: 'running', summary: 'Trace entrypoint ownership', invocation_id: 'reported-explorer-session' });
+  const before = inventory(root), map = readAgentMap(root), id = `progress:${workflow.meta.id}:explore-entrypoints`;
+  const agent = map.nodes.find(node => node.id === id);
+  assert.ok(agent, 'An explicitly started native profile is visible before its final work report.');
+  assert.equal(agent.label, 'NeoMind Explorer Agent');
+  assert.equal(agent.role, 'codebase-analyst');
+  assert.equal(agent.profile_id, 'explorer');
+  assert.equal(agent.assignment_id, 'explore-entrypoints');
+  assert.equal(agent.source, 'native-activity');
+  assert.equal(agent.source_id, event.id);
+  assert.equal(agent.execution_mode, 'unsigned-native-progress');
+  assert.equal(agent.state, 'running');
+  assert.equal(agent.reported_state, 'running');
+  assert.equal(agent.expired, false);
+  assert.equal(agent.activity_summary, 'Trace entrypoint ownership');
+  assert.equal(agent.reported_at, event.observed_at);
+  assert.equal(agent.confirmed_model, null);
+  assert.equal(agent.requested_model, null);
+  assert.equal(agent.provider, null);
+  assert.ok(map.edges.some(edge => edge.kind === 'handoff' && edge.from === workflow.meta.id && edge.to === id &&
+    edge.source === 'native-activity' && edge.evidence_id === event.id && edge.at === event.observed_at));
+  assert.equal(map.nodes.some(node => node.id === `progress:${workflow.meta.id}:coordinator`), false);
+  assert.equal(JSON.stringify(map).includes('PRIVATE WORKFLOW BODY'), false);
+  assert.deepEqual(inventory(root), before, 'Reading activity must not create locks, records or files or modify existing state.');
+});
+
+test('reported allocations and returns connect to an actually reported Coordinator without duplicating progress messages', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const { root } = setup(t), workflow = nativeWorkflow(root);
+  const task = createRecord(root, { type: 'task', title: 'Refine criteria', owner: 'requirements', status: 'ready',
+    data: { workflow_id: workflow.meta.id, routing_required: false } });
+  const workflowBefore = readFileSync(join(root, workflow.path)), taskBefore = readFileSync(join(root, task.path));
+  reportAgentActivity(root, { workflow_id: workflow.meta.id, assignment_id: 'coordinator', profile_id: 'coordinator',
+    state: 'running', summary: 'Coordinate the requirement increment' });
+  t.mock.timers.tick(1);
+  const input = { workflow_id: workflow.meta.id, assignment_id: 'plan', profile_id: 'planner', task_id: task.meta.id,
+    invocation_id: 'reported-planner' };
+  const allocation = reportAgentActivity(root, { ...input, state: 'dispatched', summary: 'Allocate acceptance planning' });
+  const coordinator = `progress:${workflow.meta.id}:coordinator`, planner = `progress:${workflow.meta.id}:plan`;
+  const dispatched = readAgentMap(root);
+  assert.equal(dispatched.nodes.find(node => node.id === planner).state, 'waiting');
+  assert.equal(dispatched.nodes.find(node => node.id === planner).reported_state, 'dispatched');
+  assert.ok(dispatched.edges.some(edge => edge.from === coordinator && edge.to === planner && edge.kind === 'handoff' && edge.evidence_id === allocation.id));
+  t.mock.timers.tick(1);
+  reportAgentActivity(root, { ...input, state: 'running', summary: 'Refine measurable acceptance criteria' });
+  t.mock.timers.tick(1);
+  const returned = reportAgentActivity(root, { ...input, state: 'completed', summary: 'Return proposed acceptance criteria' });
+  const map = readAgentMap(root), node = map.nodes.find(node => node.id === planner);
+  assert.equal(node.state, 'completed');
+  assert.equal(node.source_id, returned.id);
+  assert.equal(node.confirmed_model, null);
+  assert.equal(map.edges.filter(edge => edge.kind === 'handoff' && edge.to === planner).length, 1);
+  assert.ok(map.edges.some(edge => edge.from === planner && edge.to === coordinator && edge.kind === 'report' &&
+    edge.source === 'native-activity' && edge.evidence_id === returned.id && edge.at === returned.observed_at));
+  assert.ok(map.edges.some(edge => edge.from === planner && edge.to === task.meta.id && edge.kind === 'works-on'));
+  assert.deepEqual(readFileSync(join(root, workflow.path)), workflowBefore);
+  assert.deepEqual(readFileSync(join(root, task.path)), taskBefore, 'Activity completion cannot accept or submit an engineering task.');
+});
+
+test('expired native progress becomes unknown instead of finished and stops its allocation animation', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const { root } = setup(t), workflow = nativeWorkflow(root);
+  const event = reportAgentActivity(root, { workflow_id: workflow.meta.id, assignment_id: 'diagnose', profile_id: 'debugger',
+    state: 'running', summary: 'Reproduce the reported failure' });
+  t.mock.timers.tick(agentActivityTtlMs + 1);
+  const before = inventory(root), map = readAgentMap(root), id = `progress:${workflow.meta.id}:diagnose`;
+  const node = map.nodes.find(node => node.id === id);
+  assert.equal(node.state, 'unknown');
+  assert.equal(node.reported_state, 'running');
+  assert.equal(node.expired, true);
+  assert.equal(Date.parse(node.expires_at), Date.parse(event.observed_at) + agentActivityTtlMs);
+  assert.equal(node.confirmed_model, null);
+  assert.equal(map.edges.find(edge => edge.to === id && edge.kind === 'handoff').animated, false);
+  assert.equal(map.edges.some(edge => edge.from === id && edge.kind === 'report'), false);
+  assert.deepEqual(inventory(root), before);
+});
+
+test('lightweight workflows expose explicitly reported activity without requiring a full-lifecycle report', t => {
+  const { root } = setup(t);
+  const result = lightweightRun(root, { requirement: 'Inspect a bounded local feature', request_id: 'activity-map-lightweight' });
+  const workflowId = result.workflow.workflow_id;
+  reportAgentActivity(root, { workflow_id: workflowId, assignment_id: 'coordinator', profile_id: 'coordinator',
+    state: 'running', summary: 'Check the lightweight plan and evidence' });
+  const before = inventory(root), map = readAgentMap(root);
+  assert.equal(map.nodes.find(node => node.id === workflowId).kind, 'workflow');
+  const coordinator = map.nodes.find(node => node.id === `progress:${workflowId}:coordinator`);
+  assert.equal(coordinator.label, 'NeoMind Coordinator Agent');
+  assert.equal(coordinator.source, 'native-activity');
+  assert.equal(coordinator.state, 'running');
+  assert.equal(coordinator.execution_mode, 'unsigned-native-progress');
+  assert.deepEqual(inventory(root), before);
+});
+
+test('native progress shares the existing agent cap and surfaces invalid or omitted activity diagnostics', t => {
+  const { root, receipt } = setup(t), workflow = nativeWorkflow(root);
+  reportAgentActivity(root, { workflow_id: workflow.meta.id, assignment_id: 'explore', profile_id: 'explorer',
+    state: 'running', summary: 'Inspect bounded code paths' });
+  writeFileSync(join(root, `.neomind/runs/agent-activity/${randomUUID()}.json`), '{invalid');
+  for (let index = 0; index < agentMapLimits.receipts; index++) receipt({ state: 'completed' });
+  const before = inventory(root), map = readAgentMap(root);
+  assert.equal(map.nodes.filter(node => node.kind === 'agent').length, agentMapLimits.receipts);
+  assert.equal(map.nodes.some(node => node.source === 'native-activity'), false);
+  assert.equal(map.diagnostics.invalid_activity, 1);
+  assert.ok(map.diagnostics.omitted_activity >= 1);
+  assert.deepEqual(inventory(root), before);
+});
 
 test('map uses verified receipts and explicit engineering edges without disclosing prompts or record bodies', t => {
   const { root, receipt } = setup(t);

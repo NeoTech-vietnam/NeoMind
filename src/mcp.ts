@@ -3,6 +3,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { readFileSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { reportAgentActivity } from './agent-activity.js';
+import { agentProfiles } from './agent-profiles.js';
 import { relative } from 'node:path';
 import {
   createRecord,
@@ -701,6 +703,17 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
       },
       async (input) => {
         try {
+          if (name === 'note_create') {
+            // Native tool clients can serialize absent optional revision fields as
+            // null or blank text. Normalize only these placeholders before ownership
+            // resolution; nonempty targets and all actual revision gates stay intact.
+            input = { ...input };
+            for (const field of ['revision_id', 'revision_reason'])
+              if (input[field] === null ||
+                  (typeof input[field] === 'string' && !input[field].trim()))
+                delete input[field];
+            if (input.expected_revision === null) delete input.expected_revision;
+          }
           const receipt = bound();
           const cornell = name === 'note_create' ||
             (name === 'recipe_prepare' && input.recipe_id === 'cornell-evidence-note');
@@ -720,6 +733,8 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
                 };
           }
           if (receipt) {
+            if (name === 'agent_activity')
+              throw new Error('Unsigned activity reporting requires the native client; signed sessions use their existing receipts.');
             if (name === 'lightweight_checkpoint')
               throw new Error('Lightweight checkpoints require the native client, not a signed worker session.');
             if (!readOnly && receipt.state !== 'running')
@@ -739,7 +754,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
           } else if (
             !readOnly &&
             readRoutingPolicy(root) &&
-            !['manager_run', 'lightweight_checkpoint'].includes(name) &&
+            !['manager_run', 'lightweight_checkpoint', 'agent_activity'].includes(name) &&
             !nativeWorkflowMutation(root, name, input)
           ) {
             if (cornell) {
@@ -774,6 +789,13 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     () => doctor(root),
   );
   tool('agent_map', 'Read bounded saved agent activity, with provenance for each node and relationship.', {}, () => readAgentMap(root));
+  tool('agent_activity', 'Report unsigned native workflow dispatch, progress or completion for the universe. Does not run an agent, attest inference or change workflow gates.', {
+    workflow_id: z.string().min(1), assignment_id: z.string().min(1).max(160),
+    profile_id: z.enum(agentProfiles.map(profile => profile.id)),
+    state: z.enum(['dispatched', 'running', 'waiting', 'completed', 'blocked', 'failed']),
+    summary: z.string().min(1).max(240), invocation_id: z.string().min(1).max(160).optional(),
+    task_id: z.string().min(1).optional(),
+  }, input => reportAgentActivity(root, input), false);
   tool('upstream_list', 'List tracked GitHub agent and skill packages, adopted pins and update observations.', {}, () => listUpstreams(root));
   tool('upstream_discover', 'Discover GitHub candidates sorted by stars; popularity is a discovery signal.', {
     query: z.string().min(1), min_stars: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(30).optional(),
@@ -1651,18 +1673,21 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
       note: cornellNoteSchema,
       revision_id: z
         .string()
+        .nullable()
         .optional()
         .describe(
-          'Existing draft Cornell record ID for an owned fixed-path repair; omit for creation.',
+          'Existing draft Cornell record ID for an owned fixed-path repair; omit for creation. Null or blank means omitted.',
         ),
       expected_revision: z
         .number()
         .int()
         .positive()
+        .nullable()
         .optional()
         .describe('Required with revision_id; read the current record revision before repair.'),
       revision_reason: z
         .string()
+        .nullable()
         .optional()
         .describe(
           'Required substantive repair rationale with revision_id; prior bytes/native authorship remain immutable history.',

@@ -19,7 +19,7 @@ const rules = [
 ];
 const generated = [
   '.neomind/config.json',
-  '.github/agents/neomind-manager.agent.md',
+  '.github/agents/neomind-coordinator.agent.md',
   '.github/skills/neomind-manager/SKILL.md',
   '.github/hooks/neomind.json',
   '.github/instructions/neomind.instructions.md',
@@ -66,8 +66,8 @@ function assertIgnored(root, project = root) {
     git(root, ['check-ignore', '--no-index', '--quiet', '--', prefix + path]);
   }
   for (const path of [
-    '.github/agents/neomind-manager.agent.md.neomind-update',
-    '.github/agents/neomind-manager.agent.md.neomind-update.2',
+    '.github/agents/neomind-coordinator.agent.md.neomind-update',
+    '.github/agents/neomind-coordinator.agent.md.neomind-update.2',
     '.github/hooks/neomind.json.neomind-update',
     '.github/hooks/neomind.json.neomind-update.1',
     '.github/instructions/neomind.instructions.md.neomind-update',

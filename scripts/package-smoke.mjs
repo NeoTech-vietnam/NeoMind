@@ -17,6 +17,7 @@ import { basename, dirname, join, resolve, relative, isAbsolute } from 'node:pat
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { parse as parseYaml } from 'yaml';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packageVersion = JSON.parse(readFileSync(join(repository, 'package.json'), 'utf8')).version;
@@ -115,23 +116,35 @@ try {
   assert.equal(core.readRoutingPolicy(workspace).strong_model, 'claude-opus-4.6');
   assert.deepEqual(core.readRoutingPolicy(workspace).worker_models, ['gpt-5.4']);
   assert.match(
-    readFileSync(join(workspace, '.github/agents/neomind-manager.agent.md'), 'utf8'),
+    readFileSync(join(workspace, '.github/agents/neomind-coordinator.agent.md'), 'utf8'),
     /model: "claude-opus-4.6"/,
   );
   const squad = [
-    ['manager', 'NeoMind Manager Agent', 'claude-opus-4.6'],
-    ['swsd', 'NeoMind SWSD Agent', 'claude-opus-4.6'],
-    ['p-res', 'NeoMind P-RES Agent', 'claude-opus-4.6'],
-    ['fnd', 'NeoMind FnD Agent', 'gpt-5.4'],
+    ['coordinator', 'NeoMind Coordinator Agent', 'claude-opus-4.6'],
+    ['explorer', 'NeoMind Explorer Agent', 'gpt-5.4'],
+    ['researcher', 'NeoMind Researcher Agent', 'gpt-5.4'],
+    ['planner', 'NeoMind Planner Agent', 'claude-opus-4.6'],
+    ['architect', 'NeoMind Architect Agent', 'claude-opus-4.6'],
+    ['implementer', 'NeoMind Implementer Agent', 'gpt-5.4'],
+    ['debugger', 'NeoMind Debugger Agent', 'gpt-5.4'],
+    ['verifier', 'NeoMind Verifier Agent', 'claude-opus-4.6'],
     ['reviewer', 'NeoMind Reviewer Agent', 'claude-opus-4.6'],
-    ['tester', 'NeoMind Tester Agent', 'gpt-5.4'],
   ];
-  assert.equal(readdirSync(join(workspace, '.github/agents')).filter((path) =>
-    path.startsWith('neomind-') && path.endsWith('.agent.md')).length, squad.length);
+  assert.deepEqual(core.agentProfiles.map(({ id, name }) => [id, name]),
+    squad.map(([id, name]) => [id, name]), 'Packaged catalog exposes the nine released expert profiles.');
+  assert.deepEqual(readdirSync(join(workspace, '.github/agents')).filter((path) =>
+    path.startsWith('neomind-') && path.endsWith('.agent.md')).sort(),
+    squad.map(([id]) => `neomind-${id}.agent.md`).sort());
   for (const [suffix, name, model] of squad) {
     const agent = readFileSync(join(workspace, `.github/agents/neomind-${suffix}.agent.md`), 'utf8');
-    assert.ok(agent.includes(`name: "${name}"`));
-    assert.ok(agent.includes(`model: "${model}"`));
+    const frontmatter = agent.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+    assert.ok(frontmatter, `${name} has valid frontmatter.`);
+    const metadata = parseYaml(frontmatter[1]);
+    assert.equal(metadata.name, name);
+    assert.equal(metadata.model, model);
+    assert.equal(metadata['user-invocable'], suffix === 'coordinator');
+    assert.deepEqual(metadata.agents, suffix === 'coordinator'
+      ? squad.filter(([id]) => id !== 'coordinator').map(([, delegate]) => delegate) : []);
   }
   const strictRequirement = core.createRecord(workspace, {
     type: 'requirement',
@@ -604,6 +617,7 @@ try {
       'resource-resolution',
       'three-adapter-generation',
       'twelve-role-generation',
+      'nine-expert-Copilot-profile-generation-and-delegation',
       'three-versioned-recipe-resolution',
       'strict-routing-policy-defaults',
       'strict-CLI-and-MCP-unconfirmed-invocation-rejection',
@@ -638,7 +652,7 @@ try {
     ],
     limitations: [
       'The complete engineering lifecycle intentionally uses a separately initialized legacy-policy project; automated identities establish core mechanics only.',
-      'Installed alpha.3 strict policy is exercised for missing-receipt rejection and discovery, not authenticated inference.',
+      `Installed ${packageVersion} strict policy is exercised for missing-receipt rejection and discovery, not authenticated inference.`,
       'Native account/model access, remote archives, and upstream PR publication are not exercised by package smoke.',
     ],
   };

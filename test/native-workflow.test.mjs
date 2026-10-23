@@ -33,14 +33,14 @@ test('Copilot installation defaults to full native mode with visible named subag
   assert.equal(policy.execution_mode, 'copilot-native');
   assert.equal(policy.knowledge_research_required, true);
   assert.equal(policy.cornell_publication, 'project-branch');
-  const agent = readFileSync(join(root, '.github/agents/neomind-manager.agent.md'), 'utf8');
+  const agent = readFileSync(join(root, '.github/agents/neomind-coordinator.agent.md'), 'utf8');
   assert.match(agent, /"agent"/);
-  assert.match(agent, /agents: .*NeoMind FnD Agent/);
+  assert.match(agent, /agents: .*NeoMind Implementer Agent/);
   assert.match(agent, /unsigned-native-report/);
   const server = JSON.parse(readFileSync(join(root, '.vscode/mcp.json'), 'utf8'));
   assert.equal(server.servers.neomind.type, 'stdio');
   const result = await managedRun(root, { requirement: 'Export one with documentation.', request_id: 'visible' });
-  assert.equal(result.handoff.agent, 'NeoMind Manager Agent');
+  assert.equal(result.handoff.agent, 'NeoMind Coordinator Agent');
   assert.equal(result.invocation, undefined);
   assert.equal(existsSync(safePath(root, '.neomind/native/receipts')), false);
 });
@@ -53,12 +53,13 @@ test('native handoffs require named delegation, real reports and saved Cornell b
     'Research the existing architecture and explain its tradeoffs without changing production code.',
   ]) {
     const result = await managedRun(root, { requirement, execution_mode: 'copilot-native' });
-    assert.equal(result.handoff.agent, 'NeoMind Manager Agent');
+    assert.equal(result.handoff.agent, 'NeoMind Coordinator Agent');
     assert.equal(result.invocation, undefined);
     const prompt = result.handoff.prompt;
-    assert.match(prompt, /Continue directly as NeoMind Manager Agent for the existing NeoMind increment/);
-    assert.match(prompt, /do not call manager_run again or launch NeoMind Manager Agent \(yourself\)/);
-    for (const name of ['NeoMind SWSD Agent', 'NeoMind P-RES Agent', 'NeoMind FnD Agent', 'NeoMind Reviewer Agent', 'NeoMind Tester Agent'])
+    assert.match(prompt, /Continue directly as NeoMind Coordinator Agent for the existing NeoMind increment/);
+    assert.match(prompt, /do not call manager_run again or launch NeoMind Coordinator Agent \(yourself\)/);
+    for (const name of ['NeoMind Explorer Agent', 'NeoMind Researcher Agent', 'NeoMind Planner Agent', 'NeoMind Architect Agent',
+      'NeoMind Implementer Agent', 'NeoMind Debugger Agent', 'NeoMind Verifier Agent', 'NeoMind Reviewer Agent'])
       assert.ok(prompt.includes(name), name);
     assert.match(prompt, /standard VS Code agent tool by exact display name/);
     assert.match(prompt, /at least two separate specialist contributions/);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parse as parseYaml } from 'yaml';
@@ -11,12 +11,15 @@ import { installProject } from '../dist/installer.js';
 import { createMcpServer } from '../dist/mcp.js';
 
 const displayNames = new Map([
-  ['manager', 'NeoMind Manager Agent'],
-  ['swsd', 'NeoMind SWSD Agent'],
-  ['p-res', 'NeoMind P-RES Agent'],
-  ['fnd', 'NeoMind FnD Agent'],
+  ['coordinator', 'NeoMind Coordinator Agent'],
+  ['explorer', 'NeoMind Explorer Agent'],
+  ['researcher', 'NeoMind Researcher Agent'],
+  ['planner', 'NeoMind Planner Agent'],
+  ['architect', 'NeoMind Architect Agent'],
+  ['implementer', 'NeoMind Implementer Agent'],
+  ['debugger', 'NeoMind Debugger Agent'],
+  ['verifier', 'NeoMind Verifier Agent'],
   ['reviewer', 'NeoMind Reviewer Agent'],
-  ['tester', 'NeoMind Tester Agent'],
 ]);
 
 function installedProject(t) {
@@ -33,28 +36,36 @@ function installedProject(t) {
   return { root, generated };
 }
 
-test('generated Copilot UI names carry NeoMind and delegation targets resolve without exposing workers', (t) => {
+test('nine NeoMind profiles expose only Coordinator and resolve every bounded delegate by exact name', (t) => {
   const { root, generated } = installedProject(t);
   for (const [id, expectedName] of displayNames) {
     assert.equal(generated.get(id).metadata.name, expectedName,
       `${id} must be discoverable by the NeoMind product name in Copilot metadata.`);
   }
   const names = new Set([...generated.values()].map(({ metadata }) => metadata.name));
-  assert.equal(names.size, 6);
-  const manager = generated.get('manager').metadata;
-  const workers = [...generated.entries()].filter(([id]) => id !== 'manager');
-  assert.deepEqual(new Set(manager.agents), new Set(workers.map(([, { metadata }]) => metadata.name)));
+  assert.equal(names.size, 9);
+  assert.deepEqual(readdirSync(join(root, '.github/agents')).sort(),
+    [...displayNames.keys()].map(id => `neomind-${id}.agent.md`).sort());
+  const coordinator = generated.get('coordinator').metadata;
+  const workers = [...generated.entries()].filter(([id]) => id !== 'coordinator');
+  assert.deepEqual(new Set(coordinator.agents), new Set(workers.map(([, { metadata }]) => metadata.name)));
   for (const [id, { metadata }] of generated) {
-    assert.equal(metadata['user-invocable'], id === 'manager');
+    assert.equal(metadata['user-invocable'], id === 'coordinator');
     for (const target of metadata.agents) assert.ok(names.has(target), `${id} delegates to a generated display name.`);
-    if (id !== 'manager') assert.deepEqual(metadata.agents, []);
+    if (id !== 'coordinator') {
+      assert.deepEqual(metadata.agents, []);
+      assert.equal(metadata.tools.includes('agent'), false);
+      assert.equal(metadata.tools.includes('neomind/manager_run'), false);
+      assert.ok(generated.get('coordinator').text.includes(metadata.name), `Coordinator names ${id} in its actual prompt.`);
+    }
   }
+  assert.equal(coordinator.agents.includes(coordinator.name), false);
   const generic = readFileSync(join(root, '.github/copilot-instructions.md'), 'utf8');
   const target = generic.match(/Launch exactly (.+?) through the standard VS Code agent tool/)?.[1];
-  assert.equal(target, manager.name, 'Generic intake must launch the same display name Copilot registers.');
+  assert.equal(target, coordinator.name, 'Generic intake must launch the same display name Copilot registers.');
 });
 
-test('published manager_run handoffs resolve to the installed branded manager in native and lightweight modes', async (t) => {
+test('published manager_run handoffs resolve to installed Coordinator in native and lightweight modes', async (t) => {
   const { root, generated } = installedProject(t);
   const server = createMcpServer(root);
   const client = new Client({ name: 'copilot-display-integration', version: '1' });
@@ -69,12 +80,12 @@ test('published manager_run handoffs resolve to the installed branded manager in
     });
     assert.notEqual(response.isError, true, JSON.stringify(response.content));
     const result = JSON.parse(response.content[0].text);
-    assert.equal(result.handoff.agent, 'NeoMind Manager Agent');
-    assert.equal(result.handoff.agent, generated.get('manager').metadata.name);
+    assert.equal(result.handoff.agent, 'NeoMind Coordinator Agent');
+    assert.equal(result.handoff.agent, generated.get('coordinator').metadata.name);
     if (mode === 'copilot-native') {
       for (const [id, { metadata }] of generated) {
-        if (id !== 'manager') assert.ok(result.handoff.prompt.includes(metadata.name),
-          `Manager handoff must name the installed ${id} delegate.`);
+        if (id !== 'coordinator') assert.ok(result.handoff.prompt.includes(metadata.name),
+          `Coordinator handoff must name the installed ${id} delegate.`);
       }
     }
   }

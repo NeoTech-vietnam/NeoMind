@@ -14,12 +14,13 @@ function descriptorPath(root: string): string {
   return join(tmpdir(), `neomind-vscode-${key}`, 'host.json');
 }
 function privateDirectory(path: string): void {
-  if (existsSync(path)) {
-    const stat = lstatSync(path);
-    if (!stat.isDirectory() || stat.isSymbolicLink() ||
-        (process.platform !== 'win32' && (stat.uid !== process.getuid!() || (stat.mode & 0o077))))
-      throw new Error('VS Code bridge descriptor directory is not private.');
-  } else mkdirSync(path, { mode: 0o700 });
+  let created = false;
+  try { mkdirSync(path, { mode: 0o700 }); created = true; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+  const stat = lstatSync(path);
+  if (!stat.isDirectory() || stat.isSymbolicLink() ||
+      (process.platform !== 'win32' && (stat.uid !== process.getuid!() || (stat.mode & 0o077))))
+    throw new Error('VS Code bridge descriptor directory is not private.');
   if (process.platform === 'win32') {
     execFileSync('icacls.exe', [path, '/inheritance:r', '/grant:r', `${userInfo().username}:(OI)(CI)F`],
       { stdio: 'ignore', windowsHide: true, timeout: 10000 });
@@ -29,10 +30,18 @@ function privateDirectory(path: string): void {
     execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
       "$ErrorActionPreference='Stop'; $acl=[System.IO.Directory]::GetAccessControl($env:NEOMIND_PRIVATE_DIRECTORY); " +
       "$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; " +
+      // Token defaults can give fresh objects an Administrators owner and
+      // explicit foreign grants. Initialize only an atomically created directory.
+      "if ($env:NEOMIND_PRIVATE_CREATED -eq '1') { $acl=New-Object System.Security.AccessControl.DirectorySecurity; " +
+      "$acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); " +
+      "$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow'); " +
+      "$acl.AddAccessRule($rule); " +
+      "[System.IO.Directory]::SetAccessControl($env:NEOMIND_PRIVATE_DIRECTORY,$acl); " +
+      "$acl=[System.IO.Directory]::GetAccessControl($env:NEOMIND_PRIVATE_DIRECTORY) }; " +
       "if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { exit 1 }; " +
       "foreach ($rule in $acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])) { " +
       "if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -ne $sid.Value) { exit 1 } }"],
-      { env: { ...process.env, NEOMIND_PRIVATE_DIRECTORY: path }, stdio: 'ignore', windowsHide: true, timeout: 10000 });
+      { env: { ...process.env, NEOMIND_PRIVATE_DIRECTORY: path, NEOMIND_PRIVATE_CREATED: created ? '1' : '0' }, stdio: 'ignore', windowsHide: true, timeout: 10000 });
   } else chmodSync(path, 0o700);
 }
 async function body(message: IncomingMessage): Promise<any> {

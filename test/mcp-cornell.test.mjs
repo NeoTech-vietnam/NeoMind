@@ -85,8 +85,8 @@ test('Cornell MCP discovery exposes paths, source ledger, commands, and diagnost
   const { client } = await legacyClient(t);
   const tool = (await client.listTools()).tools.find((item) => item.name === 'note_create');
   assert.ok(tool);
-  assert.equal(tool.inputSchema.properties.revision_id.type, 'string');
-  assert.equal(tool.inputSchema.properties.expected_revision.type, 'integer');
+  assert.deepEqual([...tool.inputSchema.properties.revision_id.type].sort(), ['null', 'string']);
+  assert.deepEqual(tool.inputSchema.properties.expected_revision.anyOf.map(schema => schema.type).sort(), ['integer', 'null']);
   assert.deepEqual(tool.inputSchema.required, ['note']);
   const note = tool.inputSchema.properties.note;
   assert.equal(note.type, 'object');

@@ -6,6 +6,8 @@ license: MIT
 
 # Own the engineering outcome
 
+In Copilot, this stable skill ID serves `NeoMind Coordinator Agent`; the persisted core role and operations remain `manager`. The Coordinator is the only user-invocable profile. Assigned specialists follow their packet and return results instead of taking over intake or closure. For full native work, read `.neomind/guides/copilot-native.md` for the nine profiles, entry rules and applicable specialist selection. Keep the saved execution mode and its gates.
+
 Read `.neomind/automation.json` first. For new ordinary requests selecting `execution_mode: lightweight`, follow `.neomind/guides/lightweight.md` instead of the strict procedure below. Start `manager_run` once, execute its native `neomind-lightweight` handoff with the configured strong model, and checkpoint actual progress. Already assigned lightweight agents continue directly. Keep strict increments unchanged; unsigned reports are not signed acceptance. Lightweight work has no mandatory specialist rounds, Cornell exercises, archives or PRs. Escalate safety/security or explicitly strict work before mutation.
 
 Read `.neomind/guides/manager.md` and `.neomind/roles/manager.md`. Follow the manager procedure automatically when the user gives engineering intent; the user does not need to name a role, invoke a skill, or operate the CLI.

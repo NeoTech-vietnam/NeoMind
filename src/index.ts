@@ -13,6 +13,10 @@ export * from './evidence-inputs.js';
 export * from './workspace.js';
 export * from './routing.js';
 export * from './agent-map.js';
+export * from './agent-profiles.js';
+export * from './agent-activity.js';
+export * from './focus-calendar.js';
+export * from './focus-services.js';
 export * from './model-control.js';
 export * from './upstreams.js';
 export {

@@ -48,7 +48,7 @@ test('lightweight intake is idempotent, exact-intent and unsigned; never starts 
   const { root } = setup(t);
   const input = { requirement: 'Keep portable changes.', request_id: 'same-request' };
   const first = await managedRun(root, input);
-  assert.equal(first.handoff.agent, 'NeoMind Manager Agent');
+  assert.equal(first.handoff.agent, 'NeoMind Coordinator Agent');
   assert.match(first.handoff.prompt, /Do not call manager_run recursively/);
   assert.equal(first.invocation, undefined);
   assert.equal(first.workflow.assurance, 'unsigned-native-report');
@@ -151,13 +151,17 @@ test('generated native manager exposes subagents and MCP checkpoint; built-in Co
   const { root, config, policy } = setup(t);
   assert.deepEqual(vscodeSelection(root, 'manager', policy.strong_model), { vendor: 'copilot', id: policy.strong_model });
   const outputs = adapterOutputs(root, config);
-  const lightweight = outputs.find(output => output.path === '.github/agents/neomind-manager.agent.md');
+  const lightweight = outputs.find(output => output.path === '.github/agents/neomind-coordinator.agent.md');
   assert.ok(lightweight);
   assert.ok(lightweight.content.includes(`model: ${JSON.stringify(policy.strong_model)}`));
   assert.match(lightweight.content, /tools: .*agent.*neomind\/lightweight_checkpoint/);
-  assert.match(lightweight.content, /Selected NeoMind Manager Agent:.*continue the returned handoff.prompt and workflow directly/);
-  assert.match(lightweight.content, /Do not launch handoff.agent when it is NeoMind Manager Agent/);
-  const developer = outputs.find(output => output.path === '.github/agents/neomind-fnd.agent.md');
+  assert.match(lightweight.content, /Selected NeoMind Coordinator Agent:.*continue the returned handoff.prompt and workflow directly/);
+  assert.match(lightweight.content, /Do not launch handoff.agent when it is NeoMind Coordinator Agent/);
+  for (const output of outputs.filter(output => output.path.startsWith('.github/agents/'))) {
+    assert.match(output.content, /Do not call assignment_report, manager_finish or require Cornell closure for a lightweight-workflow/);
+    assert.match(output.content, /Full lifecycle\/reporting instructions and profile output-record requirements below apply only to copilot-native\/strict mode/);
+  }
+  const developer = outputs.find(output => output.path === '.github/agents/neomind-implementer.agent.md');
   assert.ok(developer.content.includes(JSON.stringify(policy.worker_models)));
   const reviewer = outputs.find(output => output.path === '.github/agents/neomind-reviewer.agent.md');
   assert.ok(reviewer.content.includes(`model: ${JSON.stringify(policy.strong_model)}`));

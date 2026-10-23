@@ -64,7 +64,7 @@ test('CLI local init and repeated/model updates preserve shared files and bind M
   setRoleModel(root, { role: 'developer', model: 'local-selected-model' });
   const generated = updateProject(root);
   assert.deepEqual(generated.conflicts, []);
-  assert.match(read(root, '.github/agents/neomind-fnd.agent.md'), /model: "local-selected-model"/);
+  assert.match(read(root, '.github/agents/neomind-implementer.agent.md'), /model: "local-selected-model"/);
   assert.deepEqual(JSON.parse(read(root, '.neomind/mcp-server.json')), example);
   assert.equal(readConfig(root).copilot_integration, 'local');
   for (const [path, body] of Object.entries(sentinels)) assert.equal(read(root, path), body, path);

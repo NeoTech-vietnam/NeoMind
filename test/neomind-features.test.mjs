@@ -58,7 +58,7 @@ test('CLI role selection regenerates the native Copilot agent and exposes the re
   const saved = cli('models', 'set', '--role', 'developer', '--model', 'new-worker', '--effort', 'low');
   assert.equal(saved.applies_to, 'next-invocation');
   assert.deepEqual(saved.installation.conflicts, []);
-  assert.match(readFileSync(join(root, '.github/agents/neomind-fnd.agent.md'), 'utf8'), /model: "new-worker"/);
+  assert.match(readFileSync(join(root, '.github/agents/neomind-implementer.agent.md'), 'utf8'), /model: "new-worker"/);
   assert.match(readFileSync(join(root, '.codex/agents/neomind-developer.toml'), 'utf8'), /model = "new-worker"/);
   const map = cli('map');
   assert.equal(map.project.id, 'FEATURES');

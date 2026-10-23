@@ -1,6 +1,8 @@
 const { realpathSync } = require('node:fs');
 const { join } = require('node:path');
 const { randomBytes } = require('node:crypto');
+const { renderFocusSpace } = require('./focus-space.cjs');
+const { createFocusHost } = require('./focus-host.cjs');
 
 const genericModelChangeRefusal = 'NeoMind refused the model change. Check active invocations and role/model policy; the requested change was not accepted.';
 const knownModelChangeRefusals = new Map([
@@ -23,18 +25,32 @@ function modelChangeRefusal(error) {
   return knownModelChangeRefusals.get(message) ?? genericModelChangeRefusal;
 }
 
-function renderMonitorHtml({ cspSource, script, style, nonce }) {
+function renderMonitorHtml({ cspSource, script, style, universe = 'universe.js', focusScript = 'focus-space.js', focusStyle = 'focus-space.css', nonce }) {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource}; script-src 'nonce-${nonce}';">
-<link rel="stylesheet" href="${style}"><title>NeoMind Agent Map</title></head><body>
-<header><div><h1>NeoMind</h1><p>Agents, assignments, and recorded handoffs</p></div><button id="refresh">Refresh</button></header>
-<p id="status" role="status">Loading local project state…</p>
-<div class="map"><canvas id="field" aria-label="NeoMind pixel farm agent map"></canvas></div>
-<p class="legend">Yellow dashed: recorded relationship · Blue moving dots: replay of recorded reports or handoffs · Signed receipts identify agents; project records describe work.</p>
-<section id="selection" aria-live="polite">Select a character or work item to inspect its source.</section>
-<section><h2>Role models</h2><p>Changes apply to the next invocation. Active invocations must finish or stop first. Native Copilot shares six agent files; each card names its group's controlling role. Strict bridge mode can select every role independently.</p><div id="roles"></div></section>
-<section><h2>Observed agents and work</h2><div id="nodes"></div></section>
-<script nonce="${nonce}" src="${script}"></script></body></html>`;
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource}; script-src 'nonce-${nonce}' https://www.youtube.com; img-src ${cspSource} https://i.ytimg.com data:; frame-src https://www.youtube.com https://www.youtube-nocookie.com; connect-src https://www.youtube.com https://www.youtube-nocookie.com; media-src blob:; base-uri 'none';">
+<link rel="stylesheet" href="${style}"><link rel="stylesheet" href="${focusStyle}"><title>NeoMind Universe</title></head><body><div id="universe-view">
+<header class="app-header">
+  <div class="brand"><span class="brand-orbit" aria-hidden="true"></span><div><h1>NeoMind <span>UNIVERSE</span></h1><p>Agent observatory</p></div></div>
+  <div class="project-heading"><span class="eyebrow">PROJECT SYSTEM</span><strong id="project-name">Connecting…</strong></div>
+  <div class="header-actions"><button id="enter-focus-space" class="button secondary" type="button">◉ Enter Earth <span>· Focus Space</span></button><span id="router-status" class="pill">Reading routing</span><button id="refresh" class="button secondary" type="button">↻ <span>Refresh</span></button></div>
+</header>
+<div class="telemetry"><p id="status" role="status">Loading local project state…</p><span id="observed-summary"></span></div>
+<main class="observatory">
+  <section class="universe-stage" aria-label="Agent universe">
+    <div class="stage-toolbar"><span class="eyebrow"><span class="tiny-orbit" aria-hidden="true">◎</span> ORBITAL VIEW</span><div class="view-actions"><button id="focus-selection" type="button" class="button subtle">Focus</button><button id="reset-view" type="button" class="button subtle">Reset view</button><button id="motion" type="button" class="button subtle" aria-pressed="false">Pause orbits</button></div></div>
+    <canvas id="field" role="img" aria-label="Universe of configured role planets, saved task moons and recorded communication. Select items using the lists below."></canvas>
+    <div id="empty-state" class="scene-notice" hidden></div>
+    <div class="scene-footer"><div class="state-legend"><span><i class="state-dot running"></i>Working</span><span><i class="state-dot waiting"></i>Waiting</span><span><i class="state-dot blocked"></i>Blocked</span><span><i class="state-dot completed"></i>Complete</span><span><i class="state-dot configured"></i>Configured</span></div><span class="scene-hint">Scroll to zoom · Drag to explore</span></div>
+  </section>
+  <aside class="mission-control" aria-label="Selection and recorded activity">
+    <section class="inspector panel"><div class="panel-heading"><span class="eyebrow">MISSION CONTROL</span><span class="local-label">LOCAL STATE</span></div><div id="selection" aria-live="polite"><div class="selection-placeholder"><span class="placeholder-orbit" aria-hidden="true">◎</span><h2>Select a planet</h2><p>Inspect a role, its model policy and its saved activity.</p></div></div></section>
+    <section class="activity-panel panel"><div class="panel-heading"><h2>Agent interactions</h2><span class="replay-label">LOCAL REPORTS</span></div><p id="live-summary" class="activity-summary">Waiting for assignment activity.</p><div id="live-agents"></div><h3 class="timeline-heading">Dispatch and report history</h3><div id="activity"><p class="empty">Reported dispatches and saved handoffs will appear here.</p></div></section>
+  </aside>
+</main>
+<p class="provenance-note">Planets represent configured roles and profiles. Moons and stations show saved work and reported assignments. Trails are a replay of recorded dispatch/report events, not a live message stream of arbitrary Copilot chat. Unsigned activity expires after five minutes without a report; signed receipts retain their separate provenance.</p>
+<section class="role-section"><div class="section-heading"><div><span class="eyebrow">MODEL ROUTING</span><h2>Role constellation <span id="roles-count" class="count"></span></h2></div><p>Choose a role to inspect its 9router or VS Code model policy.</p></div><p id="profiles-summary" class="routing-note">Reading native expert profiles.</p><div id="roles" class="role-grid"></div><p class="routing-note">Model changes apply to new invocations. Native profiles can share core roles; the inspector identifies each profile's controlling model policy. The strict bridge selects each core role independently.</p></section>
+<details class="saved-records panel"><summary>Saved agents &amp; work <span id="nodes-count" class="count"></span><span class="summary-hint">Inspect source records</span></summary><div id="nodes"></div></details>
+</div>${renderFocusSpace()}<script nonce="${nonce}" src="${universe}"></script><script nonce="${nonce}" src="${focusScript}"></script><script nonce="${nonce}" src="${script}"></script></body></html>`;
 }
 
 /** The monitor observes project state; it never enables the model bridge. */
@@ -61,14 +77,18 @@ function activateMonitor(vscode, context, loadRuntime) {
       const runtime = await loadRuntime(root);
       if (token !== generation || !vscode.workspace.isTrusted) return;
       const resources = vscode.Uri.file(join(__dirname, 'resources', 'monitor'));
-      const current = vscode.window.createWebviewPanel('neomind.monitor', 'NeoMind Agent Map', vscode.ViewColumn?.One ?? 1,
-        { enableScripts: true, retainContextWhenHidden: false, localResourceRoots: [resources] });
+      const current = vscode.window.createWebviewPanel('neomind.monitor', 'NeoMind Universe', vscode.ViewColumn?.One ?? 1,
+        { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [resources] });
       panel = current;
       const nonce = randomBytes(24).toString('hex');
       const script = current.webview.asWebviewUri(vscode.Uri.file(join(resources.fsPath, 'monitor.js')));
       const style = current.webview.asWebviewUri(vscode.Uri.file(join(resources.fsPath, 'monitor.css')));
-      current.webview.html = renderMonitorHtml({ cspSource: current.webview.cspSource, script, style, nonce });
+      const universe = current.webview.asWebviewUri(vscode.Uri.file(join(resources.fsPath, 'universe.js')));
+      const focusScript = current.webview.asWebviewUri(vscode.Uri.file(join(resources.fsPath, 'focus-space.js')));
+      const focusStyle = current.webview.asWebviewUri(vscode.Uri.file(join(resources.fsPath, 'focus-space.css')));
+      current.webview.html = renderMonitorHtml({ cspSource: current.webview.cspSource, script, style, universe, focusScript, focusStyle, nonce });
       const alive = () => panel === current && token === generation && vscode.workspace.isTrusted;
+      const focusHost = createFocusHost({ vscode, context, runtime, alive, post: message => current.webview.postMessage(message) });
       async function refresh() {
         if (!alive() || refreshBusy || current.visible === false) return;
         refreshBusy = true;
@@ -81,6 +101,7 @@ function activateMonitor(vscode, context, loadRuntime) {
           const roles = control.roles.map(role => ({ role: role.role, models: role.models,
             provider: role.provider, reasoning_effort: role.reasoning_effort, strong: role.strong }));
           await current.webview.postMessage({ type: 'snapshot', map, roles,
+            agent_profiles: control.agent_profiles ?? [],
             router_configured: Boolean(control.router), active_count: controlUnavailable ? null : control.active_invocations.length,
             control_unavailable: controlUnavailable });
         } catch {
@@ -90,6 +111,7 @@ function activateMonitor(vscode, context, loadRuntime) {
       let selecting = false;
       current.webview.onDidReceiveMessage(async message => {
         if (!alive() || !message || typeof message !== 'object') return;
+        if (message.type === 'focus-space') { await focusHost.handle(message); return; }
         if (message.type === 'refresh') { await refresh(); return; }
         if (message.type !== 'select-model' || selecting || typeof message.role !== 'string') return;
         selecting = true;
@@ -156,6 +178,7 @@ function activateMonitor(vscode, context, loadRuntime) {
         } finally { selecting = false; }
       });
       current.onDidDispose(() => {
+        focusHost.dispose();
         if (panel === current) { panel = undefined; generation++; if (timer) clearInterval(timer); timer = undefined; }
       });
       current.onDidChangeViewState?.(() => { if (current.visible) void refresh(); });
