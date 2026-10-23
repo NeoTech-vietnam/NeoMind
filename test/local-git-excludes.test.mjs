@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, lstatSync, existsSync, symlinkSync, readlinkSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, lstatSync, existsSync, symlinkSync, readlinkSync, unlinkSync, realpathSync } from 'node:fs';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -43,6 +43,10 @@ function excludes(root) {
   const path = git(root, ['rev-parse', '--git-path', 'info/exclude']);
   return isAbsolute(path) ? path : resolve(root, path);
 }
+function canonical(path) {
+  const full = realpathSync.native(path);
+  return process.platform === 'win32' ? full.toLowerCase() : full;
+}
 function write(path, bytes) { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, bytes); }
 function createFileLink(t, target, path) {
   try { symlinkSync(target, path, 'file'); return true; }
@@ -59,6 +63,27 @@ function run(root, args) {
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return JSON.parse(result.stdout);
 }
+
+test('Windows short-path aliases install the same local exclusions as Git expanded paths', { skip: process.platform !== 'win32' }, t => {
+  const { root } = fixture(t);
+  initializeGit(root);
+  const short = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+    '$folder = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:NEOMIND_TEST_SHORT_PATH); [Console]::Write($folder.ShortPath)'],
+  { encoding: 'utf8', windowsHide: true, timeout: 10000, env: { ...process.env, NEOMIND_TEST_SHORT_PATH: root } });
+  assert.equal(short.status, 0, short.error?.message ?? short.stderr);
+  const alias = short.stdout.trim();
+  if (resolve(alias).toLowerCase() === resolve(root).toLowerCase()) { t.skip('This Windows volume does not provide an 8.3 alias for the fixture.'); return; }
+  assert.equal(realpathSync.native(alias).toLowerCase(), realpathSync.native(root).toLowerCase());
+  const path = excludes(root), original = readFileSync(path);
+  const result = run(alias, ['init', '--local', '--platforms', 'copilot']);
+  assert.ok(!result.installation.warnings.some(warning => /Git exclusions could not be updated safely/.test(warning)), JSON.stringify(result.installation.warnings));
+  assertIgnored(root);
+  const after = readFileSync(path);
+  assert.notDeepEqual(after, original);
+  assert.deepEqual(after.subarray(after.length - original.length), original);
+  run(root, ['update']); run(alias, ['update']);
+  assert.deepEqual(readFileSync(path), after, 'Long and short names must update one exclusion file idempotently.');
+});
 function assertIgnored(root, project = root) {
   const prefix = project === root ? '' : relative(root, project).replaceAll('\\', '/') + '/';
   for (const path of generated) {
@@ -146,7 +171,7 @@ test('linked worktrees use Git-resolved shared info/exclude and preserve the .gi
   assert.ok(lstatSync(join(worktree, '.git')).isFile());
   const pointer = readFileSync(join(worktree, '.git'));
   const path = excludes(worktree);
-  assert.equal(resolve(path).toLowerCase(), resolve(excludes(root)).toLowerCase());
+  assert.equal(canonical(path), canonical(excludes(root)));
   const original = readFileSync(path);
   run(worktree, ['init', '--local', '--platforms', 'copilot']);
   const after = readFileSync(path);
@@ -165,7 +190,7 @@ test('separate Git directories resolve their own info/exclude without creating a
   const pointer = readFileSync(join(root, '.git'));
   assert.ok(lstatSync(join(root, '.git')).isFile());
   const path = excludes(root);
-  assert.equal(resolve(path).toLowerCase(), resolve(gitDirectory, 'info/exclude').toLowerCase());
+  assert.equal(canonical(path), canonical(resolve(gitDirectory, 'info/exclude')));
   run(root, ['init', '--local', '--platforms', 'copilot']);
   assertIgnored(root);
   assert.deepEqual(readFileSync(join(root, '.git')), pointer);

@@ -52,6 +52,7 @@ try {
     chmodSync(target, 0o644);
   }
   result = spawnSync(process.execPath, [resolve(npmCli), 'exec', '--yes', '--no-audit', '--no-fund',
+    '--cache', join(repository, 'artifacts/vsce-tool-cache'),
     '--registry=https://registry.npmjs.org', '--package=@vscode/vsce@4.0.0', '--',
     'vsce', 'package', '--no-dependencies', '--out', output,
   ], { cwd: staging, env: { ...process.env, SOURCE_DATE_EPOCH: epoch, TZ: 'UTC' },

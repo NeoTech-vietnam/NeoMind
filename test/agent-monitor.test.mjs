@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 const { activateMonitor, _test } = createRequire(import.meta.url)('../extensions/vscode-model-bridge/monitor.cjs');
 
 function setup(t, overrides = {}, options = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'neomind-monitor-'));
+  const root = mkdtempSync(join(options.tempDirectory ?? tmpdir(), 'neomind-monitor-'));
   const commands = new Map(), calls = [], context = { subscriptions: [] };
   let workspaceChanged, received, disposed, current, readCount = 0, panelCount = 0;
   const control = { roles: [{ role: 'developer', models: ['configured-model'], provider: 'test', reasoning_effort: 'low', strong: false }], active_invocations: [], router: null };
@@ -38,7 +38,7 @@ function setup(t, overrides = {}, options = {}) {
       } },
   };
   const monitor = activateMonitor(vscode, context, async selected => {
-    assert.equal(selected.toLowerCase(), root.toLowerCase());
+    assert.equal(selected, realpathSync.native(root), 'The runtime receives the canonical physical workspace, including Windows temp aliases');
     await options.beforeLoad?.();
     return runtime;
   });
@@ -47,6 +47,18 @@ function setup(t, overrides = {}, options = {}) {
     changeFolders: () => workspaceChanged(), message: value => received(value),
     get panel() { return current; }, get reads() { return readCount; }, get panelCount() { return panelCount; } };
 }
+
+test('monitor opens a workspace created through a real temp-directory alias using its canonical root', async t => {
+  const temporary = mkdtempSync(join(tmpdir(), 'neomind-monitor-alias-'));
+  t.after(() => rmSync(temporary, { recursive: true, force: true }));
+  const alias = join(temporary, 'linked-temp');
+  symlinkSync(temporary, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const env = setup(t, {}, { tempDirectory: alias });
+  await env.open();
+  assert.equal(env.panelCount, 1, 'A filesystem alias must not turn successful root canonicalization into an open failure');
+  assert.equal(env.panel.messages[0].type, 'snapshot');
+  assert.deepEqual(env.calls, []);
+});
 
 test('overlapping opens while runtime loading create exactly one panel', async t => {
   let resolveLoad;

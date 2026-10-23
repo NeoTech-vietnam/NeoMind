@@ -55,10 +55,12 @@ export function ensureLocalGitExclusions(root: string): LocalGitExclusions {
   let temporary: string | undefined;
   let outcome: LocalGitExclusions = { changed: false };
   try {
-    const projectDirectory = relative(realpathSync(top), realpathSync(root));
+    // The native Windows resolver expands 8.3 names (for example RUNNER~1),
+    // matching Git's expanded paths before applying the containment check.
+    const projectDirectory = relative(realpathSync.native(top), realpathSync.native(root));
     if (outside(projectDirectory) || relative(resolve(common), resolve(gitExclude)).replaceAll('\\', '/') !== 'info/exclude')
       throw new Error('Git metadata does not belong to the selected working tree.');
-    const directory = join(realpathSync(common), 'info');
+    const directory = join(realpathSync.native(common), 'info');
     if (existsSync(directory) && (!lstatSync(directory).isDirectory() || lstatSync(directory).isSymbolicLink()))
       throw new Error('Git info directory is not a regular directory.');
     mkdirSync(directory, { recursive: true });
