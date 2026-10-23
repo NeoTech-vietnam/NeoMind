@@ -1,0 +1,1000 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+  existsSync,
+  readdirSync,
+} from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
+import { tmpdir } from 'node:os';
+import { spawn, spawnSync } from 'node:child_process';
+import { parse } from 'jsonc-parser';
+import { installProject, updateProject, doctor, configureCodeGraph } from '../dist/installer.js';
+import { adapterOutputs, codeGraphConformanceChecks } from '../dist/adapters.js';
+import { createRecord, getRecord, updateRecord, saveWorkflowClosure } from '../dist/storage.js';
+import { resumeTask } from '../dist/engineering.js';
+import { createHash } from 'node:crypto';
+
+function project(t, platforms = ['codex', 'claude', 'copilot']) {
+  const root = mkdtempSync(join(tmpdir(), 'taskforces install-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, '.taskforces'));
+  writeFileSync(
+    join(root, '.taskforces', 'config.json'),
+    JSON.stringify({
+      schema_version: 1,
+      project_id: 'TEST-PROJECT',
+      name: 'Installer test',
+      profile: 'software',
+      platforms,
+      models: { economy: null, balanced: null, strong: null },
+      max_workers: 3,
+      repair_attempts: 1,
+    }),
+  );
+  return root;
+}
+function write(root, path, content) {
+  mkdirSync(join(root, path, '..'), { recursive: true });
+  writeFileSync(join(root, path), content);
+}
+function read(root, path) {
+  return readFileSync(join(root, path), 'utf8');
+}
+
+test('installation preserves instructions and JSONC/TOML siblings, then is idempotent', (t) => {
+  const root = project(t);
+  const instructions = '# Project rules\n\nKeep all existing rules.\n';
+  write(root, 'AGENTS.md', instructions);
+  write(root, 'CLAUDE.md', '# Existing Claude instructions\n');
+  write(
+    root,
+    '.mcp.json',
+    '{\n  // User server comment\n  "mcpServers": { "existing": { "command": "existing-server" } },\n  "extra": true,\n}\n',
+  );
+  write(
+    root,
+    '.codex/config.toml',
+    '# Personal comment\nmodel = "user-model"\n\n[mcp_servers.existing]\ncommand = "existing-server"\n',
+  );
+  const report = installProject(root);
+  assert.deepEqual(report.conflicts, []);
+  assert.ok(read(root, 'AGENTS.md').startsWith(instructions.trimEnd()));
+  assert.match(read(root, 'AGENTS.md'), /BEGIN TASKFORCES instructions/);
+  assert.match(read(root, '.mcp.json'), /User server comment/);
+  assert.equal(parse(read(root, '.mcp.json')).mcpServers.existing.command, 'existing-server');
+  assert.equal(parse(read(root, '.mcp.json')).extra, true);
+  assert.match(read(root, '.codex/config.toml'), /model = "user-model"/);
+  assert.match(read(root, '.codex/config.toml'), /\[mcp_servers.existing\]/);
+  assert.equal(readdirSync(join(root, '.codex/agents')).length, 12);
+  assert.match(
+    read(root, '.github/agents/taskforces-manager.agent.md'),
+    /model: "claude-opus-4.6"/,
+  );
+  assert.match(read(root, '.github/agents/taskforces-fnd.agent.md'), /model: "gpt-5.4"/);
+  assert.equal(readdirSync(join(root, '.github/agents')).length, 6);
+  assert.doesNotMatch(
+    read(root, '.github/copilot-instructions.md'),
+    /gpt-6\.1-sol|gpt-6-luna|gpt-5\.6-terra/,
+  );
+  assert.match(
+    read(root, '.github/copilot-instructions.md'),
+    /optional VS Code Bridge and signed routing gates/,
+  );
+  assert.match(read(root, '.github/agents/taskforces-manager.agent.md'), /model: "claude-opus-4.6"/);
+  assert.match(read(root, '.github/agents/taskforces-manager.agent.md'), /taskforces\/lightweight_checkpoint/);
+  assert.match(read(root, '.taskforces/guides/lightweight.md'), /Source-backed reproducibility/);
+  assert.doesNotMatch(read(root, '.github/copilot-instructions.md'), /adapter is implemented/);
+  assert.ok(existsSync(join(root, '.agents/skills/taskforces-verify/SKILL.md')));
+  assert.ok(existsSync(join(root, '.claude/skills/taskforces-verify/SKILL.md')));
+  assert.ok(existsSync(join(root, '.github/skills/taskforces-verify/SKILL.md')));
+  const before = read(root, 'AGENTS.md');
+  const next = updateProject(root);
+  assert.deepEqual(next.installed, []);
+  assert.deepEqual(next.updated, []);
+  assert.deepEqual(next.conflicts, []);
+  assert.equal(read(root, 'AGENTS.md'), before);
+});
+
+test('Copilot rename retires hash-owned artifacts and preserves edited files and sibling settings', (t) => {
+  const root = project(t, ['copilot']);
+  installProject(root);
+  const manifestPath = '.taskforces/install-manifest.json';
+  const manifest = JSON.parse(read(root, manifestPath));
+  const digest = (value) => createHash('sha256').update(value).digest('hex');
+  for (const [path, content, edited] of [
+    ['.github/agents/verythinker-developer.agent.md', 'Owned old developer.\n', false],
+    ['.github/agents/taskforces-developer.agent.md', 'Owned former squad agent.\n', false],
+    ['.github/agents/taskforces-lightweight.agent.md', 'Owned former lightweight agent.\n', false],
+    ['.github/agents/taskforces-curator.agent.md', 'Edited former squad agent.\n', true],
+    ['.github/agents/verythinker-reviewer.agent.md', 'Original old reviewer.\n', true],
+    ['.github/hooks/verythinker.json', '{}\n', false],
+    ['.github/skills/verythinker-manager/SKILL.md', 'Old skill.\n', false],
+  ]) {
+    write(root, path, edited ? 'User-owned edits.\n' : content);
+    manifest.files[path] = { path, kind: 'file', hash: digest(content), version: manifest.version };
+  }
+  const oldServer = { command: 'old-server' };
+  write(root, '.mcp.json', JSON.stringify({ mcpServers: { verythinker: oldServer, existing: { command: 'keep-me' } }, extra: true }));
+  manifest.files['.mcp.json#mcpServers.verythinker'] = { path: '.mcp.json', kind: 'json', key: 'mcpServers.verythinker', hash: digest(JSON.stringify(oldServer)), version: manifest.version };
+  write(root, manifestPath, JSON.stringify(manifest));
+  const report = updateProject(root);
+  assert.equal(existsSync(join(root, '.github/agents/verythinker-developer.agent.md')), false);
+  assert.equal(existsSync(join(root, '.github/agents/taskforces-developer.agent.md')), false);
+  assert.equal(existsSync(join(root, '.github/agents/taskforces-lightweight.agent.md')), false);
+  assert.equal(read(root, '.github/agents/taskforces-curator.agent.md'), 'User-owned edits.\n');
+  assert.equal(existsSync(join(root, '.github/hooks/verythinker.json')), false);
+  assert.equal(existsSync(join(root, '.github/skills/verythinker-manager/SKILL.md')), false);
+  assert.equal(read(root, '.github/agents/verythinker-reviewer.agent.md'), 'User-owned edits.\n');
+  assert.ok(report.warnings.some((warning) => warning.includes('verythinker-reviewer')));
+  const settings = parse(read(root, '.mcp.json'));
+  assert.equal(settings.mcpServers.verythinker, undefined);
+  assert.equal(settings.mcpServers.existing.command, 'keep-me');
+  assert.equal(settings.extra, true);
+  const reviewer = read(root, '.github/agents/taskforces-reviewer.agent.md');
+  assert.doesNotMatch(reviewer.split('---')[1], /"execute"|"edit"|native_dispatch|capability_invoke|task_file_write/);
+});
+
+test('ordinary engineering intent automatically routes to the manager on every native adapter', (t) => {
+  const root = project(t);
+  installProject(root);
+  for (const path of ['AGENTS.md', 'CLAUDE.md', '.github/copilot-instructions.md']) {
+    const instructions = read(root, path);
+    assert.match(instructions, /new requirement, feature, fix/);
+    assert.match(instructions, path === '.github/copilot-instructions.md' ? /Generic intake only/ : /automatically act as the TaskForces manager/);
+    assert.match(instructions, path === '.github/copilot-instructions.md' ? /Launch exactly Manager Agent/ : /taskforces-manager/);
+    assert.match(instructions, /automation\.json/);
+    assert.match(instructions, /agent-operated.*CLI.*fallback/);
+  }
+  for (const prefix of ['.agents', '.claude', '.github']) {
+    const name = prefix === '.github' ? 'taskforces-manager' : 'taskforces-manager';
+    const skill = read(root, `${prefix}/skills/${name}/SKILL.md`);
+    assert.match(skill, new RegExp(`^---\\r?\\nname: ${name}\\r?\\n`));
+    assert.match(skill, /description: Manage a user's engineering requirement/);
+    assert.doesNotMatch(skill, /disable-model-invocation: true/);
+    assert.match(skill, prefix === '.github' ? /taskforces\/manager_run/ : /manager_begin/);
+    if (prefix === '.github') {
+      assert.match(skill, /guides\/copilot-native\.md/);
+      assert.doesNotMatch(skill, /Complete the increment through actual core operations and signed native invocations/);
+    }
+    assert.match(skill, /reviewed knowledge contribution/);
+  }
+  const guide = read(root, '.taskforces/guides/manager.md');
+  for (const operation of [
+    'manager_begin',
+    'manager_discuss',
+    'manager_decide',
+    'manager_finish',
+  ]) {
+    assert.ok(guide.includes(operation), operation);
+  }
+  assert.match(guide, /documentation_required: true/);
+  assert.match(guide, /separate reviewer invocation/);
+  assert.match(guide, /automatic_pr/);
+  assert.match(guide, /Human approval governs merging/);
+  assert.match(guide, /three rounds/);
+  assert.match(guide, /unconfigured background service/);
+});
+
+test('installed Copilot agents distinguish intake, selected Manager and bounded specialists', (t) => {
+  const root = project(t, ['copilot']);
+  installProject(root);
+  const delegates = ['SWSD Agent', 'P-RES Agent', 'FnD Agent', 'Reviewer Agent', 'Tester Agent'];
+  const generic = read(root, '.github/copilot-instructions.md');
+  assert.match(generic, /Generic intake only \(neither selected Manager Agent nor an assigned specialist\)/);
+  assert.match(generic, /Launch exactly Manager Agent.*handoff\.prompt unchanged/);
+  assert.match(generic, /Selected Manager Agent:.*continue the returned handoff\.prompt and workflow directly/);
+  assert.match(generic, /Assigned specialist:.*Never perform intake, call manager_run/);
+  const manager = read(root, '.github/agents/taskforces-manager.agent.md');
+  const metadata = parseYaml(manager.split('---')[1]);
+  assert.deepEqual(metadata.agents, delegates);
+  assert.equal(metadata.agents.includes('Manager Agent'), false);
+  assert.ok(metadata.tools.includes('agent'));
+  assert.ok(metadata.tools.includes('taskforces/manager_run'));
+  assert.match(manager, /Selected Manager Agent:.*call taskforces\/manager_run once.*continue the returned handoff\.prompt and workflow directly/);
+  assert.match(manager, /Do not launch handoff\.agent when it is Manager Agent: that is yourself/);
+  assert.match(manager, /already assigned Manager Agent.*without calling manager_run again or self-delegating/);
+  assert.doesNotMatch(manager, /Generic intake only|Launch exactly Manager Agent|configured taskforces-\* agents/);
+  for (const name of delegates) assert.ok(manager.includes(name), name);
+  assert.ok(manager.indexOf('## Execution instructions') < manager.indexOf('## TaskForces engineering workflow'));
+  assert.match(manager, /must never perform production implementation or independent self-review/);
+  assert.match(manager, /Inline role impersonation is not delegation/);
+  assert.match(manager, /actual invocation IDs and assignment_report IDs/);
+  assert.match(manager, /before the substantive user answer, save a meaningful evidence-linked Cornell note/);
+  assert.match(manager, /returned note ID and saved path/);
+  assert.match(manager, /Analysis\/research-only requests still require.*meaningful saved Cornell note/);
+  assert.match(manager, /Do not invent production changes, builds, code reviews or SIL runs/);
+  for (const instructions of [generic, manager]) {
+    assert.match(instructions, /local-only and automatic_pr: false/);
+    assert.match(instructions, /zero remote discovery, publication or archive requests/);
+    assert.match(instructions, /knowledge_search/);
+    assert.match(instructions, /upstream not searched/);
+    assert.match(instructions, /401.*never no-match/);
+    assert.match(instructions, /later user opt-in to remote-enabled/);
+    assert.match(instructions, /same-workflow record references/);
+    assert.match(instructions, /older external notes as historical context, not current evidence/);
+    assert.doesNotMatch(instructions, /Network\/authentication failures remain blockers|discover commit-pinned prior Cornell sources from the configured upstream/);
+  }
+  for (const id of ['swsd', 'p-res', 'fnd', 'reviewer', 'tester']) {
+    const specialist = read(root, `.github/agents/taskforces-${id}.agent.md`);
+    const header = parseYaml(specialist.split('---')[1]);
+    assert.deepEqual(header.agents, []);
+    assert.equal(header['user-invocable'], false);
+    assert.equal(header.tools.includes('agent'), false);
+    assert.equal(header.tools.includes('taskforces/manager_run'), false);
+    assert.match(specialist, /Assigned specialist: execute only the supplied bounded task/);
+    assert.match(specialist, /Never perform intake, call manager_run, launch Manager Agent or delegate recursively/);
+    assert.match(specialist, /Return actual results, invocation ID and assignment_report ID/);
+    assert.doesNotMatch(specialist, /Generic intake only|Selected Manager Agent:|Launch exactly Manager Agent|Call taskforces\/manager_run once/i);
+    assert.ok(specialist.indexOf('## Execution instructions') < specialist.indexOf('## TaskForces engineering workflow'));
+  }
+  // Skills are shared: their intake branch must remain explicitly conditional on invocation role.
+  const skill = read(root, '.github/skills/taskforces-manager/SKILL.md');
+  assert.match(skill, /Generic intake only \(neither selected Manager Agent nor an assigned specialist\)/);
+  assert.match(skill, /already assigned Manager Agent.*without calling manager_run again/);
+  assert.match(skill, /Assigned specialist:.*Never perform intake/);
+  const guide = read(root, '.taskforces/guides/copilot-native.md');
+  assert.match(guide, /Directly selected Manager Agent/);
+  assert.match(guide, /Assigned specialists/);
+  assert.match(guide, /saved path \(`artifact_path`\)/);
+  assert.match(guide, /Analysis\/research-only requests still require/);
+  assert.match(guide, /Full engineering gates remain unchanged/);
+  assert.match(guide, /zero remote discovery, publication or archive requests/);
+  assert.match(guide, /upstream not searched/);
+  assert.match(guide, /same-workflow `requirement_ids` and evidence references/);
+  assert.match(guide, /Remote work is deferred, not an engineering waiver/);
+  assert.doesNotMatch(guide, /Fresh native policy publishes/);
+});
+
+test('modified and deleted managed templates remain preserved and receive candidates', (t) => {
+  const root = project(t, ['codex']);
+  installProject(root);
+  const changed = '.taskforces/roles/researcher.md';
+  const removed = '.taskforces/roles/reviewer.md';
+  write(root, changed, 'User research procedure.\n');
+  rmSync(join(root, removed));
+  const report = updateProject(root);
+  assert.equal(read(root, changed), 'User research procedure.\n');
+  assert.equal(existsSync(join(root, removed)), false);
+  const changedConflict = report.conflicts.find((item) => item.path === changed);
+  const removedConflict = report.conflicts.find((item) => item.path === removed);
+  assert.ok(changedConflict);
+  assert.ok(removedConflict);
+  assert.match(read(root, changedConflict.candidate), /Research/);
+  assert.match(read(root, removedConflict.candidate), /Review/);
+  const repeated = updateProject(root);
+  assert.equal(
+    repeated.conflicts.find((item) => item.path === changed).candidate,
+    changedConflict.candidate,
+  );
+});
+
+test('user-owned MCP entries and hook events produce review candidates', (t) => {
+  const root = project(t);
+  write(
+    root,
+    '.mcp.json',
+    '{ // preserve me\n "mcpServers": {"taskforces": {"command":"user-owned"}}\n}\n',
+  );
+  write(
+    root,
+    '.codex/config.toml',
+    '# User owned\n[mcp_servers.taskforces]\ncommand = "user-owned"\n',
+  );
+  write(
+    root,
+    '.claude/settings.json',
+    '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"user-start"}]}]},"other":42}\n',
+  );
+  const mcp = read(root, '.mcp.json');
+  const toml = read(root, '.codex/config.toml');
+  const report = installProject(root);
+  assert.equal(read(root, '.mcp.json'), mcp);
+  assert.equal(read(root, '.codex/config.toml'), toml);
+  assert.equal(
+    parse(read(root, '.claude/settings.json')).hooks.SessionStart[0].hooks[0].command,
+    'user-start',
+  );
+  assert.equal(parse(read(root, '.claude/settings.json')).other, 42);
+  assert.ok(report.conflicts.some((item) => item.path === '.mcp.json#mcpServers.taskforces'));
+  assert.ok(report.conflicts.some((item) => item.path === '.codex/config.toml#mcp'));
+  assert.ok(
+    report.conflicts.some((item) => item.path === '.claude/settings.json#hooks.SessionStart'),
+  );
+});
+
+test('sibling changes remain editable and managed instructions edits produce a full candidate', (t) => {
+  const root = project(t, ['codex', 'claude']);
+  installProject(root);
+  write(
+    root,
+    '.mcp.json',
+    read(root, '.mcp.json').replace('{', '{\n // Later user note\n "other": 5,'),
+  );
+  write(root, 'AGENTS.md', read(root, 'AGENTS.md').replace('Use English', 'Use custom English'));
+  const report = updateProject(root);
+  assert.match(read(root, '.mcp.json'), /Later user note/);
+  assert.equal(parse(read(root, '.mcp.json')).other, 5);
+  assert.match(read(root, 'AGENTS.md'), /Use custom English/);
+  const conflict = report.conflicts.find((item) => item.path === 'AGENTS.md#instructions');
+  assert.ok(conflict);
+  assert.match(read(root, conflict.candidate), /Use English/);
+});
+
+test('native hook commands and model metadata are generated without claiming live execution', (t) => {
+  const root = project(t);
+  installProject(root);
+  const codex = parse(read(root, '.codex/hooks.json'));
+  const claude = parse(read(root, '.claude/settings.json'));
+  const copilot = parse(read(root, '.github/hooks/taskforces.json'));
+  assert.match(codex.hooks.SessionStart[0].hooks[0].command, /--event.*session-start/);
+  assert.match(codex.hooks.Stop[0].hooks[0].commandWindows, /^& /);
+  assert.equal(claude.hooks.SessionStart[0].hooks[0].command, process.execPath);
+  assert.ok(claude.hooks.SessionStart[0].hooks[0].args.includes('--project'));
+  const hook = claude.hooks.SessionStart[0].hooks[0];
+  const result = spawnSync(hook.command, hook.args, {
+    input: '{"hook_event_name":"SessionStart"}',
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 10000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(JSON.parse(result.stdout).hookSpecificOutput.additionalContext, /TEST-PROJECT/);
+  assert.equal(copilot.version, 1);
+  assert.ok(copilot.hooks.sessionStart);
+  assert.ok(copilot.hooks.agentStop);
+  const report = doctor(root);
+  assert.equal(report.codegraph.version, '1.6.2');
+  assert.equal(report.codegraph.enabled, false);
+  for (const platform of report.platforms) {
+    assert.equal(
+      platform.capabilities.find((item) => item.capability === 'adapter-files').status,
+      'configured',
+    );
+    assert.equal(
+      platform.capabilities.find((item) => item.capability === 'skill-discovery').status,
+      'unverified',
+    );
+    assert.equal(
+      platform.capabilities.find((item) => item.capability === 'model-routing').status,
+      platform.platform === 'copilot' ? 'unverified' : 'restricted',
+    );
+  }
+});
+
+test('routing policy is authoritative while legacy mappings and historical records remain untouched', (t) => {
+  const root = project(t);
+  const config = JSON.parse(read(root, '.taskforces/config.json'));
+  config.models = {
+    economy: { claude: 'haiku', copilot: 'worker-choice' },
+    balanced: null,
+    strong: { copilot: 'authored-model', claude: 'opus' },
+  };
+  write(root, '.taskforces/config.json', JSON.stringify(config, null, 2) + '\n');
+  write(
+    root,
+    '.taskforces/records/legacy.md',
+    'Historical accepted record retained byte for byte.\n',
+  );
+  const report = installProject(root);
+  const current = JSON.parse(read(root, '.taskforces/config.json'));
+  assert.deepEqual(current.models.economy, {
+    claude: 'haiku',
+    copilot: 'worker-choice',
+  });
+  assert.equal(current.models.balanced, null);
+  assert.deepEqual(current.models.strong, { copilot: 'authored-model', claude: 'opus' });
+  assert.equal(
+    report.conflicts.some((item) => item.path.includes('models')),
+    false,
+  );
+  assert.equal(
+    read(root, '.taskforces/records/legacy.md'),
+    'Historical accepted record retained byte for byte.\n',
+  );
+  assert.match(read(root, '.codex/agents/taskforces-manager.toml'), /model = "claude-opus-4.6"/);
+  assert.match(
+    read(root, '.github/agents/taskforces-manager.agent.md'),
+    /model: "claude-opus-4.6"/,
+  );
+  assert.equal(
+    updateProject(root).conflicts.some((item) => item.path.includes('models')),
+    false,
+  );
+});
+
+test('one routing file regenerates Copilot models from provider-qualified catalog entries', (t) => {
+  const root = project(t);
+  installProject(root);
+  write(
+    root,
+    'models.json',
+    JSON.stringify([
+      {
+        name: 'Bosch Model Farm',
+        vendor: 'customendpoint',
+        apiKey: 'never-copy-this',
+        models: [
+          { id: 'gpt 4o-mini', name: 'GPT-4o mini' },
+          { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite' },
+        ],
+      },
+      {
+        name: '9localrouter',
+        vendor: 'customendpoint',
+        models: [
+          { id: 'company-top-tier-model', name: 'company-top-tier-model' },
+          { id: 'top-tier-model', name: 'top-tier-model' },
+        ],
+      },
+    ]),
+  );
+  const policy = JSON.parse(read(root, '.taskforces/routing.json'));
+  Object.assign(policy, {
+    strong_model: 'company-top-tier-model',
+    strong_provider: '9localrouter',
+    worker_models: ['gpt 4o-mini', 'gemini-2.5-flash-lite'],
+    worker_provider: 'Bosch Model Farm',
+    language_models_file: 'models.json',
+  });
+  write(root, '.taskforces/routing.json', JSON.stringify(policy));
+  assert.deepEqual(updateProject(root).conflicts, []);
+  const manager = '.github/agents/taskforces-manager.agent.md';
+  const developer = '.github/agents/taskforces-fnd.agent.md';
+  assert.match(read(root, manager), /model: "company-top-tier-model \(customendpoint\)"/);
+  assert.match(read(root, developer), /model: \["GPT-4o mini \(customendpoint\)","Gemini 2.5 Flash-Lite \(customendpoint\)"\]/);
+  assert.doesNotMatch(read(root, developer), /never-copy-this|apiKey/);
+  policy.strong_model = 'top-tier-model';
+  policy.worker_models = ['gemini-2.5-flash-lite'];
+  write(root, '.taskforces/routing.json', JSON.stringify(policy));
+  const cli = spawnSync(process.execPath, [fileURLToPath(new URL('../dist/cli.js', import.meta.url)),
+    'update', '--project', root], { encoding: 'utf8' });
+  assert.equal(cli.status, 0, cli.stderr || cli.stdout);
+  assert.deepEqual(JSON.parse(cli.stdout).conflicts, []);
+  for (const [id, name, model] of [
+    ['manager', 'Manager Agent', 'top-tier-model'], ['swsd', 'SWSD Agent', 'top-tier-model'],
+    ['p-res', 'P-RES Agent', 'top-tier-model'], ['reviewer', 'Reviewer Agent', 'top-tier-model'],
+    ['fnd', 'FnD Agent', 'Gemini 2.5 Flash-Lite'], ['tester', 'Tester Agent', 'Gemini 2.5 Flash-Lite'],
+  ]) {
+    const metadata = parseYaml(read(root, `.github/agents/taskforces-${id}.agent.md`).split('---')[1]);
+    assert.equal(metadata.name, name);
+    assert.equal(metadata.model, `${model} (customendpoint)`);
+    assert.deepEqual(metadata.agents, id === 'manager'
+      ? ['SWSD Agent', 'P-RES Agent', 'FnD Agent', 'Reviewer Agent', 'Tester Agent'] : []);
+  }
+  assert.match(read(root, manager), /model: "top-tier-model \(customendpoint\)"/);
+  assert.match(read(root, developer), /model: "Gemini 2.5 Flash-Lite \(customendpoint\)"/);
+  policy.worker_provider = '9localrouter';
+  write(root, '.taskforces/routing.json', JSON.stringify(policy));
+  assert.throws(() => updateProject(root), /exactly one entry.*9localrouter/);
+  policy.worker_provider = 'Bosch Model Farm';
+  policy.worker_models = ['missing-model'];
+  write(root, '.taskforces/routing.json', JSON.stringify(policy));
+  assert.throws(() => updateProject(root), /missing-model.*exactly one entry/);
+  policy.worker_models = ['gemini-2.5-flash-lite'];
+  write(root, manager, 'User-owned agent instructions.\n');
+  policy.strong_model = 'company-top-tier-model';
+  write(root, '.taskforces/routing.json', JSON.stringify(policy));
+  assert.ok(updateProject(root).conflicts.some((item) => item.path === manager));
+  assert.equal(read(root, manager), 'User-owned agent instructions.\n');
+});
+
+test('CRLF-reconciled Copilot candidates retain actual hashes and support later model updates', (t) => {
+  const root = project(t, ['copilot']);
+  assert.deepEqual(installProject(root).conflicts, []);
+  const paths = ['manager', 'swsd', 'p-res', 'fnd', 'reviewer', 'tester']
+    .map((id) => `.github/agents/taskforces-${id}.agent.md`);
+  const manifestPath = '.taskforces/install-manifest.json';
+  const digest = (value) => createHash('sha256').update(value).digest('hex');
+  for (const path of paths) write(root, path, read(root, path) + '\nLocal agent customization.\n');
+  const review = updateProject(root);
+  assert.equal(review.conflicts.length, paths.length);
+  const reconciled = new Map();
+  for (const path of paths) {
+    const conflict = review.conflicts.find((item) => item.path === path);
+    assert.ok(conflict);
+    const candidate = read(root, conflict.candidate);
+    const crlf = candidate.replaceAll('\r\n', '\n').replaceAll('\n', '\r\n');
+    assert.notEqual(crlf, candidate);
+    assert.equal(crlf.replaceAll('\r\n', '\n'), candidate.replaceAll('\r\n', '\n'));
+    write(root, path, crlf);
+    reconciled.set(path, crlf);
+  }
+  const adopted = updateProject(root);
+  assert.deepEqual(adopted.conflicts, []);
+  assert.deepEqual(adopted.updated, []);
+  const manifest = JSON.parse(read(root, manifestPath));
+  for (const [path, crlf] of reconciled) {
+    assert.ok(adopted.unchanged.includes(path));
+    assert.equal(read(root, path), crlf);
+    assert.equal(manifest.files[path].hash, digest(crlf));
+  }
+  assert.deepEqual(updateProject(root).conflicts, []);
+  const policy = JSON.parse(read(root, '.taskforces/routing.json'));
+  policy.strong_model = 'reconciled-strong-model';
+  write(root, '.taskforces/routing.json', JSON.stringify(policy));
+  const regenerated = updateProject(root);
+  assert.deepEqual(regenerated.conflicts, []);
+  for (const id of ['manager', 'swsd', 'p-res', 'reviewer']) {
+    const path = `.github/agents/taskforces-${id}.agent.md`;
+    assert.ok(regenerated.updated.includes(path));
+    assert.equal(parseYaml(read(root, path).split('---')[1]).model, policy.strong_model);
+  }
+  for (const id of ['fnd', 'tester']) {
+    const path = `.github/agents/taskforces-${id}.agent.md`;
+    assert.equal(read(root, path), reconciled.get(path));
+  }
+  const repeated = updateProject(root);
+  assert.deepEqual(repeated.conflicts, []);
+  assert.deepEqual(repeated.updated, []);
+  const manager = paths[0];
+  const generated = read(root, manager);
+  // Only CRLF pairs are ignored: authored body edits, spaces and lone CR remain conflicts.
+  for (const authored of [
+    generated + '\nKeep this authored instruction.\n',
+    generated.replace('## Assignment', '## Assignment '),
+    generated.replace('## Assignment', '## Assign\rment'),
+  ]) {
+    assert.notEqual(authored, generated);
+    write(root, manager, authored);
+    const protectedUpdate = updateProject(root);
+    assert.deepEqual(protectedUpdate.conflicts.map((item) => item.path), [manager]);
+    assert.equal(read(root, manager), authored);
+    assert.equal(read(root, protectedUpdate.conflicts[0].candidate), generated);
+    assert.equal(JSON.parse(read(root, manifestPath)).files[manager].hash, digest(generated));
+  }
+});
+
+test('normalized-identical user-owned agents remain unowned and protected from model changes', (t) => {
+  const root = project(t, ['copilot']);
+  installProject(root);
+  const path = '.github/agents/taskforces-manager.agent.md';
+  const manifestPath = '.taskforces/install-manifest.json';
+  const manifest = JSON.parse(read(root, manifestPath));
+  // Model an existing identical file for which the installer has no prior ownership.
+  delete manifest.files[path];
+  write(root, manifestPath, JSON.stringify(manifest));
+  const authored = read(root, path).replaceAll('\r\n', '\n').replaceAll('\n', '\r\n');
+  write(root, path, authored);
+  const identical = updateProject(root);
+  assert.deepEqual(identical.conflicts, []);
+  assert.ok(identical.unchanged.includes(path));
+  assert.equal(read(root, path), authored);
+  assert.equal(JSON.parse(read(root, manifestPath)).files[path], undefined);
+  const policy = JSON.parse(read(root, '.taskforces/routing.json'));
+  policy.strong_model = 'another-strong-model';
+  write(root, '.taskforces/routing.json', JSON.stringify(policy));
+  const changed = updateProject(root);
+  assert.deepEqual(changed.conflicts.map((item) => item.path), [path]);
+  assert.equal(changed.conflicts[0].reason, 'Existing content is owned by the user.');
+  assert.equal(read(root, path), authored);
+  assert.equal(JSON.parse(read(root, manifestPath)).files[path], undefined);
+});
+
+test('Copilot catalog aliases generate identical decorated headers without reordering workers or doubling suffixes', (t) => {
+  const root = project(t);
+  installProject(root);
+  const config = JSON.parse(read(root, '.taskforces/config.json'));
+  const policy = JSON.parse(read(root, '.taskforces/routing.json'));
+  const catalog = [{ name: 'Endpoint group', vendor: 'customendpoint', apiKey: 'private-key', models: [
+    { id: 'strong-id', name: 'Strong Display' },
+    { id: 'worker-b', name: 'Worker B' },
+    { id: 'worker-a', name: 'Worker A (customendpoint)' },
+    { id: 'literal', name: 'Alias Target' },
+    { id: 'literal (customendpoint)', name: 'Literal Winner' },
+  ] }];
+  Object.assign(policy, { strong_provider: 'Endpoint group', worker_provider: 'Endpoint group',
+    language_models_file: 'models.json' });
+  function run(strong, workers, entries = catalog) {
+    policy.strong_model = strong;
+    policy.worker_models = workers;
+    write(root, 'models.json', JSON.stringify(entries));
+    write(root, '.taskforces/routing.json', JSON.stringify(policy));
+    const outputs = adapterOutputs(root, config);
+    return Object.fromEntries(outputs.filter(output => output.path.startsWith('.github/agents/')).map(output => {
+      assert.doesNotMatch(output.content, /private-key|apiKey/);
+      return [output.path, parseYaml(output.content.split('---')[1])];
+    }));
+  }
+  const raw = run('strong-id', ['worker-b', 'worker-a']);
+  const byId = run('strong-id (customendpoint)', ['worker-b (customendpoint)', 'worker-a (customendpoint)']);
+  const byDisplay = run('Strong Display (customendpoint)', ['Worker B (customendpoint)', 'Worker A (customendpoint)']);
+  assert.deepEqual(byId, raw);
+  assert.deepEqual(byDisplay, raw);
+  for (const id of ['manager', 'swsd', 'p-res', 'reviewer']) {
+    assert.equal(raw[`.github/agents/taskforces-${id}.agent.md`].model, 'Strong Display (customendpoint)');
+  }
+  for (const id of ['fnd', 'tester']) {
+    assert.deepEqual(raw[`.github/agents/taskforces-${id}.agent.md`].model,
+      ['Worker B (customendpoint)', 'Worker A (customendpoint)']);
+  }
+  const literal = run('literal (customendpoint)', ['worker-a']);
+  assert.equal(literal['.github/agents/taskforces-manager.agent.md'].model, 'Literal Winner (customendpoint)');
+  assert.equal(literal['.github/agents/taskforces-fnd.agent.md'].model, 'Worker A (customendpoint)');
+  const settings = run('settings-strong (customendpoint)', ['settings-b (customendpoint)', 'settings-a'],
+    [{ name: 'Endpoint group', vendor: 'customendpoint', settings: {
+      'settings-strong': { apiKey: 'private-key' }, 'settings-a': {}, 'settings-b': {},
+    } }]);
+  assert.equal(settings['.github/agents/taskforces-manager.agent.md'].model, 'settings-strong (customendpoint)');
+  assert.deepEqual(settings['.github/agents/taskforces-fnd.agent.md'].model,
+    ['settings-b (customendpoint)', 'settings-a (customendpoint)']);
+  assert.throws(() => run('strong-id (wrong-vendor)', ['worker-b']), /exactly one entry.*Endpoint group/);
+  assert.throws(() => run('strong-id', ['worker-b'], [catalog[0], catalog[0]]), /exactly one entry.*Endpoint group/);
+  assert.throws(() => run('strong-id', ['worker-b'], [{ ...catalog[0], models: [...catalog[0].models, catalog[0].models[0]] }]),
+    /exactly one entry.*Endpoint group/);
+});
+
+test('alpha.3 migration makes pending legacy work strict while preserving recorded closed history bytes', (t) => {
+  const root = project(t, ['codex']);
+  const requirement = createRecord(root, {
+    type: 'requirement',
+    title: 'Legacy migration requirement',
+  });
+  const closed = createRecord(root, {
+    type: 'knowledge',
+    title: 'Recorded historical closed workflow',
+    status: 'verified',
+    data: { kind: 'manager-workflow', phase: 'completed', task_ids: [] },
+  });
+  const historical = createRecord(root, {
+    type: 'task',
+    title: 'Recorded historical submitted task',
+    status: 'submitted',
+    owner: 'developer',
+    data: { workflow_id: closed.meta.id, invocation_id: 'legacy-history-worker' },
+    links: [{ type: 'satisfies', target: requirement.meta.id }],
+  });
+  const report = createRecord(root, {
+    type: 'knowledge',
+    title: 'Recorded historical closure report',
+    links: [{ type: 'documents', target: closed.meta.id }],
+    data: { kind: 'work-record' },
+    body: '# Objective\nHistorical metadata fixture; it establishes no native model access.\n',
+  });
+  // This fixture imports historical closure metadata, not a generic user mutation.
+  saveWorkflowClosure(root, closed.meta.id, {
+    data: {
+      final_report_id: report.meta.id,
+      task_ids: [historical.meta.id],
+    },
+  }, () => {});
+  const accepted = createRecord(root, {
+    type: 'task',
+    title: 'Recorded historical accepted metadata',
+    status: 'accepted',
+  });
+  const superseded = createRecord(root, {
+    type: 'task',
+    title: 'Superseded historical assignment',
+    status: 'superseded',
+  });
+  const pending = createRecord(root, {
+    type: 'knowledge',
+    title: 'Pending legacy workflow',
+    data: { kind: 'manager-workflow', phase: 'execution', task_ids: [] },
+  });
+  const existingIncrement = '12345678-1234-4abc-8def-123456789abc';
+  const existing = createRecord(root, {
+    type: 'knowledge',
+    title: 'Pending workflow with an existing increment identity',
+    data: { kind: 'manager-workflow', phase: 'intake', increment_id: existingIncrement },
+  });
+  const partiallyMigrated = createRecord(root, {
+    type: 'knowledge',
+    title: 'Pending workflow whose routing migration was already applied',
+    data: { kind: 'manager-workflow', phase: 'execution', routing_required: true },
+  });
+  const active = createRecord(root, {
+    type: 'task',
+    title: 'Pending legacy in-progress implementation',
+    owner: 'developer',
+    status: 'in-progress',
+    links: [{ type: 'satisfies', target: requirement.meta.id }],
+    data: {
+      workflow_id: pending.meta.id,
+      invocation_id: 'legacy-pending-worker',
+      allowed_paths: ['src'],
+    },
+  });
+  updateRecord(root, pending.meta.id, { data: { task_ids: [active.meta.id] } });
+  const originals = [closed, historical, accepted, superseded, report].map((record) => ({
+    path: record.path,
+    bytes: read(root, record.path),
+  }));
+  const first = installProject(root);
+  assert.equal(getRecord(root, pending.meta.id).meta.data.routing_required, true);
+  const migratedIncrement = getRecord(root, pending.meta.id).meta.data.increment_id;
+  const backfilledIncrement = getRecord(root, partiallyMigrated.meta.id).meta.data.increment_id;
+  assert.match(
+    migratedIncrement,
+    /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/,
+  );
+  assert.match(
+    backfilledIncrement,
+    /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/,
+  );
+  assert.equal(getRecord(root, existing.meta.id).meta.data.increment_id, existingIncrement);
+  const migrated = getRecord(root, active.meta.id);
+  assert.equal(migrated.meta.data.routing_required, true);
+  assert.equal(migrated.meta.data.invocation_id, 'legacy-pending-worker');
+  assert.equal(migrated.meta.revision, active.meta.revision + 1);
+  assert.ok(first.updated.includes(`${active.path}#pending-routing`));
+  assert.throws(() => resumeTask(root, active.meta.id), /native|routing/i);
+  for (const original of originals) assert.equal(read(root, original.path), original.bytes);
+  const pendingBytes = read(root, active.path);
+  assert.equal(
+    updateProject(root).updated.some((path) => path.endsWith('#pending-routing')),
+    false,
+  );
+  assert.equal(read(root, active.path), pendingBytes);
+  assert.equal(getRecord(root, pending.meta.id).meta.data.increment_id, migratedIncrement);
+  assert.equal(
+    getRecord(root, partiallyMigrated.meta.id).meta.data.increment_id,
+    backfilledIncrement,
+  );
+  assert.equal(getRecord(root, existing.meta.id).meta.data.increment_id, existingIncrement);
+  for (const original of originals) assert.equal(read(root, original.path), original.bytes);
+});
+
+test('concurrent installers allocate one persistent increment identity for pending legacy work', async (t) => {
+  const root = project(t, ['codex']);
+  const pending = createRecord(root, {
+    type: 'knowledge',
+    title: 'Concurrent pending migration fixture',
+    data: { kind: 'manager-workflow', phase: 'intake' },
+  });
+  const script = `const {installProject}=await import(${JSON.stringify(new URL('../dist/installer.js', import.meta.url).href)}); const {getRecord}=await import(${JSON.stringify(new URL('../dist/storage.js', import.meta.url).href)}); installProject(process.argv[1]); process.stdout.write(JSON.stringify(getRecord(process.argv[1],process.argv[2]).meta.data.increment_id));`;
+  const run = () =>
+    new Promise((resolve, reject) => {
+      const child = spawn(
+        process.execPath,
+        ['--input-type=module', '-e', script, root, pending.meta.id],
+        { shell: false, windowsHide: true },
+      );
+      let stdout = '',
+        stderr = '';
+      child.stdout.on('data', (data) => {
+        stdout += data;
+      });
+      child.stderr.on('data', (data) => {
+        stderr += data;
+      });
+      child.on('error', reject);
+      child.on('close', (code) =>
+        code === 0 ? resolve(JSON.parse(stdout)) : reject(new Error(stderr)),
+      );
+    });
+  const [first, second] = await Promise.all([run(), run()]);
+  assert.equal(first, second);
+  assert.equal(getRecord(root, pending.meta.id).meta.data.increment_id, first);
+  updateProject(root);
+  assert.equal(getRecord(root, pending.meta.id).meta.data.increment_id, first);
+});
+
+test('strict roles and gateway tool declarations preserve reviewer independence', (t) => {
+  const root = project(t);
+  installProject(root);
+  for (const role of [
+    'manager',
+    'requirements',
+    'architect',
+    'component-owner',
+    'verifier',
+    'reviewer',
+  ]) {
+    const file = read(root, `.codex/agents/taskforces-${role}.toml`);
+    assert.match(file, /model = "claude-opus-4.6"/);
+    assert.match(file, /model_reasoning_effort = "high"/);
+    assert.match(file, /sandbox_mode = "read-only"/);
+  }
+  for (const role of [
+    'researcher',
+    'codebase-analyst',
+    'curator',
+    'developer',
+    'check-executor',
+    'release',
+  ])
+    assert.match(read(root, `.codex/agents/taskforces-${role}.toml`), /model = "gpt-5.4"/);
+  const reviewer = read(root, '.codex/agents/taskforces-reviewer.toml');
+  const enabled = JSON.parse(/^enabled_tools = (.+)$/m.exec(reviewer)[1]);
+  assert.ok(enabled.includes('task_review'));
+  assert.ok(!enabled.includes('task_submit'));
+  assert.ok(!enabled.includes('record_update'));
+  const claude = read(root, '.claude/agents/taskforces-reviewer.md');
+  const toolLine = /^tools: (.+)$/m.exec(claude)[1].split(', ');
+  assert.ok(toolLine.includes('Read'));
+  assert.ok(toolLine.includes('mcp__taskforces__task_review'));
+  assert.ok(!toolLine.includes('Edit'));
+  const copilot = JSON.parse(
+    /^tools: (.+)$/m.exec(read(root, '.github/agents/taskforces-reviewer.agent.md'))[1],
+  );
+  assert.ok(copilot.includes('taskforces/task_review'));
+  assert.ok(!copilot.includes('edit'));
+  assert.ok(existsSync(join(root, '.taskforces/roles/check-executor.capabilities.json')));
+  assert.match(read(root, '.agents/skills/taskforces-manager/SKILL.md'), /manager_run/);
+});
+
+test('project-owned routing, archive, and tool policies survive updates', (t) => {
+  const root = project(t, ['codex']);
+  installProject(root);
+  const archive = JSON.parse(read(root, '.taskforces/archive.json'));
+  archive.repository = 'example/private';
+  archive.enabled = false;
+  write(root, '.taskforces/archive.json', JSON.stringify(archive, null, 2) + '\n');
+  const tools = JSON.parse(read(root, '.taskforces/tools.json'));
+  tools.automatic_install = false;
+  tools.approved_providers = ['context7'];
+  write(root, '.taskforces/tools.json', JSON.stringify(tools, null, 2) + '\n');
+  const before = read(root, '.taskforces/routing.json');
+  const report = updateProject(root);
+  assert.deepEqual(report.conflicts, []);
+  assert.equal(read(root, '.taskforces/routing.json'), before);
+  assert.equal(JSON.parse(read(root, '.taskforces/archive.json')).repository, 'example/private');
+  assert.equal(JSON.parse(read(root, '.taskforces/tools.json')).automatic_install, false);
+  const health = doctor(root);
+  assert.deepEqual(health.routing.observations, []);
+  assert.equal(health.archives.enabled, false);
+  assert.equal(health.tools.policy.automatic_install, false);
+});
+
+test('invalid JSON remains untouched with a generated candidate', (t) => {
+  const root = project(t, ['claude']);
+  write(root, '.mcp.json', '{ invalid user content');
+  const report = installProject(root);
+  assert.equal(read(root, '.mcp.json'), '{ invalid user content');
+  const conflict = report.conflicts.find(
+    (item) => item.path === '.mcp.json#mcpServers.taskforces',
+  );
+  assert.ok(conflict);
+  assert.ok(parse(read(root, conflict.candidate)).mcpServers.taskforces);
+});
+
+test('user-owned dotted, inline, and nested TOML server settings receive candidates', (t) => {
+  for (const source of [
+    'mcp_servers.taskforces = { command = "user-provider" }\n',
+    '[mcp_servers]\ntaskforces = { command = "user-provider" }\n\n[other]\nvalue = true\n',
+    '[mcp_servers.taskforces.env]\nCUSTOM = "user-value"\n',
+  ]) {
+    const root = project(t, ['codex']);
+    write(root, '.codex/config.toml', source);
+    const report = installProject(root);
+    assert.equal(read(root, '.codex/config.toml'), source);
+    assert.ok(report.conflicts.some((item) => item.path === '.codex/config.toml#mcp'));
+  }
+});
+
+function conformance(root, change = {}) {
+  const report = {
+    package: '@colbymchenry/codegraph',
+    version: '1.6.2',
+    status: 'supported-for-fixture',
+    environment: { platform: process.platform, architecture: process.arch },
+    checks: codeGraphConformanceChecks.map((id) => ({ id, status: 'passed' })),
+    limitations: ['A small synthetic test fixture is not native client evidence.'],
+    ...change,
+  };
+  const path = join(root, 'test-conformance.json');
+  writeFileSync(path, JSON.stringify(report, null, 2));
+  return path;
+}
+
+test(
+  'explicit CodeGraph enable validates evidence, preserves configuration, and detects a changed report',
+  { skip: process.platform !== 'win32' },
+  (t) => {
+    const root = project(t);
+    installProject(root);
+    write(
+      root,
+      '.mcp.json',
+      read(root, '.mcp.json').replace('{', '{\n // User comment\n "extra": true,'),
+    );
+    const report = conformance(root);
+    const args = ['test-provider.js', 'serve', '--mcp', '--path', root];
+    const config = configureCodeGraph(root, report, process.execPath, args);
+    assert.equal(config.enabled, true);
+    assert.equal(config.status, 'supported-for-fixture');
+    assert.equal(config.report_hash.length, 64);
+    assert.deepEqual(config.args, args);
+    assert.equal(read(root, config.report_path), readFileSync(report, 'utf8'));
+    assert.deepEqual(updateProject(root).conflicts, []);
+    const mcp = parse(read(root, '.mcp.json'));
+    assert.equal(mcp.extra, true);
+    assert.match(read(root, '.mcp.json'), /User comment/);
+    assert.equal(mcp.mcpServers.codegraph.command, process.execPath);
+    assert.deepEqual(mcp.mcpServers.codegraph.args, args);
+    assert.equal(mcp.mcpServers.codegraph.env.CODEGRAPH_NO_DOWNLOAD, '1');
+    assert.match(read(root, '.codex/config.toml'), /\[mcp_servers.codegraph\]/);
+    assert.equal(doctor(root).codegraph.status, 'supported-for-fixture');
+    assert.equal(
+      doctor(root).platforms[0].capabilities.find((item) => item.capability === 'mcp').status,
+      'unverified',
+    );
+    assert.deepEqual(updateProject(root).conflicts, []);
+    write(root, config.report_path, read(root, config.report_path) + '\n');
+    const changed = doctor(root);
+    assert.equal(changed.codegraph.enabled, false);
+    assert.match(changed.warnings.join(' '), /changed since approval/);
+    assert.throws(() => updateProject(root), /changed since approval/);
+  },
+);
+
+test(
+  'CodeGraph rejects incomplete evidence, wrong versions, wrong platforms, and invalid launch arguments',
+  { skip: process.platform !== 'win32' },
+  (t) => {
+    const root = project(t);
+    const args = ['test-provider.js', 'serve', '--mcp', '--path', root];
+    for (const change of [
+      { version: '1.6.3' },
+      { environment: { platform: 'linux', architecture: process.arch } },
+      { checks: codeGraphConformanceChecks.slice(1).map((id) => ({ id, status: 'passed' })) },
+      {
+        checks: codeGraphConformanceChecks.map((id) => ({
+          id,
+          status: id === 'watch-modify' ? 'failed' : 'passed',
+        })),
+      },
+      { checks: codeGraphConformanceChecks.map(() => ({ id: 'version', status: 'passed' })) },
+    ]) {
+      assert.throws(
+        () => configureCodeGraph(root, conformance(root, change), process.execPath, args),
+        /CodeGraph/,
+      );
+    }
+    const report = conformance(root);
+    assert.throws(() => configureCodeGraph(root, report, 'node', args), /absolute executable/);
+    assert.throws(
+      () => configureCodeGraph(root, report, process.execPath, ['serve', '--mcp']),
+      /absolute project root/,
+    );
+    assert.throws(
+      () => configureCodeGraph(root, report, process.execPath, ['serve', '--path', root]),
+      /serve and --mcp/,
+    );
+    assert.equal(existsSync(join(root, '.taskforces/optional/codegraph.json')), false);
+  },
+);
+
+test(
+  'CodeGraph enable preserves user-owned server entries and creates review candidates',
+  { skip: process.platform !== 'win32' },
+  (t) => {
+    const root = project(t);
+    write(
+      root,
+      '.mcp.json',
+      '{ // Keep this provider\n "mcpServers": {"codegraph": {"command":"user-provider"}}\n}\n',
+    );
+    write(
+      root,
+      '.codex/config.toml',
+      '# Existing provider\n[mcp_servers.codegraph]\ncommand = "user-provider"\n',
+    );
+    configureCodeGraph(root, conformance(root), process.execPath, [
+      'test-provider.js',
+      'serve',
+      '--mcp',
+      '--path',
+      root,
+    ]);
+    const report = installProject(root);
+    assert.equal(parse(read(root, '.mcp.json')).mcpServers.codegraph.command, 'user-provider');
+    assert.match(read(root, '.mcp.json'), /Keep this provider/);
+    assert.match(read(root, '.codex/config.toml'), /command = "user-provider"/);
+    assert.ok(report.conflicts.some((item) => item.path === '.mcp.json#mcpServers.codegraph'));
+    assert.ok(report.conflicts.some((item) => item.path === '.codex/config.toml#codegraph'));
+    assert.equal(
+      doctor(root).platforms[0].capabilities.find((item) => item.capability === 'adapter-files')
+        .status,
+      'restricted',
+    );
+  },
+);

@@ -1,0 +1,64 @@
+{
+  "name": "taskforces",
+  "version": "0.1.0-alpha.3.1",
+  "description": "Copilot-native engineering task forces, traceability, and reviewed project knowledge.",
+  "type": "module",
+  "bin": {
+    "taskforces": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./vscode-host": {
+      "types": "./dist/vscode-host.d.ts",
+      "import": "./dist/vscode-host.js"
+    }
+  },
+  "files": [
+    "dist",
+    "resources",
+    "docs",
+    "examples",
+    "scripts",
+    "extensions/vscode-model-bridge",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=24.0.0 <25 || >=26.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "check": "npm test",
+    "prepack": "npm run build",
+    "evaluate": "node scripts/evaluate.mjs",
+    "package:smoke": "node scripts/package-smoke.mjs"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VuThach3001/VeryThinker.git"
+  },
+  "keywords": [
+    "agents",
+    "skills",
+    "mcp",
+    "traceability",
+    "embedded",
+    "v-model"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "jsonc-parser": "3.3.1",
+    "yaml": "2.9.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "prettier": "3.9.10",
+    "typescript": "7.0.2"
+  }
+}

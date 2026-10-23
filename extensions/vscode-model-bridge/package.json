@@ -1,0 +1,26 @@
+{
+  "name": "taskforces-model-bridge",
+  "displayName": "TaskForces Model Bridge",
+  "publisher": "taskforces",
+  "version": "0.1.0",
+  "description": "Optional workspace-scoped signed VS Code language model bridge for TaskForces; historical extension identity retained.",
+  "engines": { "vscode": "^1.109.0" },
+  "main": "./extension.cjs",
+  "capabilities": { "untrustedWorkspaces": { "supported": false }, "virtualWorkspaces": false },
+  "extensionKind": ["workspace"],
+  "contributes": {
+    "commands": [
+      { "command": "taskforces.bridge.enable", "title": "TaskForces: Enable Model Bridge" },
+      { "command": "taskforces.bridge.disable", "title": "TaskForces: Disable Model Bridge" }
+    ],
+    "configuration": {
+      "title": "TaskForces Model Bridge",
+      "properties": {
+        "taskforces.bridge.runtimePath": {
+          "type": "string", "default": "", "scope": "machine",
+          "description": "Absolute path to trusted installed taskforces package directory (legacy taskforces also supported; contains package.json and dist). Never inferred from workspace code."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+node_modules/
+**/__pycache__/
+dist/
+artifacts/
+*.tgz
+.taskforces/cache/
+.taskforces/runs/
+.taskforces/contributions/
+*.taskforces-update
+
+# Compatibility: local state from unmigrated projects.
+.verythinker/cache/
+.verythinker/runs/
+.verythinker/contributions/
+*.verythinker-update
