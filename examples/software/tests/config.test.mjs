@@ -22,7 +22,7 @@ test('SW-CHECK-001: valid boundaries and invalid inputs', () => {
 });
 
 test('SW-CHECK-002: persistent configuration survives a new reader; invalid writes preserve it', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'taskforces-config-'));
+  const dir = await mkdtemp(join(tmpdir(), 'neomind-config-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const file = join(dir, 'settings', 'config.json');
   assert.deepEqual(await loadConfig(file), DEFAULT_CONFIG);
@@ -40,7 +40,7 @@ test('SW-CHECK-002: persistent configuration survives a new reader; invalid writ
 });
 
 test('SW-CHECK-003: CLI acceptance in separate processes', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'taskforces-config-cli-'));
+  const dir = await mkdtemp(join(tmpdir(), 'neomind-config-cli-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const file = join(dir, 'config.json');
   const cli = fileURLToPath(new URL('../cli.mjs', import.meta.url));

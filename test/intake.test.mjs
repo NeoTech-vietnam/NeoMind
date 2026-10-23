@@ -12,7 +12,7 @@ import { createMcpServer } from '../dist/mcp.js';
 
 const requirement = 'Reject invalid configuration without changing stored values.';
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-intake-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-intake-'));
   initialize(root, { project_id: 'INTAKE' });
   t.after(() => {
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));

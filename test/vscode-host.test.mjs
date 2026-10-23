@@ -40,11 +40,11 @@ function fake(root, respond = ({ messages }) => messages.at(-1).content?.[0] ins
   return { api, get count() { return count; } };
 }
 async function setup(t, respond, policyPatch = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-vscode-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-vscode-'));
   initialize(root, { project_id: 'HOST', name: 'Host test' });
   const policy = { ...ensureRoutingPolicy(root), strong_provider: 'test-vendor', worker_provider: 'worker-vendor',
     vscode_effort_policy: 'allow-unavailable', ...policyPatch };
-  writeFileSync(join(root, '.taskforces/routing.json'), JSON.stringify(policy));
+  writeFileSync(join(root, '.neomind/routing.json'), JSON.stringify(policy));
   const model = fake(root, respond);
   const host = await enableVSCodeHost(model.api, root);
   t.after(async () => { await shutdownNative(root); await host.close(); rmSync(root, { recursive: true, force: true }); });
@@ -81,7 +81,7 @@ test('VS Code host selects exact vendor/ID, signs truthful provenance, resumes a
   writeFileSync(path, JSON.stringify({ ...done, model_provider: 'forged-provider' }));
   assert.throws(() => readInvocation(root, done.id), /signature/);
   writeFileSync(path, original);
-  writeFileSync(join(root, '.taskforces/tools.json'), '{}');
+  writeFileSync(join(root, '.neomind/tools.json'), '{}');
   assert.match(routingProblems(root, 'reviewer', done.id).join(' '), /configuration changed/);
   await assert.rejects(resumeNative(root, done.id), /configuration changed/);
 });
@@ -183,11 +183,11 @@ test('workspace trust, disabled/stale host, effort ceiling, consent refusal, una
   assert.equal(receipt.state, 'blocked'); assert.equal(model.count, 0);
   model.api.workspace.isTrusted = true;
   delete policy.vscode_effort_policy;
-  writeFileSync(join(root, '.taskforces/routing.json'), JSON.stringify(policy));
+  writeFileSync(join(root, '.neomind/routing.json'), JSON.stringify(policy));
   receipt = await startNative(root, { role: 'architect', prompt: 'Require effort.' });
   assert.equal(receipt.state, 'blocked'); assert.equal(model.count, 0);
   policy.vscode_effort_policy = 'allow-unavailable';
-  writeFileSync(join(root, '.taskforces/routing.json'), JSON.stringify(policy));
+  writeFileSync(join(root, '.neomind/routing.json'), JSON.stringify(policy));
   model.api.lm.selectChatModels = async () => [];
   receipt = await startNative(root, { role: 'architect', prompt: 'Unavailable model.' });
   assert.equal(receipt.state, 'blocked'); assert.match(receipt.error, /unavailable from live model discovery/);
@@ -226,7 +226,7 @@ test('model mismatch, forged tools, routing change, cancellation and host shutdo
   assert.equal(receipt.state, 'running');
   assert.equal((await interruptNative(root, receipt.id)).state, 'interrupted');
   receipt = await startNative(root, { role: 'reviewer', prompt: 'Block changed routing.' });
-  policy.strong_provider = 'changed'; writeFileSync(join(root, '.taskforces/routing.json'), JSON.stringify(policy));
+  policy.strong_provider = 'changed'; writeFileSync(join(root, '.neomind/routing.json'), JSON.stringify(policy));
   assert.equal((await ended(root, receipt.id)).state, 'blocked');
   receipt = await startNative(root, { role: 'reviewer', prompt: 'Host shutdown.' });
   await host.close();
@@ -260,7 +260,7 @@ test('catalog labels resolve exact vendor; workers fall back only on unavailable
   writeFileSync(catalog, JSON.stringify([{ name: 'Worker display group', vendor: 'customendpoint',
     models: [{ id: 'available-id', name: 'Second' }, { id: 'unavailable-id', name: 'First' }] }]));
   policy.worker_provider = 'Worker display group'; policy.language_models_file = catalog;
-  writeFileSync(join(root, '.taskforces/routing.json'), JSON.stringify(policy));
+  writeFileSync(join(root, '.neomind/routing.json'), JSON.stringify(policy));
   const selectors = [], select = model.api.lm.selectChatModels;
   model.api.lm.selectChatModels = async selector => {
     selectors.push(selector);
@@ -289,7 +289,7 @@ test('decorated policy invokes canonical VS Code vendor/ID and routing rejects s
   let done;
   for (const requested of ['canonical-id', 'canonical-id (customendpoint)', 'Display Name (customendpoint)']) {
     policy.strong_model = requested;
-    writeFileSync(join(root, '.taskforces/routing.json'), JSON.stringify(policy));
+    writeFileSync(join(root, '.neomind/routing.json'), JSON.stringify(policy));
     const receipt = await startNative(root, { role: 'reviewer', prompt: 'Review through decorated policy.' });
     done = await ended(root, receipt.id);
     assert.equal(done.state, 'completed', done.error);
@@ -303,7 +303,7 @@ test('decorated policy invokes canonical VS Code vendor/ID and routing rejects s
   assert.deepEqual(selectors, Array.from({ length: 3 }, () => ({ vendor: 'customendpoint', id: 'canonical-id' })));
   const path = join(root, done.receipt_path), original = readFileSync(path, 'utf8');
   // Re-sign only the fixture receipt to exercise semantic routing checks, not signature rejection.
-  const key = readFileSync(join(root, '.taskforces/cache/native/private-key.pem'), 'utf8');
+  const key = readFileSync(join(root, '.neomind/cache/native/private-key.pem'), 'utf8');
   try {
     for (const [patch, problem] of [
       [{ confirmed_model: policy.strong_model }, /did not acknowledge the permitted requested model/],
@@ -337,7 +337,7 @@ test('VS Code policy resolves literal parentheses and settings but rejects scope
   const group = { name: 'Endpoint group', vendor: 'customendpoint', models: [entry] };
   function run(requested, catalog, provider = 'Endpoint group') {
     policy.strong_model = requested; policy.strong_provider = provider;
-    writeFileSync(join(root, '.taskforces/routing.json'), JSON.stringify(policy));
+    writeFileSync(join(root, '.neomind/routing.json'), JSON.stringify(policy));
     writeFileSync(join(root, 'models.json'), JSON.stringify(catalog));
     return vscodeSelection(root, 'reviewer', requested);
   }
@@ -428,7 +428,7 @@ test('manager resumes unchanged configuration but starts fresh in same workflow 
   const unchanged = await ended(root, resumed.invocation.id);
   assert.equal(unchanged.native_thread_id, original.native_thread_id);
   policy.strong_provider = 'new-exact-vendor';
-  writeFileSync(join(root, '.taskforces/routing.json'), JSON.stringify(policy));
+  writeFileSync(join(root, '.neomind/routing.json'), JSON.stringify(policy));
   const refresh = { workflow_id: original.workflow_id, request_id: 'config-refresh' };
   const fresh = await managedRun(root, refresh);
   assert.equal(fresh.blocker, undefined);

@@ -1,6 +1,6 @@
-# TaskForces pilots
+# NeoMind pilots
 
-These scripted fixtures retain historical logical `.taskforces` paths and strict-runtime examples. Fresh installed projects use `.taskforces` and the full Copilot-native lifecycle; see [Copilot runtime](../docs/copilot-runtime.md). Fixture success does not establish live subagent execution.
+These scripted fixtures retain historical logical `.neomind` paths and strict-runtime examples. Fresh installed projects use `.neomind` and the full Copilot-native lifecycle; see [Copilot runtime](../docs/copilot-runtime.md). Fixture success does not establish live subagent execution.
 
 The software and embedded directories contain independently runnable implementations, requirements, interfaces, and named checks. `verification.json` captures actual checks with exact source hashes. The evidence includes local ngspice simulation, C cross-compilation, and C host execution against the behavioral model when those tools are supplied; its limitations remain explicit.
 
@@ -19,9 +19,9 @@ Use new or empty output directories. Existing content is preserved. Each command
 
 Generation stops at submission. A real reviewer must inspect design, interfaces, implementation, check coverage, and evidence before approving records. The generated review commands show how to record that decision; they do not establish that a review happened. After reviews pass, use `task accept`. Review the lesson separately before `memory contribute` prepares a knowledge-pack and PR proposal. Human approval and an actual upstream PR are still required for sharing.
 
-Raw check logs and receipts remain in the generated project's `.taskforces/runs`. Keep them when moving the working project; verification correctly rejects missing evidence. No model request or confirmation is invented for the script-driven run.
+Raw check logs and receipts remain in the generated project's `.neomind/runs`. Keep them when moving the working project; verification correctly rejects missing evidence. No model request or confirmation is invented for the script-driven run.
 
-For current project work, install TaskForces and give its manager a requirement. Full Copilot-native execution uses ordinary named VS Code subagents and preserves unsigned assurance after engineering acceptance. Explicit strict execution additionally requires signed routing receipts through the optional Bridge; fixture identities cannot replace those receipts. See [Copilot runtime](../docs/copilot-runtime.md).
+For current project work, install NeoMind and give its manager a requirement. Full Copilot-native execution uses ordinary named VS Code subagents and preserves unsigned assurance after engineering acceptance. Explicit strict execution additionally requires signed routing receipts through the optional Bridge; fixture identities cannot replace those receipts. See [Copilot runtime](../docs/copilot-runtime.md).
 
 ## Agent evaluation
 

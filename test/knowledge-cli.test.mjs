@@ -8,7 +8,7 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import * as api from 'taskforces';
+import * as api from 'neomind';
 import { dispatchKnowledgeCommand } from '../dist/knowledge-cli.js';
 import {
   discoverProjectKnowledge, searchProjectKnowledge, recordKnowledgeResearch,
@@ -25,7 +25,7 @@ const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const processMethods = ['spawnSync', 'spawn', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork'];
 
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-knowledge-cli-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-knowledge-cli-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   api.initialize(root, {
     project_id: 'PRIVATE-KNOWLEDGE-CLI', profile: 'basic',
@@ -34,7 +34,7 @@ function project(t) {
   api.ensureRoutingPolicy(root);
   const installation = api.installProject(root);
   assert.deepEqual(installation.conflicts, []);
-  const policyPath = join(root, '.taskforces/automation.json');
+  const policyPath = join(root, '.neomind/automation.json');
   const policy = JSON.parse(readFileSync(policyPath, 'utf8'));
   writeFileSync(policyPath, JSON.stringify({ ...policy, upstream: repository }));
   const workflow = api.beginWorkflow(root, {
@@ -44,7 +44,7 @@ function project(t) {
   mkdirSync(join(root, 'src'));
   writeFileSync(join(root, 'src/value.mjs'), source);
   // Explicitly empty durable cache; no remote discovery is implied by local search.
-  mkdirSync(join(root, '.taskforces/knowledge-cache'));
+  mkdirSync(join(root, '.neomind/knowledge-cache'));
   return { root, workflow, requirement, installation };
 }
 
@@ -108,7 +108,7 @@ const offlinePreload = `data:text/javascript,${encodeURIComponent(`
   import { syncBuiltinESMExports } from 'node:module';
   import { writeFileSync } from 'node:fs';
   const deny = () => {
-    writeFileSync(process.env.TASKFORCES_CLI_REMOTE_ATTEMPT, 'Unexpected remote/process call');
+    writeFileSync(process.env.NEOMIND_CLI_REMOTE_ATTEMPT, 'Unexpected remote/process call');
     throw new Error('External processes and network are forbidden in knowledge CLI tests.');
   };
   for (const name of ${JSON.stringify(processMethods)}) childProcess[name] = deny;
@@ -122,7 +122,7 @@ function invoke(work, ...args) {
     '--import', offlinePreload, cli, ...args, '--project', work.root, '--json',
   ], {
     cwd: work.root, encoding: 'utf8', windowsHide: true, timeout: 20000,
-    env: { ...process.env, NODE_OPTIONS: '', TASKFORCES_CLI_REMOTE_ATTEMPT: marker },
+    env: { ...process.env, NODE_OPTIONS: '', NEOMIND_CLI_REMOTE_ATTEMPT: marker },
   });
   assert.ifError(result.error);
   assert.equal(existsSync(marker), false, 'CLI must not attempt a remote call or nested process');
@@ -169,7 +169,7 @@ test('package root exports the knowledge reuse and project publication APIs', ()
 test('CLI dispatcher discovers an empty upstream and searches only the empty local cache', async (t) => {
   const work = project(t);
   // Only this simulated remote fixture opts in; ordinary local research stays local-only.
-  const policyPath = join(work.root, '.taskforces/automation.json');
+  const policyPath = join(work.root, '.neomind/automation.json');
   const policy = JSON.parse(readFileSync(policyPath, 'utf8'));
   writeFileSync(policyPath, JSON.stringify({ ...policy, network_policy: 'remote-enabled' }));
   await offline(async (attempts) => {
@@ -182,8 +182,8 @@ test('CLI dispatcher discovers an empty upstream and searches only the empty loc
     assert.deepEqual(await dispatchKnowledgeCommand(work.root, 'knowledge', 'search',
       [JSON.stringify(input)]), { handled: true, result: [] });
     assert.equal(attempts.length, 1, 'Local search must not invoke gh');
-    assert.deepEqual(readdirSync(join(work.root, '.taskforces/knowledge-cache')), []);
-    assert.ok(existsSync(join(work.root, '.taskforces/cache/knowledge.sqlite')));
+    assert.deepEqual(readdirSync(join(work.root, '.neomind/knowledge-cache')), []);
+    assert.ok(existsSync(join(work.root, '.neomind/cache/knowledge.sqlite')));
     assert.deepEqual(await dispatchKnowledgeCommand(work.root, 'unrelated', 'search', []),
       { handled: false });
   }, (command, args, options) => {
@@ -240,7 +240,7 @@ test('standalone CLI parses --data for local search and native workflow research
   const record = success(invoke(work, 'knowledge', 'research', work.workflow.meta.id,
     '--data', JSON.stringify(researchInput())));
   assertResearch(work, record);
-  assert.deepEqual(readdirSync(join(work.root, '.taskforces/knowledge-cache')), []);
+  assert.deepEqual(readdirSync(join(work.root, '.neomind/knowledge-cache')), []);
 });
 
 test('standalone CLI forwards --upstream to repository validation before any remote call', (t) => {
@@ -250,7 +250,7 @@ test('standalone CLI forwards --upstream to repository validation before any rem
   const invalid = invoke(work, 'knowledge', 'publish', lesson.meta.id, '--upstream', '../invalid');
   failure(invalid, /Upstream must be a safe explicit owner\/repository name/);
   assert.doesNotMatch(invalid.stderr, /Use knowledge publish|is required/);
-  assert.equal(existsSync(join(work.root, '.taskforces/project-knowledge', `${lesson.meta.id}.json`)), false,
+  assert.equal(existsSync(join(work.root, '.neomind/project-knowledge', `${lesson.meta.id}.json`)), false,
     'Invalid repository must not freeze publication state');
 });
 
@@ -292,14 +292,14 @@ test('standalone CLI --public-safe review persists the actual invocation and bin
 
 test('installer copies the knowledge reuse skill for every adapter without a seventh Copilot agent', (t) => {
   const work = project(t);
-  const skillPath = 'skills/taskforces-knowledge-reuse/SKILL.md';
-  const resource = readFileSync(new URL('../resources/skills/taskforces-knowledge-reuse/SKILL.md',
+  const skillPath = 'skills/neomind-knowledge-reuse/SKILL.md';
+  const resource = readFileSync(new URL('../resources/skills/neomind-knowledge-reuse/SKILL.md',
     import.meta.url), 'utf8');
   for (const prefix of ['.agents', '.claude', '.github']) {
     const path = `${prefix}/${skillPath}`;
     assert.ok(work.installation.installed.includes(path), `Installed ${path}`);
     const installed = readFileSync(join(work.root, path), 'utf8');
-    assert.match(installed, /^---\r?\nname: taskforces-knowledge-reuse\r?\n/);
+    assert.match(installed, /^---\r?\nname: neomind-knowledge-reuse\r?\n/);
     for (const contract of ['knowledge discover --data JSON', 'knowledge search --data JSON',
       'knowledge research WORKFLOW_ID --data JSON', 'knowledge publish CANDIDATE --upstream OWNER/REPO',
       '--generalization-review --public-safe', 'cornell_note_fingerprints', 'source_fingerprints'])
@@ -315,8 +315,8 @@ test('installer copies the knowledge reuse skill for every adapter without a sev
     if (prefix !== '.github') assert.equal(installed, resource);
   }
   assert.deepEqual(readdirSync(join(work.root, '.github/agents')).sort(), [
-    'taskforces-fnd.agent.md', 'taskforces-manager.agent.md', 'taskforces-p-res.agent.md',
-    'taskforces-reviewer.agent.md', 'taskforces-swsd.agent.md', 'taskforces-tester.agent.md',
+    'neomind-fnd.agent.md', 'neomind-manager.agent.md', 'neomind-p-res.agent.md',
+    'neomind-reviewer.agent.md', 'neomind-swsd.agent.md', 'neomind-tester.agent.md',
   ]);
   assert.equal(readdirSync(join(work.root, '.claude/agents')).length, 12);
   assert.equal(readdirSync(join(work.root, '.codex/agents')).length, 12);

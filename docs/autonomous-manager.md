@@ -1,6 +1,6 @@
 # Manager-first workflow
 
-After installation, give the native agent one engineering requirement in ordinary language. Managed Copilot instructions route engineering intent to `Manager Agent`, which delegates bounded work through the five standard visible VS Code specialists: SWSD Agent, P-RES Agent, FnD Agent, Reviewer Agent and Tester Agent. Launch the returned handoff with its unchanged prompt; inline steps are not delegation. Full native closure requires workflow-linked Cornell findings and delivers those findings plus actual test reports for separate human release approval. Fresh projects use the full `copilot-native` lifecycle with unsigned execution assurance; optional strict mode retains the signed VS Code Bridge. You do not need to choose specialist roles, maintain documentation, or run record-management commands.
+After installation, give the native agent one engineering requirement in ordinary language. Managed Copilot instructions route engineering intent to `NeoMind Manager Agent`, which delegates bounded work through the five standard visible VS Code specialists: NeoMind SWSD Agent, NeoMind P-RES Agent, NeoMind FnD Agent, NeoMind Reviewer Agent and NeoMind Tester Agent. Launch the returned handoff with its unchanged prompt; inline steps are not delegation. Full native closure requires workflow-linked Cornell findings and delivers those findings plus actual test reports for separate human release approval. Fresh projects use the full `copilot-native` lifecycle with unsigned execution assurance; optional strict mode retains the signed VS Code Bridge. You do not need to choose specialist roles, maintain documentation, or run record-management commands.
 
 For example:
 
@@ -32,11 +32,11 @@ The iterative V-model links specification/design to corresponding verification l
 
 The manager declares documentation outputs when assigning work. Workers update affected specifications, designs, interfaces, project guides, and seven-section work records. Submission stores substantive content, and review assesses the current implementation/documentation baseline. Missing required documentation keeps the workflow open.
 
-Fresh project records live under `.taskforces`; unmigrated projects retain `.taskforces`. Explicit offline `taskforces migrate` renames storage without rewriting historical bytes or logical references. Shared contributions contain only independently reviewed generalized content with public-safe provenance, applicability, assumptions, and limitations. Work that yields no reusable conclusion records a concrete no-lesson reason rather than inventing a lesson.
+Fresh project records live under `.neomind`; unmigrated projects retain `.neomind`. Explicit offline `neomind migrate` renames storage without rewriting historical bytes or logical references. Shared contributions contain only independently reviewed generalized content with public-safe provenance, applicability, assumptions, and limitations. Work that yields no reusable conclusion records a concrete no-lesson reason rather than inventing a lesson.
 
 ## Automatic draft PR policy
 
-Installation creates `.taskforces/automation.json` (legacy projects: `.verythinker/automation.json`). The default enables automatic reviewed documentation/knowledge PR creation to `VuThach3001/VeryThinker`. Set another upstream or disable automatic PR creation through project policy when appropriate. Managed installation preserves user edits; update conflicts produce candidates for review.
+Installation creates `.neomind/automation.json` (legacy projects: `.verythinker/automation.json`). The default enables automatic reviewed documentation/knowledge PR creation to `VuThach3001/VeryThinker`. Set another upstream or disable automatic PR creation through project policy when appropriate. Managed installation preserves user edits; update conflicts produce candidates for review.
 
 The manager reads the policy and performs routine submission after the generalization review, without another permission question. The contribution core creates a draft PR and records it for recovery; it never merges a PR or publishes an npm package. Human approval remains the merge decision. GitHub authentication and repository write access must already be available for submission.
 
@@ -58,4 +58,4 @@ The final response contains decisions and rationale, delivered behavior, actual 
 
 ## Design basis
 
-TaskForces retains its native clients and adopts CAMEL's separation of role/task context, explicit multi-agent collaboration, coordinator-owned task execution, and recorded lifecycle/termination. The implementation is independent TypeScript; it does not bundle a Python CAMEL runtime. See [CAMEL research](camel-research.md) for source-backed adoption boundaries and licensing.
+NeoMind retains its native clients and adopts CAMEL's separation of role/task context, explicit multi-agent collaboration, coordinator-owned task execution, and recorded lifecycle/termination. The implementation is independent TypeScript; it does not bundle a Python CAMEL runtime. See [CAMEL research](camel-research.md) for source-backed adoption boundaries and licensing.

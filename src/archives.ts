@@ -99,7 +99,7 @@ export interface AcceptedArchive {
   publication: ArchivePublication;
   derived: boolean;
 }
-const policyPath = '.taskforces/archive.json';
+const policyPath = '.neomind/archive.json';
 const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const snapshotPattern = /^[a-f0-9-]{36}$/;
 function releaseParts(value: string): [number, number, number] {
@@ -133,7 +133,7 @@ export function readArchivePolicy(root: string): ArchivePolicy | null {
     throw new Error('Archive policy is invalid; inspect it before publication.');
   branchName(policy.namespace);
   if (policy.last_release !== null) releaseParts(policy.last_release);
-  const restorationPath = safePath(root, '.taskforces/archive-restoration.json');
+  const restorationPath = safePath(root, '.neomind/archive-restoration.json');
   if (existsSync(restorationPath)) {
     const restoration = JSON.parse(readFileSync(restorationPath, 'utf8'));
     if (
@@ -446,13 +446,17 @@ function canonical(path: string): string {
     throw new Error(`Archive input requires a canonical project-relative path: ${path}`);
   return path;
 }
+/** Compare namespace aliases without rewriting frozen manifest paths or content. */
+function logicalManagedPath(path: string): string {
+  return path.replace(/^\.(?:taskforces|verythinker)(?=\/)/, '.neomind');
+}
 function prohibited(path: string): boolean {
   const envTemplate = /(?:^|\/)\.env\.(?:example|sample|template)$/i.test(path);
   return (
     /(?:^|\/)(?:\.git|node_modules|cache|operations|contributions|archives|archive-intents|archive-reassessments|runs)(?:\/|$)/i.test(
       path,
     ) ||
-    /^\.(?:verythinker|taskforces)\/(?:tools|raw|sessions|capabilities)(?:\/|$)/i.test(path) ||
+    /^\.(?:verythinker|taskforces|neomind)\/(?:tools|raw|sessions|capabilities)(?:\/|$)/i.test(path) ||
     (/(?:^|\/)(?:\.env(?:\.[^/]+)?|credentials[^/]*|id_rsa|id_ed25519|private-key\.pem|[^/]+\.sqlite(?:-[^/]*)?|[^/]+\.(?:lock|tmp))$/i.test(
       path,
     ) &&
@@ -508,7 +512,7 @@ function collectFiles(
     if (recordFingerprint(record) === historical.fingerprint) continue;
     if (record.meta.data.kind === 'manager-workflow' && prior) {
       const frozen = getRecord(
-        safePath(root, `.taskforces/archives/${prior.snapshot_id}/workspace`),
+        safePath(root, `.neomind/archives/${prior.snapshot_id}/workspace`),
         historical.id,
       );
       const contract = (value: ProjectRecord) => ({
@@ -577,22 +581,22 @@ function collectFiles(
       (scope) => scope === '.' || path === scope || path.startsWith(scope + '/'),
     );
   const control = (path: string) =>
-    path.startsWith('.taskforces/records/') ||
-    path.startsWith('.taskforces/native/keys/') ||
+    logicalManagedPath(path).startsWith('.neomind/records/') ||
+    logicalManagedPath(path).startsWith('.neomind/native/keys/') ||
     [
-      '.taskforces/config.json',
-      '.taskforces/id-sequence.json',
-      '.taskforces/automation.json',
+      '.neomind/config.json',
+      '.neomind/id-sequence.json',
+      '.neomind/automation.json',
       policyPath,
-      '.taskforces/archive-restoration.json',
-      '.taskforces/routing.json',
-      '.taskforces/tools.json',
-      '.taskforces/pack-lock.json',
-      '.taskforces/tool-lock.json',
-      '.taskforces/tools.lock.json',
-      '.taskforces/native-runtime.lock.json',
-      '.taskforces/native/trust.json',
-    ].includes(path);
+      '.neomind/archive-restoration.json',
+      '.neomind/routing.json',
+      '.neomind/tools.json',
+      '.neomind/pack-lock.json',
+      '.neomind/tool-lock.json',
+      '.neomind/tools.lock.json',
+      '.neomind/native-runtime.lock.json',
+      '.neomind/native/trust.json',
+    ].includes(logicalManagedPath(path));
   for (const file of prior?.files ?? []) {
     if (control(file.path) || covered(file.path)) continue;
     if (
@@ -704,7 +708,7 @@ function collectFiles(
         snapshotPattern.test(value) &&
         (key.endsWith('receipt_id') || !nativeWorkflowRecord(root, record))
       )
-        add(`.taskforces/native/receipts/${value}.json`);
+        add(`.neomind/native/receipts/${value}.json`);
     }
     for (const id of [
       data.invocation_id,
@@ -714,9 +718,9 @@ function collectFiles(
       if (
         typeof id === 'string' &&
         snapshotPattern.test(id) &&
-        existsSync(safePath(root, `.taskforces/native/receipts/${id}.json`))
+        existsSync(safePath(root, `.neomind/native/receipts/${id}.json`))
       )
-        add(`.taskforces/native/receipts/${id}.json`);
+        add(`.neomind/native/receipts/${id}.json`);
   }
   for (const path of sourcePaths) {
     canonical(path);
@@ -729,30 +733,30 @@ function collectFiles(
   // Old accepted files remain part of project history, except files explicitly absent now.
   for (const file of prior?.files ?? []) if (!prohibited(file.path)) add(file.path, true);
   for (const path of [
-    '.taskforces/config.json',
-    '.taskforces/id-sequence.json',
-    '.taskforces/automation.json',
+    '.neomind/config.json',
+    '.neomind/id-sequence.json',
+    '.neomind/automation.json',
     policyPath,
-    '.taskforces/routing.json',
-    '.taskforces/tools.json',
-    '.taskforces/archive-restoration.json',
-    '.taskforces/pack-lock.json',
-    '.taskforces/recipe-lock.json',
-    '.taskforces/tool-lock.json',
-    '.taskforces/tools.lock.json',
-    '.taskforces/native-runtime.lock.json',
-    '.taskforces/native/trust.json',
-    '.taskforces/native/keys',
+    '.neomind/routing.json',
+    '.neomind/tools.json',
+    '.neomind/archive-restoration.json',
+    '.neomind/pack-lock.json',
+    '.neomind/recipe-lock.json',
+    '.neomind/tool-lock.json',
+    '.neomind/tools.lock.json',
+    '.neomind/native-runtime.lock.json',
+    '.neomind/native/trust.json',
+    '.neomind/native/keys',
     '.codex/config.toml',
   ])
     add(path, true);
-  const packsPath = safePath(root, '.taskforces/pack-lock.json');
+  const packsPath = safePath(root, '.neomind/pack-lock.json');
   if (existsSync(packsPath))
     for (const pack of JSON.parse(readFileSync(packsPath, 'utf8')).packs ?? []) {
       if (typeof pack.path !== 'string') throw new Error('Locked pack has no portable path.');
       add(pack.path);
     }
-  const toolsPath = safePath(root, '.taskforces/tool-lock.json');
+  const toolsPath = safePath(root, '.neomind/tool-lock.json');
   if (existsSync(toolsPath))
     for (const provider of JSON.parse(readFileSync(toolsPath, 'utf8')).providers ?? []) {
       if (
@@ -763,7 +767,7 @@ function collectFiles(
           `Locked provider lacks reproducible dependency-lock identity: ${String(provider.id)}`,
         );
       const path = canonical(provider.dependency_lock_path);
-      if (!path.startsWith('.taskforces/tool-locks/'))
+      if (!logicalManagedPath(path).startsWith('.neomind/tool-locks/'))
         throw new Error(`Provider dependency lock is outside project lock storage: ${path}`);
       if (
         !existsSync(safePath(root, path)) ||
@@ -816,8 +820,8 @@ export function prepareArchive(
       } else {
         if (!candidates) {
           candidates = [];
-          for (const id of existsSync(safePath(root, '.taskforces/archives'))
-            ? readdirSync(safePath(root, '.taskforces/archives'))
+          for (const id of existsSync(safePath(root, '.neomind/archives'))
+            ? readdirSync(safePath(root, '.neomind/archives'))
             : []) {
             if (!snapshotPattern.test(id)) continue;
             const cached = readSnapshot(root, id);
@@ -849,7 +853,7 @@ export function prepareArchive(
       evidenceInputs,
     );
     const snapshotId = randomUUID();
-    const directory = `.taskforces/archives/${snapshotId}`;
+    const directory = `.neomind/archives/${snapshotId}`;
     const fileEntries = inputs.paths.map((path) => {
       const bytes = readFileSync(safePath(root, path));
       secretCheck(path, bytes);
@@ -935,7 +939,7 @@ export function prepareArchive(
 }
 function readSnapshot(root: string, id: string): ArchiveSnapshot {
   if (!snapshotPattern.test(id)) throw new Error('Invalid archive snapshot ID.');
-  const path = `.taskforces/archives/${id}`;
+  const path = `.neomind/archives/${id}`;
   const encoded = readFileSync(safePath(root, `${path}/manifest.json`));
   const manifest = JSON.parse(encoded.toString('utf8')) as ArchiveManifest;
   const identity = JSON.parse(readFileSync(safePath(root, `${path}/identity.json`), 'utf8'));
@@ -948,7 +952,7 @@ function readSnapshot(root: string, id: string): ArchiveSnapshot {
   )
     throw new Error('Archive manifest identity is invalid or changed.');
   if (
-    new Set(manifest.files.map((file) => canonical(file.path))).size !== manifest.files.length ||
+    new Set(manifest.files.map((file) => logicalManagedPath(canonical(file.path)))).size !== manifest.files.length ||
     new Set(manifest.records.map((record) => record.id)).size !== manifest.records.length
   )
     throw new Error('Archive contains duplicate paths or record IDs.');
@@ -985,7 +989,7 @@ function githubRequest(method: string, endpoint: string, body?: unknown): any {
 function assertRemoteArchiveAllowed(root: string): void {
   if (readAutomationPolicy(root).network_policy === 'local-only')
     throw new Error(
-      'Local-only policy disables remote archive operations. Use local archive prepare, inspect or restore, or set network_policy to "remote-enabled" in .taskforces/automation.json to opt in.',
+      'Local-only policy disables remote archive operations. Use local archive prepare, inspect or restore, or set network_policy to "remote-enabled" in .neomind/automation.json to opt in.',
     );
 }
 /** Check the publication boundary before freezing a new manager archive intent. */
@@ -1079,10 +1083,10 @@ export function publishArchive(
         'Immutable archive release already exists with different content. Reassess classification and baseline.',
       );
     const incrementRef = ref(request, policy.repository, incrementBranch);
-    const archiveDirectory = safePath(root, '.taskforces/archives');
+    const archiveDirectory = safePath(root, '.neomind/archives');
     for (const item of existsSync(archiveDirectory) ? readdirSync(archiveDirectory) : []) {
       if (item === id || !snapshotPattern.test(item)) continue;
-      const publicationPath = safePath(root, `.taskforces/archives/${item}/publication.json`);
+      const publicationPath = safePath(root, `.neomind/archives/${item}/publication.json`);
       if (!existsSync(publicationPath)) continue;
       const publication = JSON.parse(readFileSync(publicationPath, 'utf8')) as ArchivePublication;
       if (!['baseline-advanced', 'release-created', 'completed'].includes(publication.status))
@@ -1188,8 +1192,8 @@ export function publishArchive(
       // Fixed attribution/date makes Git object creation idempotent when a successful
       // response is lost before the local commit identity can be persisted.
       const attribution = {
-        name: 'TaskForces Archive',
-        email: 'archive@taskforces.invalid',
+        name: 'NeoMind Archive',
+        email: 'archive@neomind.invalid',
         date: manifest.created_at,
       };
       const commit = request('POST', `repos/${policy.repository}/git/commits`, {
@@ -1273,7 +1277,7 @@ export function publishArchive(
 }
 export function archiveStatus(root: string, id?: string): unknown {
   if (!id) {
-    const directory = safePath(root, '.taskforces/archives');
+    const directory = safePath(root, '.neomind/archives');
     return {
       policy: readArchivePolicy(root),
       snapshots: existsSync(directory)
@@ -1281,7 +1285,7 @@ export function archiveStatus(root: string, id?: string): unknown {
             .filter(
               (item) =>
                 snapshotPattern.test(item) &&
-                existsSync(safePath(root, `.taskforces/archives/${item}/manifest.json`)),
+                existsSync(safePath(root, `.neomind/archives/${item}/manifest.json`)),
             )
             .map((item) => archiveStatus(root, item))
         : [],
@@ -1305,12 +1309,12 @@ export function acceptedArchiveForWorkflow(
   if (policy?.last_snapshot_id) candidates.add(policy.last_snapshot_id);
   const stored = parent.meta.data.archive as Record<string, unknown> | undefined;
   if (typeof stored?.snapshot_id === 'string') candidates.add(stored.snapshot_id);
-  const intentPath = safePath(root, `.taskforces/archive-intents/${hash(workflowId)}.json`);
+  const intentPath = safePath(root, `.neomind/archive-intents/${hash(workflowId)}.json`);
   if (existsSync(intentPath)) {
     const intent = JSON.parse(readFileSync(intentPath, 'utf8'));
     if (typeof intent.snapshot_id === 'string') candidates.add(intent.snapshot_id);
   }
-  const restorationPath = safePath(root, '.taskforces/archive-restoration.json');
+  const restorationPath = safePath(root, '.neomind/archive-restoration.json');
   if (existsSync(restorationPath)) {
     const restoration = JSON.parse(readFileSync(restorationPath, 'utf8'));
     if (typeof restoration.snapshot_id === 'string') candidates.add(restoration.snapshot_id);
@@ -1361,20 +1365,21 @@ export function acceptedArchiveForWorkflow(
         );
     const ignored = new Set([
       parent.path,
-      '.taskforces/id-sequence.json',
-      '.taskforces/archive.json',
-      '.taskforces/archive-restoration.json',
+      '.neomind/id-sequence.json',
+      '.neomind/archive.json',
+      '.neomind/archive-restoration.json',
     ]);
     for (const record of snapshot.manifest.records) {
       if (record.id === workflowId) continue;
       const current = getRecord(root, record.id);
-      if (current.path !== record.path || recordFingerprint(current) !== record.fingerprint)
+      if (logicalManagedPath(current.path) !== logicalManagedPath(record.path) || recordFingerprint(current) !== record.fingerprint)
         throw new Error(
           `Accepted archive engineering record changed: ${record.id}. Begin a new managed increment.`,
         );
     }
     for (const file of snapshot.manifest.files) {
-      if (ignored.has(file.path) || file.path.startsWith('.taskforces/native/completion/'))
+      if (ignored.has(file.path) || ignored.has(logicalManagedPath(file.path)) ||
+        logicalManagedPath(file.path).startsWith('.neomind/native/completion/'))
         continue;
       if (
         !existsSync(safePath(root, file.path)) ||
@@ -1420,14 +1425,14 @@ export function reassessArchive(
   return withOperationLock(root, 'archive-publication', () => {
     const parent = workflow(root, workflowId);
     const policy = policyFor(root);
-    const intentPath = safePath(root, `.taskforces/archive-intents/${hash(workflowId)}.json`);
+    const intentPath = safePath(root, `.neomind/archive-intents/${hash(workflowId)}.json`);
     if (!existsSync(intentPath)) throw new Error('Workflow has no archive intent to reassess.');
     const intent = JSON.parse(readFileSync(intentPath, 'utf8'));
     // A retry after successful local transition returns the immutable receipt.
     if (!intent.snapshot_id && typeof intent.reassessment_id === 'string') {
       const receipt = JSON.parse(
         readFileSync(
-          safePath(root, `.taskforces/archive-reassessments/${intent.reassessment_id}.json`),
+          safePath(root, `.neomind/archive-reassessments/${intent.reassessment_id}.json`),
           'utf8',
         ),
       ) as ArchiveReassessment;
@@ -1528,10 +1533,10 @@ export function reassessArchive(
     let known: ArchiveSnapshot | null = null;
     let blocker: string | null = null;
     if (baseline !== policy.baseline_commit) {
-      const directory = safePath(root, '.taskforces/archives');
+      const directory = safePath(root, '.neomind/archives');
       for (const id of existsSync(directory) ? readdirSync(directory) : []) {
         if (!snapshotPattern.test(id)) continue;
-        const path = safePath(root, `.taskforces/archives/${id}/publication.json`);
+        const path = safePath(root, `.neomind/archives/${id}/publication.json`);
         if (!existsSync(path)) continue;
         const state = JSON.parse(readFileSync(path, 'utf8')) as ArchivePublication;
         if (
@@ -1576,21 +1581,21 @@ export function reassessArchive(
             throw new Error(`Reviewed reassessment path is outside the assigned scope: ${path}`);
         const ignored = new Set([
           getRecord(root, known.manifest.workflow_id).path,
-          '.taskforces/id-sequence.json',
-          '.taskforces/archive.json',
-          '.taskforces/archive-restoration.json',
+          '.neomind/id-sequence.json',
+          '.neomind/archive.json',
+          '.neomind/archive-restoration.json',
         ]);
         const deviations: string[] = [];
         for (const file of known.manifest.files) {
           if (
-            ignored.has(file.path) ||
+            ignored.has(file.path) || ignored.has(logicalManagedPath(file.path)) ||
             affectedPaths.some((path) => file.path === path || file.path.startsWith(path + '/'))
           )
             continue;
           if (
-            file.path.startsWith('.taskforces/records/') &&
+            logicalManagedPath(file.path).startsWith('.neomind/records/') &&
             known.manifest.records.some(
-              (record) => record.path === file.path && affectedRecords.has(record.id),
+              (record) => logicalManagedPath(record.path) === logicalManagedPath(file.path) && affectedRecords.has(record.id),
             )
           )
             continue;
@@ -1604,7 +1609,7 @@ export function reassessArchive(
           blocker = `Known remote baseline needs local integration/revalidation for unreviewed differences: ${deviations.join(', ')}. Record affected_paths/affected_records within the assigned scope and obtain a fresh independent change review before retiring the snapshot.`;
       }
     }
-    const directory = '.taskforces/archive-reassessments';
+    const directory = '.neomind/archive-reassessments';
     const prior = existsSync(safePath(root, directory))
       ? filesUnder(root, directory)
           .filter((path) => path.endsWith('.json'))
@@ -1736,7 +1741,7 @@ export function restoreArchive(
     const record = records.find((item) => item.meta.id === expected.id);
     if (
       !record ||
-      record.path !== expected.path ||
+      logicalManagedPath(record.path) !== logicalManagedPath(expected.path) ||
       record.meta.revision !== expected.revision ||
       recordFingerprint(record) !== expected.fingerprint
     )
@@ -1769,7 +1774,7 @@ export function restoreArchive(
         readFileSync(safePath(root, `${snapshot.path}/${file}`)),
       );
     atomicWrite(
-      safePath(target, '.taskforces/archive-restoration.json'),
+      safePath(target, '.neomind/archive-restoration.json'),
       JSON.stringify(
         {
           schema_version: 1,

@@ -7,7 +7,7 @@ import { vscodeSelection } from './vscode-policy.js';
 
 /** MCP remains in owning CLI process so manager and worker lifecycle APIs share ownership. */
 export class VSCodeSession {
-  private client = new Client({ name: 'taskforces-vscode-gateway', version: '1' });
+  private client = new Client({ name: 'neomind-vscode-gateway', version: '1' });
   private server: any;
   private host!: HostDescriptor;
   private stopped = false;

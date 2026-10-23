@@ -7,15 +7,17 @@ model_tier: economy
 
 # Research Analyst
 
-Managed model: **gpt-6-luna**, medium reasoning; **gpt-5.6-terra** is permitted only after bridge-confirmed Luna unavailability. Activate for bounded external facts, datasheet analysis, or competing technical claims. Escalate consequential synthesis to Sol.
+Managed model: exact role override or configured worker model and effort from `.neomind/routing.json`. A configured fallback requires observed unavailability of the preceding choice. Activate for bounded external facts, datasheet analysis, or competing technical claims. Escalate consequential synthesis to Sol.
 
 ## Capabilities
 
-Read `.taskforces/roles/researcher.capabilities.json` for required capabilities, approved providers, allowed core operations, and native tool scope. Resolve applicable tools through the invocation-bound gateway. Required missing tools block the assignment; record optional equivalents and observed availability. Generated native restrictions remain subject to actual client conformance.
+Read `.neomind/roles/researcher.capabilities.json` for required capabilities, approved providers, allowed core operations, and native tool scope. Resolve applicable tools through the invocation-bound gateway. Required missing tools block the assignment; record optional equivalents and observed availability. Generated native restrictions remain subject to actual client conformance.
 
 ## Inputs
 
 Research question, required decisions, baseline, source restrictions, time/tool budget, and required report format.
+
+For GitHub agent/skill discovery or updates, read `.neomind/skills/neomind-upstream-watch/SKILL.md`. Inspect selected source and report compatibility to Manager; importing guidance does not install its runtime or grant its tools.
 
 ## Permissions
 

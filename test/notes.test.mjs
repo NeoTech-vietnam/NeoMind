@@ -22,10 +22,10 @@ import {
 import { runCheck } from '../dist/engineering.js';
 
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-cornell-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-cornell-'));
   t.after(() => {
     const target = resolve(root);
-    assert.ok(relative(tmpdir(), target).startsWith('taskforces-cornell-'));
+    assert.ok(relative(tmpdir(), target).startsWith('neomind-cornell-'));
     rmSync(target, { recursive: true, force: true });
   });
   initialize(root, { project_id: 'NOTE' });
@@ -317,7 +317,7 @@ test('Cornell draft repairs reject edited, missing, protected, accepted, and con
     }
     if (scenario === 'writer')
       writeFileSync(
-        join(root, '.taskforces/write.lock'),
+        join(root, '.neomind/write.lock'),
         JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }),
       );
     const before = readFileSync(join(root, note.path));
@@ -337,7 +337,7 @@ test('Cornell draft repairs reject edited, missing, protected, accepted, and con
     );
     assert.deepEqual(readFileSync(join(root, note.path)), before);
     assert.deepEqual(readFileSync(join(root, value.path)), existingNoteBytes);
-    if (scenario === 'writer') rmSync(join(root, '.taskforces/write.lock'));
+    if (scenario === 'writer') rmSync(join(root, '.neomind/write.lock'));
     assert.equal(getRecord(root, note.meta.id).meta.revision, note.meta.revision);
   }
 });

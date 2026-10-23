@@ -17,7 +17,7 @@ import { createNativeBridge, shutdownNative } from '../dist/native.js';
 
 const fixture = fileURLToPath(new URL('../resources/native/fake-app-server.mjs', import.meta.url));
 async function project(t, invocationId) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-inspection-mcp-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-inspection-mcp-'));
   initialize(root, { project_id: 'INSPECT-MCP', name: 'Inspection schema and context mechanics' });
   mkdirSync(join(root, 'src'));
   writeFileSync(join(root, 'src/value.mjs'), 'export const value = 1;\n');

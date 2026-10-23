@@ -49,19 +49,19 @@ import {
 } from '../dist/archives.js';
 
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-archive-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-archive-'));
   const restore = `${root}-restored`;
   t.after(() => {
     for (const target of [root, restore, `${root}-renamed`]) {
       assert.equal(dirname(resolve(target)), resolve(tmpdir()));
-      assert.match(target, /taskforces-archive-/);
+      assert.match(target, /neomind-archive-/);
       rmSync(target, { recursive: true, force: true });
     }
   });
   initialize(root, { project_id: 'ARCHIVE', profile: 'basic' });
   const policy = ensureArchivePolicy(root);
   writeFileSync(
-    join(root, '.taskforces/archive.json'),
+    join(root, '.neomind/archive.json'),
     JSON.stringify({ ...policy, repository: 'example/private' }, null, 2) + '\n',
   );
   mkdirSync(join(root, 'src'));
@@ -259,18 +259,18 @@ function validationReceiptFixture(work, role, state = 'completed') {
     'sha512-NWZdi/kxyjv/8EUGFupziGU38YyleugZRM4JXgY5XFH7FUmaFA33NZS2Bmq0HPazf7S3jJQQWsZ/jAK9jsrV3Q==';
   const protocol = hash('fabricated archive gate validation protocol');
   writeFileSync(
-    join(root, '.taskforces/native-runtime.lock.json'),
+    join(root, '.neomind/native-runtime.lock.json'),
     JSON.stringify({ version: '0.162.1', integrity, protocol_sha256: protocol }),
   );
   if (!work.validationKey) {
     work.validationKey = generateKeyPairSync('ed25519');
     const pem = work.validationKey.publicKey.export({ type: 'spki', format: 'pem' });
     work.validationKeyId = hash(pem);
-    mkdirSync(join(root, '.taskforces/native/keys'), { recursive: true });
-    mkdirSync(join(root, '.taskforces/native/receipts'), { recursive: true });
-    writeFileSync(join(root, `.taskforces/native/keys/${work.validationKeyId}.pem`), pem);
+    mkdirSync(join(root, '.neomind/native/keys'), { recursive: true });
+    mkdirSync(join(root, '.neomind/native/receipts'), { recursive: true });
+    writeFileSync(join(root, `.neomind/native/keys/${work.validationKeyId}.pem`), pem);
     writeFileSync(
-      join(root, '.taskforces/native/trust.json'),
+      join(root, '.neomind/native/trust.json'),
       JSON.stringify({ keys: [work.validationKeyId] }),
     );
   }
@@ -279,10 +279,10 @@ function validationReceiptFixture(work, role, state = 'completed') {
   const effort = role === 'manager' ? 'high' : 'low';
   const receipt = {
     schema_version: 1,
-    issuer: 'taskforces-codex-app-server',
+    issuer: 'neomind-codex-app-server',
     execution_mode: 'native',
     id,
-    receipt_path: `.taskforces/native/receipts/${id}.json`,
+    receipt_path: `.neomind/native/receipts/${id}.json`,
     project_id: readConfig(root).project_id,
     role,
     workflow_id: work.parent.meta.id,
@@ -400,7 +400,7 @@ test('archive cannot export arbitrary inputs, raw logs, credentials, or duplicat
     /Sensitive content/,
   );
   writeFileSync(
-    join(work.root, '.taskforces/records/duplicate.md'),
+    join(work.root, '.neomind/records/duplicate.md'),
     readFileSync(join(work.root, work.task.path)),
   );
   assert.throws(() => prepareArchive(work.root, work.parent.meta.id), /Duplicate record ID/);
@@ -411,7 +411,7 @@ for (const [name, automation] of [
 ]) {
   test(`${name} local-only policy blocks archive transport but preserves local prepare, inspect and restore`, (t) => {
     const work = fixture(t);
-    writeFileSync(join(work.root, '.taskforces/automation.json'), JSON.stringify(automation));
+    writeFileSync(join(work.root, '.neomind/automation.json'), JSON.stringify(automation));
     const snapshot = prepareArchive(work.root, work.parent.meta.id);
     const remote = github();
     assert.throws(
@@ -448,7 +448,7 @@ for (const [name, automation] of [
 ]) {
   test(`${name} preserves private archive publication`, (t) => {
     const work = fixture(t);
-    const automationPath = join(work.root, '.taskforces/automation.json');
+    const automationPath = join(work.root, '.neomind/automation.json');
     if (automation) writeFileSync(automationPath, JSON.stringify(automation));
     else assert.equal(existsSync(automationPath), false);
     const remote = github();
@@ -511,7 +511,7 @@ test('public upstream and stale local inputs block upload before blob creation',
 });
 test('private destination preflight is read-only and rejects public or unconfirmed visibility before preparation', (t) => {
   const work = fixture(t);
-  const policyPath = join(work.root, '.taskforces/archive.json');
+  const policyPath = join(work.root, '.neomind/archive.json');
   const originalPolicy = readFileSync(policyPath);
   const publicRemote = github({ privateRepo: false });
   assert.throws(
@@ -520,8 +520,8 @@ test('private destination preflight is read-only and rejects public or unconfirm
   );
   assert.equal(publicRemote.calls.length, 1);
   assert.equal(publicRemote.calls[0].method, 'GET');
-  assert.equal(existsSync(join(work.root, '.taskforces/archives')), false);
-  assert.equal(existsSync(join(work.root, '.taskforces/archive-intents')), false);
+  assert.equal(existsSync(join(work.root, '.neomind/archives')), false);
+  assert.equal(existsSync(join(work.root, '.neomind/archive-intents')), false);
   assert.deepEqual(readFileSync(policyPath), originalPolicy);
   assert.throws(
     () => assertPrivateArchiveDestination(work.root, { request: () => ({}) }),
@@ -546,7 +546,7 @@ test('switching a pending archive to local-only blocks retry without changing pu
   const publicationPath = join(work.root, snapshot.path, 'publication.json');
   const intent = readFileSync(publicationPath);
   const count = remote.calls.length;
-  writeFileSync(join(work.root, '.taskforces/automation.json'), JSON.stringify(nativeAutomationPolicy()));
+  writeFileSync(join(work.root, '.neomind/automation.json'), JSON.stringify(nativeAutomationPolicy()));
   assert.throws(
     () => publishArchive(work.root, snapshot.snapshot_id, { request: remote.request }),
     /Local-only policy disables remote archive/,
@@ -622,8 +622,8 @@ test('restore recovers a known published baseline without rewriting frozen confi
   const result = restoreArchive(work.root, snapshot.snapshot_id, work.restore);
   assert.equal(result.reconciliation, 'published-baseline-restored');
   assert.deepEqual(
-    readFileSync(safePath(work.restore, '.taskforces/archive.json')),
-    readFileSync(join(work.root, snapshot.path, 'workspace/.taskforces/archive.json')),
+    readFileSync(safePath(work.restore, '.neomind/archive.json')),
+    readFileSync(join(work.root, snapshot.path, 'workspace/.neomind/archive.json')),
   );
   const policy = readArchivePolicy(work.restore);
   assert.equal(policy.baseline_commit, publication.commit);
@@ -722,10 +722,10 @@ function reassessment(work, snapshot, reviewed = true) {
       [],
       'reassessment-reviewer-fixture',
     );
-  mkdirSync(join(work.root, '.taskforces/archive-intents'), { recursive: true });
+  mkdirSync(join(work.root, '.neomind/archive-intents'), { recursive: true });
   const intentPath = join(
     work.root,
-    `.taskforces/archive-intents/${hash(work.parent.meta.id)}.json`,
+    `.neomind/archive-intents/${hash(work.parent.meta.id)}.json`,
   );
   writeFileSync(
     intentPath,
@@ -748,7 +748,7 @@ test('local-only archive reassessment fails before transport and preserves revie
   const approval = reassessment(work, snapshot);
   const intent = readFileSync(approval.intentPath);
   writeFileSync(
-    join(work.root, '.taskforces/automation.json'),
+    join(work.root, '.neomind/automation.json'),
     JSON.stringify(nativeAutomationPolicy()),
   );
   const remote = github();
@@ -762,7 +762,7 @@ test('local-only archive reassessment fails before transport and preserves revie
   );
   assert.equal(remote.calls.length, 0);
   assert.deepEqual(readFileSync(approval.intentPath), intent);
-  assert.equal(existsSync(join(work.root, '.taskforces/archive-reassessments')), false);
+  assert.equal(existsSync(join(work.root, '.neomind/archive-reassessments')), false);
   assert.equal(archiveStatus(work.root, snapshot.snapshot_id).manifest_hash, snapshot.manifest_hash);
 });
 
@@ -814,7 +814,7 @@ test('reviewed public-target recovery retires only a never-started intent and pr
   );
   const policy = readArchivePolicy(work.root);
   writeFileSync(
-    join(work.root, '.taskforces/archive.json'),
+    join(work.root, '.neomind/archive.json'),
     JSON.stringify(
       {
         ...policy,
@@ -899,7 +899,7 @@ test('public-target recovery rejects every publication stage and any managed pro
     assert.deepEqual(readFileSync(approval.intentPath), originalIntent);
     publicRemote.branches.delete(branch);
   }
-  assert.equal(existsSync(join(work.root, '.taskforces/archive-reassessments')), false);
+  assert.equal(existsSync(join(work.root, '.neomind/archive-reassessments')), false);
   assert.equal(
     publicRemote.calls.every((call) => call.method === 'GET'),
     true,
@@ -1019,13 +1019,13 @@ test('unknown remote archive baseline records an integration blocker without dis
 test('known completed remote baseline is reconciled before fresh preparation', (t) => {
   const work = fixture(t);
   const pending = prepareArchive(work.root, work.parent.meta.id);
-  const before = readFileSync(join(work.root, '.taskforces/archive.json'));
+  const before = readFileSync(join(work.root, '.neomind/archive.json'));
   const next = nextIncrement(work);
   const completed = prepareArchive(work.root, next.meta.id);
   const remote = github();
   const publication = publishArchive(work.root, completed.snapshot_id, { request: remote.request });
   // Simulate the local metadata write being missing while the completed cache and remote refs remain durable.
-  writeFileSync(join(work.root, '.taskforces/archive.json'), before);
+  writeFileSync(join(work.root, '.neomind/archive.json'), before);
   const approval = reassessment(work, pending);
   const result = reassessArchive(work.root, work.parent.meta.id, {
     change_id: approval.change.meta.id,
@@ -1043,8 +1043,8 @@ test('known completed remote baseline is reconciled before fresh preparation', (
 
 test('archive includes hash-locked provider dependencies and rejects mutated lock content', (t) => {
   const work = fixture(t);
-  mkdirSync(join(work.root, '.taskforces/tool-locks'));
-  const path = '.taskforces/tool-locks/context7-4.3.0.json';
+  mkdirSync(join(work.root, '.neomind/tool-locks'));
+  const path = '.neomind/tool-locks/context7-4.3.0.json';
   const lock =
     JSON.stringify(
       {
@@ -1061,7 +1061,7 @@ test('archive includes hash-locked provider dependencies and rejects mutated loc
     ) + '\n';
   writeFileSync(join(work.root, path), lock);
   writeFileSync(
-    join(work.root, '.taskforces/tool-lock.json'),
+    join(work.root, '.neomind/tool-lock.json'),
     JSON.stringify(
       {
         schema_version: 1,
@@ -1445,7 +1445,7 @@ test('legacy archive evidence recovers verified cached input bytes or reports it
   const missing = fixture(t);
   updateRecord(missing.root, missing.evidence.meta.id, { data: { input_snapshot: null } });
   const missingHash = missing.evidence.meta.data.file_baseline['src/value.mjs'];
-  rmSync(join(missing.root, `.taskforces/evidence/inputs/blobs/${missingHash}`));
+  rmSync(join(missing.root, `.neomind/evidence/inputs/blobs/${missingHash}`));
   writeFileSync(join(missing.root, 'src/value.mjs'), changed);
   updateRecord(missing.root, missing.task.meta.id, { status: 'draft' });
   startTask(

@@ -106,7 +106,7 @@ function historyProblems(root: string, note: ProjectRecord): string[] {
         !/^[a-f0-9]{64}$/.test(item.record_hash)
       )
         throw new Error('Invalid history identity.');
-      const base = `.taskforces/evidence/cornell-history/${note.meta.id}/${item.revision}-${item.record_hash}`;
+      const base = `.neomind/evidence/cornell-history/${note.meta.id}/${item.revision}-${item.record_hash}`;
       const expected = {
         [`${base}/record.md`]: item.record_hash,
         [`${base}/intent.json`]: item.intent_hash,
@@ -242,7 +242,7 @@ function contentPath(root: string, path: string): string {
   const canonical = relative(root, safePath(root, path)).replaceAll('\\', '/');
   if (
     !canonical ||
-    canonical.startsWith('.taskforces/') ||
+    canonical.startsWith('.neomind/') ||
     canonical.startsWith('.git/') ||
     canonical !== path
   )
@@ -640,7 +640,7 @@ function writeCornellNote(
           throw new Error('Cornell revision is stale; read the current note before repair.');
         revisionSafety(root, current, Object.keys(artifacts));
         const raw = readFileSync(safePath(root, current.path));
-        const base = `.taskforces/evidence/cornell-history/${current.meta.id}/${current.meta.revision}-${hash(raw)}`;
+        const base = `.neomind/evidence/cornell-history/${current.meta.id}/${current.meta.revision}-${hash(raw)}`;
         const intentPath = `${base}/intent.json`;
         const oldHashes = current.meta.data.artifact_hashes as Record<string, string>;
         if (

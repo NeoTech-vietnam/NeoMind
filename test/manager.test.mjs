@@ -27,7 +27,7 @@ import {
 } from '../dist/index.js';
 
 function fixture(t, plan = true) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-manager-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-manager-'));
   t.after(() => {
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));
     rmSync(root, { recursive: true, force: true });
@@ -147,7 +147,7 @@ function githubFixture() {
   const calls = [];
   const request = (method, endpoint, body) => {
     calls.push({ method, endpoint, body });
-    if (method === 'GET' && endpoint === 'repos/VuThach3001/VeryThinker')
+    if (method === 'GET' && endpoint === 'repos/NeoTech-vietnam/NeoMind')
       return { default_branch: 'main' };
     if (endpoint.includes('/git/ref/heads/')) return { object: { sha: 'base' } };
     if (method === 'GET' && endpoint.includes('/git/commits/'))
@@ -156,7 +156,7 @@ function githubFixture() {
     if (endpoint.endsWith('/git/commits')) return { sha: 'new-commit' };
     if (endpoint.endsWith('/git/refs')) return {};
     if (method === 'POST' && endpoint.endsWith('/pulls'))
-      return { html_url: 'https://github.com/VuThach3001/VeryThinker/pull/123' };
+      return { html_url: 'https://github.com/NeoTech-vietnam/NeoMind/pull/123' };
     throw new Error(`Unexpected fixture request: ${method} ${endpoint}`);
   };
   return {
@@ -183,15 +183,15 @@ test('one requirement intake is resumable and idempotent by explicit request ide
 test('project policy preserves configured targets and disables entrypoint only when requested', (t) => {
   const work = fixture(t, false);
   const policy = readAutomationPolicy(work.root);
-  assert.equal(policy.upstream, 'VuThach3001/VeryThinker');
+  assert.equal(policy.upstream, 'NeoTech-vietnam/NeoMind');
   writeFileSync(
-    safePath(work.root, '.taskforces/automation.json'),
+    safePath(work.root, '.neomind/automation.json'),
     JSON.stringify({ ...policy, upstream: 'example/library', automatic_pr: false }),
   );
   assert.equal(ensureAutomationPolicy(work.root).upstream, 'example/library');
   assert.equal(ensureAutomationPolicy(work.root).automatic_pr, false);
   writeFileSync(
-    safePath(work.root, '.taskforces/automation.json'),
+    safePath(work.root, '.neomind/automation.json'),
     JSON.stringify({ ...policy, manager_enabled: false }),
   );
   assert.throws(() => beginWorkflow(work.root, { requirement: 'Another requirement' }), /disabled/);
@@ -379,7 +379,7 @@ test('automatic draft PR uses reviewed generalized material and retry creates no
   assert.equal(result.phase, 'completed');
   assert.equal(
     result.publications[0].upstream_pr,
-    'https://github.com/VuThach3001/VeryThinker/pull/123',
+    'https://github.com/NeoTech-vietnam/NeoMind/pull/123',
   );
   const sent = JSON.stringify(github.calls);
   assert.ok(!sent.includes(work.parent.meta.id));
@@ -426,7 +426,7 @@ test('missing upstream is recorded and policy opt-out keeps prepared knowledge l
   submitted(work);
   const lesson = candidate(work);
   const policy = readAutomationPolicy(work.root);
-  const policyPath = join(work.root, '.taskforces/automation.json');
+  const policyPath = join(work.root, '.neomind/automation.json');
   writeFileSync(policyPath, JSON.stringify({ ...policy, upstream: null }));
   const blocked = finishWorkflow(
     work.root,
@@ -445,7 +445,7 @@ test('missing upstream is recorded and policy opt-out keeps prepared knowledge l
   assert.equal(local.publications[0].status, 'prepared-locally');
   assert.ok(
     readFileSync(
-      join(work.root, '.taskforces/contributions', lesson.meta.id.toLowerCase(), 'lesson.md'),
+      join(work.root, '.neomind/contributions', lesson.meta.id.toLowerCase(), 'lesson.md'),
       'utf8',
     ).includes('executable import assertion'),
   );

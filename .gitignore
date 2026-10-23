@@ -3,13 +3,19 @@ node_modules/
 dist/
 artifacts/
 *.tgz
-.taskforces/cache/
-.taskforces/runs/
-.taskforces/contributions/
-*.taskforces-update
+.neomind/cache/
+.neomind/runs/
+.neomind/contributions/
+*.neomind-update
 
 # Compatibility: local state from unmigrated projects.
 .verythinker/cache/
 .verythinker/runs/
 .verythinker/contributions/
 *.verythinker-update
+
+# Legacy project data
+.taskforces/cache/
+.taskforces/runs/
+.taskforces/contributions/
+*.taskforces-update

@@ -14,10 +14,10 @@ import {
 } from '../dist/evidence-inputs.js';
 
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-inputs-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-inputs-'));
   t.after(() => {
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));
-    assert.match(root, /taskforces-inputs-/);
+    assert.match(root, /neomind-inputs-/);
     rmSync(root, { recursive: true, force: true });
   });
   initialize(root, { project_id: 'INPUTS' });
@@ -135,7 +135,7 @@ test('legacy recovery finds exact source and record versions without changing ev
   const work = fixture(t);
   const candidate = join(work.root, 'verified-baseline');
   for (const path of [
-    '.taskforces/config.json',
+    '.neomind/config.json',
     work.requirement.path,
     work.check.path,
     'src/source.bin',
@@ -168,7 +168,7 @@ test('legacy input gaps report the exact missing source digest', (t) => {
 });
 test('capture excludes recursive, raw-session, and private runtime source baselines', (t) => {
   const work = fixture(t);
-  const path = '.taskforces/cache/native/private-key.pem';
+  const path = '.neomind/cache/native/private-key.pem';
   mkdirSync(dirname(join(work.root, path)), { recursive: true });
   writeFileSync(join(work.root, path), 'private validation placeholder');
   assert.throws(
@@ -179,5 +179,5 @@ test('capture excludes recursive, raw-session, and private runtime source baseli
       }),
     /excludes private runtime/,
   );
-  assert.equal(existsSync(join(work.root, '.taskforces/evidence/inputs/blobs')), false);
+  assert.equal(existsSync(join(work.root, '.neomind/evidence/inputs/blobs')), false);
 });

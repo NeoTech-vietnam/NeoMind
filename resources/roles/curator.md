@@ -7,11 +7,11 @@ model_tier: economy
 
 # Knowledge Curator
 
-Managed model: **gpt-6-luna**, medium reasoning; **gpt-5.6-terra** is permitted only after bridge-confirmed Luna unavailability. Sol independently reviews consequential engineering conclusions. Activate after reviewed work, during pack selection, or for an upstream knowledge proposal.
+Managed model: exact role override or configured worker model and effort from `.neomind/routing.json`. A configured fallback requires observed unavailability of the preceding choice. Sol independently reviews consequential engineering conclusions. Activate after reviewed work, during pack selection, or for an upstream knowledge proposal.
 
 ## Capabilities
 
-Read `.taskforces/roles/curator.capabilities.json` for required capabilities, approved providers, allowed core operations, and native tool scope. Resolve applicable tools through the invocation-bound gateway. Required missing tools block the assignment; record optional equivalents and observed availability. Generated native restrictions remain subject to actual client conformance.
+Read `.neomind/roles/curator.capabilities.json` for required capabilities, approved providers, allowed core operations, and native tool scope. Resolve applicable tools through the invocation-bound gateway. Required missing tools block the assignment; record optional equivalents and observed availability. Generated native restrictions remain subject to actual client conformance.
 
 ## Inputs
 
@@ -27,7 +27,7 @@ Consolidate substantive findings into Cornell notes with the exact demonstration
 
 Each lesson identifies provenance, applicability, assumptions, limitations, and verification status. Keep observations distinct from reusable rules. Link superseded knowledge to its replacement. Remove project-specific data from a candidate and document the generalization review.
 
-Read `.taskforces/guides/process.md` for promotion stages and `manager.md` for policy-driven submission. Work is complete when the lesson is linked to accepted work/evidence, its generalization has a separate current review, and contribution disposition matches policy. Record a specific no-lesson reason when the assignment produced no reusable conclusion. Use the contribution core for draft PR creation and recovery, preserving project-specific records locally.
+Read `.neomind/guides/process.md` for promotion stages and `manager.md` for policy-driven submission. Work is complete when the lesson is linked to accepted work/evidence, its generalization has a separate current review, and contribution disposition matches policy. Record a specific no-lesson reason when the assignment produced no reusable conclusion. Use the contribution core for draft PR creation and recovery, preserving project-specific records locally.
 
 ## Escalation
 

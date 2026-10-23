@@ -44,6 +44,7 @@ import {
 import { roleCapabilities, resolveCapabilities, toolCatalog, type ProviderId } from './tools.js';
 import { VSCodeSession } from './vscode-session.js';
 import { readHost, bridgeProtocol } from './vscode-wire.js';
+import { readRoleUpstreamInstructions } from './upstreams.js';
 
 const runtimeVersion = '0.162.1';
 const runtimeIntegrity =
@@ -92,15 +93,15 @@ function cleanError(error: unknown): string {
 }
 function receiptKey(root: string): { privateKey: string; id: string } {
   return withOperationLock(root, 'native-receipt-key', () => {
-    const privatePath = safePath(root, '.taskforces/cache/native/private-key.pem');
+    const privatePath = safePath(root, '.neomind/cache/native/private-key.pem');
     if (!existsSync(privatePath)) {
       const keys = generateKeyPairSync('ed25519');
       const privateKey = keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
       const publicKey = keys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
       const id = hash(publicKey);
-      const publicPath = safePath(root, `.taskforces/native/keys/${id}.pem`);
+      const publicPath = safePath(root, `.neomind/native/keys/${id}.pem`);
       atomicWrite(publicPath, publicKey);
-      const trustPath = safePath(root, '.taskforces/native/trust.json');
+      const trustPath = safePath(root, '.neomind/native/trust.json');
       const old = existsSync(trustPath)
         ? JSON.parse(readFileSync(trustPath, 'utf8'))
         : { schema_version: 1, keys: [] };
@@ -119,9 +120,9 @@ function receiptKey(root: string): { privateKey: string; id: string } {
       .export({ type: 'spki', format: 'pem' })
       .toString();
     const id = hash(publicKey);
-    const publicPath = safePath(root, `.taskforces/native/keys/${id}.pem`);
+    const publicPath = safePath(root, `.neomind/native/keys/${id}.pem`);
     const trusted = JSON.parse(
-      readFileSync(safePath(root, '.taskforces/native/trust.json'), 'utf8'),
+      readFileSync(safePath(root, '.neomind/native/trust.json'), 'utf8'),
     );
     if (
       !existsSync(publicPath) ||
@@ -147,7 +148,7 @@ function persist(root: string, receipt: NativeReceipt): NativeReceipt {
   return receipt;
 }
 function allReceipts(root: string): NativeReceipt[] {
-  const path = safePath(root, '.taskforces/native/receipts');
+  const path = safePath(root, '.neomind/native/receipts');
   if (!existsSync(path)) return [];
   return readdirSync(path)
     .filter((name) => name.endsWith('.json'))
@@ -204,7 +205,7 @@ async function run(
   });
 }
 async function installationLease<T>(root: string, action: () => Promise<T>): Promise<T> {
-  const path = safePath(root, '.taskforces/tools/codex.install.lock');
+  const path = safePath(root, '.neomind/tools/codex.install.lock');
   mkdirSync(dirname(path), { recursive: true });
   const deadline = Date.now() + 180000;
   let fd: number;
@@ -245,7 +246,7 @@ async function prepareRuntime(root: string): Promise<RuntimeInfo> {
   }
 
   return installationLease(root, async () => {
-    const prefix = safePath(root, '.taskforces/tools/codex');
+    const prefix = safePath(root, '.neomind/tools/codex');
     const main = join(prefix, 'node_modules/@openai/codex/bin/codex.js');
     const lockPath = join(prefix, 'package-lock.json');
     if (!existsSync(main) || !existsSync(lockPath)) {
@@ -276,7 +277,7 @@ async function prepareRuntime(root: string): Promise<RuntimeInfo> {
     const version = await run(process.execPath, [main, '--version'], root, 15000);
     if (version.trim() !== `codex-cli ${runtimeVersion}`)
       throw new Error('The native executable does not report the pinned Codex version.');
-    const schemaDirectory = safePath(root, '.taskforces/cache/native/schema-0.162.1');
+    const schemaDirectory = safePath(root, '.neomind/cache/native/schema-0.162.1');
     await run(
       process.execPath,
       [main, 'app-server', 'generate-json-schema', '--out', schemaDirectory],
@@ -345,7 +346,7 @@ async function prepareRuntime(root: string): Promise<RuntimeInfo> {
         ]),
       ),
     };
-    const target = safePath(root, '.taskforces/native-runtime.lock.json');
+    const target = safePath(root, '.neomind/native-runtime.lock.json');
     const serialized = JSON.stringify(publicLock, null, 2) + '\n';
     if (existsSync(target) && readFileSync(target, 'utf8') !== serialized)
       throw new Error(
@@ -641,8 +642,8 @@ class NativeSession {
     });
     await this.transport.request('initialize', {
       clientInfo: {
-        name: 'taskforces',
-        title: 'TaskForces managed engineering',
+        name: 'neomind',
+        title: 'NeoMind managed engineering',
         version: '0.1.0-alpha.3',
       },
       capabilities: { experimentalApi: false },
@@ -661,12 +662,12 @@ class NativeSession {
     const spec = roleModelPolicy(this.root, this.receipt.role);
     const cli = fileURLToPath(new URL('./cli.js', import.meta.url));
     const operations = roleCapabilities(this.receipt.role).operations;
-    const previousGateway = this.baseConfiguration.mcp_servers?.taskforces ?? {};
+    const previousGateway = this.baseConfiguration.mcp_servers?.neomind ?? {};
     for (const operation of operations) {
       const explicit = previousGateway.tools?.[operation]?.approval_mode;
       if (explicit && explicit !== 'approve')
         throw new Error(
-          `Authored TaskForces tool approval policy for ${operation} requires ${explicit}; preserve it and review the configuration before automatic execution.`,
+          `Authored NeoMind tool approval policy for ${operation} requires ${explicit}; preserve it and review the configuration before automatic execution.`,
         );
     }
     if (
@@ -674,14 +675,14 @@ class NativeSession {
       operations.some((operation) => !previousGateway.enabled_tools.includes(operation))
     )
       throw new Error(
-        'Authored TaskForces enabled_tools restricts this role. Review the native tool configuration before execution.',
+        'Authored NeoMind enabled_tools restricts this role. Review the native tool configuration before execution.',
       );
     if (
       Array.isArray(previousGateway.disabled_tools) &&
       previousGateway.disabled_tools.some((operation: string) => operations.includes(operation))
     )
       throw new Error(
-        'Authored TaskForces disabled_tools conflicts with this role; preserve the restriction and review configuration.',
+        'Authored NeoMind disabled_tools conflicts with this role; preserve the restriction and review configuration.',
       );
     const instructionPaths = [
       `roles/${this.receipt.role}.md`,
@@ -690,14 +691,14 @@ class NativeSession {
     ];
     const instructions = instructionPaths
       .map((path) => {
-        const installed = safePath(this.root, `.taskforces/${path}`);
+        const installed = safePath(this.root, `.neomind/${path}`);
         const source = existsSync(installed) ? installed : join(resourceRoot, path);
         return existsSync(source)
           ? `\n## Installed instruction ${path}\n${readFileSync(source, 'utf8')}`
           : '';
       })
       .join('')
-      .slice(0, 32000);
+      .slice(0, 32000) + '\n' + readRoleUpstreamInstructions(this.root, this.receipt.role);
     const authoringGuidance =
       this.receipt.role === 'developer'
         ? ' For ordinary assigned source or documentation edits, use project_read to obtain the current SHA-256, then task_file_write with complete UTF-8 content and that expected_hash; null is only for a missing file. Reuse the same operation UUID and payload for lost-response recovery. Cornell artifacts use note_create and its draft revision envelope. These core operations preserve reviewed scope and acceptance artifacts; native permission requests remain separate blockers.'
@@ -710,7 +711,7 @@ class NativeSession {
       ...(spec.strong ? { sandbox: 'read-only' } : {}),
       config: {
         model_reasoning_effort: spec.reasoning_effort,
-        'mcp_servers.taskforces': {
+        'mcp_servers.neomind': {
           command: process.execPath,
           args: [cli, 'mcp', '--project', this.root, '--invocation', this.receipt.id],
           enabled_tools: operations,
@@ -719,12 +720,12 @@ class NativeSession {
           ),
         },
       },
-      developerInstructions: `TaskForces native invocation ${this.receipt.id}; role ${this.receipt.role}; workflow ${this.receipt.workflow_id ?? 'unassigned'}; task ${this.receipt.task_id ?? 'unassigned'}. Use the invocation-bound TaskForces MCP operations. Work only within your role and task contract. Do not invoke manager_run recursively. The manager has already created the workflow. Every durable change and review must reference this invocation. Before ending your assignment, call assignment_report with substantive Objective, Inputs and Sources, Decisions and Rationale, Results, Evidence, Limitations, and Lessons sections. A producer's task_submit with the full seven-section work_record satisfies this reporting requirement instead. Reviewers report after their actual review; check executors report after executing checks and inspecting the result. For a follow-up report, explicitly list any covered prior invocation IDs of your own role and assignment. Do not fabricate another agent's narrative. Native authorization belongs to the existing client policy.${authoringGuidance} The installed role and workflow instructions are included below; use MCP record and recipe operations to inspect engineering state rather than shell commands just to reload these instructions.${instructions}`,
+      developerInstructions: `NeoMind native invocation ${this.receipt.id}; role ${this.receipt.role}; workflow ${this.receipt.workflow_id ?? 'unassigned'}; task ${this.receipt.task_id ?? 'unassigned'}. Use the invocation-bound NeoMind MCP operations. Work only within your role and task contract. Do not invoke manager_run recursively. The manager has already created the workflow. Every durable change and review must reference this invocation. Before ending your assignment, call assignment_report with substantive Objective, Inputs and Sources, Decisions and Rationale, Results, Evidence, Limitations, and Lessons sections. A producer's task_submit with the full seven-section work_record satisfies this reporting requirement instead. Reviewers report after their actual review; check executors report after executing checks and inspecting the result. For a follow-up report, explicitly list any covered prior invocation IDs of your own role and assignment. Do not fabricate another agent's narrative. Native authorization belongs to the existing client policy.${authoringGuidance} The installed role and workflow instructions are included below; use MCP record and recipe operations to inspect engineering state rather than shell commands just to reload these instructions.${instructions}`,
     };
     let ack: any;
     this.update({
       native_tool_scope: operations,
-      gateway_policy_sha256: hash(canonicalJson(params.config['mcp_servers.taskforces'])),
+      gateway_policy_sha256: hash(canonicalJson(params.config['mcp_servers.neomind'])),
     });
     try {
       ack = await transport.request(resumeThread ? 'thread/resume' : 'thread/start', {
@@ -848,7 +849,7 @@ class NativeSession {
           // Publication/closure failures do not rewrite a frozen accepted snapshot
           // or turn successful native inference into a failed inference claim.
           atomicWrite(
-            safePath(this.root, `.taskforces/native/completion/${this.receipt.id}.json`),
+            safePath(this.root, `.neomind/native/completion/${this.receipt.id}.json`),
             JSON.stringify(
               {
                 schema_version: 1,
@@ -885,10 +886,10 @@ function newReceipt(root: string, input: NativeStartInput, prior?: NativeReceipt
   const id = randomUUID();
   return {
     schema_version: 1,
-    issuer: 'taskforces-codex-app-server',
+    issuer: 'neomind-codex-app-server',
     execution_mode: 'native',
     id,
-    receipt_path: `.taskforces/native/receipts/${id}.json`,
+    receipt_path: `.neomind/native/receipts/${id}.json`,
     project_id: readConfig(root).project_id,
     role: input.role,
     workflow_id: input.workflow_id ?? null,
@@ -967,7 +968,7 @@ async function startOwned(
     const created = newReceipt(root, input, prior);
     if (options.runtime) created.execution_mode = 'protocol-fixture';
     else if (requireRoutingPolicy(root).platform === 'copilot') {
-      created.issuer = 'taskforces-vscode-lm';
+      created.issuer = 'neomind-vscode-lm';
       created.execution_mode = 'vscode-extension-host';
       created.identity_provenance = 'local-vscode-extension-host';
       created.effort_support = 'unavailable';
@@ -1008,7 +1009,7 @@ async function startOwned(
           });
       }
     }
-    if (receipt.issuer === 'taskforces-vscode-lm') await session.beginVSCode();
+    if (receipt.issuer === 'neomind-vscode-lm') await session.beginVSCode();
     else {
       const runtime = await (options.runtime ?? ensureNativeRuntime)(root);
       await session.begin(runtime, prior?.native_thread_id ?? undefined);
@@ -1095,7 +1096,7 @@ async function resumeOwned(
     throw new Error(
       'This invocation has no acknowledged native thread to resume. Start a new bounded invocation after resolving its blocker.',
     );
-  if (prior.issuer === 'taskforces-vscode-lm' &&
+  if (prior.issuer === 'neomind-vscode-lm' &&
       (prior.routing_sha256 !== hash(canonicalJson(readRoutingPolicy(root))) ||
        canonicalJson(prior.configuration_hashes) !== canonicalJson(routingConfigurationHashes(root))))
     throw new Error('VS Code invocation configuration changed; start fresh invocation after review.');

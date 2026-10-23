@@ -10,7 +10,7 @@ test(
   'Windows atomic replacement tolerates a transient reader and preserves the old file on persistent refusal',
   { skip: process.platform !== 'win32' },
   async (t) => {
-    const root = mkdtempSync(join(tmpdir(), 'taskforces-atomic-'));
+    const root = mkdtempSync(join(tmpdir(), 'neomind-atomic-'));
     const target = join(root, 'record.json');
     const script = join(root, 'reader.ps1');
     writeFileSync(

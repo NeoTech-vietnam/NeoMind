@@ -36,7 +36,7 @@ CI runs dependency installation, tests, and packaging on Windows and Ubuntu with
 
 Preserve logs and execution receipts needed to validate evidence. Raw runs are excluded from Git by default; provide them as explicit evidence artifacts when another machine must reassess a baseline. Run results remain tied to their source hashes and configuration.
 
-`check archive EVIDENCE_ID` copies selected logs and the execution receipt into `.taskforces/evidence` and updates their references. Review their contents before committing or sharing them. Archive evidence before final acceptance review because relocating its artifacts changes the reviewed record.
+`check archive EVIDENCE_ID` copies selected logs and the execution receipt into `.neomind/evidence` and updates their references. Review their contents before committing or sharing them. Archive evidence before final acceptance review because relocating its artifacts changes the reviewed record.
 
 ## Agent evaluation
 
@@ -72,7 +72,7 @@ Alpha.3 acceptance also requires batch traceability, stale/rerouted receipt reje
 
 ## Publication and maintenance
 
-Normal use starts with one natural-language requirement. The native manager operates record management and publication internally. `manager_finish` applies the saved `.taskforces/automation.json` policy to independently reviewed generalized candidates and creates **draft PRs** automatically when enabled. It requires authenticated `gh` write access to the configured upstream and never merges. Human approval applies to merging shared knowledge. Publication failures remain specific persisted blockers; corrected candidates require a preserved retirement/replacement rationale.
+Normal use starts with one natural-language requirement. The native manager operates record management and publication internally. `manager_finish` applies the saved `.neomind/automation.json` policy to independently reviewed generalized candidates and creates **draft PRs** automatically when enabled. It requires authenticated `gh` write access to the configured upstream and never merges. Human approval applies to merging shared knowledge. Publication failures remain specific persisted blockers; corrected candidates require a preserved retirement/replacement rationale.
 
 Private project increments use a stable namespace with append-only checkpoint branches, a fast-forward accepted baseline, and immutable SemVer release branches beginning at `1.0.0`. Project release numbers are separate from the npm alpha version. Freeze source records, implementation, verification inputs, and locks before publication; retain transport receipts outside the snapshot to avoid circular hashes. Required sensitive material or a non-private archive target blocks export. Generalized shared-library PRs retain their separate review boundary.
 
@@ -82,4 +82,4 @@ Publish only the reviewed artifact under an approved prerelease tag, then verify
 
 Template upgrades preserve user edits and expose conflicts for review. Compatibility claims identify their tested client/version. Pack changes require a new version when content changes; update project locks through a recorded decision. Keep historical evidence and knowledge provenance when baselines change.
 
-TaskForces retains MIT licensing and independently authored code/templates. Trellis is design inspiration under its own AGPL license; its code/templates are not included. Record any later third-party reuse and compatible attribution explicitly.
+NeoMind retains MIT licensing and independently authored code/templates. Trellis is design inspiration under its own AGPL license; its code/templates are not included. Record any later third-party reuse and compatible attribution explicitly.

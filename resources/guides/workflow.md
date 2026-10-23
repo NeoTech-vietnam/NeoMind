@@ -6,9 +6,9 @@ For a user's new engineering intent or a resumed increment, first read `manager.
 
 ## Start or resume
 
-1. Run `taskforces doctor` and inspect the capability report. Use the CLI when a native capability is unavailable; report the limit in the work record.
+1. Run `neomind doctor` and inspect the capability report. Use the CLI when a native capability is unavailable; report the limit in the work record.
 2. Use the `task` commands to find or create the assignment. Inspect its requirements, dependencies, baseline, and current status.
-3. Generate `taskforces context <task-id>` and read the referenced records and assigned role contract from `.taskforces/roles/`. Inspect the actual working tree before changing files.
+3. Generate `neomind context <task-id>` and read the referenced records and assigned role contract from `.neomind/roles/`. Inspect the actual working tree before changing files.
 4. Check the `ready` gate. Begin execution when dependencies and verification criteria are sufficient. Return unresolved contradictions to the manager.
 
 Each step is complete when its findings are recorded or its referenced artifact has been inspected. A context packet is a navigation aid; it does not replace source inspection.
@@ -43,4 +43,4 @@ Finish with accepted task state and a resumption note: current baseline, task st
 
 After interruption, inspect task state, latest work records, the working tree, and existing evidence. Continue from the latest verified checkpoint. Re-run checks whose revision or environment no longer applies. Historical logs remain historical; assess their applicability before reuse.
 
-Use `taskforces --help` as the source of truth for command arguments. The CLI and MCP expose the same core operations.
+Use `neomind --help` as the source of truth for command arguments. The CLI and MCP expose the same core operations.

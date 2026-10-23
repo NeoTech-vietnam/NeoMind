@@ -28,7 +28,7 @@ test('evaluation matrix contains 18 planned trials without observed results', ()
 });
 
 test('evaluation reports missing observations instead of zeros and rejects inconsistent imports', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'taskforces-evaluation-'));
+  const dir = await mkdtemp(join(tmpdir(), 'neomind-evaluation-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const input = join(dir, 'empty.jsonl');
   await writeFile(input, '');
@@ -63,7 +63,7 @@ test('evaluation reports missing observations instead of zeros and rejects incon
 });
 
 test('evaluation executes protected checks and rejects a runner that edits them', async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), 'taskforces-runner-fixture-'));
+  const dir = await mkdtemp(join(tmpdir(), 'neomind-runner-fixture-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const runner = join(dir, 'mock-runner.mjs');
   // This fixture tests the harness; its temporary results are not LLM benchmarks.
@@ -153,7 +153,7 @@ for (const pilot of ['software', 'embedded']) {
     const { buildWorkflow } = await import('../examples/workflow.mjs');
     const { acceptTask, getRecord, prepareContribution, readRoutingPolicy, reviewRecord, verify } =
       await import('../dist/index.js');
-    const dir = await mkdtemp(join(tmpdir(), `taskforces-${pilot}-workflow-`));
+    const dir = await mkdtemp(join(tmpdir(), `neomind-${pilot}-workflow-`));
     t.after(() => rm(dir, { recursive: true, force: true }));
     const report = await buildWorkflow(dir, pilot);
     assert.equal(report.execution_mode, 'legacy-policy-fixture');

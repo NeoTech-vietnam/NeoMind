@@ -18,8 +18,8 @@ The matrix contains two pilots, three configurations, and three trials each: 18 
 
 ```sh
 node scripts/evaluate.mjs matrix
-node scripts/evaluate.mjs run --runner node --runner-args-json '["/absolute/path/to/native-runner.mjs"]' --platform codex --output .taskforces/cache/evaluation/trials.jsonl
-node scripts/evaluate.mjs summarize --input .taskforces/cache/evaluation/trials.jsonl
+node scripts/evaluate.mjs run --runner node --runner-args-json '["/absolute/path/to/native-runner.mjs"]' --platform codex --output .neomind/cache/evaluation/trials.jsonl
+node scripts/evaluate.mjs summarize --input .neomind/cache/evaluation/trials.jsonl
 ```
 
 The matrix command lists planned trials and marks them `not-run`. It never creates successful observations. The run command needs an explicitly supplied wrapper for a native platform; it does not add an API orchestrator or claim access to paid/free models. Use an absolute executable/script path so trial workspace changes do not alter command resolution. Arguments are passed directly without a shell.
@@ -48,7 +48,7 @@ Elapsed time is measured by the harness. Other metrics come from observations su
 ## Imported observations
 
 ```sh
-node scripts/evaluate.mjs import --input actual-native-trials.jsonl --output .taskforces/cache/evaluation/trials.jsonl
+node scripts/evaluate.mjs import --input actual-native-trials.jsonl --output .neomind/cache/evaluation/trials.jsonl
 ```
 
 Imported JSONL follows the trial schema produced by `run`: schema version 1, a matrix trial ID, matching pilot/configuration/trial, status, elapsed time, provenance, metrics, and artifact references. Imports are marked `imported-record`, preserve original provenance, and reject duplicate trial IDs. These are reported observations, not independently authenticated telemetry. Keep the referenced logs, source revision, model observations, and review artifacts with them.

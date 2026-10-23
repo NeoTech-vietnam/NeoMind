@@ -6,12 +6,12 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 export const bridgeLimit = 1024 * 1024;
-export const bridgeProtocol = 'taskforces-vscode-lm-v1';
+export const bridgeProtocol = 'neomind-vscode-lm-v1';
 export interface HostDescriptor { protocol: string; root: string; port: number; token: string; instance: string; pid: number }
 export function exactRoot(root: string): string { return realpathSync.native(root); }
 function descriptorPath(root: string): string {
   const key = createHash('sha256').update(`${userInfo().username}\0${exactRoot(root)}`).digest('hex');
-  return join(tmpdir(), `taskforces-vscode-${key}`, 'host.json');
+  return join(tmpdir(), `neomind-vscode-${key}`, 'host.json');
 }
 function privateDirectory(path: string): void {
   if (existsSync(path)) {
@@ -24,13 +24,15 @@ function privateDirectory(path: string): void {
     execFileSync('icacls.exe', [path, '/inheritance:r', '/grant:r', `${userInfo().username}:(OI)(CI)F`],
       { stdio: 'ignore', windowsHide: true, timeout: 10000 });
     // Existing explicit grants survive icacls /inheritance:r. Reject them rather than expose bearer token.
+    // Use the framework ACL API: Get-Acl's Security module can fail to autoload
+    // in child hosts with incompatible or duplicate type data.
     execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      "$ErrorActionPreference='Stop'; $acl=Get-Acl -LiteralPath $env:TASKFORCES_PRIVATE_DIRECTORY; " +
+      "$ErrorActionPreference='Stop'; $acl=[System.IO.Directory]::GetAccessControl($env:NEOMIND_PRIVATE_DIRECTORY); " +
       "$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; " +
       "if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { exit 1 }; " +
       "foreach ($rule in $acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])) { " +
       "if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -ne $sid.Value) { exit 1 } }"],
-      { env: { ...process.env, TASKFORCES_PRIVATE_DIRECTORY: path }, stdio: 'ignore', windowsHide: true, timeout: 10000 });
+      { env: { ...process.env, NEOMIND_PRIVATE_DIRECTORY: path }, stdio: 'ignore', windowsHide: true, timeout: 10000 });
   } else chmodSync(path, 0o700);
 }
 async function body(message: IncomingMessage): Promise<any> {
@@ -62,14 +64,14 @@ export function readHost(root: string): HostDescriptor {
     process.kill(descriptor.pid, 0);
     return descriptor;
   } catch {
-    throw new Error('VS Code bridge is disabled or its descriptor is stale. Run TaskForces: Enable Model Bridge in the trusted workspace.');
+    throw new Error('VS Code bridge is disabled or its descriptor is stale. Run NeoMind: Enable Model Bridge in the trusted workspace.');
   }
 }
 export async function hostRequest(host: HostDescriptor, operation: string, input: unknown, signal?: AbortSignal): Promise<any> {
   const text = bounded(input);
   return new Promise((fulfill, reject) => {
     const req = request({ hostname: '127.0.0.1', port: host.port, path: `/${operation}`, method: 'POST',
-      headers: { authorization: `Bearer ${host.token}`, 'x-taskforces-host': host.instance,
+      headers: { authorization: `Bearer ${host.token}`, 'x-neomind-host': host.instance,
         'content-type': 'application/json', 'content-length': Buffer.byteLength(text) }, signal }, async (res) => {
       try {
         const result = await body(res);
@@ -96,7 +98,7 @@ export async function serveHost(root: string, dispatch: (operation: string, inpu
   const server = createServer(async (req, res) => {
     const auth = Buffer.from(req.headers.authorization ?? '');
     const expected = Buffer.from(`Bearer ${token}`);
-    if (req.method !== 'POST' || req.headers.origin || req.headers['x-taskforces-host'] !== instance ||
+    if (req.method !== 'POST' || req.headers.origin || req.headers['x-neomind-host'] !== instance ||
         auth.length !== expected.length || !timingSafeEqual(auth, expected)) {
       req.resume(); res.writeHead(403).end('{}'); return;
     }

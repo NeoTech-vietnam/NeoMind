@@ -45,7 +45,7 @@ function parsedNodes(result) {
 function safeCleanup(sandbox) {
   const temporary = realpathSync(tmpdir());
   const target = realpathSync(sandbox);
-  if (dirname(target) !== temporary || !basename(target).startsWith('taskforces-codegraph-')) throw new Error('Refusing to remove a directory outside the created test sandbox.');
+  if (dirname(target) !== temporary || !basename(target).startsWith('neomind-codegraph-')) throw new Error('Refusing to remove a directory outside the created test sandbox.');
   rmSync(target, { recursive: true, force: true });
 }
 function bundleLauncher(packageRoot) {
@@ -61,7 +61,7 @@ function fixture(root, name = 'sensor_read', value = 42) {
 }
 
 export async function runConformance({ packageRoot, install = false } = {}) {
-  const sandbox = mkdtempSync(join(realpathSync(tmpdir()), 'taskforces-codegraph-'));
+  const sandbox = mkdtempSync(join(realpathSync(tmpdir()), 'neomind-codegraph-'));
   const root = join(sandbox, 'fixture');
   mkdirSync(root);
   const report = { schema_version: 1, package: packageID, version: pinnedVersion, tested_at: new Date().toISOString(),
@@ -127,7 +127,7 @@ export async function runConformance({ packageRoot, install = false } = {}) {
     const transport = new StdioClientTransport({ command: launcher.command,
       args: [...launcher.args, 'serve', '--mcp', '--path', root], cwd: root, env: environment, stderr: 'pipe' });
     report.commands.push({ command: launcher.command, args: [...launcher.args, 'serve', '--mcp', '--path', root], purpose: 'MCP direct mode, automatic watcher enabled' });
-    client = new Client({ name: 'taskforces-codegraph-conformance', version: '0.1.0' });
+    client = new Client({ name: 'neomind-codegraph-conformance', version: '0.1.0' });
     await client.connect(transport, { timeout: 30000 });
     const tools = await client.listTools();
     check('mcp-tool', tools.tools.some(tool => tool.name === 'codegraph_explore'), 'MCP codegraph_explore discovered through initialize and tools/list');

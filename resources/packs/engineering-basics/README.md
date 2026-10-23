@@ -20,4 +20,4 @@ Check a lesson's applicability, provenance, assumptions, and limitations before 
 
 ## Origin
 
-These are independently written TaskForces practices informed by [NASA product realization](https://www.nasa.gov/reference/5-0-product-realization/) and [NASA crosscutting management](https://www.nasa.gov/reference/6-0-crosscutting-technical-management/). They are general engineering guidance, not reproduced process text.
+These are independently written NeoMind practices informed by [NASA product realization](https://www.nasa.gov/reference/5-0-product-realization/) and [NASA crosscutting management](https://www.nasa.gov/reference/6-0-crosscutting-technical-management/). They are general engineering guidance, not reproduced process text.

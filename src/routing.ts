@@ -4,6 +4,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 import { vscodeSelection } from './vscode-policy.js';
 import { roleCapabilities } from './tools.js';
+import { listUpstreams } from './upstreams.js';
 import {
   atomicWrite,
   getRecord,
@@ -47,6 +48,11 @@ const modelId = z
   .max(256)
   .refine((value) => !/[\r\n\x00]/.test(value));
 const reasoningEffort = z.enum(['high', 'medium', 'low']);
+const roleModelSchema = z.object({
+  model: modelId,
+  provider: modelId.optional(),
+  effort: reasoningEffort.optional(),
+}).strict();
 const routingPolicySchema = z
   .object({
     schema_version: z.literal(1),
@@ -64,12 +70,14 @@ const routingPolicySchema = z
     worker_provider: modelId.optional(),
     language_models_file: z.string().min(1).optional(),
     vscode_effort_policy: z.enum(['require-verified', 'allow-unavailable']).optional(),
+    role_models: z.partialRecord(z.enum([...strongRoles, ...workerRoles]), roleModelSchema).optional(),
   })
   .strict();
 export type RoutingPolicy = z.infer<typeof routingPolicySchema>;
 export interface NativeReceipt {
   schema_version: 1;
-  issuer: 'taskforces-codex-app-server' | 'taskforces-vscode-lm' |
+  issuer: 'neomind-codex-app-server' | 'neomind-vscode-lm' |
+    'taskforces-codex-app-server' | 'taskforces-vscode-lm' |
     'verythinker-codex-app-server' | 'verythinker-vscode-lm';
   execution_mode: 'native' | 'protocol-fixture' | 'vscode-extension-host';
   host_instance?: string;
@@ -144,13 +152,13 @@ export function defaultRoutingPolicy(): RoutingPolicy {
   };
 }
 export function readRoutingPolicy(root: string): RoutingPolicy | null {
-  const path = safePath(root, '.taskforces/routing.json');
+  const path = safePath(root, '.neomind/routing.json');
   if (!existsSync(path)) return null;
   const value = JSON.parse(readFileSync(path, 'utf8'));
   const result = routingPolicySchema.safeParse(value);
   if (!result.success)
     throw new Error(
-      `Invalid routing configuration in .taskforces/routing.json: ${result.error.message}`,
+      `Invalid routing configuration in .neomind/routing.json: ${result.error.message}`,
     );
   return result.data;
 }
@@ -161,7 +169,7 @@ export function ensureRoutingPolicy(root: string): RoutingPolicy {
     if (existing) return existing;
     const policy = defaultRoutingPolicy();
     atomicWrite(
-      safePath(root, '.taskforces/routing.json'),
+      safePath(root, '.neomind/routing.json'),
       JSON.stringify(policy, null, 2) + '\n',
     );
     return policy;
@@ -183,6 +191,7 @@ export function roleModelPolicy(
   models: string[];
   reasoning_effort: 'high' | 'medium' | 'low';
   strong: boolean;
+  provider?: string;
 } {
   const policy = requireRoutingPolicy(root);
   if (
@@ -191,19 +200,21 @@ export function roleModelPolicy(
   )
     throw new Error(`Unsupported native role: ${role}.`);
   const strong = (strongRoles as readonly string[]).includes(role);
+  const override = policy.role_models?.[role as NativeRole];
   return {
     role: role as NativeRole,
     strong,
-    models: strong ? [policy.strong_model] : [...policy.worker_models],
-    reasoning_effort: strong ? policy.strong_effort : policy.worker_effort,
+    models: override ? [override.model] : strong ? [policy.strong_model] : [...policy.worker_models],
+    reasoning_effort: override?.effort ?? (strong ? policy.strong_effort : policy.worker_effort),
+    provider: override?.provider ?? (strong ? policy.strong_provider : policy.worker_provider),
   };
 }
 export function routingConfigurationHashes(root: string): Record<string, string> {
   const paths = [
-    '.taskforces/config.json',
-    '.taskforces/routing.json',
-    '.taskforces/native-runtime.lock.json',
-    '.taskforces/tools.json',
+    '.neomind/config.json',
+    '.neomind/routing.json',
+    '.neomind/native-runtime.lock.json',
+    '.neomind/tools.json',
     '.codex/config.toml',
   ];
   const hashes = Object.fromEntries(
@@ -212,6 +223,17 @@ export function routingConfigurationHashes(root: string): Record<string, string>
       existsSync(safePath(root, path)) ? hash(readFileSync(safePath(root, path))) : 'absent',
     ]),
   );
+  // Preserve old receipt hash maps when no router configuration exists.
+  const routerPath = '.neomind/router.json';
+  if (existsSync(safePath(root, routerPath))) hashes[routerPath] = hash(readFileSync(safePath(root, routerPath)));
+  if (existsSync(safePath(root, '.neomind/upstreams.json'))) {
+    const registry = listUpstreams(root);
+    hashes['upstream-instructions'] = hash(canonicalJson({
+      schema_version: registry.schema_version,
+      sources: registry.sources.map(({ id, repository, commit, role, instruction_paths, instructions }) =>
+        ({ id, repository, commit, role, instruction_paths, instructions })),
+    }));
+  }
   const catalog = readRoutingPolicy(root)?.language_models_file;
   if (catalog) {
     const path = isAbsolute(catalog) ? catalog : resolve(root, catalog);
@@ -223,25 +245,26 @@ export function routingConfigurationHashes(root: string): Record<string, string>
 export function nativeReceiptPath(root: string, id: string): string {
   if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id))
     throw new Error('Native invocation IDs must be bridge-issued UUIDs.');
-  return safePath(root, `.taskforces/native/receipts/${id}.json`);
+  return safePath(root, `.neomind/native/receipts/${id}.json`);
 }
 export function readInvocation(root: string, id: string): NativeReceipt {
   const value = JSON.parse(readFileSync(nativeReceiptPath(root, id), 'utf8')) as NativeReceipt;
   const { signature, ...unsigned } = value;
   if (
     value.schema_version !== 1 ||
-    !['taskforces-codex-app-server', 'taskforces-vscode-lm',
+    !['neomind-codex-app-server', 'neomind-vscode-lm',
+      'taskforces-codex-app-server', 'taskforces-vscode-lm',
       'verythinker-codex-app-server', 'verythinker-vscode-lm'].includes(value.issuer) ||
     value.id !== id ||
     value.project_id !== readConfig(root).project_id ||
-    ![`.taskforces/native/receipts/${id}.json`, `.verythinker/native/receipts/${id}.json`].includes(value.receipt_path) ||
+    ![`.neomind/native/receipts/${id}.json`, `.taskforces/native/receipts/${id}.json`, `.verythinker/native/receipts/${id}.json`].includes(value.receipt_path) ||
     !/^[a-f0-9]{64}$/.test(value.key_id)
   )
     throw new Error('Native invocation receipt identity is invalid.');
   const trusted = JSON.parse(
-    readFileSync(safePath(root, '.taskforces/native/trust.json'), 'utf8'),
+    readFileSync(safePath(root, '.neomind/native/trust.json'), 'utf8'),
   ) as { keys: string[] };
-  const key = readFileSync(safePath(root, `.taskforces/native/keys/${value.key_id}.pem`), 'utf8');
+  const key = readFileSync(safePath(root, `.neomind/native/keys/${value.key_id}.pem`), 'utf8');
   if (
     !Array.isArray(trusted.keys) ||
     !trusted.keys.includes(value.key_id) ||
@@ -312,14 +335,15 @@ export function routingProblems(
     return [`Native routing receipt cannot be verified: ${String(error)}.`];
   }
   const policy = roleModelPolicy(root, role);
-  const legacy = receipt.issuer.startsWith('verythinker-');
-  const vscode = receipt.issuer === 'taskforces-vscode-lm' || receipt.issuer === 'verythinker-vscode-lm';
+  const historicalNamespace = receipt.issuer.startsWith('verythinker-') ? 'verythinker'
+    : receipt.issuer.startsWith('taskforces-') ? 'taskforces' : 'neomind';
+  const vscode = receipt.issuer.endsWith('-vscode-lm');
   let expectedModel: string | undefined = vscode ? undefined : receipt.requested_model;
   if (vscode) {
     if (receipt.execution_mode !== 'vscode-extension-host' ||
         receipt.identity_provenance !== 'local-vscode-extension-host' ||
         !/^[a-f0-9]{64}$/.test(receipt.host_instance ?? '') ||
-        receipt.protocol_sha256 !== hash(legacy ? 'verythinker-vscode-lm-v1' : 'taskforces-vscode-lm-v1') ||
+        receipt.protocol_sha256 !== hash(`${historicalNamespace}-vscode-lm-v1`) ||
         receipt.runtime_integrity !== '' || receipt.native_sandbox !== null ||
         !receipt.native_thread_id?.startsWith('vscode-host:conversation:') ||
         !receipt.native_turn_id?.startsWith('vscode-host:turn:') || !receipt.client_version)
@@ -351,7 +375,7 @@ export function routingProblems(
     );
   try {
     const runtime = JSON.parse(
-      readFileSync(safePath(root, '.taskforces/native-runtime.lock.json'), 'utf8'),
+      readFileSync(safePath(root, '.neomind/native-runtime.lock.json'), 'utf8'),
     );
     if (
       runtime.version !== receipt.client_version ||
@@ -401,8 +425,9 @@ export function routingProblems(
   if (receipt.routing_sha256 !== hash(canonicalJson(readRoutingPolicy(root))))
     errors.push('Routing policy changed after this invocation started.');
   const currentHashes = routingConfigurationHashes(root);
-  const expectedHashes = legacy ? Object.fromEntries(Object.entries(currentHashes).map(([path, value]) =>
-    [path.replace(/^\.taskforces\//, '.verythinker/'), value])) : currentHashes;
+  const expectedHashes = historicalNamespace !== 'neomind'
+    ? Object.fromEntries(Object.entries(currentHashes).map(([path, value]) =>
+      [path.replace(/^\.neomind\//, `.${historicalNamespace}/`), value])) : currentHashes;
   if (
     canonicalJson(receipt.configuration_hashes) !== canonicalJson(expectedHashes)
   )

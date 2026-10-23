@@ -34,10 +34,10 @@ import {
 } from '../dist/recipes.js';
 
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-recipes-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-recipes-'));
   t.after(() => {
     const target = resolve(root);
-    assert.ok(relative(tmpdir(), target).startsWith('taskforces-recipes-'));
+    assert.ok(relative(tmpdir(), target).startsWith('neomind-recipes-'));
     rmSync(target, { recursive: true, force: true });
   });
   initialize(root, { project_id: 'RECIPE', profile: 'software' });
@@ -346,7 +346,7 @@ test('two embedded calibrations verify every ADC state plus hysteresis and circu
     const run = runRecipe(root, instance.meta.id);
     assert.equal(run.evidence.meta.data.result, 'pass');
     const oracle = JSON.parse(
-      readFileSync(join(root, '.taskforces/recipes', instance.meta.id, 'oracle.json'), 'utf8'),
+      readFileSync(join(root, '.neomind/recipes', instance.meta.id, 'oracle.json'), 'utf8'),
     );
     assert.equal(oracle.cases.length, (max + 1) * 2 + 2);
     assert.ok(
@@ -365,7 +365,7 @@ test('parameter, oracle, check, and requirement mutations prevent recipe executi
     requirement_ids: [requirement.meta.id],
   });
   reviewAndStart(root, instance);
-  const oraclePath = join(root, '.taskforces/recipes', instance.meta.id, 'oracle.json');
+  const oraclePath = join(root, '.neomind/recipes', instance.meta.id, 'oracle.json');
   writeFileSync(oraclePath, '{}\n');
   assert.ok(
     verifyFrozenRecipe(root, instance).some((message) =>
@@ -686,7 +686,7 @@ test('rewriting snapshot metadata or superseding a recipe cannot bypass its revi
     requirement_ids: [requirement.meta.id],
   });
   reviewAndStart(root, instance);
-  const oraclePath = `.taskforces/recipes/${instance.meta.id}/oracle.json`;
+  const oraclePath = `.neomind/recipes/${instance.meta.id}/oracle.json`;
   writeFileSync(join(root, oraclePath), '{}\n');
   updateRecord(root, instance.meta.id, {
     data: {
@@ -792,7 +792,7 @@ test('interrupted recipe preparation resumes the same task and instance without 
   assert.equal(resumed.meta.data.check_id, instance.meta.data.check_id);
   assert.equal(loadRecords(root).length, count);
   updateRecord(root, instance.meta.id, { data: { preparation_complete: false } });
-  writeFileSync(join(root, `.taskforces/recipes/${instance.meta.id}/oracle.json`), '{}\n');
+  writeFileSync(join(root, `.neomind/recipes/${instance.meta.id}/oracle.json`), '{}\n');
   assert.throws(
     () => prepareRecipe(root, request),
     /Interrupted protected recipe artifact changed/,

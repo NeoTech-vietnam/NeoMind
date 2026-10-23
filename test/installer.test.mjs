@@ -22,11 +22,11 @@ import { resumeTask } from '../dist/engineering.js';
 import { createHash } from 'node:crypto';
 
 function project(t, platforms = ['codex', 'claude', 'copilot']) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces install-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind install-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  mkdirSync(join(root, '.taskforces'));
+  mkdirSync(join(root, '.neomind'));
   writeFileSync(
-    join(root, '.taskforces', 'config.json'),
+    join(root, '.neomind', 'config.json'),
     JSON.stringify({
       schema_version: 1,
       project_id: 'TEST-PROJECT',
@@ -66,7 +66,7 @@ test('installation preserves instructions and JSONC/TOML siblings, then is idemp
   const report = installProject(root);
   assert.deepEqual(report.conflicts, []);
   assert.ok(read(root, 'AGENTS.md').startsWith(instructions.trimEnd()));
-  assert.match(read(root, 'AGENTS.md'), /BEGIN TASKFORCES instructions/);
+  assert.match(read(root, 'AGENTS.md'), /BEGIN NEOMIND instructions/);
   assert.match(read(root, '.mcp.json'), /User server comment/);
   assert.equal(parse(read(root, '.mcp.json')).mcpServers.existing.command, 'existing-server');
   assert.equal(parse(read(root, '.mcp.json')).extra, true);
@@ -74,10 +74,10 @@ test('installation preserves instructions and JSONC/TOML siblings, then is idemp
   assert.match(read(root, '.codex/config.toml'), /\[mcp_servers.existing\]/);
   assert.equal(readdirSync(join(root, '.codex/agents')).length, 12);
   assert.match(
-    read(root, '.github/agents/taskforces-manager.agent.md'),
+    read(root, '.github/agents/neomind-manager.agent.md'),
     /model: "claude-opus-4.6"/,
   );
-  assert.match(read(root, '.github/agents/taskforces-fnd.agent.md'), /model: "gpt-5.4"/);
+  assert.match(read(root, '.github/agents/neomind-fnd.agent.md'), /model: "gpt-5.4"/);
   assert.equal(readdirSync(join(root, '.github/agents')).length, 6);
   assert.doesNotMatch(
     read(root, '.github/copilot-instructions.md'),
@@ -87,13 +87,13 @@ test('installation preserves instructions and JSONC/TOML siblings, then is idemp
     read(root, '.github/copilot-instructions.md'),
     /optional VS Code Bridge and signed routing gates/,
   );
-  assert.match(read(root, '.github/agents/taskforces-manager.agent.md'), /model: "claude-opus-4.6"/);
-  assert.match(read(root, '.github/agents/taskforces-manager.agent.md'), /taskforces\/lightweight_checkpoint/);
-  assert.match(read(root, '.taskforces/guides/lightweight.md'), /Source-backed reproducibility/);
+  assert.match(read(root, '.github/agents/neomind-manager.agent.md'), /model: "claude-opus-4.6"/);
+  assert.match(read(root, '.github/agents/neomind-manager.agent.md'), /neomind\/lightweight_checkpoint/);
+  assert.match(read(root, '.neomind/guides/lightweight.md'), /Source-backed reproducibility/);
   assert.doesNotMatch(read(root, '.github/copilot-instructions.md'), /adapter is implemented/);
-  assert.ok(existsSync(join(root, '.agents/skills/taskforces-verify/SKILL.md')));
-  assert.ok(existsSync(join(root, '.claude/skills/taskforces-verify/SKILL.md')));
-  assert.ok(existsSync(join(root, '.github/skills/taskforces-verify/SKILL.md')));
+  assert.ok(existsSync(join(root, '.agents/skills/neomind-verify/SKILL.md')));
+  assert.ok(existsSync(join(root, '.claude/skills/neomind-verify/SKILL.md')));
+  assert.ok(existsSync(join(root, '.github/skills/neomind-verify/SKILL.md')));
   const before = read(root, 'AGENTS.md');
   const next = updateProject(root);
   assert.deepEqual(next.installed, []);
@@ -105,14 +105,14 @@ test('installation preserves instructions and JSONC/TOML siblings, then is idemp
 test('Copilot rename retires hash-owned artifacts and preserves edited files and sibling settings', (t) => {
   const root = project(t, ['copilot']);
   installProject(root);
-  const manifestPath = '.taskforces/install-manifest.json';
+  const manifestPath = '.neomind/install-manifest.json';
   const manifest = JSON.parse(read(root, manifestPath));
   const digest = (value) => createHash('sha256').update(value).digest('hex');
   for (const [path, content, edited] of [
     ['.github/agents/verythinker-developer.agent.md', 'Owned old developer.\n', false],
-    ['.github/agents/taskforces-developer.agent.md', 'Owned former squad agent.\n', false],
-    ['.github/agents/taskforces-lightweight.agent.md', 'Owned former lightweight agent.\n', false],
-    ['.github/agents/taskforces-curator.agent.md', 'Edited former squad agent.\n', true],
+    ['.github/agents/neomind-developer.agent.md', 'Owned former squad agent.\n', false],
+    ['.github/agents/neomind-lightweight.agent.md', 'Owned former lightweight agent.\n', false],
+    ['.github/agents/neomind-curator.agent.md', 'Edited former squad agent.\n', true],
     ['.github/agents/verythinker-reviewer.agent.md', 'Original old reviewer.\n', true],
     ['.github/hooks/verythinker.json', '{}\n', false],
     ['.github/skills/verythinker-manager/SKILL.md', 'Old skill.\n', false],
@@ -126,9 +126,9 @@ test('Copilot rename retires hash-owned artifacts and preserves edited files and
   write(root, manifestPath, JSON.stringify(manifest));
   const report = updateProject(root);
   assert.equal(existsSync(join(root, '.github/agents/verythinker-developer.agent.md')), false);
-  assert.equal(existsSync(join(root, '.github/agents/taskforces-developer.agent.md')), false);
-  assert.equal(existsSync(join(root, '.github/agents/taskforces-lightweight.agent.md')), false);
-  assert.equal(read(root, '.github/agents/taskforces-curator.agent.md'), 'User-owned edits.\n');
+  assert.equal(existsSync(join(root, '.github/agents/neomind-developer.agent.md')), false);
+  assert.equal(existsSync(join(root, '.github/agents/neomind-lightweight.agent.md')), false);
+  assert.equal(read(root, '.github/agents/neomind-curator.agent.md'), 'User-owned edits.\n');
   assert.equal(existsSync(join(root, '.github/hooks/verythinker.json')), false);
   assert.equal(existsSync(join(root, '.github/skills/verythinker-manager/SKILL.md')), false);
   assert.equal(read(root, '.github/agents/verythinker-reviewer.agent.md'), 'User-owned edits.\n');
@@ -137,7 +137,7 @@ test('Copilot rename retires hash-owned artifacts and preserves edited files and
   assert.equal(settings.mcpServers.verythinker, undefined);
   assert.equal(settings.mcpServers.existing.command, 'keep-me');
   assert.equal(settings.extra, true);
-  const reviewer = read(root, '.github/agents/taskforces-reviewer.agent.md');
+  const reviewer = read(root, '.github/agents/neomind-reviewer.agent.md');
   assert.doesNotMatch(reviewer.split('---')[1], /"execute"|"edit"|native_dispatch|capability_invoke|task_file_write/);
 });
 
@@ -147,25 +147,25 @@ test('ordinary engineering intent automatically routes to the manager on every n
   for (const path of ['AGENTS.md', 'CLAUDE.md', '.github/copilot-instructions.md']) {
     const instructions = read(root, path);
     assert.match(instructions, /new requirement, feature, fix/);
-    assert.match(instructions, path === '.github/copilot-instructions.md' ? /Generic intake only/ : /automatically act as the TaskForces manager/);
-    assert.match(instructions, path === '.github/copilot-instructions.md' ? /Launch exactly Manager Agent/ : /taskforces-manager/);
+    assert.match(instructions, path === '.github/copilot-instructions.md' ? /Generic intake only/ : /automatically act as the NeoMind manager/);
+    assert.match(instructions, path === '.github/copilot-instructions.md' ? /Launch exactly NeoMind Manager Agent/ : /neomind-manager/);
     assert.match(instructions, /automation\.json/);
     assert.match(instructions, /agent-operated.*CLI.*fallback/);
   }
   for (const prefix of ['.agents', '.claude', '.github']) {
-    const name = prefix === '.github' ? 'taskforces-manager' : 'taskforces-manager';
+    const name = prefix === '.github' ? 'neomind-manager' : 'neomind-manager';
     const skill = read(root, `${prefix}/skills/${name}/SKILL.md`);
     assert.match(skill, new RegExp(`^---\\r?\\nname: ${name}\\r?\\n`));
     assert.match(skill, /description: Manage a user's engineering requirement/);
     assert.doesNotMatch(skill, /disable-model-invocation: true/);
-    assert.match(skill, prefix === '.github' ? /taskforces\/manager_run/ : /manager_begin/);
+    assert.match(skill, prefix === '.github' ? /neomind\/manager_run/ : /manager_begin/);
     if (prefix === '.github') {
       assert.match(skill, /guides\/copilot-native\.md/);
       assert.doesNotMatch(skill, /Complete the increment through actual core operations and signed native invocations/);
     }
     assert.match(skill, /reviewed knowledge contribution/);
   }
-  const guide = read(root, '.taskforces/guides/manager.md');
+  const guide = read(root, '.neomind/guides/manager.md');
   for (const operation of [
     'manager_begin',
     'manager_discuss',
@@ -185,24 +185,24 @@ test('ordinary engineering intent automatically routes to the manager on every n
 test('installed Copilot agents distinguish intake, selected Manager and bounded specialists', (t) => {
   const root = project(t, ['copilot']);
   installProject(root);
-  const delegates = ['SWSD Agent', 'P-RES Agent', 'FnD Agent', 'Reviewer Agent', 'Tester Agent'];
+  const delegates = ['NeoMind SWSD Agent', 'NeoMind P-RES Agent', 'NeoMind FnD Agent', 'NeoMind Reviewer Agent', 'NeoMind Tester Agent'];
   const generic = read(root, '.github/copilot-instructions.md');
-  assert.match(generic, /Generic intake only \(neither selected Manager Agent nor an assigned specialist\)/);
-  assert.match(generic, /Launch exactly Manager Agent.*handoff\.prompt unchanged/);
-  assert.match(generic, /Selected Manager Agent:.*continue the returned handoff\.prompt and workflow directly/);
+  assert.match(generic, /Generic intake only \(neither selected NeoMind Manager Agent nor an assigned specialist\)/);
+  assert.match(generic, /Launch exactly NeoMind Manager Agent.*handoff\.prompt unchanged/);
+  assert.match(generic, /Selected NeoMind Manager Agent:.*continue the returned handoff\.prompt and workflow directly/);
   assert.match(generic, /Assigned specialist:.*Never perform intake, call manager_run/);
-  const manager = read(root, '.github/agents/taskforces-manager.agent.md');
+  const manager = read(root, '.github/agents/neomind-manager.agent.md');
   const metadata = parseYaml(manager.split('---')[1]);
   assert.deepEqual(metadata.agents, delegates);
-  assert.equal(metadata.agents.includes('Manager Agent'), false);
+  assert.equal(metadata.agents.includes('NeoMind Manager Agent'), false);
   assert.ok(metadata.tools.includes('agent'));
-  assert.ok(metadata.tools.includes('taskforces/manager_run'));
-  assert.match(manager, /Selected Manager Agent:.*call taskforces\/manager_run once.*continue the returned handoff\.prompt and workflow directly/);
-  assert.match(manager, /Do not launch handoff\.agent when it is Manager Agent: that is yourself/);
-  assert.match(manager, /already assigned Manager Agent.*without calling manager_run again or self-delegating/);
-  assert.doesNotMatch(manager, /Generic intake only|Launch exactly Manager Agent|configured taskforces-\* agents/);
+  assert.ok(metadata.tools.includes('neomind/manager_run'));
+  assert.match(manager, /Selected NeoMind Manager Agent:.*call neomind\/manager_run once.*continue the returned handoff\.prompt and workflow directly/);
+  assert.match(manager, /Do not launch handoff\.agent when it is NeoMind Manager Agent: that is yourself/);
+  assert.match(manager, /already assigned NeoMind Manager Agent.*without calling manager_run again or self-delegating/);
+  assert.doesNotMatch(manager, /Generic intake only|Launch exactly NeoMind Manager Agent|configured neomind-\* agents/);
   for (const name of delegates) assert.ok(manager.includes(name), name);
-  assert.ok(manager.indexOf('## Execution instructions') < manager.indexOf('## TaskForces engineering workflow'));
+  assert.ok(manager.indexOf('## Execution instructions') < manager.indexOf('## NeoMind engineering workflow'));
   assert.match(manager, /must never perform production implementation or independent self-review/);
   assert.match(manager, /Inline role impersonation is not delegation/);
   assert.match(manager, /actual invocation IDs and assignment_report IDs/);
@@ -222,25 +222,25 @@ test('installed Copilot agents distinguish intake, selected Manager and bounded 
     assert.doesNotMatch(instructions, /Network\/authentication failures remain blockers|discover commit-pinned prior Cornell sources from the configured upstream/);
   }
   for (const id of ['swsd', 'p-res', 'fnd', 'reviewer', 'tester']) {
-    const specialist = read(root, `.github/agents/taskforces-${id}.agent.md`);
+    const specialist = read(root, `.github/agents/neomind-${id}.agent.md`);
     const header = parseYaml(specialist.split('---')[1]);
     assert.deepEqual(header.agents, []);
     assert.equal(header['user-invocable'], false);
     assert.equal(header.tools.includes('agent'), false);
-    assert.equal(header.tools.includes('taskforces/manager_run'), false);
+    assert.equal(header.tools.includes('neomind/manager_run'), false);
     assert.match(specialist, /Assigned specialist: execute only the supplied bounded task/);
-    assert.match(specialist, /Never perform intake, call manager_run, launch Manager Agent or delegate recursively/);
+    assert.match(specialist, /Never perform intake, call manager_run, launch NeoMind Manager Agent or delegate recursively/);
     assert.match(specialist, /Return actual results, invocation ID and assignment_report ID/);
-    assert.doesNotMatch(specialist, /Generic intake only|Selected Manager Agent:|Launch exactly Manager Agent|Call taskforces\/manager_run once/i);
-    assert.ok(specialist.indexOf('## Execution instructions') < specialist.indexOf('## TaskForces engineering workflow'));
+    assert.doesNotMatch(specialist, /Generic intake only|Selected NeoMind Manager Agent:|Launch exactly NeoMind Manager Agent|Call neomind\/manager_run once/i);
+    assert.ok(specialist.indexOf('## Execution instructions') < specialist.indexOf('## NeoMind engineering workflow'));
   }
   // Skills are shared: their intake branch must remain explicitly conditional on invocation role.
-  const skill = read(root, '.github/skills/taskforces-manager/SKILL.md');
-  assert.match(skill, /Generic intake only \(neither selected Manager Agent nor an assigned specialist\)/);
-  assert.match(skill, /already assigned Manager Agent.*without calling manager_run again/);
+  const skill = read(root, '.github/skills/neomind-manager/SKILL.md');
+  assert.match(skill, /Generic intake only \(neither selected NeoMind Manager Agent nor an assigned specialist\)/);
+  assert.match(skill, /already assigned NeoMind Manager Agent.*without calling manager_run again/);
   assert.match(skill, /Assigned specialist:.*Never perform intake/);
-  const guide = read(root, '.taskforces/guides/copilot-native.md');
-  assert.match(guide, /Directly selected Manager Agent/);
+  const guide = read(root, '.neomind/guides/copilot-native.md');
+  assert.match(guide, /Directly selected NeoMind Manager Agent/);
   assert.match(guide, /Assigned specialists/);
   assert.match(guide, /saved path \(`artifact_path`\)/);
   assert.match(guide, /Analysis\/research-only requests still require/);
@@ -255,8 +255,8 @@ test('installed Copilot agents distinguish intake, selected Manager and bounded 
 test('modified and deleted managed templates remain preserved and receive candidates', (t) => {
   const root = project(t, ['codex']);
   installProject(root);
-  const changed = '.taskforces/roles/researcher.md';
-  const removed = '.taskforces/roles/reviewer.md';
+  const changed = '.neomind/roles/researcher.md';
+  const removed = '.neomind/roles/reviewer.md';
   write(root, changed, 'User research procedure.\n');
   rmSync(join(root, removed));
   const report = updateProject(root);
@@ -280,12 +280,12 @@ test('user-owned MCP entries and hook events produce review candidates', (t) => 
   write(
     root,
     '.mcp.json',
-    '{ // preserve me\n "mcpServers": {"taskforces": {"command":"user-owned"}}\n}\n',
+    '{ // preserve me\n "mcpServers": {"neomind": {"command":"user-owned"}}\n}\n',
   );
   write(
     root,
     '.codex/config.toml',
-    '# User owned\n[mcp_servers.taskforces]\ncommand = "user-owned"\n',
+    '# User owned\n[mcp_servers.neomind]\ncommand = "user-owned"\n',
   );
   write(
     root,
@@ -302,7 +302,7 @@ test('user-owned MCP entries and hook events produce review candidates', (t) => 
     'user-start',
   );
   assert.equal(parse(read(root, '.claude/settings.json')).other, 42);
-  assert.ok(report.conflicts.some((item) => item.path === '.mcp.json#mcpServers.taskforces'));
+  assert.ok(report.conflicts.some((item) => item.path === '.mcp.json#mcpServers.neomind'));
   assert.ok(report.conflicts.some((item) => item.path === '.codex/config.toml#mcp'));
   assert.ok(
     report.conflicts.some((item) => item.path === '.claude/settings.json#hooks.SessionStart'),
@@ -332,7 +332,7 @@ test('native hook commands and model metadata are generated without claiming liv
   installProject(root);
   const codex = parse(read(root, '.codex/hooks.json'));
   const claude = parse(read(root, '.claude/settings.json'));
-  const copilot = parse(read(root, '.github/hooks/taskforces.json'));
+  const copilot = parse(read(root, '.github/hooks/neomind.json'));
   assert.match(codex.hooks.SessionStart[0].hooks[0].command, /--event.*session-start/);
   assert.match(codex.hooks.Stop[0].hooks[0].commandWindows, /^& /);
   assert.equal(claude.hooks.SessionStart[0].hooks[0].command, process.execPath);
@@ -370,20 +370,20 @@ test('native hook commands and model metadata are generated without claiming liv
 
 test('routing policy is authoritative while legacy mappings and historical records remain untouched', (t) => {
   const root = project(t);
-  const config = JSON.parse(read(root, '.taskforces/config.json'));
+  const config = JSON.parse(read(root, '.neomind/config.json'));
   config.models = {
     economy: { claude: 'haiku', copilot: 'worker-choice' },
     balanced: null,
     strong: { copilot: 'authored-model', claude: 'opus' },
   };
-  write(root, '.taskforces/config.json', JSON.stringify(config, null, 2) + '\n');
+  write(root, '.neomind/config.json', JSON.stringify(config, null, 2) + '\n');
   write(
     root,
-    '.taskforces/records/legacy.md',
+    '.neomind/records/legacy.md',
     'Historical accepted record retained byte for byte.\n',
   );
   const report = installProject(root);
-  const current = JSON.parse(read(root, '.taskforces/config.json'));
+  const current = JSON.parse(read(root, '.neomind/config.json'));
   assert.deepEqual(current.models.economy, {
     claude: 'haiku',
     copilot: 'worker-choice',
@@ -395,12 +395,12 @@ test('routing policy is authoritative while legacy mappings and historical recor
     false,
   );
   assert.equal(
-    read(root, '.taskforces/records/legacy.md'),
+    read(root, '.neomind/records/legacy.md'),
     'Historical accepted record retained byte for byte.\n',
   );
-  assert.match(read(root, '.codex/agents/taskforces-manager.toml'), /model = "claude-opus-4.6"/);
+  assert.match(read(root, '.codex/agents/neomind-manager.toml'), /model = "claude-opus-4.6"/);
   assert.match(
-    read(root, '.github/agents/taskforces-manager.agent.md'),
+    read(root, '.github/agents/neomind-manager.agent.md'),
     /model: "claude-opus-4.6"/,
   );
   assert.equal(
@@ -435,7 +435,7 @@ test('one routing file regenerates Copilot models from provider-qualified catalo
       },
     ]),
   );
-  const policy = JSON.parse(read(root, '.taskforces/routing.json'));
+  const policy = JSON.parse(read(root, '.neomind/routing.json'));
   Object.assign(policy, {
     strong_model: 'company-top-tier-model',
     strong_provider: '9localrouter',
@@ -443,44 +443,44 @@ test('one routing file regenerates Copilot models from provider-qualified catalo
     worker_provider: 'Bosch Model Farm',
     language_models_file: 'models.json',
   });
-  write(root, '.taskforces/routing.json', JSON.stringify(policy));
+  write(root, '.neomind/routing.json', JSON.stringify(policy));
   assert.deepEqual(updateProject(root).conflicts, []);
-  const manager = '.github/agents/taskforces-manager.agent.md';
-  const developer = '.github/agents/taskforces-fnd.agent.md';
+  const manager = '.github/agents/neomind-manager.agent.md';
+  const developer = '.github/agents/neomind-fnd.agent.md';
   assert.match(read(root, manager), /model: "company-top-tier-model \(customendpoint\)"/);
   assert.match(read(root, developer), /model: \["GPT-4o mini \(customendpoint\)","Gemini 2.5 Flash-Lite \(customendpoint\)"\]/);
   assert.doesNotMatch(read(root, developer), /never-copy-this|apiKey/);
   policy.strong_model = 'top-tier-model';
   policy.worker_models = ['gemini-2.5-flash-lite'];
-  write(root, '.taskforces/routing.json', JSON.stringify(policy));
+  write(root, '.neomind/routing.json', JSON.stringify(policy));
   const cli = spawnSync(process.execPath, [fileURLToPath(new URL('../dist/cli.js', import.meta.url)),
     'update', '--project', root], { encoding: 'utf8' });
   assert.equal(cli.status, 0, cli.stderr || cli.stdout);
   assert.deepEqual(JSON.parse(cli.stdout).conflicts, []);
   for (const [id, name, model] of [
-    ['manager', 'Manager Agent', 'top-tier-model'], ['swsd', 'SWSD Agent', 'top-tier-model'],
-    ['p-res', 'P-RES Agent', 'top-tier-model'], ['reviewer', 'Reviewer Agent', 'top-tier-model'],
-    ['fnd', 'FnD Agent', 'Gemini 2.5 Flash-Lite'], ['tester', 'Tester Agent', 'Gemini 2.5 Flash-Lite'],
+    ['manager', 'NeoMind Manager Agent', 'top-tier-model'], ['swsd', 'NeoMind SWSD Agent', 'top-tier-model'],
+    ['p-res', 'NeoMind P-RES Agent', 'top-tier-model'], ['reviewer', 'NeoMind Reviewer Agent', 'top-tier-model'],
+    ['fnd', 'NeoMind FnD Agent', 'Gemini 2.5 Flash-Lite'], ['tester', 'NeoMind Tester Agent', 'Gemini 2.5 Flash-Lite'],
   ]) {
-    const metadata = parseYaml(read(root, `.github/agents/taskforces-${id}.agent.md`).split('---')[1]);
+    const metadata = parseYaml(read(root, `.github/agents/neomind-${id}.agent.md`).split('---')[1]);
     assert.equal(metadata.name, name);
     assert.equal(metadata.model, `${model} (customendpoint)`);
     assert.deepEqual(metadata.agents, id === 'manager'
-      ? ['SWSD Agent', 'P-RES Agent', 'FnD Agent', 'Reviewer Agent', 'Tester Agent'] : []);
+      ? ['NeoMind SWSD Agent', 'NeoMind P-RES Agent', 'NeoMind FnD Agent', 'NeoMind Reviewer Agent', 'NeoMind Tester Agent'] : []);
   }
   assert.match(read(root, manager), /model: "top-tier-model \(customendpoint\)"/);
   assert.match(read(root, developer), /model: "Gemini 2.5 Flash-Lite \(customendpoint\)"/);
   policy.worker_provider = '9localrouter';
-  write(root, '.taskforces/routing.json', JSON.stringify(policy));
+  write(root, '.neomind/routing.json', JSON.stringify(policy));
   assert.throws(() => updateProject(root), /exactly one entry.*9localrouter/);
   policy.worker_provider = 'Bosch Model Farm';
   policy.worker_models = ['missing-model'];
-  write(root, '.taskforces/routing.json', JSON.stringify(policy));
+  write(root, '.neomind/routing.json', JSON.stringify(policy));
   assert.throws(() => updateProject(root), /missing-model.*exactly one entry/);
   policy.worker_models = ['gemini-2.5-flash-lite'];
   write(root, manager, 'User-owned agent instructions.\n');
   policy.strong_model = 'company-top-tier-model';
-  write(root, '.taskforces/routing.json', JSON.stringify(policy));
+  write(root, '.neomind/routing.json', JSON.stringify(policy));
   assert.ok(updateProject(root).conflicts.some((item) => item.path === manager));
   assert.equal(read(root, manager), 'User-owned agent instructions.\n');
 });
@@ -489,8 +489,8 @@ test('CRLF-reconciled Copilot candidates retain actual hashes and support later 
   const root = project(t, ['copilot']);
   assert.deepEqual(installProject(root).conflicts, []);
   const paths = ['manager', 'swsd', 'p-res', 'fnd', 'reviewer', 'tester']
-    .map((id) => `.github/agents/taskforces-${id}.agent.md`);
-  const manifestPath = '.taskforces/install-manifest.json';
+    .map((id) => `.github/agents/neomind-${id}.agent.md`);
+  const manifestPath = '.neomind/install-manifest.json';
   const digest = (value) => createHash('sha256').update(value).digest('hex');
   for (const path of paths) write(root, path, read(root, path) + '\nLocal agent customization.\n');
   const review = updateProject(root);
@@ -516,18 +516,18 @@ test('CRLF-reconciled Copilot candidates retain actual hashes and support later 
     assert.equal(manifest.files[path].hash, digest(crlf));
   }
   assert.deepEqual(updateProject(root).conflicts, []);
-  const policy = JSON.parse(read(root, '.taskforces/routing.json'));
+  const policy = JSON.parse(read(root, '.neomind/routing.json'));
   policy.strong_model = 'reconciled-strong-model';
-  write(root, '.taskforces/routing.json', JSON.stringify(policy));
+  write(root, '.neomind/routing.json', JSON.stringify(policy));
   const regenerated = updateProject(root);
   assert.deepEqual(regenerated.conflicts, []);
   for (const id of ['manager', 'swsd', 'p-res', 'reviewer']) {
-    const path = `.github/agents/taskforces-${id}.agent.md`;
+    const path = `.github/agents/neomind-${id}.agent.md`;
     assert.ok(regenerated.updated.includes(path));
     assert.equal(parseYaml(read(root, path).split('---')[1]).model, policy.strong_model);
   }
   for (const id of ['fnd', 'tester']) {
-    const path = `.github/agents/taskforces-${id}.agent.md`;
+    const path = `.github/agents/neomind-${id}.agent.md`;
     assert.equal(read(root, path), reconciled.get(path));
   }
   const repeated = updateProject(root);
@@ -554,8 +554,8 @@ test('CRLF-reconciled Copilot candidates retain actual hashes and support later 
 test('normalized-identical user-owned agents remain unowned and protected from model changes', (t) => {
   const root = project(t, ['copilot']);
   installProject(root);
-  const path = '.github/agents/taskforces-manager.agent.md';
-  const manifestPath = '.taskforces/install-manifest.json';
+  const path = '.github/agents/neomind-manager.agent.md';
+  const manifestPath = '.neomind/install-manifest.json';
   const manifest = JSON.parse(read(root, manifestPath));
   // Model an existing identical file for which the installer has no prior ownership.
   delete manifest.files[path];
@@ -567,9 +567,9 @@ test('normalized-identical user-owned agents remain unowned and protected from m
   assert.ok(identical.unchanged.includes(path));
   assert.equal(read(root, path), authored);
   assert.equal(JSON.parse(read(root, manifestPath)).files[path], undefined);
-  const policy = JSON.parse(read(root, '.taskforces/routing.json'));
+  const policy = JSON.parse(read(root, '.neomind/routing.json'));
   policy.strong_model = 'another-strong-model';
-  write(root, '.taskforces/routing.json', JSON.stringify(policy));
+  write(root, '.neomind/routing.json', JSON.stringify(policy));
   const changed = updateProject(root);
   assert.deepEqual(changed.conflicts.map((item) => item.path), [path]);
   assert.equal(changed.conflicts[0].reason, 'Existing content is owned by the user.');
@@ -580,8 +580,8 @@ test('normalized-identical user-owned agents remain unowned and protected from m
 test('Copilot catalog aliases generate identical decorated headers without reordering workers or doubling suffixes', (t) => {
   const root = project(t);
   installProject(root);
-  const config = JSON.parse(read(root, '.taskforces/config.json'));
-  const policy = JSON.parse(read(root, '.taskforces/routing.json'));
+  const config = JSON.parse(read(root, '.neomind/config.json'));
+  const policy = JSON.parse(read(root, '.neomind/routing.json'));
   const catalog = [{ name: 'Endpoint group', vendor: 'customendpoint', apiKey: 'private-key', models: [
     { id: 'strong-id', name: 'Strong Display' },
     { id: 'worker-b', name: 'Worker B' },
@@ -595,7 +595,7 @@ test('Copilot catalog aliases generate identical decorated headers without reord
     policy.strong_model = strong;
     policy.worker_models = workers;
     write(root, 'models.json', JSON.stringify(entries));
-    write(root, '.taskforces/routing.json', JSON.stringify(policy));
+    write(root, '.neomind/routing.json', JSON.stringify(policy));
     const outputs = adapterOutputs(root, config);
     return Object.fromEntries(outputs.filter(output => output.path.startsWith('.github/agents/')).map(output => {
       assert.doesNotMatch(output.content, /private-key|apiKey/);
@@ -608,21 +608,21 @@ test('Copilot catalog aliases generate identical decorated headers without reord
   assert.deepEqual(byId, raw);
   assert.deepEqual(byDisplay, raw);
   for (const id of ['manager', 'swsd', 'p-res', 'reviewer']) {
-    assert.equal(raw[`.github/agents/taskforces-${id}.agent.md`].model, 'Strong Display (customendpoint)');
+    assert.equal(raw[`.github/agents/neomind-${id}.agent.md`].model, 'Strong Display (customendpoint)');
   }
   for (const id of ['fnd', 'tester']) {
-    assert.deepEqual(raw[`.github/agents/taskforces-${id}.agent.md`].model,
+    assert.deepEqual(raw[`.github/agents/neomind-${id}.agent.md`].model,
       ['Worker B (customendpoint)', 'Worker A (customendpoint)']);
   }
   const literal = run('literal (customendpoint)', ['worker-a']);
-  assert.equal(literal['.github/agents/taskforces-manager.agent.md'].model, 'Literal Winner (customendpoint)');
-  assert.equal(literal['.github/agents/taskforces-fnd.agent.md'].model, 'Worker A (customendpoint)');
+  assert.equal(literal['.github/agents/neomind-manager.agent.md'].model, 'Literal Winner (customendpoint)');
+  assert.equal(literal['.github/agents/neomind-fnd.agent.md'].model, 'Worker A (customendpoint)');
   const settings = run('settings-strong (customendpoint)', ['settings-b (customendpoint)', 'settings-a'],
     [{ name: 'Endpoint group', vendor: 'customendpoint', settings: {
       'settings-strong': { apiKey: 'private-key' }, 'settings-a': {}, 'settings-b': {},
     } }]);
-  assert.equal(settings['.github/agents/taskforces-manager.agent.md'].model, 'settings-strong (customendpoint)');
-  assert.deepEqual(settings['.github/agents/taskforces-fnd.agent.md'].model,
+  assert.equal(settings['.github/agents/neomind-manager.agent.md'].model, 'settings-strong (customendpoint)');
+  assert.deepEqual(settings['.github/agents/neomind-fnd.agent.md'].model,
     ['settings-b (customendpoint)', 'settings-a (customendpoint)']);
   assert.throws(() => run('strong-id (wrong-vendor)', ['worker-b']), /exactly one entry.*Endpoint group/);
   assert.throws(() => run('strong-id', ['worker-b'], [catalog[0], catalog[0]]), /exactly one entry.*Endpoint group/);
@@ -788,7 +788,7 @@ test('strict roles and gateway tool declarations preserve reviewer independence'
     'verifier',
     'reviewer',
   ]) {
-    const file = read(root, `.codex/agents/taskforces-${role}.toml`);
+    const file = read(root, `.codex/agents/neomind-${role}.toml`);
     assert.match(file, /model = "claude-opus-4.6"/);
     assert.match(file, /model_reasoning_effort = "high"/);
     assert.match(file, /sandbox_mode = "read-only"/);
@@ -801,43 +801,43 @@ test('strict roles and gateway tool declarations preserve reviewer independence'
     'check-executor',
     'release',
   ])
-    assert.match(read(root, `.codex/agents/taskforces-${role}.toml`), /model = "gpt-5.4"/);
-  const reviewer = read(root, '.codex/agents/taskforces-reviewer.toml');
+    assert.match(read(root, `.codex/agents/neomind-${role}.toml`), /model = "gpt-5.4"/);
+  const reviewer = read(root, '.codex/agents/neomind-reviewer.toml');
   const enabled = JSON.parse(/^enabled_tools = (.+)$/m.exec(reviewer)[1]);
   assert.ok(enabled.includes('task_review'));
   assert.ok(!enabled.includes('task_submit'));
   assert.ok(!enabled.includes('record_update'));
-  const claude = read(root, '.claude/agents/taskforces-reviewer.md');
+  const claude = read(root, '.claude/agents/neomind-reviewer.md');
   const toolLine = /^tools: (.+)$/m.exec(claude)[1].split(', ');
   assert.ok(toolLine.includes('Read'));
-  assert.ok(toolLine.includes('mcp__taskforces__task_review'));
+  assert.ok(toolLine.includes('mcp__neomind__task_review'));
   assert.ok(!toolLine.includes('Edit'));
   const copilot = JSON.parse(
-    /^tools: (.+)$/m.exec(read(root, '.github/agents/taskforces-reviewer.agent.md'))[1],
+    /^tools: (.+)$/m.exec(read(root, '.github/agents/neomind-reviewer.agent.md'))[1],
   );
-  assert.ok(copilot.includes('taskforces/task_review'));
+  assert.ok(copilot.includes('neomind/task_review'));
   assert.ok(!copilot.includes('edit'));
-  assert.ok(existsSync(join(root, '.taskforces/roles/check-executor.capabilities.json')));
-  assert.match(read(root, '.agents/skills/taskforces-manager/SKILL.md'), /manager_run/);
+  assert.ok(existsSync(join(root, '.neomind/roles/check-executor.capabilities.json')));
+  assert.match(read(root, '.agents/skills/neomind-manager/SKILL.md'), /manager_run/);
 });
 
 test('project-owned routing, archive, and tool policies survive updates', (t) => {
   const root = project(t, ['codex']);
   installProject(root);
-  const archive = JSON.parse(read(root, '.taskforces/archive.json'));
+  const archive = JSON.parse(read(root, '.neomind/archive.json'));
   archive.repository = 'example/private';
   archive.enabled = false;
-  write(root, '.taskforces/archive.json', JSON.stringify(archive, null, 2) + '\n');
-  const tools = JSON.parse(read(root, '.taskforces/tools.json'));
+  write(root, '.neomind/archive.json', JSON.stringify(archive, null, 2) + '\n');
+  const tools = JSON.parse(read(root, '.neomind/tools.json'));
   tools.automatic_install = false;
   tools.approved_providers = ['context7'];
-  write(root, '.taskforces/tools.json', JSON.stringify(tools, null, 2) + '\n');
-  const before = read(root, '.taskforces/routing.json');
+  write(root, '.neomind/tools.json', JSON.stringify(tools, null, 2) + '\n');
+  const before = read(root, '.neomind/routing.json');
   const report = updateProject(root);
   assert.deepEqual(report.conflicts, []);
-  assert.equal(read(root, '.taskforces/routing.json'), before);
-  assert.equal(JSON.parse(read(root, '.taskforces/archive.json')).repository, 'example/private');
-  assert.equal(JSON.parse(read(root, '.taskforces/tools.json')).automatic_install, false);
+  assert.equal(read(root, '.neomind/routing.json'), before);
+  assert.equal(JSON.parse(read(root, '.neomind/archive.json')).repository, 'example/private');
+  assert.equal(JSON.parse(read(root, '.neomind/tools.json')).automatic_install, false);
   const health = doctor(root);
   assert.deepEqual(health.routing.observations, []);
   assert.equal(health.archives.enabled, false);
@@ -850,17 +850,17 @@ test('invalid JSON remains untouched with a generated candidate', (t) => {
   const report = installProject(root);
   assert.equal(read(root, '.mcp.json'), '{ invalid user content');
   const conflict = report.conflicts.find(
-    (item) => item.path === '.mcp.json#mcpServers.taskforces',
+    (item) => item.path === '.mcp.json#mcpServers.neomind',
   );
   assert.ok(conflict);
-  assert.ok(parse(read(root, conflict.candidate)).mcpServers.taskforces);
+  assert.ok(parse(read(root, conflict.candidate)).mcpServers.neomind);
 });
 
 test('user-owned dotted, inline, and nested TOML server settings receive candidates', (t) => {
   for (const source of [
-    'mcp_servers.taskforces = { command = "user-provider" }\n',
-    '[mcp_servers]\ntaskforces = { command = "user-provider" }\n\n[other]\nvalue = true\n',
-    '[mcp_servers.taskforces.env]\nCUSTOM = "user-value"\n',
+    'mcp_servers.neomind = { command = "user-provider" }\n',
+    '[mcp_servers]\nneomind = { command = "user-provider" }\n\n[other]\nvalue = true\n',
+    '[mcp_servers.neomind.env]\nCUSTOM = "user-value"\n',
   ]) {
     const root = project(t, ['codex']);
     write(root, '.codex/config.toml', source);
@@ -959,7 +959,7 @@ test(
       () => configureCodeGraph(root, report, process.execPath, ['serve', '--path', root]),
       /serve and --mcp/,
     );
-    assert.equal(existsSync(join(root, '.taskforces/optional/codegraph.json')), false);
+    assert.equal(existsSync(join(root, '.neomind/optional/codegraph.json')), false);
   },
 );
 

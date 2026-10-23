@@ -18,7 +18,7 @@ import {
 // These explicitly legacy fixtures test inspection mechanics, not account access,
 // model inference, or the quality of semantic judgement.
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-inspection-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-inspection-'));
   t.after(() => {
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));
     rmSync(root, { recursive: true, force: true });

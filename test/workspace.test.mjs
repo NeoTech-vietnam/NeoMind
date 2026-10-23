@@ -18,20 +18,20 @@ function receipt(work, role, { state = 'completed', task_id = null, scope = ['ta
   const policy = ensureRoutingPolicy(work.root);
   const integrity = 'sha512-NWZdi/kxyjv/8EUGFupziGU38YyleugZRM4JXgY5XFH7FUmaFA33NZS2Bmq0HPazf7S3jJQQWsZ/jAK9jsrV3Q==';
   const protocol = hash('FABRICATED WORKSPACE UNIT VALIDATION');
-  writeFileSync(join(work.root, '.taskforces/native-runtime.lock.json'), JSON.stringify({ version: '0.162.1', integrity, protocol_sha256: protocol }));
+  writeFileSync(join(work.root, '.neomind/native-runtime.lock.json'), JSON.stringify({ version: '0.162.1', integrity, protocol_sha256: protocol }));
   if (!work.key) {
     work.key = generateKeyPairSync('ed25519');
     const pem = work.key.publicKey.export({ type: 'spki', format: 'pem' });
     work.keyId = hash(pem);
-    mkdirSync(join(work.root, '.taskforces/native/keys'), { recursive: true });
-    mkdirSync(join(work.root, '.taskforces/native/receipts'), { recursive: true });
-    writeFileSync(join(work.root, `.taskforces/native/keys/${work.keyId}.pem`), pem);
-    writeFileSync(join(work.root, '.taskforces/native/trust.json'), JSON.stringify({ keys: [work.keyId] }));
+    mkdirSync(join(work.root, '.neomind/native/keys'), { recursive: true });
+    mkdirSync(join(work.root, '.neomind/native/receipts'), { recursive: true });
+    writeFileSync(join(work.root, `.neomind/native/keys/${work.keyId}.pem`), pem);
+    writeFileSync(join(work.root, '.neomind/native/trust.json'), JSON.stringify({ keys: [work.keyId] }));
   }
   const id = randomUUID(), strong = strongRoles.includes(role);
   const unsigned = {
-    schema_version: 1, issuer: 'taskforces-codex-app-server', execution_mode: 'native',
-    id, receipt_path: `.taskforces/native/receipts/${id}.json`, project_id: readConfig(work.root).project_id,
+    schema_version: 1, issuer: 'neomind-codex-app-server', execution_mode: 'native',
+    id, receipt_path: `.neomind/native/receipts/${id}.json`, project_id: readConfig(work.root).project_id,
     role, workflow_id, task_id, request_id: null, prior_invocation_id,
     input_text: 'FABRICATED UNIT FIXTURE, not authenticated native proof.', input_sha256: hash('FABRICATED UNIT FIXTURE'),
     requested_model: strong ? 'claude-opus-4.6' : 'gpt-5.4', confirmed_model: strong ? 'claude-opus-4.6' : 'gpt-5.4',
@@ -49,14 +49,14 @@ function receipt(work, role, { state = 'completed', task_id = null, scope = ['ta
   return unsigned;
 }
 function updateReceipt(work, id, patch) {
-  const path = join(work.root, `.taskforces/native/receipts/${id}.json`);
+  const path = join(work.root, `.neomind/native/receipts/${id}.json`);
   const { signature, ...original } = JSON.parse(readFileSync(path, 'utf8'));
   const unsigned = { ...original, ...patch };
   writeFileSync(path, JSON.stringify({ ...unsigned,
     signature: sign(null, Buffer.from(canonicalJson(unsigned)), work.key.privateKey).toString('base64') }));
 }
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-workspace-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-workspace-'));
   t.after(() => { assert.equal(dirname(resolve(root)), resolve(tmpdir())); rmSync(root, { recursive: true, force: true }); });
   initialize(root, { project_id: 'WORKSPACE', profile: 'software' });
   ensureRoutingPolicy(root);
@@ -156,7 +156,7 @@ test('role, producer, workflow, observed capability, lifecycle and current desig
 
 test('scope, protected expectations, Cornell ownership, configuration, aliases and binary inputs are rejected', (t) => {
   const work = fixture(t);
-  for (const path of ['outside.txt', '../README.md', 'src/../README.md', 'src\\value.mjs', 'src/name.', 'src/NUL.txt', '.taskforces/config.json', 'src/.GIT/config', 'src/node_modules/tool.js', 'src/AGENTS.md', 'src/CLAUDE.md', 'src/SKILL.md', 'src/.codex/config.toml', 'src/.env', 'src/file.key'])
+  for (const path of ['outside.txt', '../README.md', 'src/../README.md', 'src\\value.mjs', 'src/name.', 'src/NUL.txt', '.neomind/config.json', 'src/.GIT/config', 'src/node_modules/tool.js', 'src/AGENTS.md', 'src/CLAUDE.md', 'src/SKILL.md', 'src/.codex/config.toml', 'src/.env', 'src/file.key'])
     assert.throws(() => work.write({ path, expected_hash: null }), /outside|canonical|managed storage/);
   writeFileSync(join(work.root, 'src/oracle.mjs'), 'export const expectation = 1;\n');
   createRecord(work.root, { type: 'knowledge', title: 'Protected expectations', data: { protected_files: { 'src/oracle.mjs': hash(readFileSync(join(work.root, 'src/oracle.mjs'))) } } });
@@ -314,7 +314,7 @@ test('interruption before task linkage recovers only an unchanged contract and a
   finally { fs.renameSync = originalRename; syncBuiltinESMExports(); }
   assert.equal(getRecord(work.root, work.task.meta.id).meta.data.workspace_writes, undefined);
   assert.deepEqual(readFileSync(join(work.root, 'README.md')), previous);
-  const base = `.taskforces/evidence/workspace-history/${work.task.meta.id}/${operation_id}`;
+  const base = `.neomind/evidence/workspace-history/${work.task.meta.id}/${operation_id}`;
   const frozenIntent = readFileSync(join(work.root, base, 'intent.json'));
   updateReceipt(work, work.worker.id, { state: 'interrupted', inference_completed: false });
   const resumed = receipt(work, 'developer', { state: 'running', task_id: work.task.meta.id, prior_invocation_id: work.worker.id });

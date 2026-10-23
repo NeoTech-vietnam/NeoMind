@@ -104,7 +104,7 @@ function ordinaryPath(path: string): void {
   const lower = fold(path);
   if (
     lower.split('/').some((part) =>
-      ['.git', '.taskforces', '.taskforces', '.codex', '.claude', '.github', '.vscode', '.agents', '.cursor', '.gemini', 'node_modules'].includes(part) ||
+      ['.git', '.neomind', '.taskforces', '.verythinker', '.codex', '.claude', '.github', '.vscode', '.agents', '.cursor', '.gemini', 'node_modules'].includes(part) ||
       /^(?:\.env(?:\..*)?|credentials?|secrets?|id_rsa|id_ed25519)$/.test(part) ||
       /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/.test(part)) ||
     /(?:^|\/)(?:agents(?:\.override)?\.md|claude\.md|gemini\.md|skill\.md|copilot-instructions\.md|\.cursorrules|[^/]+\.(?:agent|instructions)\.md)$/.test(lower) ||
@@ -194,7 +194,7 @@ function immutable(root: string, path: string, bytes: Buffer): void {
   } else atomicWrite(target, bytes);
 }
 function historyBase(taskId: string, operationId: string): string {
-  return `.taskforces/evidence/workspace-history/${taskId}/${operationId}`;
+  return `.neomind/evidence/workspace-history/${taskId}/${operationId}`;
 }
 function entries(task: ProjectRecord): WriteEntry[] {
   const value = task.meta.data.workspace_writes;

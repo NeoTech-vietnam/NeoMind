@@ -1,26 +1,52 @@
 {
-  "name": "taskforces-model-bridge",
-  "displayName": "TaskForces Model Bridge",
-  "publisher": "taskforces",
+  "name": "neomind-model-bridge",
+  "displayName": "NeoMind Agent Monitor",
+  "publisher": "neomind",
   "version": "0.1.0",
-  "description": "Optional workspace-scoped signed VS Code language model bridge for TaskForces; historical extension identity retained.",
-  "engines": { "vscode": "^1.109.0" },
+  "description": "Animated agent activity map, per-role model controls, 9router diagnostics and optional signed VS Code model bridge.",
+  "engines": {
+    "vscode": "^1.109.0"
+  },
   "main": "./extension.cjs",
-  "capabilities": { "untrustedWorkspaces": { "supported": false }, "virtualWorkspaces": false },
-  "extensionKind": ["workspace"],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": false
+  },
+  "extensionKind": [
+    "workspace"
+  ],
   "contributes": {
     "commands": [
-      { "command": "taskforces.bridge.enable", "title": "TaskForces: Enable Model Bridge" },
-      { "command": "taskforces.bridge.disable", "title": "TaskForces: Disable Model Bridge" }
+      {
+        "command": "neomind.bridge.enable",
+        "title": "NeoMind: Enable Model Bridge"
+      },
+      {
+        "command": "neomind.bridge.disable",
+        "title": "NeoMind: Disable Model Bridge"
+      },
+      {
+        "command": "neomind.monitor.open",
+        "title": "NeoMind: Open Agent Map"
+      }
     ],
     "configuration": {
-      "title": "TaskForces Model Bridge",
+      "title": "NeoMind",
       "properties": {
-        "taskforces.bridge.runtimePath": {
-          "type": "string", "default": "", "scope": "machine",
-          "description": "Absolute path to trusted installed taskforces package directory (legacy taskforces also supported; contains package.json and dist). Never inferred from workspace code."
+        "neomind.bridge.runtimePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Absolute path to a trusted NeoMind package directory containing package.json and built dist. Read only from User settings."
         }
       }
     }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NeoTech-vietnam/NeoMind.git"
   }
 }

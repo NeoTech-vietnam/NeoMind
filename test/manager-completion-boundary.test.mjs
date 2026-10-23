@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { beginWorkflow, createRecord, getRecord, initialize, safePath, updateRecord } from '../dist/index.js';
 
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-manager-boundary-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-manager-boundary-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   initialize(root, { project_id: 'BOUNDARY' });
   return root;

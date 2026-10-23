@@ -64,7 +64,7 @@ function submitClaimedContribution(
 ): unknown {
   if (readAutomationPolicy(root).network_policy === 'local-only')
     throw new Error(
-      'Local-only policy disables remote contribution publication. Set network_policy to "remote-enabled" in .taskforces/automation.json to opt in.',
+      'Local-only policy disables remote contribution publication. Set network_policy to "remote-enabled" in .neomind/automation.json to opt in.',
     );
   const prepared = prepareContribution(root, id) as { path: string; files: string[] };
   const pack = JSON.parse(readFileSync(safePath(root, `${prepared.path}/pack.json`), 'utf8'));

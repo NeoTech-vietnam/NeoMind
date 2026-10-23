@@ -25,7 +25,7 @@ import { ensureRoutingPolicy } from '../dist/routing.js';
 import { createNativeBridge, shutdownNative, nativeStatus } from '../dist/native.js';
 const fixture = fileURLToPath(new URL('../resources/native/fake-app-server.mjs', import.meta.url));
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-mcp-bound-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-mcp-bound-'));
   initialize(root, { project_id: 'MCP-BOUND', name: 'Bound MCP protocol fixture' });
   ensureRoutingPolicy(root);
   t.after(async () => {
@@ -136,7 +136,7 @@ test('project source reads enforce task paths, exclude credentials, and preserve
   );
   assert.throws(() => projectRead(root, { path: '.env' }), /Private credentials/);
   assert.throws(
-    () => projectRead(root, { path: '.taskforces/cache/native/private-key.pem' }),
+    () => projectRead(root, { path: '.neomind/cache/native/private-key.pem' }),
     /Private credentials/,
   );
   assert.throws(
@@ -374,8 +374,8 @@ test('removed strict routing policy blocks native start, resume, reporting, and 
   const started = await invocation(root, 'developer', workflow.meta.id, task.meta.id);
   const client = await clientFor(t, root, started.id);
   renameSync(
-    join(root, '.taskforces/routing.json'),
-    join(root, '.taskforces/routing.removed.json'),
+    join(root, '.neomind/routing.json'),
+    join(root, '.neomind/routing.removed.json'),
   );
   const receiptBytes = readFileSync(join(root, started.receipt_path), 'utf8');
   const bridge = createNativeBridge({

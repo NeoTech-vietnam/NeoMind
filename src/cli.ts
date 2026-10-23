@@ -61,14 +61,17 @@ import { migrateStorage } from './migration.js';
 import { upgradeProject } from './upgrade.js';
 import { workspaceWrite } from './workspace.js';
 import { probeRouter } from './router-probe.js';
+import { readAgentMap } from './agent-map.js';
+import { modelControlStatus, setRoleModel, configureRouter, routerHealth, routerModels, routerProbe } from './model-control.js';
+import { listUpstreams, discoverUpstreams, trackUpstream, checkUpstream, cloneUpstream, adoptUpstreamUpdate, readUpstreamInstructions, watchUpstreams } from './upstreams.js';
 import { checkpointLightweight, type LightweightCheckpoint } from './lightweight.js';
 import { recordTypes, type Gate, type Platform, type Profile, type RecordType } from './types.js';
 
-const help = `TaskForces engineering workflow (Node.js 24+)
+const help = `NeoMind engineering workflow (Node.js 24+)
 
-Usage: taskforces <command> [action] [id] [options]
-  init --name NAME --profile basic|software|embedded --platforms codex,claude,copilot
-  doctor | update
+Usage: neomind <command> [action] [id] [options]
+  init --name NAME --profile basic|software|embedded --platforms codex,claude,copilot [--local]
+  doctor | update [--local] (persist separately ignorable Copilot integration)
   upgrade --to VERSION_OR_TAG_OR_LOCAL_TGZ (uninstall old package, install new, refresh integration)
   workflow begin --requirement TEXT [--title TITLE] [--request-id ID]
   workflow run --requirement TEXT | --data '{"requirements":["..."],"execution_mode":"copilot-native"}'
@@ -94,8 +97,14 @@ Usage: taskforces <command> [action] [id] [options]
   mcp
   native run --data JSON | native status [ID] | native wait|interrupt|resume ID
   router probe --url URL --alias MODEL (diagnostic only; no native receipt)
+  map (bounded saved agent activity and communication snapshot)
+  models status | models set --role ROLE --model MODEL [--provider PROVIDER] [--effort low|medium|high]
+  router configure --base-url URL [--api-key-env ENV] [--catalog-provider NAME]
+  router health|models|probe [--model MODEL] (configured 9router; diagnostics only)
+  upstream list|discover|track|check|clone|adopt|instructions [ID] --data JSON
+  upstream watch [--wait-ms INTERVAL] (persistent checks, default 15 minutes; Ctrl+C stops)
   archive prepare WORKFLOW_ID | archive publish|status SNAPSHOT_ID | archive restore ID --destination DIRECTORY | archive reassess WORKFLOW_ID --data JSON
-  migrate (move the legacy .taskforces storage root to .taskforces; never merges or overwrites)
+  migrate (move .taskforces or .verythinker storage to .neomind; never merges or overwrites)
   note create --data JSON | note revise ID --data JSON | note validate ID
   recipe list|resolve ID|prepare --data JSON|run ID|revise ID --data JSON
   capability describe ROLE|resolve --data JSON|invoke --data JSON
@@ -149,9 +158,15 @@ async function main(): Promise<void> {
       'disposition',
       'wait-ms',
       'to',
+      'role',
+      'provider',
+      'effort',
+      'base-url',
+      'api-key-env',
+      'catalog-provider',
     ].map((k) => [k, { type: 'string' }]),
   );
-  for (const key of ['json', 'help', 'version', 'impact', 'generalization-review', 'public-safe'])
+  for (const key of ['json', 'help', 'version', 'impact', 'generalization-review', 'public-safe', 'local'])
     options[key] = { type: 'boolean' };
   const parsed = parseArgs({ options, allowPositionals: true });
   const o = parsed.values;
@@ -200,16 +215,57 @@ async function main(): Promise<void> {
     return;
   }
   switch (command) {
+    case 'map':
+      result = readAgentMap(root);
+      break;
+    case 'models':
+      if (action === 'status') result = modelControlStatus(root);
+      else if (action === 'set') {
+        const selection = setRoleModel(root, {
+          role: needed(o.role, '--role'), model: needed(o.model, '--model'),
+          ...(o.provider ? { provider: String(o.provider) } : {}),
+          ...(o.effort ? { effort: String(o.effort) as 'high' | 'medium' | 'low' } : {}),
+        });
+        // Preserve a successful policy write if a user-edited adapter needs review.
+        try { result = { ...selection, installation: updateProject(root) }; }
+        catch (error) { result = { ...selection, adapter_error: error instanceof Error ? error.message : String(error) }; }
+      }
+      else throw new Error('Use models status|set.');
+      break;
+    case 'upstream': {
+      const input = data();
+      if (action === 'watch') {
+        const controller = new AbortController(), stop = () => controller.abort();
+        process.on('SIGINT', stop); process.on('SIGTERM', stop);
+        try {
+          for await (const event of watchUpstreams(root, {
+            signal: controller.signal, ...(o['wait-ms'] ? { interval_ms: Number(o['wait-ms']) } : {}),
+          })) console.log(json(event));
+        } finally { process.off('SIGINT', stop); process.off('SIGTERM', stop); }
+        return;
+      }
+      if (action === 'list') result = listUpstreams(root);
+      else if (action === 'discover') result = await discoverUpstreams(root, input as never);
+      else if (action === 'track') result = await trackUpstream(root, input as never);
+      else if (action === 'check') result = await checkUpstream(root, needed(id, 'Upstream ID'));
+      else if (action === 'clone') result = await cloneUpstream(root, needed(id, 'Upstream ID'));
+      else if (action === 'adopt') result = await adoptUpstreamUpdate(root, needed(id, 'Upstream ID'), input as never);
+      else if (action === 'instructions') result = readUpstreamInstructions(root, needed(id, 'Upstream ID'));
+      else throw new Error('Use upstream list|discover|track|check|clone|adopt|instructions.');
+      break;
+    }
     case 'init': {
-      const config = initialize(root, {
-        name: String(o.name ?? 'TaskForces project'),
+      initialize(root, {
+        name: String(o.name ?? 'NeoMind project'),
         profile: String(o.profile ?? 'basic') as Profile,
         platforms: list(o.platforms ?? 'copilot') as Platform[],
         ...(o['project-id'] ? { project_id: String(o['project-id']) } : {}),
+        ...(o.local ? { copilot_integration: 'local' as const } : {}),
       });
+      const installation = installProject(root, o.local ? { copilot_integration: 'local' } : {});
       result = {
-        config,
-        installation: installProject(root),
+        config: readConfig(root),
+        installation,
         pack: installPack(root, 'engineering-basics'),
       };
       break;
@@ -223,9 +279,9 @@ async function main(): Promise<void> {
       break;
     case 'workflow': {
       if (action === 'begin' || action === 'run') {
-        if (!existsSync(safePath(root, '.taskforces/config.json'))) {
+        if (!existsSync(safePath(root, '.neomind/config.json'))) {
           initialize(root, {
-            name: String(o.name ?? 'TaskForces project'),
+            name: String(o.name ?? 'NeoMind project'),
             profile: String(o.profile ?? 'basic') as Profile,
             platforms: [String(o.platform ?? 'copilot') as Platform],
           });
@@ -296,7 +352,7 @@ async function main(): Promise<void> {
       };
       break;
     case 'update':
-      result = updateProject(root);
+      result = updateProject(root, o.local ? { copilot_integration: 'local' } : {});
       break;
     case 'record': {
       if (action === 'list')
@@ -527,7 +583,7 @@ async function main(): Promise<void> {
       const platform = String(o.platform ?? 'codex');
       if (!['codex', 'claude', 'copilot'].includes(platform))
         throw new Error('Unknown hook platform.');
-      const message = `TaskForces ${config.profile} project ${config.project_id}. For a requirement, act as taskforces-manager and read the installed guides/copilot-native.md for native mode or guides/manager.md for strict mode, under .taskforces (legacy: .taskforces). Resume saved workflows with manager_status. Own internal discussion, documentation, review, acceptance, and configured draft PRs; ask only for missing product intent or a genuine blocker. This hook is advisory.`;
+      const message = `NeoMind ${config.profile} project ${config.project_id}. For a requirement, act as neomind-manager and read the installed guides/copilot-native.md for native mode or guides/manager.md for strict mode, under .neomind. Resume saved workflows with manager_status. Own internal discussion, documentation, review, acceptance, and configured draft PRs; ask only for missing product intent or a genuine blocker. This hook is advisory.`;
       console.log(
         json(
           event !== 'session-start'
@@ -547,15 +603,21 @@ async function main(): Promise<void> {
       return;
     }
     case 'router': {
-      if (action !== 'probe') throw new Error('Use router probe --url URL --alias MODEL.');
+      if (action === 'configure') {
+        result = configureRouter(root, { base_url: needed(o['base-url'], '--base-url'),
+          ...(o['api-key-env'] ? { api_key_env: String(o['api-key-env']) } : {}),
+          ...(o['catalog-provider'] ? { catalog_provider: String(o['catalog-provider']) } : {}),
+        });
+        break;
+      }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 45000);
       try {
-        result = await probeRouter(
-          needed(o.url, 'Router URL'),
-          needed(o.alias, 'Router alias'),
-          controller.signal,
-        );
+        if (action === 'health') result = await routerHealth(root, controller.signal);
+        else if (action === 'models') result = await routerModels(root, controller.signal);
+        else if (action === 'probe' && o.url) result = await probeRouter(needed(o.url, 'Router URL'), needed(o.alias, 'Router alias'), controller.signal);
+        else if (action === 'probe') result = await routerProbe(root, needed(o.model, '--model'), controller.signal);
+        else throw new Error('Use router configure|health|models|probe.');
       } finally {
         clearTimeout(timer);
       }

@@ -43,7 +43,7 @@ for await (const line of createInterface({ input: process.stdin })) {
         model_provider: 'openai',
         changed,
         ...(scenario === 'explicit-tool-policy'
-          ? { mcp_servers: { taskforces: { tools: { record_get: { approval_mode: 'prompt' } } } } }
+          ? { mcp_servers: { neomind: { tools: { record_get: { approval_mode: 'prompt' } } } } }
           : {}),
       },
       origins: {},

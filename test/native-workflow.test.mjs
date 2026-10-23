@@ -19,7 +19,7 @@ import {
 } from '../dist/index.js';
 
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-native-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-native-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   initialize(root, { project_id: 'NATIVE' });
   ensureRoutingPolicy(root);
@@ -29,20 +29,20 @@ function project(t) {
 test('Copilot installation defaults to full native mode with visible named subagents', async (t) => {
   const root = project(t);
   installProject(root);
-  const policy = JSON.parse(readFileSync(safePath(root, '.taskforces/automation.json'), 'utf8'));
+  const policy = JSON.parse(readFileSync(safePath(root, '.neomind/automation.json'), 'utf8'));
   assert.equal(policy.execution_mode, 'copilot-native');
   assert.equal(policy.knowledge_research_required, true);
   assert.equal(policy.cornell_publication, 'project-branch');
-  const agent = readFileSync(join(root, '.github/agents/taskforces-manager.agent.md'), 'utf8');
+  const agent = readFileSync(join(root, '.github/agents/neomind-manager.agent.md'), 'utf8');
   assert.match(agent, /"agent"/);
-  assert.match(agent, /agents: .*FnD Agent/);
+  assert.match(agent, /agents: .*NeoMind FnD Agent/);
   assert.match(agent, /unsigned-native-report/);
   const server = JSON.parse(readFileSync(join(root, '.vscode/mcp.json'), 'utf8'));
-  assert.equal(server.servers.taskforces.type, 'stdio');
+  assert.equal(server.servers.neomind.type, 'stdio');
   const result = await managedRun(root, { requirement: 'Export one with documentation.', request_id: 'visible' });
-  assert.equal(result.handoff.agent, 'Manager Agent');
+  assert.equal(result.handoff.agent, 'NeoMind Manager Agent');
   assert.equal(result.invocation, undefined);
-  assert.equal(existsSync(safePath(root, '.taskforces/native/receipts')), false);
+  assert.equal(existsSync(safePath(root, '.neomind/native/receipts')), false);
 });
 
 test('native handoffs require named delegation, real reports and saved Cornell before answering', async (t) => {
@@ -53,12 +53,12 @@ test('native handoffs require named delegation, real reports and saved Cornell b
     'Research the existing architecture and explain its tradeoffs without changing production code.',
   ]) {
     const result = await managedRun(root, { requirement, execution_mode: 'copilot-native' });
-    assert.equal(result.handoff.agent, 'Manager Agent');
+    assert.equal(result.handoff.agent, 'NeoMind Manager Agent');
     assert.equal(result.invocation, undefined);
     const prompt = result.handoff.prompt;
-    assert.match(prompt, /Continue directly as Manager Agent for the existing TaskForces increment/);
-    assert.match(prompt, /do not call manager_run again or launch Manager Agent \(yourself\)/);
-    for (const name of ['SWSD Agent', 'P-RES Agent', 'FnD Agent', 'Reviewer Agent', 'Tester Agent'])
+    assert.match(prompt, /Continue directly as NeoMind Manager Agent for the existing NeoMind increment/);
+    assert.match(prompt, /do not call manager_run again or launch NeoMind Manager Agent \(yourself\)/);
+    for (const name of ['NeoMind SWSD Agent', 'NeoMind P-RES Agent', 'NeoMind FnD Agent', 'NeoMind Reviewer Agent', 'NeoMind Tester Agent'])
       assert.ok(prompt.includes(name), name);
     assert.match(prompt, /standard VS Code agent tool by exact display name/);
     assert.match(prompt, /at least two separate specialist contributions/);
@@ -85,7 +85,7 @@ test('native increment keeps engineering gates, immutable evidence and independe
   const root = project(t);
   installProject(root);
   // Exercise installed research defaults without performing remote archive publication.
-  const archivePath = join(root, '.taskforces/archive.json');
+  const archivePath = join(root, '.neomind/archive.json');
   const archivePolicy = JSON.parse(readFileSync(archivePath, 'utf8'));
   writeFileSync(archivePath, JSON.stringify({ ...archivePolicy, enabled: false }));
   const requirements = ['Export integer one.', 'Document the integer export.'];
@@ -193,7 +193,7 @@ test('native increment keeps engineering gates, immutable evidence and independe
   try {
     const response = await client.callTool({ name: 'archive_restore', arguments: { snapshot_id: snapshot.manifest.snapshot_id, destination: restored } });
     assert.equal(response.isError, undefined, JSON.stringify(response));
-    assert.equal(existsSync(join(restored, '.taskforces/config.json')), true);
+    assert.equal(existsSync(join(restored, '.neomind/config.json')), true);
     assert.equal(getRecord(restored, workflow_id).meta.data.assurance, 'unsigned-native-report');
   } finally { await client.close(); await server.close(); }
   writeFileSync(join(root, 'src/value.mjs'), 'export const value = 2;\n');
@@ -275,10 +275,10 @@ test('native MCP permits owned lifecycle work but protects strict state, receipt
       data: { workflow_id: native.meta.id, ...data } })).isError, true);
   assert.equal((await call('record_create', { type: 'evidence', title: 'Fake evidence', owner: 'check-executor', data: { workflow_id: native.meta.id } })).isError, true);
   assert.equal((await call('record_create', { type: 'knowledge', title: 'Mixed note', owner: 'curator', data: { workflow_id: native.meta.id }, links: [{ type: 'references', target: strict.meta.id }] })).isError, true);
-  for (const path of ['.taskforces/cache/private.txt', '.taskforces/tools/private.txt', '.taskforces/evidence/inputs/blobs/private.txt']) {
+  for (const path of ['.neomind/cache/private.txt', '.neomind/tools/private.txt', '.neomind/evidence/inputs/blobs/private.txt']) {
     mkdirSync(join(root, path, '..'), { recursive: true });
     writeFileSync(join(root, path), 'Private fixture bytes.');
-    for (const alias of [path, path.replace('.taskforces/', '.taskforces/')])
+    for (const alias of [path, path.replace('.neomind/', '.neomind/')])
       assert.equal((await call('project_read', { path: alias })).isError, true, alias);
   }
   const report = await call('assignment_report', { target_ids: [id], invocation_id: 'reported-curator', role: 'curator',
@@ -377,7 +377,7 @@ for (const ownership of ['requirement', 'nested', 'outer', 'task'])
       assert.equal(record.meta.data.routing_required, false, id);
       assert.equal(nativeWorkflowRecord(root, record), true, id);
     }
-    const frozen = JSON.parse(readFileSync(join(root, `.taskforces/recipes/${instance.meta.id}/parameters.json`), 'utf8'));
+    const frozen = JSON.parse(readFileSync(join(root, `.neomind/recipes/${instance.meta.id}/parameters.json`), 'utf8'));
     assert.equal(frozen.note.workflow_id, workflow.meta.id);
     assert.equal(loadRecords(root).some((record) => record.meta.type === 'evidence'), false);
     assert.equal(existsSync(join(root, note.path)), false, 'Preparation must not claim delivery or execute the recipe.');

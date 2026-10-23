@@ -1,8 +1,8 @@
 # One-file model configuration
 
-For an installed project, edit only `.taskforces/routing.json` (legacy physical root: `.verythinker/routing.json`) to choose strong and worker models. Then run `npx taskforces update` in that project to regenerate all six managed Copilot agents. Do not edit each generated agent or duplicate model settings in `config.json`.
+For an installed project, edit only `.neomind/routing.json` (legacy physical root: `.verythinker/routing.json`) to choose strong and worker models. Then run `npx neomind update` in that project to regenerate all six managed Copilot agents. Do not edit each generated agent or duplicate model settings in `config.json`.
 
-The [ready-to-use template](../examples/model-routing.json) selects the models in this machine's VS Code catalog:
+The [ready-to-use template](../examples/model-routing.json) illustrates provider-qualified model choices; replace its example catalog path with your own:
 
 ```json
 {
@@ -20,11 +20,11 @@ The [ready-to-use template](../examples/model-routing.json) selects the models i
 }
 ```
 
-For a project initialized with TaskForces, apply the template in PowerShell (use `.verythinker` instead for an unmigrated legacy root):
+For a project initialized with NeoMind, apply the template in PowerShell (use `.verythinker` instead for an unmigrated legacy root):
 
 ```powershell
-Copy-Item D:\DevCloud\TaskForces\examples\model-routing.json .taskforces\routing.json
-npx taskforces update
+Copy-Item D:\workspace\NeoMind\examples\model-routing.json .neomind\routing.json
+npx neomind update
 ```
 
 This replaces the selected project's previous routing choices. Change the catalog path when moving to another machine; relative paths resolve from the project root. Installation creates an initial policy when absent and preserves customized policies on subsequent updates. Existing initial Copilot defaults remain unchanged until you edit the policy or apply this template.
@@ -33,8 +33,8 @@ This replaces the selected project's previous routing choices. Change the catalo
 
 | Field                                | Meaning                                                                                                                                                                                                                           |
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `strong_model`                       | Copilot: Manager Agent, SWSD Agent, P-RES Agent and Reviewer Agent. Strict core roles: manager, requirements, architect, component-owner, verifier and reviewer. Change to `top-tier-model` to use the other 9localrouter choice. |
-| `worker_models`                      | Copilot: FnD Agent and Tester Agent. Strict core roles: researcher, codebase-analyst, curator, developer, check-executor and release. Use one entry to force a single choice; reverse the order to prefer Gemini.                 |
+| `strong_model`                       | Copilot: NeoMind Manager Agent, NeoMind SWSD Agent, NeoMind P-RES Agent and NeoMind Reviewer Agent. Strict core roles: manager, requirements, architect, component-owner, verifier and reviewer. Change to `top-tier-model` to use the other 9localrouter choice. |
+| `worker_models`                      | Copilot: NeoMind FnD Agent and NeoMind Tester Agent. Strict core roles: researcher, codebase-analyst, curator, developer, check-executor and release. Use one entry to force a single choice; reverse the order to prefer Gemini.                 |
 | `strong_provider`, `worker_provider` | Optional catalog provider name or vendor. Names distinguish Bosch Model Farm and 9localrouter because both have vendor `customendpoint`.                                                                                          |
 | `language_models_file`               | Optional path to the existing VS Code model catalog. Model IDs are resolved to client display names; missing or ambiguous entries stop generation. Without a catalog, configured strings are emitted as client model names.       |
 | `strong_effort`, `worker_effort`     | Requested effort: `high`, `medium`, or `low`. These are policy requests, not proof that a custom endpoint supports reasoning-effort controls.                                                                                     |
@@ -45,7 +45,7 @@ Routing accepts raw catalog IDs, exact display names, and their vendor-qualified
 
 VS Code custom agents support a single `model` name or a prioritized array. Worker agents receive the configured list in order. This is client availability selection, not an assertion of completed inference. The native protocol path permits worker fallback only after explicit model-unavailability evidence, never after missing authentication or permission refusal.
 
-The catalog continues to own endpoint URLs and credentials. TaskForces reads model metadata but does not copy API keys, secret references, or URLs into generated agents. Register new models in VS Code first, then select them in the project's routing file. Changing the catalog alone does not change the project's selected IDs; run `update` after changing a selected model's display name.
+The catalog continues to own endpoint URLs and credentials. NeoMind reads model metadata but does not copy API keys, secret references, or URLs into generated agents. Register new models in VS Code first, then select them in the project's routing file. Changing the catalog alone does not change the project's selected IDs; run `update` after changing a selected model's display name.
 
 ## Preservation and execution limits
 
@@ -53,6 +53,6 @@ Updates regenerate untouched managed agents. Manually edited agents remain untou
 
 Changing routing invalidates prior signed invocations for current strict acceptance. Historical records are preserved. Invalid settings, empty models, duplicate worker entries, and unsupported schema/runtime values are rejected without rewriting the policy.
 
-Default `manager_run` returns a `Manager Agent` handoff for the standard VS Code agent tool; the host must launch it and wait. This native path reports unsigned invocation identities without signed receipts. Only optional `execution_mode: strict` dispatch uses the explicitly enabled [VS Code Model Bridge](vscode-bridge.md), not a headless SDK or Copilot CLI. Existing catalog selections resolve to exact `vscode.lm.selectChatModels({vendor,id})` selectors; provider labels require the catalog. The bridge signs local host attestations and host-issued conversation/turn IDs, not provider identity proofs. It exposes only invocation-bound MCP tools, with no builtin shell/filesystem tools and no pretend sandbox.
+Default `manager_run` returns a `NeoMind Manager Agent` handoff for the standard VS Code agent tool; the host must launch it and wait. This native path reports unsigned invocation identities without signed receipts. Only optional `execution_mode: strict` dispatch uses the explicitly enabled [VS Code Model Bridge](vscode-bridge.md), not a headless SDK or Copilot CLI. Existing catalog selections resolve to exact `vscode.lm.selectChatModels({vendor,id})` selectors; provider labels require the catalog. The bridge signs local host attestations and host-issued conversation/turn IDs, not provider identity proofs. It exposes only invocation-bound MCP tools, with no builtin shell/filesystem tools and no pretend sandbox.
 
 Add `"vscode_effort_policy": "allow-unavailable"` only after accepting that the stable API cannot verify reasoning effort. Requested effort remains recorded; confirmed effort stays null. Omission or `"require-verified"` blocks automated execution. Consent refusal, unavailable/ambiguous models, unsupported tools, configuration/catalog changes, and stale hosts also block. See the bridge guide for exact installation, enable/disable, cancellation and resumption instructions.

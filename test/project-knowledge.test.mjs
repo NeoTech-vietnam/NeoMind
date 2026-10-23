@@ -12,11 +12,11 @@ import { cornellFixture } from './cornell-fixture.mjs';
 
 const repository = 'example/shared';
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-project-knowledge-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-project-knowledge-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   initialize(root, { project_id: 'PRIVATE-PROJECT' });
   const policy = ensureAutomationPolicy(root);
-  writeFileSync(join(root, '.taskforces/automation.json'), JSON.stringify({ ...policy, upstream: repository }));
+  writeFileSync(join(root, '.neomind/automation.json'), JSON.stringify({ ...policy, upstream: repository }));
   const workflow = createRecord(root, {
     type: 'knowledge', title: 'Private workflow', owner: 'manager', body: 'PRIVATE_WORKFLOW_BODY',
     data: { kind: 'manager-workflow' },
@@ -60,7 +60,7 @@ function approve(work, id) {
   return updateRecord(work.root, review.meta.id, { data: { public_safe: true } });
 }
 function statePath(work) {
-  return join(work.root, '.taskforces/project-knowledge', `${work.id}.json`);
+  return join(work.root, '.neomind/project-knowledge', `${work.id}.json`);
 }
 function state(work) { return JSON.parse(readFileSync(statePath(work), 'utf8')); }
 function notFound() { return Object.assign(new Error('HTTP 404: reference absent'), { status: 404 }); }
@@ -150,7 +150,7 @@ test('preparation renders only sanitized Cornell narrative, public metadata and 
   const work = candidate(project(t));
   const prepared = prepareProjectKnowledge(work.root, work.id);
   assert.equal(prepared.project_hash, hash('PRIVATE-PROJECT'));
-  assert.equal(prepared.branch, `taskforces/knowledge/${hash('PRIVATE-PROJECT').slice(0, 16)}`);
+  assert.equal(prepared.branch, `neomind/knowledge/${hash('PRIVATE-PROJECT').slice(0, 16)}`);
   assert.equal(prepared.path, `knowledge/projects/${hash('PRIVATE-PROJECT')}/notes/durable-configuration/1.0.0.md`);
   assert.match(prepared.content_hash, /^[a-f0-9]{64}$/);
   const markdown = prepared.files.find((file) => file.path === prepared.path).content;
@@ -168,7 +168,7 @@ test('preparation renders only sanitized Cornell narrative, public metadata and 
 
 test('local-only publication fails before transport, requires explicit remote opt-in, and preserves publication receipts', (t) => {
   const work = candidate(project(t));
-  const path = join(work.root, '.taskforces/automation.json');
+  const path = join(work.root, '.neomind/automation.json');
   const policy = JSON.parse(readFileSync(path, 'utf8'));
   const prepared = prepareProjectKnowledge(work.root, work.id);
   let calls = 0;
@@ -453,7 +453,7 @@ test('completed receipt is not returned for changed current candidate, review, s
     } else if (failure === 'source') {
       writeFileSync(join(work.root, 'docs/practice/value-answer.md'), 'Changed answer');
     } else {
-      const path = join(work.root, '.taskforces/automation.json');
+      const path = join(work.root, '.neomind/automation.json');
       const policy = JSON.parse(readFileSync(path, 'utf8'));
       writeFileSync(path, JSON.stringify({ ...policy, upstream: 'other/shared' }));
     }

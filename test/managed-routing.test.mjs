@@ -28,7 +28,7 @@ const transport = fileURLToPath(
   new URL('../resources/native/fake-app-server.mjs', import.meta.url),
 );
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-managed-routing-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-managed-routing-'));
   initialize(root, { project_id: 'MANAGED', profile: 'software' });
   ensureRoutingPolicy(root);
   t.after(async () => {
@@ -168,7 +168,7 @@ test('gateway never grants a simulated caller publication and pins explicit role
 });
 
 test('an unmigrated pending legacy workflow cannot plan or close after routing installation', (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-pending-migration-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-pending-migration-'));
   t.after(() => {
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));
     rmSync(root, { recursive: true, force: true });

@@ -28,7 +28,7 @@ import {
 import { ensureArchivePolicy, publishArchive } from '../dist/archives.js';
 
 test('automatic archive retry reuses the frozen snapshot and final report after lost publication response', (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-manager-archive-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-manager-archive-'));
   t.after(() => {
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));
     rmSync(root, { recursive: true, force: true });
@@ -36,7 +36,7 @@ test('automatic archive retry reuses the frozen snapshot and final report after 
   initialize(root, { project_id: 'CLOSURE', profile: 'basic' });
   const policy = ensureArchivePolicy(root);
   writeFileSync(
-    join(root, '.taskforces/archive.json'),
+    join(root, '.neomind/archive.json'),
     JSON.stringify({ ...policy, repository: 'example/private' }, null, 2) + '\n',
   );
   const parent = beginWorkflow(root, {
@@ -144,11 +144,11 @@ test('automatic archive retry reuses the frozen snapshot and final report after 
     loadRecords(root).filter((record) => record.meta.title === 'Manager final report').length,
     1,
   );
-  const sequence = readFileSync(join(root, '.taskforces/id-sequence.json'));
+  const sequence = readFileSync(join(root, '.neomind/id-sequence.json'));
   const second = finishWorkflow(root, parent.meta.id, input, undefined, publisher);
   assert.equal(second.phase, 'completed');
   assert.equal(new Set(snapshots).size, 1);
-  assert.deepEqual(readFileSync(join(root, '.taskforces/id-sequence.json')), sequence);
+  assert.deepEqual(readFileSync(join(root, '.neomind/id-sequence.json')), sequence);
   assert.equal(
     loadRecords(root).filter((record) => record.meta.title === 'Manager final report').length,
     1,

@@ -1,12 +1,12 @@
-# Research basis for TaskForces v1
+# Research basis for NeoMind v1
 
-Reviewed on **2026-10-11**. This report records primary-source inspection and design decisions. Repository claims and published evaluations are identified as source-reported; they are not TaskForces performance measurements or live client validation. Mutable repository links represent the reviewed documentation, not a dependency version lock.
+Reviewed on **2026-10-11**. This report records primary-source inspection and design decisions. Repository claims and published evaluations are identified as source-reported; they are not NeoMind performance measurements or live client validation. Mutable repository links represent the reviewed documentation, not a dependency version lock.
 
 ## Conclusions
 
 The inspected implementation snapshots were Trellis `f089cb3286071199e84118dee86b6d76aab032f1` (npm `0.6.17`, AGPL-3.0-only), Matt Pocock skills `49dd158d1076134a641b33efb035946536778336` (MIT), and the published CodeGraph `1.6.2` artifact with git head `6560052a6f856855d3f71eee838fd66ccfa4285d` (MIT). Repository main branches can differ from those published snapshots. The [pinned CodeGraph experiment](codegraph.md) separately records measured package behavior.
 
-TaskForces should install a small engineering core around the user's existing native agent client. Portable role and skill content can be shared, while model selection, tool restrictions, hooks, and native agent definitions require client-specific adapters. Requirements and verified outcomes need stable records beyond the current conversation. Local project history and generalized reusable knowledge have different promotion and review needs.
+NeoMind should install a small engineering core around the user's existing native agent client. Portable role and skill content can be shared, while model selection, tool restrictions, hooks, and native agent definitions require client-specific adapters. Requirements and verified outcomes need stable records beyond the current conversation. Local project history and generalized reusable knowledge have different promotion and review needs.
 
 An intelligent coordinator with bounded workers is a promising routing strategy, but efficiency must be measured on accepted tasks. A larger roster of always-active agents would add coordination cost without establishing better outcomes. Logical roles can be combined for small increments and separated when expertise, independence, or ownership requires it.
 
@@ -16,13 +16,13 @@ Trellis documents task directories containing requirements, design, research, st
 
 **Adoption:** keep scoped task records, context pointers, work history, and reviewed lessons. Add explicit dependency validation and typed engineering links. Markdown/YAML records remain authoritative; SQLite becomes a rebuildable query index rather than a competing authority. The inspected task/journal documentation does not describe SQL as the authoritative task store.
 
-Trellis publishes an npm installation route and multi-platform generated setup. Its repository declares AGPL-3.0 licensing. TaskForces retains MIT and implements the selected patterns independently; no Trellis templates or code are bundled. [Repository and license](https://github.com/mindfold-ai/Trellis).
+Trellis publishes an npm installation route and multi-platform generated setup. Its repository declares AGPL-3.0 licensing. NeoMind retains MIT and implements the selected patterns independently; no Trellis templates or code are bundled. [Repository and license](https://github.com/mindfold-ai/Trellis).
 
 ## Matt Pocock: task graphs and context pointers
 
 The inspected `implement-spec` skill uses a task graph, a ready frontier, bounded implementer work, context pointers, integration, and final review. It describes worktrees for parallel implementers. [Primary skill](https://raw.githubusercontent.com/mattpocock/skills/main/skills/engineering/implement-spec/SKILL.md).
 
-**Adoption:** packets point to specifications and research instead of repeating them. Dependencies are explicit. Parallel assignments need ownership boundaries. A task's outputs and criteria determine completion. Worktrees are useful when independent Git changes require isolation, while shared working-tree execution needs disjoint ownership. TaskForces does not inherit destructive reset operations or mandate that every small change create a branch and worktree.
+**Adoption:** packets point to specifications and research instead of repeating them. Dependencies are explicit. Parallel assignments need ownership boundaries. A task's outputs and criteria determine completion. Worktrees are useful when independent Git changes require isolation, while shared working-tree execution needs disjoint ownership. NeoMind does not inherit destructive reset operations or mandate that every small change create a branch and worktree.
 
 ## Code-context providers
 
@@ -36,7 +36,7 @@ The candidate comparison concerns installation fit and exposed capabilities. It 
 
 The selected provider's current README describes capabilities of its current repository. Those capabilities must be tested against the pinned artifact; a newer README does not establish older-version support. Windows startup, C/C++ symbol relationships, source edits/deletes, and query freshness require fixture verification.
 
-**Adoption:** use code graphs to discover implementation relationships and likely change impact. A call graph cannot independently prove a requirement is satisfied. Store requirement/design/check/evidence links in TaskForces records and review their meaning. The optional provider must leave the core workflow usable when unavailable.
+**Adoption:** use code graphs to discover implementation relationships and likely change impact. A call graph cannot independently prove a requirement is satisfied. Store requirement/design/check/evidence links in NeoMind records and review their meaning. The optional provider must leave the core workflow usable when unavailable.
 
 ## Native platform portability
 
@@ -58,11 +58,11 @@ Agent evaluations should assess the final artifact, actual checks, operational l
 
 ## V-model, process evidence, and reuse
 
-VDA's publication page lists Automotive SPICE 4.1, dated August 2026, as its process reference and assessment model. TaskForces uses this version for process navigation. The detailed PAM PDF could not be retrieved through the browsing tool during this inspection; the mapping is guidance and must be checked against the official outcomes before a formal assessment. [VDA publications](https://vda-qmc.de/en/automotive-spice/automotive-spice-veroeffentlichungen/).
+VDA's publication page lists Automotive SPICE 4.1, dated August 2026, as its process reference and assessment model. NeoMind uses this version for process navigation. The detailed PAM PDF could not be retrieved through the browsing tool during this inspection; the mapping is guidance and must be checked against the official outcomes before a formal assessment. [VDA publications](https://vda-qmc.de/en/automotive-spice/automotive-spice-veroeffentlichungen/).
 
 NASA describes iterative realization, verification against design specifications, validation against stakeholder expectations, and reassessment of reused products in the new system. Its management guidance addresses requirements, configuration, interfaces, and technical data. [Product realization](https://www.nasa.gov/reference/5-0-product-realization/), [crosscutting management](https://www.nasa.gov/reference/6-0-crosscutting-technical-management/).
 
-**Adoption:** define checks with requirements, preserve typed links and baseline-specific evidence, and distinguish simulation from physical testing. Review requirements/interfaces and reassess downstream records after change. Project knowledge is generalized into candidates and reviewed before upstream sharing. Versioned packs compose reusable lessons; Git branches carry the contribution changes. Profiles and gates are TaskForces design decisions, not a certification claim.
+**Adoption:** define checks with requirements, preserve typed links and baseline-specific evidence, and distinguish simulation from physical testing. Review requirements/interfaces and reassess downstream records after change. Project knowledge is generalized into candidates and reviewed before upstream sharing. Versioned packs compose reusable lessons; Git branches carry the contribution changes. Profiles and gates are NeoMind design decisions, not a certification claim.
 
 ## Remaining verification work
 

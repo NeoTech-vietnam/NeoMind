@@ -10,7 +10,7 @@ import { initialize, createRecord, loadRecords } from '../dist/storage.js';
 import { cornellKinds, cornellQuote } from '../dist/notes.js';
 
 async function legacyClient(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-cornell-schema-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-cornell-schema-'));
   // This explicitly uninstalled legacy fixture tests schema/core mechanics, never native access.
   initialize(root, { project_id: 'CORNELL-SCHEMA', name: 'Cornell schema mechanics fixture' });
   mkdirSync(join(root, 'src'));

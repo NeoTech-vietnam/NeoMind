@@ -156,7 +156,7 @@ export async function buildWorkflow(output, pilot) {
     data: {
       generalization: definition.lesson,
       applicability: definition.applicability,
-      provenance: [`Bundled TaskForces ${pilot} pilot and its executed acceptance checks.`],
+      provenance: [`Bundled NeoMind ${pilot} pilot and its executed acceptance checks.`],
       domains: [pilot],
       technologies: pilot === 'software' ? ['Node.js', 'JSON'] : ['C', 'circuit simulation'],
       assumptions: ['Review applicability against the receiving project.'],
@@ -193,7 +193,7 @@ export async function buildWorkflow(output, pilot) {
     acceptance_status: 'submitted-awaiting-independent-review',
     next_actions: [
       [
-        'taskforces',
+        'neomind',
         'review',
         design.meta.id,
         '--owner',
@@ -204,7 +204,7 @@ export async function buildWorkflow(output, pilot) {
         output,
       ],
       [
-        'taskforces',
+        'neomind',
         'review',
         task.meta.id,
         '--owner',
@@ -214,9 +214,9 @@ export async function buildWorkflow(output, pilot) {
         '--project',
         output,
       ],
-      ['taskforces', 'task', 'accept', task.meta.id, '--project', output],
+      ['neomind', 'task', 'accept', task.meta.id, '--project', output],
       [
-        'taskforces',
+        'neomind',
         'review',
         lesson.meta.id,
         '--owner',
@@ -227,7 +227,7 @@ export async function buildWorkflow(output, pilot) {
         '--project',
         output,
       ],
-      ['taskforces', 'memory', 'contribute', lesson.meta.id, '--project', output],
+      ['neomind', 'memory', 'contribute', lesson.meta.id, '--project', output],
     ],
     limitations: [
       'Legacy policy fixture only: native model routing, authentication, and production agent execution are not demonstrated.',

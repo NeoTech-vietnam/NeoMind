@@ -1,6 +1,6 @@
 # Architecture decisions
 
-Status: **v1 design baseline**. For current command arguments, use `taskforces --help`; for demonstrated behavior, read the project's verification report. [Research basis](research.md) separates source claims from implementation measurements.
+Status: **v1 design baseline**. For current command arguments, use `neomind --help`; for demonstrated behavior, read the project's verification report. [Research basis](research.md) separates source claims from implementation measurements.
 
 ## One package with one engineering core
 
@@ -33,7 +33,7 @@ Managed instructions route an ordinary requirement or batch to the manager skill
 
 Assignments carry a mandatory documentation contract. Submission captures substantive seven-section work records and affected documentation hashes; acceptance requires current execution evidence and review from an invocation that has never implemented that assignment. Requirement baselines include transitive allocation ancestry. Replanning preserves superseded tasks, evidence, reports, and publication history.
 
-Project-owned `.taskforces/automation.json` controls the manager and automatic draft PRs. Closure prepares only independently reviewed generalized candidates, records real publication results or blockers, and never merges. Operation locks serialize intake, decision/closure, and candidate publication; record preconditions and final gate checks prevent a slow publication from overwriting changed work. An explicit candidate retirement with rationale preserves obsolete publication history while allowing a corrected reviewed replacement.
+Project-owned `.neomind/automation.json` controls the manager and automatic draft PRs. Closure prepares only independently reviewed generalized candidates, records real publication results or blockers, and never merges. Operation locks serialize intake, decision/closure, and candidate publication; record preconditions and final gate checks prevent a slow publication from overwriting changed work. An explicit candidate retirement with rationale preserves obsolete publication history while allowing a corrected reviewed replacement.
 
 ## Authoritative records and query index
 

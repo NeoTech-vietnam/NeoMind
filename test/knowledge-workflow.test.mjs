@@ -27,16 +27,16 @@ const body = '# Objective\nDeliver a documented integer export with reproducible
 function project(t, publication = 'project-branch', policyOverrides = {
   network_policy: undefined, automatic_pr: true,
 }) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-knowledge-workflow-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-knowledge-workflow-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   initialize(root, { project_id: 'PRIVATE-KNOWLEDGE-WORKFLOW', profile: 'basic' });
   ensureRoutingPolicy(root);
   installProject(root);
   // Archive transport has its own integration suite; isolate this publication contract.
-  const archivePath = join(root, '.taskforces/archive.json');
+  const archivePath = join(root, '.neomind/archive.json');
   const archive = JSON.parse(readFileSync(archivePath, 'utf8'));
   writeFileSync(archivePath, JSON.stringify({ ...archive, enabled: false }));
-  const policyPath = join(root, '.taskforces/automation.json');
+  const policyPath = join(root, '.neomind/automation.json');
   const policy = JSON.parse(readFileSync(policyPath, 'utf8'));
   assert.equal(policy.knowledge_research_required, true);
   assert.equal(policy.cornell_publication, 'project-branch');
@@ -164,7 +164,7 @@ test('native policy defaults to local-only while legacy defaults and saved polic
   assert.equal(native.automatic_pr, false);
   assert.equal(native.knowledge_research_required, true);
   const work = project(t);
-  const path = join(work.root, '.taskforces/automation.json');
+  const path = join(work.root, '.neomind/automation.json');
   const saved = readAutomationPolicy(work.root);
   assert.equal(saved.network_policy, undefined);
   assert.equal(saved.automatic_pr, true);
@@ -196,7 +196,7 @@ test('local-only native closure defers all remote publishers regardless of archi
   for (const enabled of [true, false]) for (const automatic_pr of [true, false])
     for (const publication of ['project-branch', 'draft-pr']) {
       const work = project(t, publication, { network_policy: 'local-only', automatic_pr, upstream: null });
-      const archivePath = join(work.root, '.taskforces/archive.json');
+      const archivePath = join(work.root, '.neomind/archive.json');
       const archive = JSON.parse(readFileSync(archivePath, 'utf8'));
       writeFileSync(archivePath, JSON.stringify({ ...archive, enabled }));
       const lesson = complete(work);
@@ -224,18 +224,18 @@ test('local-only native closure defers all remote publishers regardless of archi
         assert.deepEqual(attempts, []);
       });
       assert.deepEqual(calls, []);
-      assert.equal(existsSync(join(work.root, `.taskforces/archive-intents/${hash(work.workflow.meta.id)}.json`)), false);
+      assert.equal(existsSync(join(work.root, `.neomind/archive-intents/${hash(work.workflow.meta.id)}.json`)), false);
     }
 });
 
 test('local-only completed workflow defers historical archive errors without changing the recovery intent', (t) => {
   const work = project(t, 'project-branch', {});
   const lesson = complete(work);
-  const intentPath = join(work.root, `.taskforces/archive-intents/${hash(work.workflow.meta.id)}.json`);
+  const intentPath = join(work.root, `.neomind/archive-intents/${hash(work.workflow.meta.id)}.json`);
   const historicalError = 'Project archive: GitHub authentication was unavailable during earlier publication.';
   const intent = Buffer.from(JSON.stringify({ workflow_id: work.workflow.meta.id,
     error: historicalError, at: '2026-01-01T00:00:00.000Z' }, null, 2) + '\n');
-  mkdirSync(join(work.root, '.taskforces/archive-intents'), { recursive: true });
+  mkdirSync(join(work.root, '.neomind/archive-intents'), { recursive: true });
   writeFileSync(intentPath, intent);
   withoutExternalProcesses((attempts) => {
     const closed = finishWorkflow(work.root, work.workflow.meta.id, { knowledge_ids: [lesson.meta.id] });
@@ -253,7 +253,7 @@ test('local-only completed workflow defers historical archive errors without cha
     assert.equal(closed.archive.status, 'deferred');
     assert.equal(closed.tasks[0].accepted.ok, true);
     assert.deepEqual(readFileSync(intentPath), intent);
-    const policyPath = join(work.root, '.taskforces/automation.json');
+    const policyPath = join(work.root, '.neomind/automation.json');
     const policy = readAutomationPolicy(work.root);
     for (const network_policy of ['remote-enabled', undefined]) {
       writeFileSync(policyPath, JSON.stringify({ ...policy, network_policy }));
@@ -271,7 +271,7 @@ test('local-only completed workflow defers historical archive errors without cha
 test('native local-only closure without a reusable lesson defers the enabled archive without authentication', (t) => {
   const work = project(t, 'project-branch', {});
   complete(work);
-  const archivePath = join(work.root, '.taskforces/archive.json');
+  const archivePath = join(work.root, '.neomind/archive.json');
   const archive = JSON.parse(readFileSync(archivePath, 'utf8'));
   writeFileSync(archivePath, JSON.stringify({ ...archive, enabled: true }));
   withoutExternalProcesses((attempts) => {
@@ -476,7 +476,7 @@ test('manager_finish publishes a reviewed Cornell candidate through the sixth br
   assert.deepEqual(result.publication_blockers, []);
   assert.equal(result.publications[0].status, 'branch-published');
   assert.equal(result.publications[0].commit, 'a'.repeat(40));
-  assert.equal(result.publications[0].branch, `taskforces/knowledge/${hash('PRIVATE-KNOWLEDGE-WORKFLOW').slice(0, 16)}`);
+  assert.equal(result.publications[0].branch, `neomind/knowledge/${hash('PRIVATE-KNOWLEDGE-WORKFLOW').slice(0, 16)}`);
   assert.equal(result.publications[0].knowledge_id, lesson.meta.id);
   assert.equal(getRecord(work.root, work.workflow.meta.id).meta.data.publications[0].commit, 'a'.repeat(40));
   assert.match(result.final_report, /branch-published/);
@@ -490,7 +490,7 @@ test('manager_finish retains branch publisher failures as blockers instead of cl
     const branchPublisher = () => {
       calls++;
       if (failure === 'request-failed') throw new Error('Injected publication request failed before branch confirmation.');
-      return { status: 'branch-published', branch: 'taskforces/knowledge/unconfirmed' };
+      return { status: 'branch-published', branch: 'neomind/knowledge/unconfirmed' };
     };
     const unexpected = () => assert.fail('No fallback to draft PR or archive publication.');
     const closed = withoutExternalProcesses((attempts) => {

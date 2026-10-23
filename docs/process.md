@@ -1,6 +1,6 @@
 # Process reference
 
-The packaged [process guide](../resources/guides/process.md) is the authoritative agent-facing definition of profiles, gates, traceability, evidence, and knowledge promotion. Installation places it at `.taskforces/guides/process.md` in the target project.
+The packaged [process guide](../resources/guides/process.md) is the authoritative agent-facing definition of profiles, gates, traceability, evidence, and knowledge promotion. Installation places it at `.neomind/guides/process.md` in the target project.
 
 Use the **basic** profile for bounded work with requirement/check/evidence/review coverage, **software** for explicit architecture and verification levels, and **embedded** for hardware/software allocation and reproducible configurations. Document why an item is non-applicable.
 

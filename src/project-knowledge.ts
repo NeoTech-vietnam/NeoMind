@@ -12,7 +12,7 @@ import { projectKnowledgeArtifactPath } from './knowledge-reuse.js';
 export type ProjectKnowledgeRequest = (method: string, endpoint: string, body?: unknown) => any;
 interface CatalogEntry {
   schema_version: 1;
-  schema: 'taskforces-project-knowledge-note';
+  schema: 'neomind-project-knowledge-note' | 'taskforces-project-knowledge-note';
   title: string;
   platforms: string[];
   frameworks: string[];
@@ -96,7 +96,7 @@ function publicList(value: unknown, label: string, nonempty = false): string[] {
 function catalog(entries: CatalogEntry[]): string {
   return json({
     schema_version: 1,
-    schema: 'taskforces-project-knowledge-catalog',
+    schema: 'neomind-project-knowledge-catalog',
     notes: [...entries].sort((a, b) => a.artifact_path.localeCompare(b.artifact_path)),
   });
 }
@@ -169,7 +169,7 @@ export function prepareProjectKnowledge(root: string, id: string): PreparedProje
   const manifestPath = `knowledge/projects/${projectHash}/manifest.json`;
   const narrative = `# ${title}\n\n## Cue Column\n\n${cues}\n\n## Main Notes\n\n${notes}\n\n## Summary\n\n${summary}\n\n## Application\n\n${application}\n\n## Applicability\n\n${applicability.map((item) => `- ${item}`).join('\n')}\n\n## Provenance\n\n${provenance.map((item) => `- ${item}`).join('\n')}\n`;
   const entry: CatalogEntry = {
-    schema_version: 1, schema: 'taskforces-project-knowledge-note', title,
+    schema_version: 1, schema: 'neomind-project-knowledge-note', title,
     platforms, frameworks, applicability, provenance, artifact_path: path, sha256: hash(narrative),
   };
   // Public-safe approval is not a secret scanner. Still reject known local IDs and
@@ -184,7 +184,7 @@ export function prepareProjectKnowledge(root: string, id: string): PreparedProje
     }),
   ];
   if (privateValues.some((value) => value && publicContent.includes(value.toLowerCase())) ||
-    /(?:\b[a-z]:\/|file:\/\/|\.taskforces\/)/i.test(publicContent))
+    /(?:\b[a-z]:\/|file:\/\/|\.(?:neomind|taskforces|verythinker)\/)/i.test(publicContent))
     throw new Error('Public fields contain a private project identity or source artifact path.');
   const files = [
     { path, content: narrative },
@@ -192,7 +192,7 @@ export function prepareProjectKnowledge(root: string, id: string): PreparedProje
     { path: manifestPath, content: catalog([entry]) },
   ];
   return {
-    project_hash: projectHash, branch: `taskforces/knowledge/${projectHash.slice(0, 16)}`,
+    project_hash: projectHash, branch: `neomind/knowledge/${projectHash.slice(0, 16)}`,
     path, manifest_path: manifestPath, pack: { id: pack.id, version: pack.version }, entry, files,
     content_hash: hash(JSON.stringify(files)),
     validation_hash: hash(JSON.stringify({
@@ -222,18 +222,20 @@ function mergeCatalog(prepared: PreparedProjectKnowledge, base: string, reposito
     if (response?.encoding !== 'base64' || typeof response.content !== 'string')
       throw new Error('Remote project catalog is not a base64 file.');
     const existing = JSON.parse(Buffer.from(response.content, 'base64').toString('utf8'));
-    if (existing.schema_version !== 1 || existing.schema !== 'taskforces-project-knowledge-catalog' ||
+    if (existing.schema_version !== 1 ||
+      !['neomind-project-knowledge-catalog', 'taskforces-project-knowledge-catalog'].includes(existing.schema) ||
       !Array.isArray(existing.notes)) throw new Error('Remote project catalog is malformed.');
     entries = existing.notes.map((item: CatalogEntry) => {
       const prefix = `knowledge/projects/${prepared.project_hash}/notes/`;
-      if (!item || item.schema_version !== 1 || item.schema !== 'taskforces-project-knowledge-note' ||
+      if (!item || item.schema_version !== 1 ||
+        !['neomind-project-knowledge-note', 'taskforces-project-knowledge-note'].includes(item.schema) ||
         typeof item.artifact_path !== 'string' || !item.artifact_path.startsWith(prefix) ||
         !/^[a-z][a-z0-9-]{0,63}\/\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?\.md$/.test(item.artifact_path.slice(prefix.length)) ||
         typeof item.sha256 !== 'string' || !digest.test(item.sha256))
         throw new Error('Remote project catalog entry is malformed.');
       // Preserve only the public schema, never arbitrary fields in a remote file.
       return {
-        schema_version: 1, schema: 'taskforces-project-knowledge-note',
+        schema_version: 1, schema: item.schema,
         title: publicText(item.title, 'Catalog title'),
         platforms: publicList(item.platforms, 'Catalog platforms'),
         frameworks: publicList(item.frameworks, 'Catalog frameworks'),
@@ -267,15 +269,15 @@ export function publishProjectKnowledge(root: string, id: string, repository: st
     const assertRepository = () => {
       const policy = readAutomationPolicy(root);
       if (policy.network_policy === 'local-only')
-        throw new Error('Local-only policy disables remote knowledge publication. Set network_policy to "remote-enabled" in .taskforces/automation.json to opt in.');
+        throw new Error('Local-only policy disables remote knowledge publication. Set network_policy to "remote-enabled" in .neomind/automation.json to opt in.');
       if (policy.upstream !== repository)
-        throw new Error('Publication repository must exactly match the configured TaskForces upstream.');
+        throw new Error('Publication repository must exactly match the configured NeoMind upstream.');
     };
     assertRepository();
     const candidateId = getRecord(root, id).meta.id;
     const prepared = prepareProjectKnowledge(root, candidateId);
     if (prepared.project_hash !== projectHash) throw new Error('Project identity changed during publication.');
-    const output = safePath(root, `.taskforces/project-knowledge/${candidateId}.json`);
+    const output = safePath(root, `.neomind/project-knowledge/${candidateId}.json`);
     const prior: PublicationState | null = existsSync(output) ? JSON.parse(readFileSync(output, 'utf8')) : null;
     if (prior && (prior.schema_version !== 1 || prior.candidate_id !== candidateId ||
       prior.project_hash !== projectHash || prior.repository !== repository ||

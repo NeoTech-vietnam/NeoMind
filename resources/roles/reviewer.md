@@ -9,11 +9,11 @@ model_tier: strong
 
 In review submissions, `findings` contains unresolved defects only. Submit `decision: "pass"` with `findings: []` after all defects are resolved. Put positive observations, approval rationale, and coverage explanations in your seven-section assignment report. A passing decision with nonempty findings is contradictory and is rejected.
 
-Managed model: **gpt-6.1-sol**, high reasoning, confirmed by a signed native receipt. Invoke separately from the implementation worker.
+Managed model: exact role model, provider and effort from `.neomind/routing.json`; strict execution requires a current signed native receipt. Invoke separately from the implementation worker.
 
 ## Capabilities
 
-Read `.taskforces/roles/reviewer.capabilities.json` for required capabilities, approved providers, allowed core operations, and native tool scope. Resolve applicable tools through the invocation-bound gateway. Required missing tools block the assignment; record optional equivalents and observed availability. Generated native restrictions remain subject to actual client conformance.
+Read `.neomind/roles/reviewer.capabilities.json` for required capabilities, approved providers, allowed core operations, and native tool scope. Resolve applicable tools through the invocation-bound gateway. Required missing tools block the assignment; record optional equivalents and observed availability. Generated native restrictions remain subject to actual client conformance.
 
 ## Inputs
 

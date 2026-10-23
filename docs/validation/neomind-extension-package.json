@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-10-23T07:48:00.6465740Z",
+  "status": "passed",
+  "packager": {
+    "integrity": "sha512-NImwuLaenMmb5D5Jer9/lzi/F9ZQUBOp8Azhj/BVYcTFgixv8KehFXqEUDjQlD2tAiw2E6dDGyjTuAB//di60A==",
+    "version": "4.0.0",
+    "registry": "https://registry.npmjs.org/@vscode%2Fvsce/4.0.0",
+    "name": "@vscode/vsce"
+  },
+  "command": "npx --offline --yes @vscode/vsce package --no-dependencies --out D:\\workspace\\NeoMind\\artifacts\\neomind-agent-monitor-0.1.0.vsix",
+  "artifact": "artifacts/neomind-agent-monitor-0.1.0.vsix",
+  "bytes": 13732,
+  "sha256": "4627b3c4903f1142e81162c30a3196bca1fe02e9b571e11d7d514925b0728a27",
+  "extension": {
+    "display_name": "NeoMind Agent Monitor",
+    "name": "neomind-model-bridge",
+    "publisher": "neomind",
+    "engine": "^1.109.0",
+    "main": "./extension.cjs",
+    "version": "0.1.0"
+  },
+  "package_entries": [
+    {
+      "path": "extension.vsixmanifest",
+      "bytes": 2572,
+      "sha256": "e3529e4b257e0e5e455092f42efe97e6a80fd4df97ac93de8eb294f228726236"
+    },
+    {
+      "path": "[Content_Types].xml",
+      "bytes": 527,
+      "sha256": "a4ede8716e6d13b8a79dfb61e950fc16fdd3a5e127a7467248a0f2caa1e9291a"
+    },
+    {
+      "path": "extension/extension.cjs",
+      "bytes": 4235,
+      "sha256": "97fef61502be58abe8a48674118601cbe520bc953995f531b435e3359b975616",
+      "source_bytes_match": true
+    },
+    {
+      "path": "extension/LICENSE.txt",
+      "bytes": 1096,
+      "sha256": "73595a2e5c515930ad8c6118b6563c7223fe7aa1220b901cadc96095f3d8a2ea",
+      "source_bytes_match": true
+    },
+    {
+      "path": "extension/monitor.cjs",
+      "bytes": 10582,
+      "sha256": "8b487b0c01d01652ba4a8e3759f149cc939ff492e75574490eae4a7309643935",
+      "source_bytes_match": true
+    },
+    {
+      "path": "extension/package.json",
+      "bytes": 1357,
+      "sha256": "855c8eca03dd6b95aa8747046ac3d2f27b2eefcfec8ffd75bf3901d605509e18",
+      "source_bytes_match": true
+    },
+    {
+      "path": "extension/readme.md",
+      "bytes": 1567,
+      "sha256": "5efd3f64ab1c71d272b2c693cce0245931f775f244120828ecf9963092aa79ef",
+      "source_bytes_match": true
+    },
+    {
+      "path": "extension/resources/monitor/monitor.css",
+      "bytes": 1994,
+      "sha256": "fe53d6fcf162fb14e7858eaec43a749eef38a6c42dfbab65ae1cb83dec2d8f48",
+      "source_bytes_match": true
+    },
+    {
+      "path": "extension/resources/monitor/monitor.js",
+      "bytes": 10511,
+      "sha256": "33e6169383f361951bf32c8dcb8065feed7e46514c21d1ef799ad9c60db85128",
+      "source_bytes_match": true
+    }
+  ],
+  "private_workspace_or_runtime_data_included": false,
+  "verified_allowlist_only": true,
+  "published": false,
+  "installed_into_vscode": false,
+  "live_extension_host_execution": "not-tested-by-packaging"
+}

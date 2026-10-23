@@ -97,7 +97,7 @@ export function lightweightRun(root: string, input: WorkflowInput & { workflow_i
     return {
       workflow: lightweightStatus(record),
       handoff: {
-        agent: 'Manager Agent',
+        agent: 'NeoMind Manager Agent',
         prompt: `Continue lightweight workflow ${record.meta.id}. Read ${resolveManagedRoot(root)}/guides/lightweight.md and the saved record. Execute within the original user authorization and saved continuations; continuations clarify or narrow scope, not expand it. Checkpoint plan, actual checks, changed paths and limitations. Do not call manager_run recursively or resume unrelated strict workflows.\nOriginal requirement batch:\n${JSON.stringify(record.meta.data.original_requirements, null, 2)}\nUser clarifications or continuations (in order):\n${JSON.stringify(continuations, null, 2)}`,
       },
     };

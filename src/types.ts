@@ -69,6 +69,8 @@ export interface ProjectConfig {
   name: string;
   profile: Profile;
   platforms: Platform[];
+  /** Keep Copilot integration in separately ignorable local files. */
+  copilot_integration?: 'local';
   models: Record<
     'economy' | 'balanced' | 'strong',
     string | null | Partial<Record<Platform, string>>

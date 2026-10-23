@@ -48,7 +48,7 @@ async function invoke(stage, prompt) {
 
 const task = `Implement the ${packet.pilot} pilot in this isolated workspace.
 Read task-packet.json and README.md for requirements and interfaces.
-Edit the implementation files only; preserve README.md and tests. Do not access the completed TaskForces source repository.
+Edit the implementation files only; preserve README.md and tests. Do not access the completed NeoMind source repository.
 Use Node.js standard libraries. For the embedded pilot, implement the portable C controller too.
 You are the single implementation agent; do not delegate.
 Run the acceptance command from task-packet.json. Fix actual failures within the task scope.

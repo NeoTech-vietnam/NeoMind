@@ -9,8 +9,8 @@ import { runInNewContext } from 'node:vm';
 const require = createRequire(import.meta.url);
 const source = readFileSync(new URL('../extensions/vscode-model-bridge/extension.cjs', import.meta.url), 'utf8');
 // Stub only dynamic import: custom VM import hooks otherwise need experimental Node flags.
-assert.equal(source.split('await import(').length, 2);
-const executable = source.replace('await import(', 'await importRuntime(');
+assert.equal(source.split('await import(').length, 3);
+const executable = source.replaceAll('await import(', 'await importRuntime(');
 
 function deferred() {
   let resolve;
@@ -18,7 +18,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'taskforces' } = {}) {
+function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'neomind' } = {}) {
   const entered = deferred(), release = deferred();
   const calls = { folder: 0, consent: 0, import: 0, startup: 0, close: 0 };
   const info = [], errors = [], commands = new Map(), subscriptions = [];
@@ -40,7 +40,7 @@ function setup(blocked, { trusted = true, globalRuntime = true, packageName = 't
       isTrusted: trusted,
       workspaceFolders: blocked === 'folder' ? [] : [folder],
       getConfiguration(name) {
-        assert.equal(name, 'taskforces.bridge');
+        assert.equal(name, 'neomind.bridge');
         return { inspect(key) {
           assert.equal(key, 'runtimePath');
           return { globalValue: globalRuntime ? runtime : undefined, workspaceValue: resolve('untrusted-runtime') };
@@ -59,6 +59,7 @@ function setup(blocked, { trusted = true, globalRuntime = true, packageName = 't
   runInNewContext(executable, {
     module,
     require(name) {
+      if (name === './monitor.cjs') return { activateMonitor() {} };
       if (name === 'vscode') return vscode;
       if (name === 'node:fs') return {
         realpathSync: { native: path => path },
@@ -81,8 +82,8 @@ function setup(blocked, { trusted = true, globalRuntime = true, packageName = 't
   module.exports.activate({ subscriptions });
   return {
     calls, info, errors, entered: entered.promise, release: release.resolve,
-    enable: commands.get('taskforces.bridge.enable'),
-    disable: commands.get('taskforces.bridge.disable'),
+    enable: commands.get('neomind.bridge.enable'),
+    disable: commands.get('neomind.bridge.disable'),
     deactivate: module.exports.deactivate,
     foldersChanged: () => foldersChanged(),
     dispose: () => subscriptions.at(-1).dispose(),
@@ -145,7 +146,7 @@ test('activation stays idle; explicit enable uses User runtime; disable closes o
 for (const [options, message] of [
   [{ trusted: false }, /Workspace Trust required/],
   [{ globalRuntime: false }, /Workspace overrides are ignored/],
-  [{ packageName: 'untrusted-package' }, /not a TaskForces package/],
+  [{ packageName: 'untrusted-package' }, /not a NeoMind package/],
   [{ packageName: 'verythinker' }, /Reinstall the renamed runtime/],
 ]) {
   test(`enable rejects ${JSON.stringify(options)}`, async () => {

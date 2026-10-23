@@ -26,7 +26,7 @@ The following mapping provides navigational guidance to Automotive SPICE 4.1. Re
 
 Configuration management, change/problem handling, project management, and quality assurance are cross-cutting responsibilities. Their evidence lives in configuration baselines, change/problem records, task state, and review records.
 
-| Cross-cutting activity | Process reference | TaskForces records and responsible roles |
+| Cross-cutting activity | Process reference | NeoMind records and responsible roles |
 | --- | --- | --- |
 | Quality assurance | SUP.1 | Independent reviews, unresolved findings, gate reports; reviewer and manager |
 | Configuration management | SUP.8 | Version/hash locks, Git/workspace baselines, board/BOM/firmware identifiers, release records; release engineer |
@@ -77,7 +77,7 @@ Every completed or interrupted assignment writes these sections:
 
 Core task submission stores the substantive seven-section body as a knowledge record with `kind: work-record`, linked to its originating task and invocation. Role history is a view of these records, avoiding separate contradictory journals. Required project documentation is an assignment deliverable and part of the reviewed baseline.
 
-Promote knowledge through `Work Record -> Project Lesson -> Generalized Candidate -> Review -> Upstream PR -> Human Approval -> Versioned Pack`. A candidate contains the generalized lesson, provenance, applicability, assumptions, limitations, and verification status. Inspect it for project-specific data before creating an upstream proposal. The manager automatically creates the independently reviewed draft PR when `.taskforces/automation.json` enables submission; human approval applies to merging shared knowledge. Read `manager.md` for automatic closure and external-blocker handling.
+Promote knowledge through `Work Record -> Project Lesson -> Generalized Candidate -> Review -> Upstream PR -> Human Approval -> Versioned Pack`. A candidate contains the generalized lesson, provenance, applicability, assumptions, limitations, and verification status. Inspect it for project-specific data before creating an upstream proposal. The manager automatically creates the independently reviewed draft PR when `.neomind/automation.json` enables submission; human approval applies to merging shared knowledge. Read `manager.md` for automatic closure and external-blocker handling.
 
 Install compatible packs at recorded versions and hashes. Similarity finds candidates; applicability and assumptions decide reuse. Record conflicts with project requirements and their disposition. Reassess a lesson when its source revision, environment, or applicability changes.
 

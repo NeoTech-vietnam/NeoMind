@@ -14,7 +14,7 @@ import {
 } from './storage.js';
 import type { ProjectRecord } from './types.js';
 
-const store = '.taskforces/evidence/inputs';
+const store = '.neomind/evidence/inputs';
 const digest = /^[a-f0-9]{64}$/;
 const maxFileBytes = 32 * 1024 * 1024;
 const maxSnapshotBytes = 128 * 1024 * 1024;
@@ -79,7 +79,7 @@ function bytesAt(root: string, path: string): Buffer {
 }
 function excludeEphemeral(path: string): void {
   if (
-    /^\.(?:verythinker|taskforces)\/(?:cache|runs|raw|sessions|tools|operations|archives|capabilities|contributions|evidence\/inputs)\//.test(
+    /^\.(?:verythinker|taskforces|neomind)\/(?:cache|runs|raw|sessions|tools|operations|archives|capabilities|contributions|evidence\/inputs)\//.test(
       path,
     ) ||
     /(?:^|\/)\.git(?:\/|$)/.test(path) ||
@@ -171,13 +171,13 @@ function configurationInputs(
   absent: string[];
 } {
   const defaults = [
-    '.taskforces/config.json',
-    '.taskforces/routing.json',
-    '.taskforces/tools.json',
-    '.taskforces/pack-lock.json',
-    '.taskforces/tool-lock.json',
-    '.taskforces/recipe-lock.json',
-    '.taskforces/native-runtime.lock.json',
+    '.neomind/config.json',
+    '.neomind/routing.json',
+    '.neomind/tools.json',
+    '.neomind/pack-lock.json',
+    '.neomind/tool-lock.json',
+    '.neomind/recipe-lock.json',
+    '.neomind/native-runtime.lock.json',
   ];
   const paths = new Set(defaults.filter((path) => existsSync(safePath(root, path))));
   const absent = defaults.filter((path) => !existsSync(safePath(root, path)));
@@ -188,7 +188,7 @@ function configurationInputs(
       : [path])
       paths.add(file.replaceAll('\\', '/'));
   }
-  const packs = safePath(root, '.taskforces/pack-lock.json');
+  const packs = safePath(root, '.neomind/pack-lock.json');
   if (existsSync(packs))
     for (const pack of JSON.parse(readFileSync(packs, 'utf8')).packs ?? []) {
       if (typeof pack.path !== 'string')
@@ -205,13 +205,13 @@ function configurationInputs(
         throw new Error(`Evidence knowledge pack is missing or modified: ${pack.path}`);
       for (const file of contents) paths.add(file);
     }
-  const tools = safePath(root, '.taskforces/tool-lock.json');
+  const tools = safePath(root, '.neomind/tool-lock.json');
   if (existsSync(tools))
     for (const provider of JSON.parse(readFileSync(tools, 'utf8')).providers ?? []) {
       const path = canonical(provider.dependency_lock_path);
       expectedHash(provider.dependency_lock_hash);
       if (
-        !path.startsWith('.taskforces/tool-locks/') ||
+        !path.startsWith('.neomind/tool-locks/') ||
         hash(bytesAt(root, path)) !== provider.dependency_lock_hash
       )
         throw new Error(`Evidence tool dependency lock is missing or changed: ${path}`);
@@ -220,9 +220,9 @@ function configurationInputs(
   if (invocationId) {
     if (!/^[a-f0-9-]{36}$/i.test(invocationId))
       throw new Error('Evidence execution invocation ID is invalid.');
-    paths.add(`.taskforces/native/receipts/${invocationId}.json`);
-    paths.add('.taskforces/native/trust.json');
-    for (const path of filesUnder(root, '.taskforces/native/keys'))
+    paths.add(`.neomind/native/receipts/${invocationId}.json`);
+    paths.add('.neomind/native/trust.json');
+    for (const path of filesUnder(root, '.neomind/native/keys'))
       paths.add(path.replaceAll('\\', '/'));
   }
   for (const path of paths) excludeEphemeral(path);
@@ -498,12 +498,12 @@ export function recoverLegacyEvidenceInputs(
         );
     }
     for (const [field, path] of [
-      ['pack_lock_hash', '.taskforces/pack-lock.json'],
-      ['tool_lock_hash', '.taskforces/tool-lock.json'],
+      ['pack_lock_hash', '.neomind/pack-lock.json'],
+      ['tool_lock_hash', '.neomind/tool-lock.json'],
     ])
       if (typeof data[field!] === 'string')
         manifest.context_files[path!] = recoverFile(path!, data[field!] as string);
-    const packLock = manifest.context_files['.taskforces/pack-lock.json'];
+    const packLock = manifest.context_files['.neomind/pack-lock.json'];
     if (packLock)
       for (const pack of JSON.parse(bytesAt(root, packLock.blob_path).toString('utf8')).packs ??
         []) {
@@ -531,7 +531,7 @@ export function recoverLegacyEvidenceInputs(
             `Historical evidence ${evidence.meta.id} is missing original knowledge pack ${pack.path} with fingerprint ${pack.hash}.`,
           );
       }
-    const toolLock = manifest.context_files['.taskforces/tool-lock.json'];
+    const toolLock = manifest.context_files['.neomind/tool-lock.json'];
     if (toolLock)
       for (const provider of JSON.parse(bytesAt(root, toolLock.blob_path).toString('utf8'))
         .providers ?? []) {

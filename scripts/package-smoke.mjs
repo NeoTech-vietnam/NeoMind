@@ -54,7 +54,7 @@ else {
   );
   tarball = join(repository, 'artifacts', packed[0].filename);
 }
-const workspace = mkdtempSync(join(tmpdir(), 'taskforces-package-'));
+const workspace = mkdtempSync(join(tmpdir(), 'neomind-package-'));
 function removeManaged(path) {
   const target = resolve(path);
   const child = relative(workspace, target);
@@ -68,7 +68,7 @@ function removeTemporaryRecovery(path) {
   assert.ok(isAbsolute(path));
   const target = resolve(path);
   assert.equal(dirname(target), realpathSync(tmpdir()));
-  assert.match(basename(target), /^taskforces-upgrade-[A-Za-z0-9]+$/);
+  assert.match(basename(target), /^neomind-upgrade-[A-Za-z0-9]+$/);
   const stat = lstatSync(target);
   assert.ok(stat.isDirectory() && !stat.isSymbolicLink());
   assert.equal(realpathSync(target), target);
@@ -77,15 +77,15 @@ function removeTemporaryRecovery(path) {
 try {
   writeFileSync(join(workspace, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
   run([npmCli, 'install', '--ignore-scripts', '--no-audit', '--no-fund', tarball], workspace);
-  const installed = join(workspace, 'node_modules/taskforces');
+  const installed = join(workspace, 'node_modules/neomind');
   const cli = join(installed, 'dist/cli.js');
   const host = await import(pathToFileURL(join(installed, 'dist/vscode-host.js')).href);
   assert.equal(typeof host.enableVSCodeHost, 'function');
   const extension = join(installed, 'extensions/vscode-model-bridge');
   assert.ok(existsSync(join(extension, 'extension.cjs')));
-  assert.equal(JSON.parse(readFileSync(join(extension, 'package.json'), 'utf8')).name, 'taskforces-model-bridge');
+  assert.equal(JSON.parse(readFileSync(join(extension, 'package.json'), 'utf8')).name, 'neomind-model-bridge');
   assert.match(run(['--input-type=module', '-e',
-    "import { enableVSCodeHost } from 'taskforces/vscode-host'; console.log(typeof enableVSCodeHost)"], workspace), /function/);
+    "import { enableVSCodeHost } from 'neomind/vscode-host'; console.log(typeof enableVSCodeHost)"], workspace), /function/);
   let project = workspace;
   const invoke = (args) => JSON.parse(run([cli, ...args, '--project', project], project));
   writeFileSync(join(workspace, 'AGENTS.md'), '# Existing project instructions\n');
@@ -107,7 +107,7 @@ try {
   );
   const core = await import(pathToFileURL(join(installed, 'dist/index.js')).href);
   assert.equal(
-    readdirSync(join(workspace, '.taskforces/roles')).filter((path) => path.endsWith('.md'))
+    readdirSync(join(workspace, '.neomind/roles')).filter((path) => path.endsWith('.md'))
       .length,
     12,
   );
@@ -115,21 +115,21 @@ try {
   assert.equal(core.readRoutingPolicy(workspace).strong_model, 'claude-opus-4.6');
   assert.deepEqual(core.readRoutingPolicy(workspace).worker_models, ['gpt-5.4']);
   assert.match(
-    readFileSync(join(workspace, '.github/agents/taskforces-manager.agent.md'), 'utf8'),
+    readFileSync(join(workspace, '.github/agents/neomind-manager.agent.md'), 'utf8'),
     /model: "claude-opus-4.6"/,
   );
   const squad = [
-    ['manager', 'Manager Agent', 'claude-opus-4.6'],
-    ['swsd', 'SWSD Agent', 'claude-opus-4.6'],
-    ['p-res', 'P-RES Agent', 'claude-opus-4.6'],
-    ['fnd', 'FnD Agent', 'gpt-5.4'],
-    ['reviewer', 'Reviewer Agent', 'claude-opus-4.6'],
-    ['tester', 'Tester Agent', 'gpt-5.4'],
+    ['manager', 'NeoMind Manager Agent', 'claude-opus-4.6'],
+    ['swsd', 'NeoMind SWSD Agent', 'claude-opus-4.6'],
+    ['p-res', 'NeoMind P-RES Agent', 'claude-opus-4.6'],
+    ['fnd', 'NeoMind FnD Agent', 'gpt-5.4'],
+    ['reviewer', 'NeoMind Reviewer Agent', 'claude-opus-4.6'],
+    ['tester', 'NeoMind Tester Agent', 'gpt-5.4'],
   ];
   assert.equal(readdirSync(join(workspace, '.github/agents')).filter((path) =>
-    path.startsWith('taskforces-') && path.endsWith('.agent.md')).length, squad.length);
+    path.startsWith('neomind-') && path.endsWith('.agent.md')).length, squad.length);
   for (const [suffix, name, model] of squad) {
-    const agent = readFileSync(join(workspace, `.github/agents/taskforces-${suffix}.agent.md`), 'utf8');
+    const agent = readFileSync(join(workspace, `.github/agents/neomind-${suffix}.agent.md`), 'utf8');
     assert.ok(agent.includes(`name: "${name}"`));
     assert.ok(agent.includes(`model: "${model}"`));
   }
@@ -159,11 +159,11 @@ try {
     /native|receipt|routing|invocation/i,
   );
   assert.equal(core.getRecord(workspace, strictTask.meta.id).meta.status, 'draft');
-  const edited = join(workspace, '.taskforces/roles/developer.md');
+  const edited = join(workspace, '.neomind/roles/developer.md');
   writeFileSync(edited, 'User edits preserved.\n');
   assert.ok(
     invoke(['update']).conflicts.some(
-      (conflict) => conflict.path === '.taskforces/roles/developer.md',
+      (conflict) => conflict.path === '.neomind/roles/developer.md',
     ),
   );
   assert.equal(readFileSync(edited, 'utf8'), 'User edits preserved.\n');
@@ -271,8 +271,8 @@ try {
     'packaged-independent-review-fixture',
   ]);
   assert.equal(invoke(['task', 'accept', task.meta.id]).meta.status, 'accepted');
-  removeManaged(join(project, '.taskforces/cache'));
-  removeManaged(join(project, '.taskforces/runs'));
+  removeManaged(join(project, '.neomind/cache'));
+  removeManaged(join(project, '.neomind/runs'));
   assert.equal(invoke(['verify', task.meta.id, '--gate', 'accepted']).ok, true);
   assert.equal(invoke(['memory', 'search', 'Packaged']).length > 0, true);
   const client = new Client({ name: 'packaged-smoke', version: '1.0.0' });
@@ -483,8 +483,8 @@ try {
   } finally {
     await client.close();
   }
-  removeManaged(join(project, '.taskforces/cache'));
-  removeManaged(join(project, '.taskforces/runs'));
+  removeManaged(join(project, '.neomind/cache'));
+  removeManaged(join(project, '.neomind/runs'));
   const managerResumed = invoke(['workflow', 'status', managerWorkflow.meta.id]);
   assert.equal(managerResumed.phase, 'completed');
   assert.equal(managerResumed.final_report_id, managerFinalReportId);
@@ -496,8 +496,8 @@ try {
   const preserved = new Map([
     join(workspace, 'AGENTS.md'),
     edited,
-    join(workspace, '.taskforces/config.json'),
-    join(project, '.taskforces/config.json'),
+    join(workspace, '.neomind/config.json'),
+    join(project, '.neomind/config.json'),
     ...core.loadRecords(workspace).map((record) => join(workspace, record.path)),
     ...core.loadRecords(project).map((record) => join(project, record.path)),
   ].map((path) => [path, readFileSync(path)]));
@@ -510,14 +510,14 @@ try {
   const originalManifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   const dependencySections = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
   const originalSections = dependencySections.filter((section) =>
-    Object.hasOwn(originalManifest[section] ?? {}, 'taskforces'));
+    Object.hasOwn(originalManifest[section] ?? {}, 'neomind'));
   assert.equal(originalSections.length, 1);
   const dependencySection = originalSections[0];
   assert.ok(['dependencies', 'devDependencies'].includes(dependencySection));
   const manifestBeforeOverride = readFileSync(manifestPath);
   const lockBeforeOverride = readFileSync(lockPath);
   writeFileSync(manifestPath, JSON.stringify({ ...originalManifest,
-    overrides: { taskforces: originalManifest[dependencySection].taskforces } }));
+    overrides: { neomind: originalManifest[dependencySection].neomind } }));
   try {
     const rejected = spawnSync(process.execPath, [cli, 'upgrade', '--to', tarball,
       '--project', workspace, '--json'], { cwd: workspace, encoding: 'utf8',
@@ -526,7 +526,7 @@ try {
     assert.match(rejected.stderr, /overrides.*manual review/i);
     assert.equal(JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8')).version, packageVersion);
     assert.deepEqual(readFileSync(lockPath), lockBeforeOverride);
-    const recoveryMatch = /recovery: (.*)\. TaskForces/.exec(rejected.stderr);
+    const recoveryMatch = /recovery: (.*)\. NeoMind/.exec(rejected.stderr);
     assert.ok(recoveryMatch, 'Override rejection must identify recovery diagnostics.');
     removeTemporaryRecovery(recoveryMatch[1]);
   } finally {
@@ -543,23 +543,23 @@ try {
   assert.equal(upgrade.schema_version, 1);
   assert.equal(upgrade.status, 'upgraded');
   assert.equal(upgrade.root, realpathSync(workspace));
-  assert.deepEqual(upgrade.target, { name: 'taskforces', version: packageVersion });
+  assert.deepEqual(upgrade.target, { name: 'neomind', version: packageVersion });
   assert.equal(upgrade.dependency_section, dependencySection);
   const archiveBytes = readFileSync(tarball);
   const archiveHash = createHash('sha256').update(archiveBytes).digest('hex');
-  const durableTarget = join(realpathSync(workspace), '.taskforces/package-cache', `${archiveHash}.tgz`);
-  const dependencySpec = `file:.taskforces/package-cache/${archiveHash}.tgz`;
+  const durableTarget = join(realpathSync(workspace), '.neomind/package-cache', `${archiveHash}.tgz`);
+  const dependencySpec = `file:.neomind/package-cache/${archiveHash}.tgz`;
   assert.equal(upgrade.durable_target, durableTarget);
   assert.equal(upgrade.dependency_spec, dependencySpec);
   const assertDurableInstall = () => {
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
     const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
-    assert.equal(manifest[dependencySection].taskforces, dependencySpec);
-    assert.equal(lock.packages[''][dependencySection].taskforces, dependencySpec);
+    assert.equal(manifest[dependencySection].neomind, dependencySpec);
+    assert.equal(lock.packages[''][dependencySection].neomind, dependencySpec);
     for (const section of dependencySections) {
-      if (section !== dependencySection) assert.equal(manifest[section]?.taskforces, undefined);
+      if (section !== dependencySection) assert.equal(manifest[section]?.neomind, undefined);
     }
-    const locked = lock.packages['node_modules/taskforces'];
+    const locked = lock.packages['node_modules/neomind'];
     assert.equal(locked.version, packageVersion);
     assert.equal(locked.resolved, dependencySpec);
     assert.deepEqual(readFileSync(durableTarget), archiveBytes);
@@ -568,7 +568,7 @@ try {
   const assertUpdate = (update) => {
     assert.equal(update.version, packageVersion);
     assert.equal(realpathSync(update.root), realpathSync(workspace));
-    const conflict = update.conflicts.find((entry) => entry.path === '.taskforces/roles/developer.md');
+    const conflict = update.conflicts.find((entry) => entry.path === '.neomind/roles/developer.md');
     assert.ok(conflict, 'The new CLI must report the preserved developer-role conflict.');
     const candidate = resolve(workspace, conflict.candidate);
     const child = relative(workspace, candidate);
@@ -592,7 +592,7 @@ try {
   const report = {
     schema_version: 1,
     tested_at: new Date().toISOString(),
-    package: 'taskforces',
+    package: 'neomind',
     version: initialization.installation.version,
     tarball: relative(repository, tarball).replaceAll('\\', '/'),
     sha256: createHash('sha256').update(readFileSync(tarball)).digest('hex'),

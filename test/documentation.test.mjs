@@ -25,7 +25,7 @@ import {
 } from '../dist/index.js';
 
 function assignment(t, required = true, documentationPaths = ['docs/configuration.md']) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-documentation-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-documentation-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   initialize(root, { project_id: 'DOC', profile: 'software' });
   const workflow = createRecord(root, { type: 'knowledge', title: 'Documentation fixture workflow',
@@ -157,11 +157,11 @@ test('both current bundled and installed template scaffolding are rejected', (t)
   const work = assignment(t);
   const template = readFileSync(join(resourceRoot, 'templates/work-record.md'), 'utf8');
   assert.throws(() => submit(work, template), /template scaffolding/);
-  mkdirSync(join(work.root, '.taskforces/templates'));
+  mkdirSync(join(work.root, '.neomind/templates'));
   const placeholder =
     'Replace this paragraph with assignment-specific measurements and supporting execution log references.';
   writeFileSync(
-    join(work.root, '.taskforces/templates/work-record.md'),
+    join(work.root, '.neomind/templates/work-record.md'),
     `# Evidence\n${placeholder}\n`,
   );
   const body = workRecord(work).replace(
@@ -250,11 +250,11 @@ test('missing documentation and recursive managed-record paths cannot be submitt
   assert.throws(() => submit(work), /Baseline input does not exist/);
   assert.equal(getRecord(work.root, work.task.meta.id).meta.status, 'in-progress');
   updateRecord(work.root, work.task.meta.id, {
-    data: { documentation_paths: ['.taskforces/records'] },
+    data: { documentation_paths: ['.neomind/records'] },
   });
   assert.throws(() => submit(work), /cannot include managed records/);
   updateRecord(work.root, work.task.meta.id, {
-    data: { documentation_paths: ['docs/../.taskforces/records'] },
+    data: { documentation_paths: ['docs/../.neomind/records'] },
   });
   assert.throws(() => submit(work), /cannot include managed records/);
   assert.equal(getRecord(work.root, work.task.meta.id).meta.status, 'in-progress');

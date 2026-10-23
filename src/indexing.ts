@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import { loadRecords, safePath, sourceHash } from './storage.js';
 
 function open(root: string): DatabaseSync {
-  const path = safePath(root, '.taskforces/cache/index.sqlite');
+  const path = safePath(root, '.neomind/cache/index.sqlite');
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;

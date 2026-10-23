@@ -17,7 +17,7 @@ import { createNativeBridge, shutdownNative } from '../dist/native.js';
 const fixture = fileURLToPath(new URL('../resources/native/fake-app-server.mjs', import.meta.url));
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 function project(t, strict = false) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-workspace-mcp-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-workspace-mcp-'));
   initialize(root, { project_id: 'WORKSPACE-MCP', name: 'Scoped editing mechanics' });
   if (strict) ensureRoutingPolicy(root);
   t.after(async () => {

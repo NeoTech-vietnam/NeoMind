@@ -37,7 +37,7 @@ export interface KnowledgeResearchInput {
 }
 interface Note {
   schema_version: 1;
-  schema: 'taskforces-project-knowledge-note';
+  schema: 'neomind-project-knowledge-note' | 'taskforces-project-knowledge-note';
   title: string;
   platforms: string[];
   frameworks: string[];
@@ -48,7 +48,7 @@ interface Note {
 }
 interface CachedSource {
   schema_version: 1;
-  schema: 'taskforces-project-knowledge-cache';
+  schema: 'neomind-project-knowledge-cache' | 'taskforces-project-knowledge-cache';
   source_id: string;
   repo: string;
   branch: string;
@@ -59,7 +59,7 @@ interface CachedSource {
 }
 interface VerifiedSource extends CachedSource { narrative: string }
 
-const cache = '.taskforces/knowledge-cache';
+const cache = '.neomind/knowledge-cache';
 const digest = /^[a-f0-9]{64}$/;
 const commitPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const notePattern = /^knowledge\/projects\/([a-f0-9]{64})\/notes\/[a-z][a-z0-9-]{0,63}\/(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\.md$/;
@@ -113,7 +113,7 @@ function repository(value: unknown): string {
 }
 function branch(value: unknown): string {
   if (typeof value !== 'string' || value.length > 200 ||
-    !/^taskforces\/knowledge\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value) ||
+    !/^(?:neomind|taskforces)\/knowledge\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value) ||
     value.split('/').some((part) => !part || part.startsWith('.') || part.endsWith('.') || part.endsWith('.lock')) ||
     value.includes('..') || value.includes('//'))
     throw new Error('Unsafe project knowledge branch.');
@@ -156,15 +156,17 @@ function readBounded(root: string, path: string, maximum = maxFile): Buffer {
   return bytes;
 }
 function publicContent(value: string): void {
-  if (/(?:file:\/\/|\b[a-z]:[\\/]|\.(?:taskforces|verythinker)[\\/]|(?:^|[\s"'/(])\.env(?:\b|\.)|~\/[.]ssh\/|\/(?:home|Users)\/[^\s/]+\/|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})\b|\b(?:password|api[_-]?key|access[_-]?token|client[_-]?secret)\s*[:=]\s*\S+)/i.test(value))
+  if (/(?:file:\/\/|\b[a-z]:[\\/]|\.(?:neomind|taskforces|verythinker)[\\/]|(?:^|[\s"'/(])\.env(?:\b|\.)|~\/[.]ssh\/|\/(?:home|Users)\/[^\s/]+\/|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})\b|\b(?:password|api[_-]?key|access[_-]?token|client[_-]?secret)\s*[:=]\s*\S+)/i.test(value))
     throw new Error('Remote knowledge contains secret or private content.');
 }
 function note(value: unknown): Note {
   const input = object(value, 'Remote knowledge note');
-  if (input.schema_version !== 1 || input.schema !== 'taskforces-project-knowledge-note')
+  if (input.schema_version !== 1 ||
+    !['neomind-project-knowledge-note', 'taskforces-project-knowledge-note'].includes(String(input.schema)))
     throw new Error('Unsupported project knowledge note schema.');
   const result: Note = {
-    schema_version: 1, schema: 'taskforces-project-knowledge-note',
+    // Preserve a historical source's discriminator so existing provenance hashes stay valid.
+    schema_version: 1, schema: input.schema as Note['schema'],
     title: text(input.title, 'title', 1, 500),
     platforms: list(input.platforms, 'platforms'), frameworks: list(input.frameworks, 'frameworks'),
     applicability: list(input.applicability, 'applicability', true),
@@ -177,7 +179,7 @@ function note(value: unknown): Note {
   return result;
 }
 function configuredRepository(root: string): string {
-  const policyPath = '.taskforces/automation.json';
+  const policyPath = '.neomind/automation.json';
   if (existsSync(localPath(root, policyPath))) {
     const policy = object(JSON.parse(readBounded(root, policyPath).toString('utf8')), 'Automation policy');
     if (policy.schema_version !== 1) throw new Error('Unsupported automation policy schema.');
@@ -185,7 +187,7 @@ function configuredRepository(root: string): string {
       !['local-only', 'remote-enabled'].includes(policy.network_policy as string))
       throw new Error('Invalid automation network_policy.');
     if (policy.network_policy === 'local-only')
-      throw new Error('Local-only policy disables remote knowledge discovery. Use local knowledge search, or set network_policy to "remote-enabled" in .taskforces/automation.json to opt in.');
+      throw new Error('Local-only policy disables remote knowledge discovery. Use local knowledge search, or set network_policy to "remote-enabled" in .neomind/automation.json to opt in.');
     return repository(policy.upstream);
   }
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -235,8 +237,10 @@ function verifyCache(root: string, id: string): VerifiedSource {
   if (!digest.test(id)) throw new Error('Invalid knowledge source_id.');
   const data = object(JSON.parse(readBounded(root, `${cache}/${id}.json`).toString('utf8')), 'Knowledge cache');
   const entry = note(data.entry);
+  if (!['neomind-project-knowledge-cache', 'taskforces-project-knowledge-cache'].includes(String(data.schema)))
+    throw new Error(`Knowledge cache provenance mismatch: ${id}`);
   const source: CachedSource = {
-    schema_version: 1, schema: 'taskforces-project-knowledge-cache', source_id: id,
+    schema_version: 1, schema: data.schema as CachedSource['schema'], source_id: id,
     repo: repository(data.repo), branch: branch(data.branch), commit: commit(data.commit),
     path: artifactPath(data.path), sha256: entry.sha256, entry,
   };
@@ -305,7 +309,7 @@ export function discoverProjectKnowledge(root: string,
     for (const value of values) {
       const item = object(value, 'Remote branch');
       if (typeof item.name !== 'string') throw new Error('Remote branch name is missing.');
-      if (!item.name.startsWith('taskforces/knowledge/')) continue;
+      if (!/^(?:neomind|taskforces)\/knowledge\//.test(item.name)) continue;
       const name = branch(item.name);
       if (seen.has(name)) throw new Error('Branch pagination repeated a knowledge branch.');
       seen.add(name);
@@ -353,7 +357,8 @@ export function discoverProjectKnowledge(root: string,
     const catalogEntries = new Map<string, Note>();
     for (const path of manifests) {
       const catalog = object(JSON.parse(remoteFile(request, repo, head.sha, path)), 'Project knowledge catalog');
-      if (catalog.schema_version !== 1 || catalog.schema !== 'taskforces-project-knowledge-catalog' ||
+      if (catalog.schema_version !== 1 ||
+        !['neomind-project-knowledge-catalog', 'taskforces-project-knowledge-catalog'].includes(String(catalog.schema)) ||
         !Array.isArray(catalog.notes) || catalog.notes.length > maxSources)
         throw new Error('Invalid project knowledge catalog schema/bounds.');
       for (const raw of catalog.notes) {
@@ -376,7 +381,7 @@ export function discoverProjectKnowledge(root: string,
       publicContent(narrative);
       if (hash(narrative) !== entry.sha256) throw new Error('Remote knowledge artifact hash mismatch.');
       pending.push({ narrative, source: {
-        schema_version: 1, schema: 'taskforces-project-knowledge-cache',
+        schema_version: 1, schema: 'neomind-project-knowledge-cache',
         source_id: sourceId(repo, head.sha, entry.artifact_path), repo, branch: head.name,
         commit: head.sha, path: entry.artifact_path, sha256: entry.sha256, entry,
       } });
@@ -396,11 +401,11 @@ export function discoverProjectKnowledge(root: string,
 function indexedSearch(root: string, input: KnowledgeSearchInput, limit: number,
   allowedIds?: ReadonlySet<string>): ProjectKnowledgeSource[] {
   const sources = cachedSources(root);
-  const path = localPath(root, '.taskforces/cache/knowledge.sqlite');
+  const path = localPath(root, '.neomind/cache/knowledge.sqlite');
   // SQLite also opens these paths; reject pre-existing symlinks before opening the database.
-  localPath(root, '.taskforces/cache/knowledge.sqlite-wal');
-  localPath(root, '.taskforces/cache/knowledge.sqlite-shm');
-  localPath(root, '.taskforces/cache/knowledge.sqlite-journal');
+  localPath(root, '.neomind/cache/knowledge.sqlite-wal');
+  localPath(root, '.neomind/cache/knowledge.sqlite-shm');
+  localPath(root, '.neomind/cache/knowledge.sqlite-journal');
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   try {

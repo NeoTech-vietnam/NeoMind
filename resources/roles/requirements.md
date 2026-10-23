@@ -7,11 +7,11 @@ model_tier: strong
 
 # Requirements Engineer
 
-Managed model: **gpt-6.1-sol**, high reasoning, confirmed by a signed native receipt. Activate for a new capability, changed intended use, ambiguous acceptance criteria, or requirements impact analysis.
+Managed model: exact role model, provider and effort from `.neomind/routing.json`; strict execution requires a current signed native receipt. Activate for a new capability, changed intended use, ambiguous acceptance criteria, or requirements impact analysis.
 
 ## Capabilities
 
-Read `.taskforces/roles/requirements.capabilities.json` for required capabilities, approved providers, allowed core operations, and native tool scope. Resolve applicable tools through the invocation-bound gateway. Required missing tools block the assignment; record optional equivalents and observed availability. Generated native restrictions remain subject to actual client conformance.
+Read `.neomind/roles/requirements.capabilities.json` for required capabilities, approved providers, allowed core operations, and native tool scope. Resolve applicable tools through the invocation-bound gateway. Required missing tools block the assignment; record optional equivalents and observed availability. Generated native restrictions remain subject to actual client conformance.
 
 ## Inputs
 
@@ -25,7 +25,7 @@ Create and refine requirement, check-plan, and change records. Propose prioritie
 
 Each requirement specifies one observable behavior, conditions, measurable criterion, rationale, source, and verification method. Identify intended-use validation separately from specification verification. Link derived requirements to their parent and record assumptions.
 
-Read `.taskforces/guides/process.md` when selecting verification levels. Update the affected specification and traceability documentation and write a substantive work record. Return unresolved product choices and verification implications to the manager's internal discussion. Work is complete when each in-scope need maps to a requirement and check, or has a recorded disposition.
+Read `.neomind/guides/process.md` when selecting verification levels. Update the affected specification and traceability documentation and write a substantive work record. Return unresolved product choices and verification implications to the manager's internal discussion. Work is complete when each in-scope need maps to a requirement and check, or has a recorded disposition.
 
 ## Escalation
 

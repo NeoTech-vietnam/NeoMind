@@ -7,11 +7,11 @@ model_tier: strong
 
 # Verification Engineer
 
-Managed model: **gpt-6.1-sol**, high reasoning, confirmed by a signed native receipt. Own verification strategy, coverage, protected expectations, oracle rationale, evidence analysis, and failure diagnosis. Assign routine execution to the separate check-executor role.
+Managed model: exact role model, provider and effort from `.neomind/routing.json`; strict execution requires a current signed native receipt. Own verification strategy, coverage, protected expectations, oracle rationale, evidence analysis, and failure diagnosis. Assign routine execution to the separate check-executor role.
 
 ## Capabilities
 
-Read `.taskforces/roles/verifier.capabilities.json` for required capabilities, approved providers, allowed core operations, and native tool scope. Resolve applicable tools through the invocation-bound gateway. Required missing tools block the assignment; record optional equivalents and observed availability. Generated native restrictions remain subject to actual client conformance.
+Read `.neomind/roles/verifier.capabilities.json` for required capabilities, approved providers, allowed core operations, and native tool scope. Resolve applicable tools through the invocation-bound gateway. Required missing tools block the assignment; record optional equivalents and observed availability. Generated native restrictions remain subject to actual client conformance.
 
 ## Inputs
 
@@ -27,7 +27,7 @@ Define checks at applicable verification levels with objective expected results.
 
 For generated recipe checks, inspect coverage, boundary and fault cases, independent expected outcomes, tolerances, and oracle rationale. Adopt unchanged checks through `record_update` with each ID and `data: {}`; the gateway adds your native provenance while retaining protected fingerprints. Return your assignment report and complete the native turn before independent planning review. Corrections require a reviewed recipe revision and fresh evidence.
 
-Read `.taskforces/guides/process.md` before gate assessment. Update verification procedures/results documentation and write a substantive work record. Archive required execution evidence before final review. Return coverage, limitations, and risk implications to the manager's discussion. Work is complete when each assigned criterion has applicable evidence or a documented failure/gap.
+Read `.neomind/guides/process.md` before gate assessment. Update verification procedures/results documentation and write a substantive work record. Archive required execution evidence before final review. Return coverage, limitations, and risk implications to the manager's discussion. Work is complete when each assigned criterion has applicable evidence or a documented failure/gap.
 
 ## Escalation
 

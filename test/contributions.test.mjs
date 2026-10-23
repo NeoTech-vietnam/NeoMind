@@ -17,10 +17,10 @@ import {
 } from '../dist/index.js';
 
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-publication-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-publication-'));
   t.after(() => {
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));
-    assert.ok(root.includes('taskforces-publication-'));
+    assert.ok(root.includes('neomind-publication-'));
     rmSync(root, { recursive: true, force: true });
   });
   initialize(root, { project_id: 'PUBLICATION' });
@@ -40,7 +40,7 @@ function project(t) {
   return { root, id: candidate.meta.id };
 }
 function submissionPath(work) {
-  return join(work.root, '.taskforces/contributions', work.id.toLowerCase(), 'submission.json');
+  return join(work.root, '.neomind/contributions', work.id.toLowerCase(), 'submission.json');
 }
 function readState(work) {
   return JSON.parse(readFileSync(submissionPath(work), 'utf8'));
@@ -101,7 +101,7 @@ for (const [name, automation] of [
 ]) {
   test(`${name} local-only policy blocks contribution transport without blocking local preparation`, (t) => {
     const work = project(t);
-    const automationPath = join(work.root, '.taskforces/automation.json');
+    const automationPath = join(work.root, '.neomind/automation.json');
     writeFileSync(automationPath, JSON.stringify(automation));
     assert.equal(prepareContribution(work.root, work.id).status, 'prepared');
     const github = fakeGitHub(work);
@@ -131,7 +131,7 @@ for (const [name, automation] of [
 ]) {
   test(`${name} preserves legacy contribution publication`, (t) => {
     const work = project(t);
-    const automationPath = join(work.root, '.taskforces/automation.json');
+    const automationPath = join(work.root, '.neomind/automation.json');
     if (automation) writeFileSync(automationPath, JSON.stringify(automation));
     else assert.equal(existsSync(automationPath), false);
     const github = fakeGitHub(work);
@@ -154,7 +154,7 @@ test('switching a pending contribution to local-only blocks retry without changi
   );
   const intent = readFileSync(submissionPath(work));
   const count = github.calls.length;
-  writeFileSync(join(work.root, '.taskforces/automation.json'), JSON.stringify(nativeAutomationPolicy()));
+  writeFileSync(join(work.root, '.neomind/automation.json'), JSON.stringify(nativeAutomationPolicy()));
   assert.throws(
     () => submitContribution(work.root, work.id, 'example/shared', github.request),
     /Local-only policy disables remote contribution/,
@@ -229,7 +229,7 @@ test('a candidate changed during remote preparation cannot create its PR', (t) =
 
 test('operation locks recover only dead owners and preserve live or malformed leases', (t) => {
   const work = project(t);
-  const path = join(work.root, '.taskforces/operations/fixture.lock');
+  const path = join(work.root, '.neomind/operations/fixture.lock');
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, '{malformed');
   assert.throws(() => withOperationLock(work.root, 'fixture', () => 'unsafe', 0), /remains locked/);
@@ -276,7 +276,7 @@ const [root, id, worker] = process.argv.slice(2);
 writeFileSync(join(root, 'ready-' + worker), 'ready');
 while (!existsSync(join(root, 'start'))) await pause(10);
 const request = (method, endpoint, body) => {
-  const state = JSON.parse(readFileSync(join(root, '.taskforces/contributions', id.toLowerCase(), 'submission.json'), 'utf8'));
+  const state = JSON.parse(readFileSync(join(root, '.neomind/contributions', id.toLowerCase(), 'submission.json'), 'utf8'));
   if (!state.operation_id || !state.branch) throw new Error('Intent was not persisted before remote operations.');
   appendFileSync(join(root, 'remote-calls.jsonl'), JSON.stringify({method, endpoint, body, operation_id:state.operation_id}) + '\\n');
   if (endpoint === 'repos/example/shared') {

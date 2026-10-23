@@ -7,6 +7,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  lstatSync,
   writeFileSync,
   openSync,
   closeSync,
@@ -31,28 +32,28 @@ import {
 export const resourceRoot = fileURLToPath(new URL('../resources/', import.meta.url));
 export const now = () => new Date().toISOString();
 export const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
-// New records use TaskForces paths. Explicit legacy aliases read existing bytes
+// New records use NeoMind paths. Explicit legacy aliases read existing bytes
 // without rewriting signed receipts or historical record metadata.
-export const managedRoot = '.taskforces';
+export const managedRoot = '.neomind';
 export const legacyManagedRoot = '.verythinker';
+export const legacyManagedRoots = ['.taskforces', legacyManagedRoot] as const;
 export function assertNoStorageMigration(root: string): void {
-  if (existsSync(join(resolve(root), '.taskforces-migration.lock')))
+  if ([managedRoot, ...legacyManagedRoots].some((name) => existsSync(join(resolve(root), `${name}-migration.lock`))))
     throw new Error('Storage migration is active; stop writers and retry after migration completes.');
 }
 /** Physical managed-data directory name for a project root. */
 export function resolveManagedRoot(root: string): string {
   const base = resolve(root);
-  if (existsSync(join(base, managedRoot)) && existsSync(join(base, legacyManagedRoot)))
+  const roots = [managedRoot, ...legacyManagedRoots].filter((name) => existsSync(join(base, name)));
+  if (roots.length > 1)
     throw new Error('Both storage roots exist; resolve conflicting roots before continuing.');
-  if (existsSync(join(base, managedRoot))) return managedRoot;
-  if (existsSync(join(base, legacyManagedRoot))) return legacyManagedRoot;
-  return managedRoot;
+  return roots[0] ?? managedRoot;
 }
 // Resolve either managed namespace to one physical root. Other paths stay verbatim.
 function remapLegacyManaged(base: string, path: string): string {
   const separator = path.search(/[\\/]/);
   const head = separator === -1 ? path : path.slice(0, separator);
-  if (head !== managedRoot && head !== legacyManagedRoot) return path;
+  if (![managedRoot, ...legacyManagedRoots].includes(head)) return path;
   const physical = resolveManagedRoot(base);
   return physical + (separator === -1 ? '' : path.slice(separator));
 }
@@ -104,7 +105,7 @@ export function retryWindowsFileOperation(action: () => void): void {
 }
 export function readConfig(root: string): ProjectConfig {
   const config = JSON.parse(
-    readFileSync(safePath(root, '.taskforces/config.json'), 'utf8'),
+    readFileSync(safePath(root, '.neomind/config.json'), 'utf8'),
   ) as ProjectConfig;
   validateConfig(config);
   return config;
@@ -121,6 +122,7 @@ function validateConfig(config: ProjectConfig): void {
     !config.platforms.length ||
     config.platforms.some((p) => !['codex', 'claude', 'copilot'].includes(p)) ||
     new Set(config.platforms).size !== config.platforms.length ||
+    (config.copilot_integration !== undefined && config.copilot_integration !== 'local') ||
     !Number.isSafeInteger(config.max_workers) ||
     config.max_workers < 1 ||
     config.max_workers > 3 ||
@@ -147,32 +149,35 @@ function validateConfig(config: ProjectConfig): void {
 export function initialize(root: string, options: Partial<ProjectConfig> = {}): ProjectConfig {
   root = resolve(root);
   mkdirSync(root, { recursive: true });
-  const configPath = safePath(root, '.taskforces/config.json');
+  const configPath = safePath(root, '.neomind/config.json');
   if (existsSync(configPath)) return readConfig(root);
-  const project_id = options.project_id ?? `TF-${randomUUID().slice(0, 8).toUpperCase()}`;
+  const project_id = options.project_id ?? `NM-${randomUUID().slice(0, 8).toUpperCase()}`;
   if (!/^[A-Z][A-Z0-9-]{0,31}$/.test(project_id))
     throw new Error('Project ID must use uppercase letters, digits, and hyphens.');
   const config: ProjectConfig = {
     schema_version: 1,
     project_id,
-    name: options.name ?? 'TaskForces project',
+    name: options.name ?? 'NeoMind project',
     profile: options.profile ?? 'basic',
     platforms: options.platforms ?? ['copilot'],
+    ...(options.copilot_integration ? { copilot_integration: options.copilot_integration } : {}),
     models: options.models ?? { economy: null, balanced: null, strong: null },
     max_workers: options.max_workers ?? 3,
     repair_attempts: 1,
   };
   validateConfig(config);
   atomicWrite(configPath, JSON.stringify(config, null, 2) + '\n');
-  atomicWrite(
-    safePath(root, '.taskforces/.gitignore'),
-    'cache/\nruns/\ncontributions/\n*.lock\n*.tmp\n',
-  );
-  mkdirSync(safePath(root, '.taskforces/records'), { recursive: true });
+  const ignorePath = safePath(root, '.neomind/.gitignore');
+  let ignoreExists = false;
+  try { lstatSync(ignorePath); ignoreExists = true; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  if (!ignoreExists)
+    atomicWrite(ignorePath, 'cache/\nruns/\ncontributions/\n*.lock\n*.tmp\n');
+  mkdirSync(safePath(root, '.neomind/records'), { recursive: true });
   return config;
 }
 export function withLock<T>(root: string, action: () => T): T {
-  const path = safePath(root, '.taskforces/write.lock');
+  const path = safePath(root, '.neomind/write.lock');
   mkdirSync(dirname(path), { recursive: true });
   let fd: number;
   try {
@@ -195,7 +200,7 @@ export function withLock<T>(root: string, action: () => T): T {
 }
 /** Recover only a lock whose recorded process can be proved absent. */
 export function recoverLock(root: string): boolean {
-  const path = safePath(root, '.taskforces/write.lock');
+  const path = safePath(root, '.neomind/write.lock');
   if (!existsSync(path)) return false;
   let pid: number;
   try {
@@ -224,7 +229,7 @@ export function withOperationLock<T>(
     throw new Error('Operation lock key must be a portable identifier.');
   if (!Number.isSafeInteger(waitMs) || waitMs < 0 || waitMs > 60000)
     throw new Error('Operation lock wait must be between 0 and 60000 milliseconds.');
-  const path = safePath(root, `.taskforces/operations/${key}.lock`);
+  const path = safePath(root, `.neomind/operations/${key}.lock`);
   mkdirSync(dirname(path), { recursive: true });
   const lease = { pid: process.pid, thread_id: threadId, token: randomUUID(), started_at: now() };
   const pause = new Int32Array(new SharedArrayBuffer(4));
@@ -419,7 +424,7 @@ function parseRecordBytes(bytes: Buffer, path: string): { meta: Metadata; body: 
 export function loadRecords(root: string): ProjectRecord[] {
   readConfig(root);
   const seen = new Set<string>();
-  return filesUnder(root, '.taskforces/records')
+  return filesUnder(root, '.neomind/records')
     .filter((p) => p.endsWith('.md'))
     .map((path) => {
       const { meta, body } = parseRecordBytes(readFileSync(safePath(root, path)), path);
@@ -455,7 +460,7 @@ export function createRecord(root: string, input: CreateRecord): ProjectRecord {
     const config = readConfig(root);
     const records = loadRecords(root);
     const prefix = `${config.project_id}-${prefixes[input.type]}-`;
-    const sequencePath = safePath(root, '.taskforces/id-sequence.json');
+    const sequencePath = safePath(root, '.neomind/id-sequence.json');
     const sequence: Record<string, number> = existsSync(sequencePath)
       ? JSON.parse(readFileSync(sequencePath, 'utf8'))
       : {};
@@ -474,7 +479,7 @@ export function createRecord(root: string, input: CreateRecord): ProjectRecord {
     );
     const managedTask =
       input.type === 'task' &&
-      existsSync(safePath(root, '.taskforces/routing.json')) &&
+      existsSync(safePath(root, '.neomind/routing.json')) &&
       records.some(
         (candidate) =>
           candidate.meta.id === input.data?.workflow_id &&
@@ -508,7 +513,7 @@ export function createRecord(root: string, input: CreateRecord): ProjectRecord {
                 documentation_paths: input.data?.documentation_paths ?? [],
               }
             : {}),
-          ...(existsSync(safePath(root, '.taskforces/routing.json')) && !native
+          ...(existsSync(safePath(root, '.neomind/routing.json')) && !native
             ? { routing_required: true }
             : {}),
           ...(native ? { assurance: 'unsigned-native-report', routing_required: false } : {}),
@@ -523,7 +528,7 @@ export function createRecord(root: string, input: CreateRecord): ProjectRecord {
     validateMetadata(record.meta);
     sequence[input.type] = number;
     atomicWrite(sequencePath, JSON.stringify(sequence, null, 2) + '\n');
-    record.path = `.taskforces/records/${record.meta.id}.md`;
+    record.path = `.neomind/records/${record.meta.id}.md`;
     atomicWrite(safePath(root, record.path), serialize(record));
     return record;
   });
@@ -610,7 +615,7 @@ export function saveStatus(
 }
 export function appendEvent(root: string, run: string, event: Record<string, unknown>): string {
   if (!/^[a-zA-Z0-9-]+$/.test(run)) throw new Error('Invalid run ID.');
-  const path = safePath(root, `.taskforces/runs/${run}/events.jsonl`);
+  const path = safePath(root, `.neomind/runs/${run}/events.jsonl`);
   mkdirSync(dirname(path), { recursive: true });
   const fd = openSync(path, 'a');
   try {
@@ -620,11 +625,11 @@ export function appendEvent(root: string, run: string, event: Record<string, unk
   }
   // Return the stable logical path so serialized references stay identical across
   // legacy, new, and migrated projects regardless of the physical directory name.
-  return `${legacyManagedRoot}/runs/${run}/events.jsonl`;
+  return `${managedRoot}/runs/${run}/events.jsonl`;
 }
 export function sourceHash(root: string): string {
   return hash(
-    filesUnder(root, '.taskforces/records')
+    filesUnder(root, '.neomind/records')
       .filter((p) => p.endsWith('.md'))
       .map((p) => `${p}:${hash(readFileSync(safePath(root, p)))}`)
       .join('\n'),

@@ -51,7 +51,7 @@ The native acknowledgment reports the client's selected model; it is not indepen
 
 ## Packaged installation and consumer upgrade
 
-The local deliverable is `artifacts/taskforces-0.1.0-alpha.3.tgz`. Installed-package smoke verifies resource resolution, all three generated adapters, twelve roles, three recipes, MCP discovery/invocation, strict missing-receipt rejection, and preservation of user edits. A separate explicitly labelled legacy-policy fixture exercises the complete record lifecycle and new-process resumption. The legacy fixture does not establish native model execution.
+The local deliverable is `artifacts/neomind-0.1.0-alpha.3.tgz`. Installed-package smoke verifies resource resolution, all three generated adapters, twelve roles, three recipes, MCP discovery/invocation, strict missing-receipt rejection, and preservation of user edits. A separate explicitly labelled legacy-policy fixture exercises the complete record lifecycle and new-process resumption. The legacy fixture does not establish native model execution.
 
 The smoke report records the exact final tarball hash. Consumer migration preserves authored model/configuration changes as reviewable conflicts and keeps accepted legacy evidence attached to its original baseline. Existing running MCP processes retain the previously loaded package until their owning client reloads them.
 

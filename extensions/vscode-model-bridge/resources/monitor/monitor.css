@@ -1,0 +1,22 @@
+:root { color-scheme: dark; font-family: var(--vscode-font-family, system-ui, sans-serif); color: var(--vscode-foreground, #dce8df); background: var(--vscode-editor-background, #162b2d); }
+body { margin: 0 auto; padding: 22px; max-width: 1250px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+h1 { margin: 0; font-size: 27px; letter-spacing: 1px; }
+h2 { margin-top: 27px; font-size: 17px; }
+p { color: var(--vscode-descriptionForeground, #a8beb4); line-height: 1.55; }
+header p { margin: 5px 0; }
+button { color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #226a56); border: 1px solid transparent; border-radius: 4px; padding: 7px 12px; cursor: pointer; font: inherit; }
+button:hover { background: var(--vscode-button-hoverBackground, #2f8066); }
+button:focus-visible { outline: 2px solid var(--vscode-focusBorder, #5fe8c0); outline-offset: 2px; }
+.map { margin-top: 18px; border: 1px solid #425d53; border-radius: 10px; overflow: auto; background: #1b3437; }
+canvas { display: block; width: 100%; min-width: 760px; height: 480px; image-rendering: pixelated; }
+.legend { font-size: 11px; }
+#selection { border-left: 3px solid #6dbd9b; padding: 10px 16px; background: var(--vscode-sideBar-background, #223c37); overflow-wrap: anywhere; line-height: 1.7; }
+#roles { display: grid; grid-template-columns: repeat(auto-fit, minmax(235px, 1fr)); gap: 9px; }
+.role { padding: 12px; border: 1px solid var(--vscode-panel-border, #42594d); border-radius: 6px; }
+.role strong, .role span { display: block; margin-bottom: 7px; overflow-wrap: anywhere; }
+.role span { color: var(--vscode-descriptionForeground, #a8beb4); font-size: 12px; }
+#nodes { display: grid; gap: 5px; }
+.node { text-align: left; background: var(--vscode-sideBar-background, #223c37); color: inherit; padding: 11px; overflow-wrap: anywhere; }
+.empty { padding: 14px; border: 1px dashed #527566; }
+@media (max-width: 650px) { body { padding: 12px; } }

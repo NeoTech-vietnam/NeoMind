@@ -98,6 +98,8 @@ import { managedRun, type ManagedRunInput } from './managed.js';
 import { workspaceWrite } from './workspace.js';
 import { checkpointLightweight } from './lightweight.js';
 import { validateEvidenceInputs, type EvidenceInputSnapshot } from './evidence-inputs.js';
+import { readAgentMap } from './agent-map.js';
+import { listUpstreams, discoverUpstreams, trackUpstream, checkUpstream, cloneUpstream, adoptUpstreamUpdate, readUpstreamInstructions } from './upstreams.js';
 
 const cornellNoteSchema = z
   .object({
@@ -223,7 +225,7 @@ function privateProjectPath(path: string): boolean {
   const lower = path.toLowerCase();
   return (
     lower.split('/').some((part) => part === '.git' || part === 'node_modules') ||
-    /^\.(?:verythinker|taskforces)\/(?:cache|tools|runs)(?:\/|$)/.test(lower) ||
+    /^\.(?:verythinker|taskforces|neomind)\/(?:cache|tools|runs)(?:\/|$)/.test(lower) ||
     /(?:^|\/)(?:\.env(?:\.[^/]*)?|auth\.json|credentials?(?:\.json)?|private[^/]*\.pem|id_(?:rsa|ed25519)(?:\.pub)?)$/.test(
       lower,
     )
@@ -244,15 +246,15 @@ export function projectRead(
     throw new Error('Project read starting line must be positive.');
   const target = safePath(root, input.path),
     physicalPath = relative(root, target).replaceAll('\\', '/');
-  const path = physicalPath.replace(/^\.(?:verythinker|taskforces)(?=\/|$)/, '.taskforces');
+  const path = physicalPath.replace(/^\.(?:verythinker|taskforces|neomind)(?=\/|$)/, '.neomind');
   const lower = path.toLowerCase();
-  if ((input.path.replace(/^\.verythinker(?=\/|$)/, '.taskforces') !== path && input.path !== physicalPath) || privateProjectPath(path))
+  if ((input.path.replace(/^\.(?:verythinker|taskforces)(?=\/|$)/, '.neomind') !== path && input.path !== physicalPath) || privateProjectPath(path))
     throw new Error(
       'Private credentials, raw sessions, runtime caches, and noncanonical paths are unavailable through project_read.',
     );
   const inputArtifacts = new Set<string>();
   const privateInputArtifacts = new Set<string>();
-  if (receipt && (receipt.task_id || lower.startsWith('.taskforces/evidence/inputs/'))) {
+  if (receipt && (receipt.task_id || lower.startsWith('.neomind/evidence/inputs/'))) {
     const scope = recordScope(root, receipt);
     for (const evidence of loadRecords(root).filter(
       (record) => scope.has(record.meta.id) && record.meta.type === 'evidence',
@@ -285,7 +287,7 @@ export function projectRead(
     }
     for (const artifact of privateInputArtifacts) inputArtifacts.delete(artifact);
   }
-  if (lower.startsWith('.taskforces/evidence/inputs/') && !inputArtifacts.has(path))
+  if (lower.startsWith('.neomind/evidence/inputs/') && !inputArtifacts.has(path))
     throw new Error('Captured input artifact is outside the assigned verified evidence scope.');
   if (receipt?.task_id) {
     const scope = recordScope(root, receipt),
@@ -485,7 +487,7 @@ export function assertRecordPreview(
     body: prior?.body ?? '',
     meta: {
       schema_version: 1,
-      id: prior?.meta.id ?? '__taskforces_new_record_preview__',
+      id: prior?.meta.id ?? '__neomind_new_record_preview__',
       type: input.type,
       title: input.title ?? prior?.meta.title ?? 'Record preview',
       owner: prior?.meta.owner ?? 'system',
@@ -611,6 +613,8 @@ export function assertGenericRecordMutation(
  * always resolves false, so this exception can never bypass the signed-session requirement.
  */
 function nativeWorkflowMutation(root: string, name: string, input: Record<string, unknown>): boolean {
+  if (name.startsWith('upstream_'))
+    return readAutomationPolicy(root).execution_mode === 'copilot-native';
   if (name === 'manager_begin')
     return input.execution_mode === 'copilot-native' ||
       (input.execution_mode === undefined && readAutomationPolicy(root).execution_mode === 'copilot-native');
@@ -670,7 +674,7 @@ import { publishProjectKnowledge } from './project-knowledge.js';
 export function createMcpServer(root: string, binding: McpBinding = {}): McpServer {
   readConfig(root);
   const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-  const server = new McpServer({ name: 'taskforces', version: packageJson.version });
+  const server = new McpServer({ name: 'neomind', version: packageJson.version });
   const ownerToken = randomUUID();
   server.server.onclose = () => {
     void shutdownNative(root, ownerToken);
@@ -769,6 +773,26 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     {},
     () => doctor(root),
   );
+  tool('agent_map', 'Read bounded saved agent activity, with provenance for each node and relationship.', {}, () => readAgentMap(root));
+  tool('upstream_list', 'List tracked GitHub agent and skill packages, adopted pins and update observations.', {}, () => listUpstreams(root));
+  tool('upstream_discover', 'Discover GitHub candidates sorted by stars; popularity is a discovery signal.', {
+    query: z.string().min(1), min_stars: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(30).optional(),
+  }, i => discoverUpstreams(root, i), true, true);
+  tool('upstream_track', 'Track a GitHub source at a resolved exact commit, without executing repository code.', {
+    upstream_id: z.string(), repository: z.string(), ref: z.string().optional(), commit: z.string().optional(), min_stars: z.number().int().min(0).optional(), role: z.string().optional(), instructions: z.array(z.string()).optional(),
+  }, i => trackUpstream(root, { ...i, id: i.upstream_id }), false, true);
+  tool('upstream_check', 'Observe upstream head movement while preserving the adopted commit and instructions.', {
+    upstream_id: z.string(),
+  }, i => checkUpstream(root, i.upstream_id), false, true);
+  tool('upstream_clone', 'Cache the adopted commit with bare Git and verify selected instruction blobs. Executes no upstream scripts.', {
+    upstream_id: z.string(),
+  }, i => cloneUpstream(root, i.upstream_id), false, true);
+  tool('upstream_adopt', 'Adopt an inspected exact update using an expected current commit; active signed invocations must be stopped first.', {
+    upstream_id: z.string(), expected_commit: z.string(), commit: z.string(), instructions: z.array(z.string()).optional(),
+  }, i => adoptUpstreamUpdate(root, i.upstream_id, i), false, true);
+  tool('upstream_instructions', 'Read hash-verified selected upstream skill or agent text with provenance; grants no runtime capabilities.', {
+    upstream_id: z.string(),
+  }, i => readUpstreamInstructions(root, i.upstream_id));
   tool(
     'project_read',
     'Read bounded relevant project text with a content hash; credentials, private native keys, raw sessions and runtime caches are excluded.',

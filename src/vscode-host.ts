@@ -6,6 +6,7 @@ import { readInvocation, routingProblems, canonicalJson, routingConfigurationHas
 import { roleCapabilities } from './tools.js';
 import { vscodeSelection } from './vscode-policy.js';
 import { resourceRoot, safePath } from './storage.js';
+import { readRoleUpstreamInstructions } from './upstreams.js';
 
 // VS Code is supplied by extension host, not imported into CLI or added as dependency.
 type VSCode = any;
@@ -61,7 +62,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
         phase = 'request';
         const response = await turn.model.sendRequest(conversation.messages, {
           tools: turn.tools, toolMode: vscode.LanguageModelChatToolMode.Auto,
-          justification: 'Run explicitly enabled TaskForces workflow using only invocation-bound engineering tools.',
+          justification: 'Run explicitly enabled NeoMind workflow using only invocation-bound engineering tools.',
         }, turn.source.token);
         phase = 'response-stream';
         const parts: any[] = [], calls: any[] = [];
@@ -135,7 +136,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
     if (operation === 'open') {
       if (turns.size >= 256 || conversations.size >= 256) throw new Error('Host session limit reached; re-enable bridge.');
       const receipt = readInvocation(root, input.invocation_id);
-      if (receipt.issuer !== 'taskforces-vscode-lm' || receipt.owner_pid !== input.owner_pid || receipt.state !== 'starting')
+      if (receipt.issuer !== 'neomind-vscode-lm' || receipt.owner_pid !== input.owner_pid || receipt.state !== 'starting')
         throw new Error('Host requires a starting signed invocation.');
       if (requireRoutingPolicy(root).vscode_effort_policy !== 'allow-unavailable')
         throw new Error('VS Code API cannot verify reasoning effort. Explicit allow-unavailable policy required.');
@@ -177,12 +178,12 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
       } else {
         const instructions = [`roles/${receipt.role}.md`, 'guides/workflow.md', ...(receipt.role === 'manager' ? ['guides/manager.md'] : [])]
           .map((path) => {
-            const installed = safePath(root, `.taskforces/${path}`);
+            const installed = safePath(root, `.neomind/${path}`);
             const source = existsSync(installed) ? installed : join(resourceRoot, path);
             return existsSync(source) ? readFileSync(source, 'utf8') : '';
-          }).join('\n').slice(0, 32000);
+          }).join('\n').slice(0, 32000) + '\n' + readRoleUpstreamInstructions(root, receipt.role);
         conversation = { role: receipt.role, workflow: receipt.workflow_id, task: receipt.task_id, vendor: selector.vendor, model: selector.id,
-          messages: [vscode.LanguageModelChatMessage.User(`TaskForces invocation ${receipt.id}. Role ${receipt.role}; workflow ${receipt.workflow_id}; task ${receipt.task_id}. Only supplied invocation-bound MCP tools exist. No builtin shell or filesystem tools. Never recursively start manager_run, manager_begin or another manager. Use project_read for hashes, task_file_write for assigned edits, check_run for prescribed checks. Before ending call assignment_report with substantive seven-section Cornell work_record, or task_submit with full work_record. Do not fabricate evidence. Installed instructions:\n${instructions}`)] };
+          messages: [vscode.LanguageModelChatMessage.User(`NeoMind invocation ${receipt.id}. Role ${receipt.role}; workflow ${receipt.workflow_id}; task ${receipt.task_id}. Only supplied invocation-bound MCP tools exist. No builtin shell or filesystem tools. Never recursively start manager_run, manager_begin or another manager. Use project_read for hashes, task_file_write for assigned edits, check_run for prescribed checks. Before ending call assignment_report with substantive seven-section Cornell work_record, or task_submit with full work_record. Do not fabricate evidence. Installed instructions:\n${instructions}`)] };
         conversations.set(conversationId, conversation);
       }
       conversation.messages.push(vscode.LanguageModelChatMessage.User(receipt.input_text));

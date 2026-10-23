@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-10-23T07:31:06.602Z",
+  "environment": {
+    "platform": "win32",
+    "node": "v24.18.0"
+  },
+  "project_policy": "remote-enabled",
+  "source": {
+    "repository": "morluto/rea",
+    "requested_commit": "e073f64be0a5a30c32d8b3cec23f9bd411080903",
+    "adopted_commit": "e073f64be0a5a30c32d8b3cec23f9bd411080903",
+    "metadata": {
+      "repository": "morluto/rea",
+      "url": "https://github.com/morluto/rea",
+      "description": "Reverse engineer anything with agents, from app behavior down to native binaries.",
+      "stars": 368500,
+      "forks": 92318,
+      "license": "MIT",
+      "default_branch": "main",
+      "archived": false,
+      "observed_at": "2026-10-23T07:31:07.264Z"
+    },
+    "checked_head": "28a33cae8f8d4de8e11f7a266ff0d756432ab092",
+    "update_available": true,
+    "pin_preserved_after_check": true
+  },
+  "runtime_setup_executed": false,
+  "clone_strategy": "bare Git; no checkout, hooks, submodules or repository scripts",
+  "instructions": [
+    {
+      "path": ".agents/skills/reverse-engineer-anything/SKILL.md",
+      "sha256": "42eaf3fbf581274071c4069b1a3f04a6a6363539635f20fb0a752eac831b598c",
+      "git_blob_sha": "16e7c03fba39789989f4cb1089534bb10767f76b",
+      "bytes": 31067
+    }
+  ],
+  "available_instruction_count": 5,
+  "role_prompt_bytes": 16167,
+  "role_prompt_excerpt_reported": true,
+  "status": "passed"
+}

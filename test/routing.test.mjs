@@ -18,7 +18,7 @@ import {
   workerRoles,
 } from '../dist/routing.js';
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-routing-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-routing-'));
   initialize(root);
   t.after(() => {
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));
@@ -41,14 +41,14 @@ test('one routing file dynamically selects custom strong and worker models', (t)
   const policy = ensureRoutingPolicy(root);
   policy.strong_model = 'company-top-tier-model';
   policy.worker_models = ['gpt 4o-mini', 'gemini-2.5-flash-lite'];
-  writeFileSync(join(root, '.taskforces/routing.json'), JSON.stringify(policy));
+  writeFileSync(join(root, '.neomind/routing.json'), JSON.stringify(policy));
   assert.deepEqual(roleModelPolicy(root, 'reviewer').models, ['company-top-tier-model']);
   assert.deepEqual(roleModelPolicy(root, 'developer').models, [
     'gpt 4o-mini',
     'gemini-2.5-flash-lite',
   ]);
   policy.strong_model = 'top-tier-model';
-  writeFileSync(join(root, '.taskforces/routing.json'), JSON.stringify(policy));
+  writeFileSync(join(root, '.neomind/routing.json'), JSON.stringify(policy));
   assert.deepEqual(ensureRoutingPolicy(root), policy);
   assert.deepEqual(roleModelPolicy(root, 'manager').models, ['top-tier-model']);
   const task = createRecord(root, {
@@ -65,7 +65,7 @@ test('one routing file dynamically selects custom strong and worker models', (t)
 test('legacy model mappings cannot override the single routing policy', (t) => {
   const root = project(t);
   ensureRoutingPolicy(root);
-  const path = join(root, '.taskforces/config.json');
+  const path = join(root, '.neomind/config.json');
   const config = JSON.parse(readFileSync(path, 'utf8'));
   config.models.strong = { claude: 'authored-claude-model', copilot: 'claude-opus-4.6' };
   config.models.economy = { copilot: 'gpt-5.4' };
@@ -84,11 +84,11 @@ test('approved provider installations do not invalidate routing policy fingerpri
   ensureRoutingPolicy(root);
   const prior = routingConfigurationHashes(root);
   writeFileSync(
-    join(root, '.taskforces/tool-lock.json'),
+    join(root, '.neomind/tool-lock.json'),
     JSON.stringify({ providers: ['codegraph'] }),
   );
   assert.deepEqual(routingConfigurationHashes(root), prior);
-  writeFileSync(join(root, '.taskforces/tools.json'), JSON.stringify({ approved_providers: [] }));
+  writeFileSync(join(root, '.neomind/tools.json'), JSON.stringify({ approved_providers: [] }));
   assert.notDeepEqual(routingConfigurationHashes(root), prior);
 });
 test('strategic and routine roles use distinct Copilot models without duplicate fallback', (t) => {
@@ -110,7 +110,7 @@ test('strategic and routine roles use distinct Copilot models without duplicate 
 test('update preserves valid customized routing and rejects invalid settings without rewriting them', (t) => {
   const root = project(t);
   ensureRoutingPolicy(root);
-  const path = join(root, '.taskforces/routing.json');
+  const path = join(root, '.neomind/routing.json');
   const original = JSON.parse(readFileSync(path, 'utf8'));
   original.strong_model = 'custom-model';
   writeFileSync(path, JSON.stringify(original));
@@ -154,7 +154,7 @@ test('managed resumption preserves increment identity and reports policy blocker
   );
   assert.equal(getRecord(root, workflowId).meta.data.original_requirements.length, 2);
   const policy = ensureRoutingPolicy(root);
-  const path = join(root, '.taskforces/routing.json');
+  const path = join(root, '.neomind/routing.json');
   policy.worker_models = [];
   writeFileSync(path, JSON.stringify(policy));
   const conflicted = await managedRun(root, { workflow_id: workflowId });

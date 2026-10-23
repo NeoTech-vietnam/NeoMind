@@ -18,7 +18,7 @@ import {
 } from '../dist/index.js';
 
 function project(t, profile = 'basic') {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-adversarial-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-adversarial-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   initialize(root, { project_id: 'ADV', profile });
   mkdirSync(join(root, 'src'));
@@ -152,7 +152,7 @@ test('stale accepted dependencies do not satisfy downstream readiness', (t) => {
 
 test('knowledge pack installation preserves binary asset bytes and locked integrity', (t) => {
   const root = project(t);
-  const source = mkdtempSync(join(tmpdir(), 'taskforces-asset-pack-'));
+  const source = mkdtempSync(join(tmpdir(), 'neomind-asset-pack-'));
   t.after(() => rmSync(source, { recursive: true, force: true }));
   writeFileSync(
     join(source, 'pack.json'),

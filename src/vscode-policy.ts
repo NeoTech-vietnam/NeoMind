@@ -8,7 +8,7 @@ export function vscodeSelection(root: string, role: string, id: string): { vendo
   const policy = requireRoutingPolicy(root);
   const spec = roleModelPolicy(root, role);
   if (!spec.models.includes(id)) throw new Error('Requested model is outside the role policy.');
-  const provider = spec.strong ? policy.strong_provider : policy.worker_provider;
+  const provider = spec.provider;
   if (provider === 'copilot') return { vendor: 'copilot', id };
   if (!policy.language_models_file) return { vendor: provider ?? 'copilot', id };
   const path = isAbsolute(policy.language_models_file)

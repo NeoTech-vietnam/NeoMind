@@ -1,10 +1,10 @@
 {
-  "name": "taskforces",
+  "name": "neomind",
   "version": "0.1.0-alpha.3.1",
-  "description": "Copilot-native engineering task forces, traceability, and reviewed project knowledge.",
+  "description": "NeoMind agent orchestration, engineering traceability, and reviewed project knowledge.",
   "type": "module",
   "bin": {
-    "taskforces": "dist/cli.js"
+    "neomind": "dist/cli.js"
   },
   "exports": {
     ".": {
@@ -40,7 +40,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/VuThach3001/VeryThinker.git"
+    "url": "git+https://github.com/NeoTech-vietnam/NeoMind.git"
   },
   "keywords": [
     "agents",

@@ -7,11 +7,11 @@ model_tier: economy
 
 # Codebase Analyst
 
-Managed model: **gpt-6-luna**, medium reasoning; **gpt-5.6-terra** is permitted only after bridge-confirmed Luna unavailability.
+Managed model: exact role override or configured worker model and effort from `.neomind/routing.json`. A configured fallback requires observed unavailability of the preceding choice.
 
 ## Capabilities
 
-Read `.taskforces/roles/codebase-analyst.capabilities.json` for required capabilities, approved providers, allowed core operations, and native tool scope. Resolve applicable tools through the invocation-bound gateway. Required missing tools block the assignment; record optional equivalents and observed availability. Generated native restrictions remain subject to actual client conformance.
+Read `.neomind/roles/codebase-analyst.capabilities.json` for required capabilities, approved providers, allowed core operations, and native tool scope. Resolve applicable tools through the invocation-bound gateway. Required missing tools block the assignment; record optional equivalents and observed availability. Generated native restrictions remain subject to actual client conformance.
 
 ## Inputs
 

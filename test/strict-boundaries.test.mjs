@@ -38,18 +38,18 @@ function validationFixture(work, role, state = 'completed', taskId = null) {
     'sha512-NWZdi/kxyjv/8EUGFupziGU38YyleugZRM4JXgY5XFH7FUmaFA33NZS2Bmq0HPazf7S3jJQQWsZ/jAK9jsrV3Q==';
   const protocol = hash('FABRICATED UNIT VALIDATION FIXTURE');
   writeFileSync(
-    join(root, '.taskforces/native-runtime.lock.json'),
+    join(root, '.neomind/native-runtime.lock.json'),
     JSON.stringify({ version: '0.162.1', integrity, protocol_sha256: protocol }),
   );
   if (!work.key) {
     work.key = generateKeyPairSync('ed25519');
     const pem = work.key.publicKey.export({ type: 'spki', format: 'pem' });
     work.keyId = hash(pem);
-    mkdirSync(join(root, '.taskforces/native/keys'), { recursive: true });
-    mkdirSync(join(root, '.taskforces/native/receipts'), { recursive: true });
-    writeFileSync(join(root, `.taskforces/native/keys/${work.keyId}.pem`), pem);
+    mkdirSync(join(root, '.neomind/native/keys'), { recursive: true });
+    mkdirSync(join(root, '.neomind/native/receipts'), { recursive: true });
+    writeFileSync(join(root, `.neomind/native/keys/${work.keyId}.pem`), pem);
     writeFileSync(
-      join(root, '.taskforces/native/trust.json'),
+      join(root, '.neomind/native/trust.json'),
       JSON.stringify({ keys: [work.keyId] }),
     );
   }
@@ -57,10 +57,10 @@ function validationFixture(work, role, state = 'completed', taskId = null) {
     strong = strongRoles.includes(role);
   const receipt = {
     schema_version: 1,
-    issuer: 'taskforces-codex-app-server',
+    issuer: 'neomind-codex-app-server',
     execution_mode: 'native',
     id,
-    receipt_path: `.taskforces/native/receipts/${id}.json`,
+    receipt_path: `.neomind/native/receipts/${id}.json`,
     project_id: readConfig(root).project_id,
     role,
     workflow_id: work.parent.meta.id,
@@ -110,10 +110,10 @@ function validationFixture(work, role, state = 'completed', taskId = null) {
   return receipt;
 }
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-strict-boundary-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-strict-boundary-'));
   t.after(() => {
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));
-    assert.match(root, /taskforces-strict-boundary-/);
+    assert.match(root, /neomind-strict-boundary-/);
     rmSync(root, { recursive: true, force: true });
   });
   initialize(root, { project_id: 'BOUNDARY', profile: 'software' });
@@ -266,14 +266,14 @@ test('capability invocation derives task scope when callers omit it and blocks b
     }),
     /exact URL.*assigned task/,
   );
-  assert.equal(existsSync(join(work.root, '.taskforces/tools/playwright')), false);
+  assert.equal(existsSync(join(work.root, '.neomind/tools/playwright')), false);
 });
 
 test('removing installed routing cannot turn strict review or dispatch into legacy authorization', (t) => {
   const work = project(t);
   assert.equal(hasCurrentReview(work.root, work.check.meta.id), true);
   const worker = validationFixture(work, 'developer', 'running', work.task.meta.id);
-  rmSync(join(work.root, '.taskforces/routing.json'));
+  rmSync(join(work.root, '.neomind/routing.json'));
   assert.equal(hasCurrentReview(work.root, work.check.meta.id), false);
   assert.throws(
     () => startTask(work.root, work.task.meta.id, undefined, undefined, worker.id),

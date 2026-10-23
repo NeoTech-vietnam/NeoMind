@@ -24,7 +24,7 @@ import {
 import { migrateStorage } from '../dist/migration.js';
 
 function tempRoot(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-migration-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-migration-'));
   t.after(() => {
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));
     rmSync(root, { recursive: true, force: true });
@@ -47,22 +47,22 @@ function record(root) {
 function legacyProject(root, options = {}) {
   initialize(root, { project_id: 'LEGACY', platforms: ['copilot'], ...options });
   const item = record(root);
-  renameSync(join(root, '.taskforces'), join(root, '.verythinker'));
+  renameSync(join(root, '.neomind'), join(root, '.verythinker'));
   return item;
 }
 
-test('fresh storage is created under .taskforces with TaskForces defaults', (t) => {
+test('fresh storage is created under .neomind with NeoMind defaults', (t) => {
   const root = tempRoot(t);
   const config = initialize(root);
-  assert.ok(existsSync(join(root, '.taskforces/config.json')));
+  assert.ok(existsSync(join(root, '.neomind/config.json')));
   assert.equal(existsSync(join(root, '.verythinker')), false);
-  assert.match(config.project_id, /^TF-[0-9A-F]+$/);
-  assert.equal(config.name, 'TaskForces project');
+  assert.match(config.project_id, /^NM-[0-9A-F]+$/);
+  assert.equal(config.name, 'NeoMind project');
   assert.deepEqual(config.platforms, ['copilot']);
 
   const item = record(root);
-  assert.equal(item.path, `.taskforces/records/${item.meta.id}.md`);
-  assert.ok(existsSync(join(root, '.taskforces/records', `${item.meta.id}.md`)));
+  assert.equal(item.path, `.neomind/records/${item.meta.id}.md`);
+  assert.ok(existsSync(join(root, '.neomind/records', `${item.meta.id}.md`)));
   assert.equal(existsSync(join(root, '.verythinker')), false);
   assert.equal(getRecord(root, item.meta.id).meta.title, 'measurable contract');
 });
@@ -78,7 +78,7 @@ test('initialize never creates a second root and leaves legacy bytes untouched',
 
   const reread = initialize(root);
   assert.equal(reread.project_id, 'LEGACY');
-  assert.equal(existsSync(join(root, '.taskforces')), false);
+  assert.equal(existsSync(join(root, '.neomind')), false);
   assert.deepEqual(readFileSync(file), before);
 });
 
@@ -93,33 +93,33 @@ test('migration moves the directory while preserving bytes, hashes, and logical 
 
   const result = migrateStorage(root);
   assert.equal(result.moved, true);
-  assert.ok(existsSync(join(root, '.taskforces/records', `${item.meta.id}.md`)));
+  assert.ok(existsSync(join(root, '.neomind/records', `${item.meta.id}.md`)));
   assert.equal(existsSync(join(root, '.verythinker')), false);
 
-  assert.deepEqual(readFileSync(join(root, '.taskforces/records', `${item.meta.id}.md`)), bytesBefore);
+  assert.deepEqual(readFileSync(join(root, '.neomind/records', `${item.meta.id}.md`)), bytesBefore);
   assert.equal(sourceHash(root), sourceBefore);
   assert.deepEqual(snapshotPaths(root, ['.verythinker/records']), snapshotBefore);
   assert.equal(loadRecords(root)[0].path, pathBefore);
-  assert.ok(pathBefore.startsWith('.taskforces/records/'));
+  assert.ok(pathBefore.startsWith('.neomind/records/'));
 });
 
-test('migration is idempotent once storage already lives under .taskforces', (t) => {
+test('migration is idempotent once storage already lives under .neomind', (t) => {
   const root = tempRoot(t);
   initialize(root, { project_id: 'DONE', platforms: ['copilot'] });
   const result = migrateStorage(root);
   assert.equal(result.moved, false);
-  assert.ok(existsSync(join(root, '.taskforces/config.json')));
+  assert.ok(existsSync(join(root, '.neomind/config.json')));
 });
 
 test('target-only migration rejects active gates and linked roots', (t) => {
   const root = tempRoot(t);
   initialize(root);
-  const gate = join(root, '.taskforces-migration.lock');
+  const gate = join(root, '.neomind-migration.lock');
   writeFileSync(gate, 'interrupted');
   assert.throws(() => migrateStorage(root), /migration lock exists/i);
   rmSync(gate);
-  renameSync(join(root, '.taskforces'), join(root, 'storage'));
-  symlinkSync(join(root, 'storage'), join(root, '.taskforces'), 'junction');
+  renameSync(join(root, '.neomind'), join(root, 'storage'));
+  symlinkSync(join(root, 'storage'), join(root, '.neomind'), 'junction');
   assert.throws(() => migrateStorage(root), /real directory/i);
 });
 
@@ -132,8 +132,8 @@ test('migration accepts canonical Windows case variants', { skip: process.platfo
 test('migration refuses when both storage roots exist', (t) => {
   const root = tempRoot(t);
   mkdirSync(join(root, '.verythinker'), { recursive: true });
-  mkdirSync(join(root, '.taskforces'), { recursive: true });
-  assert.throws(() => migrateStorage(root), /both the legacy and taskforces/i);
+  mkdirSync(join(root, '.neomind'), { recursive: true });
+  assert.throws(() => migrateStorage(root), /both the legacy and neomind/i);
 });
 
 test('migration refuses a linked legacy root', (t) => {
@@ -192,17 +192,17 @@ test('settled native receipts do not block migration', (t) => {
     JSON.stringify({ state: 'completed' }),
   );
   assert.equal(migrateStorage(root).moved, true);
-  assert.ok(existsSync(join(root, '.taskforces/native/receipts')));
+  assert.ok(existsSync(join(root, '.neomind/native/receipts')));
 });
 
 test('migration gate blocks new core writers and interrupted migrations fail closed', (t) => {
   const root = tempRoot(t);
   legacyProject(root);
-  const gate = join(root, '.taskforces-migration.lock');
+  const gate = join(root, '.neomind-migration.lock');
   writeFileSync(gate, 'Interrupted migration fixture.');
   assert.throws(() => record(root), /migration is active/i);
   assert.throws(() => migrateStorage(root), /migration lock exists/i);
-  assert.equal(existsSync(join(root, '.taskforces')), false);
+  assert.equal(existsSync(join(root, '.neomind')), false);
   assert.equal(readFileSync(gate, 'utf8'), 'Interrupted migration fixture.');
   rmSync(gate);
   const receipts = join(root, '.verythinker/native/receipts');

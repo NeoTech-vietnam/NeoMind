@@ -1,5 +1,5 @@
-#ifndef TASKFORCES_CONTROLLER_H
-#define TASKFORCES_CONTROLLER_H
+#ifndef NEOMIND_CONTROLLER_H
+#define NEOMIND_CONTROLLER_H
 #include <stdint.h>
 
 /* Result bit 0: load enabled. Result bit 1: input/configuration fault. */

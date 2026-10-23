@@ -16,7 +16,7 @@ import { createRecord, getRecord, loadRecords } from '../dist/storage.js';
 import { initialize } from '../dist/storage.js';
 
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-record-cache-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-record-cache-'));
   initialize(root, { project_id: 'CACHE', name: 'Fresh record-byte cache fixture' });
   t.after(() => {
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));
@@ -54,13 +54,13 @@ test('cached content never hides duplicate IDs, fresh renamed paths, or deleted 
   const item = record(root);
   getRecord(root, item.meta.id);
   const original = join(root, item.path);
-  const duplicate = join(root, '.taskforces/records/copied.md');
+  const duplicate = join(root, '.neomind/records/copied.md');
   copyFileSync(original, duplicate);
   assert.throws(() => loadRecords(root), /Duplicate record ID/);
   rmSync(duplicate);
-  const renamed = join(root, '.taskforces/records/renamed.md');
+  const renamed = join(root, '.neomind/records/renamed.md');
   renameSync(original, renamed);
-  assert.equal(getRecord(root, item.meta.id).path, '.taskforces/records/renamed.md');
+  assert.equal(getRecord(root, item.meta.id).path, '.neomind/records/renamed.md');
   rmSync(renamed);
   assert.deepEqual(loadRecords(root), []);
   assert.throws(() => getRecord(root, item.meta.id), /Record not found/);
@@ -111,7 +111,7 @@ test('invalid replacements and configuration remain fresh failures rather than c
     writeFileSync(path, original);
     assert.equal(getRecord(root, item.meta.id).meta.revision, 1);
   }
-  const configPath = join(root, '.taskforces/config.json');
+  const configPath = join(root, '.neomind/config.json');
   const config = readFileSync(configPath);
   writeFileSync(
     configPath,
@@ -128,7 +128,7 @@ test('record freshness and caller independence survive a collection exceeding th
   const original = readFileSync(join(root, item.path), 'utf8');
   for (let index = 2; index <= 1030; index++)
     writeFileSync(
-      join(root, `.taskforces/records/entry-${index}.md`),
+      join(root, `.neomind/records/entry-${index}.md`),
       original.replaceAll(item.meta.id, `CACHE-REQ-${String(index).padStart(4, '0')}`),
     );
   assert.equal(loadRecords(root).length, 1030);

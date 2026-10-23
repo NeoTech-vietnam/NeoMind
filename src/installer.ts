@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import { dirname, join, resolve, relative, isAbsolute, delimiter } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { ensureLocalGitExclusions } from './local-git-excludes.js';
 import { parse, modify, applyEdits, type ParseError } from 'jsonc-parser';
 import { ensureAutomationPolicy, nativeAutomationPolicy, readAutomationPolicy, type AutomationPolicy } from './manager.js';
 import { ensureArchivePolicy, readArchivePolicy, type ArchivePolicy } from './archives.js';
@@ -70,6 +71,7 @@ export interface InstallOptions {
   profile?: string;
   name?: string;
   force?: boolean;
+  copilot_integration?: 'local';
 }
 type Status = 'supported' | 'configured' | 'restricted' | 'unverified';
 export interface DoctorReport {
@@ -109,8 +111,8 @@ function text(path: string): string | undefined {
   return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
 }
 function configFor(root: string): AdapterConfig {
-  const path = storagePath(root, '.taskforces/config.json');
-  if (!existsSync(path)) throw new Error('Project is not initialized. Run taskforces init first.');
+  const path = storagePath(root, '.neomind/config.json');
+  if (!existsSync(path)) throw new Error('Project is not initialized. Run neomind init first.');
   const config = JSON.parse(readFileSync(path, 'utf8')) as AdapterConfig;
   if (
     !Array.isArray(config.platforms) ||
@@ -147,15 +149,15 @@ function save(path: string, content: string): void {
   writeFileSync(path, content, 'utf8');
 }
 function manifestFor(root: string): Manifest {
-  const source = text(safePath(root, '.taskforces/install-manifest.json'));
+  const source = text(safePath(root, '.neomind/install-manifest.json'));
   if (!source) return { schema_version: 1, version: version(), files: {} };
   const manifest = JSON.parse(source) as Manifest;
   if (manifest.schema_version !== 1 || !manifest.files || typeof manifest.files !== 'object')
     throw new Error('Unsupported installation manifest.');
   // Normalize inventory paths only; authored content and historical signed bytes stay intact.
   manifest.files = Object.fromEntries(Object.entries(manifest.files).map(([id, entry]) => [
-    id.replace(/^\.verythinker(?=\/|#|$)/, '.taskforces'),
-    { ...entry, path: entry.path.replace(/^\.verythinker(?=\/|$)/, '.taskforces') },
+    id.replace(/^\.(?:verythinker|taskforces)(?=\/|#|$)/, '.neomind'),
+    { ...entry, path: entry.path.replace(/^\.(?:verythinker|taskforces)(?=\/|$)/, '.neomind') },
   ]));
   return manifest;
 }
@@ -171,7 +173,7 @@ function migratePendingRouting(
   try {
     records = loadRecords(root);
   } catch {
-    const base = '.taskforces/migrations/alpha3-records-review.json';
+    const base = '.neomind/migrations/alpha3-records-review.json';
     const body =
       JSON.stringify(
         {
@@ -191,7 +193,7 @@ function migratePendingRouting(
       candidate = `${base}.${suffix++}`;
     save(safePath(root, candidate), body);
     report.conflicts.push({
-      path: '.taskforces/records#alpha3-pending-routing',
+      path: '.neomind/records#alpha3-pending-routing',
       candidate,
       reason:
         'Existing record validation prevents safe pending-work migration; records were preserved for review.',
@@ -276,8 +278,8 @@ function outputID(output: ManagedOutput): string {
 function markers(output: ManagedOutput): { begin: string; end: string } {
   const key = output.key ?? 'instructions';
   return output.path.endsWith('.toml') || output.path.endsWith('.gitignore')
-    ? { begin: `# BEGIN TASKFORCES ${key}`, end: `# END TASKFORCES ${key}` }
-    : { begin: `<!-- BEGIN TASKFORCES ${key} -->`, end: `<!-- END TASKFORCES ${key} -->` };
+    ? { begin: `# BEGIN NEOMIND ${key}`, end: `# END NEOMIND ${key}` }
+    : { begin: `<!-- BEGIN NEOMIND ${key} -->`, end: `<!-- END NEOMIND ${key} -->` };
 }
 function blockState(
   source: string | undefined,
@@ -285,12 +287,11 @@ function blockState(
 ): { value?: string; start?: number; end?: number; malformed?: boolean } {
   if (source === undefined) return {};
   let mark = markers(output);
-  const legacy = { begin: mark.begin.replace('TASKFORCES', 'VERYTHINKER'),
-    end: mark.end.replace('TASKFORCES', 'VERYTHINKER') };
-  const hasCurrent = source.includes(mark.begin) || source.includes(mark.end);
-  const hasLegacy = source.includes(legacy.begin) || source.includes(legacy.end);
-  if (hasCurrent && hasLegacy) return { malformed: true };
-  if (hasLegacy) mark = legacy;
+  const candidates = [mark, ...['TASKFORCES', 'VERYTHINKER'].map((name) => ({
+    begin: mark.begin.replace('NEOMIND', name), end: mark.end.replace('NEOMIND', name),
+  }))].filter((candidate) => source.includes(candidate.begin) || source.includes(candidate.end));
+  if (candidates.length > 1) return { malformed: true };
+  mark = candidates[0] ?? mark;
   const start = source.indexOf(mark.begin);
   const finish = source.indexOf(mark.end);
   if (start < 0 && finish < 0) return {};
@@ -357,7 +358,7 @@ function installOutput(
         state.start === undefined
           ? `${current?.trimEnd() ?? ''}${current ? '\n\n' : ''}${block}\n`
           : `${current!.slice(0, state.start)}${block}${current!.slice(state.end)}`;
-      const serverName = output.key === 'codegraph' ? 'codegraph' : 'taskforces';
+      const serverName = output.key === 'codegraph' ? 'codegraph' : 'neomind';
       const serverKey = `(?:${serverName}|"${serverName}"|'${serverName}')`;
       const table = new RegExp(
         `^\\s*\\[\\s*mcp_servers\\s*\\.\\s*${serverKey}\\s*(?:\\.|\\])`,
@@ -432,7 +433,7 @@ function installOutput(
   if (!reason && !previous && currentValue !== undefined)
     reason = 'Existing content is owned by the user.';
   if (reason) {
-    const candidate = `${output.path}.taskforces-update${output.key ? `-${output.key.replace(/[^a-z0-9-]/gi, '-')}` : ''}`;
+    const candidate = `${output.path}.neomind-update${output.key ? `-${output.key.replace(/[^a-z0-9-]/gi, '-')}` : ''}`;
     const candidatePath = safePath(root, candidate);
     // Keep conflicting candidate edits too; choose a fresh numbered filename.
     let available = candidatePath;
@@ -472,7 +473,7 @@ function resourceOutputs(): ManagedOutput[] {
     }
   }
   for (const directory of ['roles', 'guides', 'templates', 'skills'])
-    visit(join(resourcesDirectory, directory), `.taskforces/${directory}`);
+    visit(join(resourcesDirectory, directory), `.neomind/${directory}`);
   return outputs;
 }
 
@@ -483,25 +484,30 @@ export function installProject(root: string, options: InstallOptions = {}): Inst
 }
 function installProjectClaimed(root: string, options: InstallOptions): InstallReport {
   const config = configFor(root);
-  const policyExists = existsSync(safePath(root, '.taskforces/automation.json'));
-  if (!policyExists && resolveManagedRoot(root) === '.taskforces')
-    save(safePath(root, '.taskforces/automation.json'), JSON.stringify(nativeAutomationPolicy(), null, 2) + '\n');
+  if (options.copilot_integration !== undefined && options.copilot_integration !== 'local')
+    throw new Error('Unsupported Copilot integration mode.');
+  if (config.copilot_integration !== undefined && config.copilot_integration !== 'local')
+    throw new Error('Unsupported Copilot integration mode in project configuration.');
+  const policyExists = existsSync(safePath(root, '.neomind/automation.json'));
+  if (!policyExists && resolveManagedRoot(root) === '.neomind')
+    save(safePath(root, '.neomind/automation.json'), JSON.stringify(nativeAutomationPolicy(), null, 2) + '\n');
   ensureAutomationPolicy(root);
   const policyPaths = [
-    '.taskforces/routing.json',
-    '.taskforces/archive.json',
-    '.taskforces/tools.json',
+    '.neomind/routing.json',
+    '.neomind/archive.json',
+    '.neomind/tools.json',
   ];
   const newPolicyPaths = policyPaths.filter((path) => !existsSync(safePath(root, path)));
   if (options.platforms) config.platforms = options.platforms;
   if (options.profile) config.profile = options.profile;
   if (options.name) config.name = options.name;
+  if (options.copilot_integration) config.copilot_integration = options.copilot_integration;
   if (config.platforms.some((platform) => !platforms.includes(platform)))
     throw new Error('Unsupported platform requested.');
   if (!['basic', 'software', 'embedded'].includes(config.profile))
     throw new Error('Unsupported project profile requested.');
-  if (options.platforms || options.profile || options.name)
-    save(safePath(root, '.taskforces/config.json'), JSON.stringify(config, null, 2) + '\n');
+  if (options.platforms || options.profile || options.name || options.copilot_integration)
+    save(safePath(root, '.neomind/config.json'), JSON.stringify(config, null, 2) + '\n');
   const manifest = manifestFor(root);
   const report: InstallReport = {
     schema_version: 1,
@@ -514,13 +520,22 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
     conflicts: [],
     warnings: [],
   };
-  if (!policyExists) report.installed.push('.taskforces/automation.json');
+  const localCopilot = config.platforms.includes('copilot') && config.copilot_integration === 'local';
+  if (localCopilot) {
+    const exclusions = ensureLocalGitExclusions(root);
+    if (exclusions.changed && exclusions.path) report.updated.push(exclusions.path);
+    if (exclusions.warning) report.warnings.push(exclusions.warning);
+    report.warnings.push('Local Copilot mode does not register an MCP server. Review .neomind/mcp-server.json and register its server in VS Code user-profile MCP configuration.');
+    if (['.github/copilot-instructions.md', '.vscode/mcp.json', '.mcp.json'].some(path => existsSync(safePath(root, path))))
+      report.warnings.push('Local Copilot integration preserves existing shared instructions and workspace MCP configuration. Review any previously configured NeoMind, TaskForces or VeryThinker integration before enabling the user-profile server.');
+  }
+  if (!policyExists) report.installed.push('.neomind/automation.json');
   ensureRoutingPolicy(root);
   ensureArchivePolicy(root);
   ensureToolPolicy(root);
   report.installed.push(...newPolicyPaths);
   const pendingMigration = migratePendingRouting(root, report);
-  const migrationPath = '.taskforces/migrations/alpha3.json';
+  const migrationPath = '.neomind/migrations/alpha3.json';
   if (!existsSync(safePath(root, migrationPath))) {
     save(
       safePath(root, migrationPath),
@@ -531,7 +546,7 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
           historical_routing:
             'Historical accepted/superseded records and recorded closed workflow history retain their original bytes and evidence. Pending tasks and workflows require strict native routing and strategic reassessment; old model strings are legacy observations.',
           new_work:
-            'Model choices are configured in routing.json. New TaskForces projects use visible Copilot subagents with unsigned assurance; signed VS Code Bridge execution remains opt-in.',
+            'Model choices are configured in routing.json. New NeoMind projects use visible Copilot subagents with unsigned assurance; signed VS Code Bridge execution remains opt-in.',
           authored_overrides: 'preserved-legacy-mappings; routing.json controls strict model selection',
           pending_work: pendingMigration,
         },
@@ -549,7 +564,7 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
     ...resourceOutputs(),
     ...adapterOutputs(root, config),
     ...[...strongRoles, ...workerRoles].map((role) => ({
-      path: `.taskforces/roles/${role}.capabilities.json`,
+      path: `.neomind/roles/${role}.capabilities.json`,
       kind: 'file' as const,
       content:
         JSON.stringify(
@@ -564,29 +579,34 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
         ) + '\n',
     })),
     {
-      path: '.taskforces/providers/codegraph.json',
+      path: '.neomind/providers/codegraph.json',
       kind: 'file' as const,
       content: JSON.stringify(codeGraphProvider, null, 2) + '\n',
     },
-    {
-      path: '.taskforces/.gitignore',
+    ...(!localCopilot ? [{
+      path: '.neomind/.gitignore',
       kind: 'block' as const,
       key: 'local-data',
       content:
         'index.sqlite*\ncache/\nraw/\nsessions/\ntools/\narchives/\noperations/\ncapabilities/\n',
-    },
+    }] : []),
   ];
   for (const output of outputs) installOutput(root, output, manifest, report);
   {
     const currentIds = new Set(outputs.map(outputID));
     for (const [id, entry] of Object.entries(manifest.files)) {
+      // Shared files may be tracked on another branch. Local mode never edits
+      // or retires their historical entries; any stale integration needs review.
+      if (localCopilot && ['.github/copilot-instructions.md', '.vscode/mcp.json', '.mcp.json'].includes(entry.path))
+        continue;
       const renamed = entry.kind === 'file' && (
-        /^\.(?:github|claude|agents)\/(?:agents\/verythinker-[^/]+\.(?:agent\.md|md)|hooks\/verythinker\.json|skills\/verythinker-[^/]+\/SKILL\.md)$/.test(entry.path) ||
-        /^\.codex\/agents\/verythinker-[^/]+\.toml$/.test(entry.path));
-      const oldServer = entry.kind === 'json' && entry.key === 'servers.verythinker' && entry.path === '.vscode/mcp.json';
+        /^\.neomind\/skills\/(?:verythinker|taskforces)-[^/]+\/SKILL\.md$/.test(entry.path) ||
+        /^\.(?:github|claude|agents)\/(?:agents\/(?:verythinker|taskforces)-[^/]+\.(?:agent\.md|md)|hooks\/(?:verythinker|taskforces)\.json|skills\/(?:verythinker|taskforces)-[^/]+\/SKILL\.md)$/.test(entry.path) ||
+        /^\.codex\/agents\/(?:verythinker|taskforces)-[^/]+\.toml$/.test(entry.path));
+      const oldServer = entry.kind === 'json' && ['servers.verythinker', 'servers.taskforces'].includes(entry.key ?? '') && entry.path === '.vscode/mcp.json';
       const duplicateServer = entry.kind === 'json' && entry.path === '.mcp.json' &&
-        (entry.key === 'mcpServers.verythinker' || (entry.key === 'mcpServers.taskforces' && !config.platforms.includes('claude')));
-      const retiredSquadAgent = entry.kind === 'file' && /^\.github\/agents\/taskforces-[^/]+\.agent\.md$/.test(entry.path);
+        (['mcpServers.verythinker', 'mcpServers.taskforces'].includes(entry.key ?? '') || (entry.key === 'mcpServers.neomind' && !config.platforms.includes('claude')));
+      const retiredSquadAgent = entry.kind === 'file' && /^\.github\/agents\/neomind-[^/]+\.agent\.md$/.test(entry.path);
       if (currentIds.has(id) || (!renamed && !oldServer && !duplicateServer && !retiredSquadAgent)) continue;
       const path = safePath(root, entry.path);
       const source = text(path);
@@ -613,14 +633,14 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
   }
   manifest.version = report.version;
   save(
-    safePath(root, '.taskforces/install-manifest.json'),
+    safePath(root, '.neomind/install-manifest.json'),
     JSON.stringify(manifest, null, 2) + '\n',
   );
   return report;
 }
 
-export function updateProject(root: string): InstallReport {
-  return installProject(root);
+export function updateProject(root: string, options: Pick<InstallOptions, 'copilot_integration'> = {}): InstallReport {
+  return installProject(root, options);
 }
 
 export function configureCodeGraph(
@@ -642,7 +662,7 @@ export function configureCodeGraph(
     status: 'supported-for-fixture',
     command: realpathSync(executablePath),
     args: [...args],
-    report_path: '.taskforces/optional/codegraph-conformance.json',
+    report_path: '.neomind/optional/codegraph-conformance.json',
     report_hash: hash(source),
     platform: process.platform,
     architecture: process.arch,
@@ -653,7 +673,7 @@ export function configureCodeGraph(
   };
   save(safePath(root, config.report_path), source);
   save(
-    safePath(root, '.taskforces/optional/codegraph.json'),
+    safePath(root, '.neomind/optional/codegraph.json'),
     JSON.stringify(config, null, 2) + '\n',
   );
   return config;
@@ -690,6 +710,8 @@ export function doctor(root: string): DoctorReport {
   root = realpathSync(resolve(root));
   const config = configFor(root);
   const warnings: string[] = [];
+  if (config.platforms.includes('copilot') && config.copilot_integration === 'local')
+    warnings.push('Local Copilot mode requires VS Code user-profile MCP registration. .neomind/mcp-server.json is example metadata only; no registered connection or successful tool call is inferred.');
   let codegraph: typeof codeGraphProvider | CodeGraphConfiguration = codeGraphProvider;
   try {
     codegraph = loadCodeGraphConfiguration(root) ?? codeGraphProvider;
@@ -709,7 +731,7 @@ export function doctor(root: string): DoctorReport {
   const nodeMajor = Number(process.versions.node.split('.')[0]);
   const routingPolicy = readRoutingPolicy(root);
   const observations: DoctorReport['routing']['observations'] = [];
-  const receiptDirectory = safePath(root, '.taskforces/native/receipts');
+  const receiptDirectory = safePath(root, '.neomind/native/receipts');
   for (const file of existsSync(receiptDirectory) ? readdirSync(receiptDirectory) : []) {
     if (!file.endsWith('.json')) continue;
     try {
@@ -725,13 +747,13 @@ export function doctor(root: string): DoctorReport {
       /* Invalid receipts remain unusable engineering evidence. */
     }
   }
-  const capabilityDirectory = safePath(root, '.taskforces/capabilities');
+  const capabilityDirectory = safePath(root, '.neomind/capabilities');
   const capabilityObservations: unknown[] = [];
   for (const file of existsSync(capabilityDirectory) ? readdirSync(capabilityDirectory) : []) {
     if (!file.endsWith('.json')) continue;
     try {
       capabilityObservations.push(
-        JSON.parse(readFileSync(safePath(root, `.taskforces/capabilities/${file}`), 'utf8')),
+        JSON.parse(readFileSync(safePath(root, `.neomind/capabilities/${file}`), 'utf8')),
       );
     } catch {
       warnings.push(`Tool observation cannot be read: ${file}`);
@@ -790,6 +812,10 @@ export function doctor(root: string): DoctorReport {
         client,
         requested_models: config.models,
         capabilities: [
+          ...(platform === 'copilot' && config.copilot_integration === 'local' ? [{
+            capability: 'user-profile-mcp', status: 'unverified' as const,
+            detail: 'Register the reviewed server in VS Code user-profile MCP configuration and verify a real tool call. Local metadata is not an active connection.',
+          }] : []),
           {
             capability: 'adapter-files',
             status: configured ? 'configured' : 'restricted',

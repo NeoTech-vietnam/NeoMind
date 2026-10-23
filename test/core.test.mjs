@@ -60,7 +60,7 @@ test('locked pack upgrades require a current reviewed owner decision and invalid
   const work = assignment(root);
   installPack(root, 'engineering-basics@0.1.0');
   submitted(root, work);
-  const source = mkdtempSync(join(tmpdir(), 'taskforces-pack-upgrade-'));
+  const source = mkdtempSync(join(tmpdir(), 'neomind-pack-upgrade-'));
   t.after(() => rmSync(source, { recursive: true, force: true }));
   cpSync(join(resourceRoot, 'packs/engineering-basics'), source, { recursive: true });
   const manifest = JSON.parse(readFileSync(join(source, 'pack.json'), 'utf8'));
@@ -128,7 +128,7 @@ test('failed upstream PR creation resumes its persisted branch without duplicate
 });
 
 function project(t, profile = 'basic') {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-core-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-core-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   initialize(root, { project_id: 'TEST', profile });
   mkdirSync(join(root, 'src'));
@@ -183,9 +183,9 @@ function submitted(root, work) {
 test('stable IDs survive rename and a deleted ID is never reallocated', (t) => {
   const root = project(t);
   const first = createRecord(root, { type: 'requirement', title: 'Original' });
-  renameSync(join(root, first.path), join(root, '.taskforces/records/renamed.md'));
-  assert.equal(getRecord(root, first.meta.id).path, '.taskforces/records/renamed.md');
-  rmSync(join(root, '.taskforces/records/renamed.md'));
+  renameSync(join(root, first.path), join(root, '.neomind/records/renamed.md'));
+  assert.equal(getRecord(root, first.meta.id).path, '.neomind/records/renamed.md');
+  rmSync(join(root, '.neomind/records/renamed.md'));
   const second = createRecord(root, { type: 'requirement', title: 'Replacement' });
   assert.notEqual(first.meta.id, second.meta.id);
 });
@@ -211,9 +211,9 @@ test('record mutations return the same canonical body and fingerprint as persist
 test('duplicate IDs and malformed metadata prevent indexing', (t) => {
   const root = project(t);
   const record = createRecord(root, { type: 'requirement', title: 'Unique' });
-  copyFileSync(join(root, record.path), join(root, '.taskforces/records/duplicate.md'));
+  copyFileSync(join(root, record.path), join(root, '.neomind/records/duplicate.md'));
   assert.throws(() => rebuildIndex(root), /Duplicate record ID/);
-  rmSync(join(root, '.taskforces/records/duplicate.md'));
+  rmSync(join(root, '.neomind/records/duplicate.md'));
   writeFileSync(join(root, record.path), '# Missing metadata');
   assert.throws(() => loadRecords(root), /YAML frontmatter/);
 });
@@ -251,7 +251,7 @@ test('FTS5 refreshes after edits and the SQLite cache rebuilds from Markdown', (
   updateRecord(root, record.meta.id, {}, 'Recovery preserves calibration.');
   assert.equal(ensureIndex(root).rebuilt, true);
   assert.equal(searchMemory(root, 'Atomic').length, 0);
-  rmSync(join(root, '.taskforces/cache'), { recursive: true });
+  rmSync(join(root, '.neomind/cache'), { recursive: true });
   assert.equal(searchMemory(root, 'calibration')[0].id, record.meta.id);
 });
 
@@ -324,16 +324,16 @@ test('a later failed execution does not reuse an earlier passing result', (t) =>
   const work = assignment(root);
   updateRecord(root, work.check.meta.id, {
     data: {
-      command: [process.execPath, '-e', 'process.exit(process.env.TASKFORCES_TEST_FAIL ? 1 : 0)'],
+      command: [process.execPath, '-e', 'process.exit(process.env.NEOMIND_TEST_FAIL ? 1 : 0)'],
     },
   });
   submitted(root, work);
   assert.equal(verify(root, work.task.meta.id, 'verified').ok, true);
-  process.env.TASKFORCES_TEST_FAIL = '1';
+  process.env.NEOMIND_TEST_FAIL = '1';
   try {
     assert.equal(runCheck(root, work.check.meta.id, work.task.meta.id).meta.data.result, 'fail');
   } finally {
-    delete process.env.TASKFORCES_TEST_FAIL;
+    delete process.env.NEOMIND_TEST_FAIL;
   }
   assert.equal(verify(root, work.task.meta.id, 'verified').ok, false);
 });
@@ -380,13 +380,13 @@ test('interrupted assignments resume, dead writer locks recover, and live locks 
   // Obtain a PID that has actually exited; avoid assuming a magic PID is absent.
   const child = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
   writeFileSync(
-    join(root, '.taskforces/write.lock'),
+    join(root, '.neomind/write.lock'),
     JSON.stringify({ pid: child.pid, started_at: new Date().toISOString() }),
   );
   updateRecord(root, work.task.meta.id, { data: { recovered: true } });
-  writeFileSync(join(root, '.taskforces/write.lock'), JSON.stringify({ pid: process.pid }));
+  writeFileSync(join(root, '.neomind/write.lock'), JSON.stringify({ pid: process.pid }));
   assert.throws(() => updateRecord(root, work.task.meta.id, {}), /locked/);
-  rmSync(join(root, '.taskforces/write.lock'));
+  rmSync(join(root, '.neomind/write.lock'));
 });
 
 test('one repair is permitted and repeated failure requires coordinator escalation', (t) => {
@@ -459,7 +459,7 @@ test('archived verification evidence remains valid after private runs are remove
   const work = assignment(root);
   const evidence = submitted(root, work);
   archiveEvidence(root, evidence.meta.id);
-  rmSync(join(root, '.taskforces/runs'), { recursive: true });
+  rmSync(join(root, '.neomind/runs'), { recursive: true });
   assert.equal(verify(root, work.task.meta.id, 'verified').ok, true);
   reviewTask(root, work.task.meta.id, 'reviewer', 'pass');
   assert.equal(acceptTask(root, work.task.meta.id).meta.status, 'accepted');
@@ -575,7 +575,7 @@ test('CLI hooks use each native response schema and CLI gates work without hooks
 
 test('MCP performs a real stdio handshake, discovery, record mutation and core gate validation', async (t) => {
   const root = project(t);
-  const client = new Client({ name: 'taskforces-test', version: '1.0.0' });
+  const client = new Client({ name: 'neomind-test', version: '1.0.0' });
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve('dist/cli.js'), 'mcp', '--project', root],

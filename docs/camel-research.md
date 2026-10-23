@@ -1,6 +1,6 @@
-# CAMEL research for autonomous TaskForces management
+# CAMEL research for autonomous NeoMind management
 
-TaskForces should make the manager the default entry point for a requirement, with internal planning, specialist discussion, execution, documentation, review, and closure. CAMEL supplies useful coordination mechanisms for this change. Its Python model runtime is optional; its task completion rules must not replace TaskForces's evidence and review gates.
+NeoMind should make the manager the default entry point for a requirement, with internal planning, specialist discussion, execution, documentation, review, and closure. CAMEL supplies useful coordination mechanisms for this change. Its Python model runtime is optional; its task completion rules must not replace NeoMind's evidence and review gates.
 
 ## Inspected snapshot
 
@@ -10,7 +10,7 @@ Primary inspection covered Workforce, TaskChannel, worker implementations, struc
 
 ## Mechanisms worth adopting
 
-| CAMEL mechanism and evidence                                                                                                                                                                                                                                                                                                                                                              | TaskForces application                                                                                                                                                                                                                               |
+| CAMEL mechanism and evidence                                                                                                                                                                                                                                                                                                                                                              | NeoMind application                                                                                                                                                                                                                               |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Workforce separates task decomposition, assignment, execution, and recovery. It supports an explicit pipeline with parallel branches and synchronization. [Workforce](https://github.com/camel-ai/camel/blob/24fde60ad739b4be8f8f533fea9ba54256fbc4a2/camel/societies/workforce/workforce.py)                                                                                             | The manager owns the objective; a planner produces bounded tasks; a dispatcher selects available native agents. Engineering gates define synchronization points.                                                                                      |
 | `TaskChannel` wraps a task with publisher, assignee, and `SENT`, `PROCESSING`, `RETURNED`, or `ARCHIVED` state. Claims occur inside an asynchronous condition. [Task channel](https://github.com/camel-ai/camel/blob/24fde60ad739b4be8f8f533fea9ba54256fbc4a2/camel/societies/workforce/task_channel.py)                                                                                  | Persist assignment identity and worker invocation, atomically claim work, and distinguish a submitted result from engineering acceptance. Store durable discussion and decisions in project records rather than relying on an in-memory conversation. |
@@ -21,17 +21,17 @@ Primary inspection covered Workforce, TaskChannel, worker implementations, struc
 
 ## Direct reuse and licensing
 
-The inspected code is Apache-2.0. Section 4 permits redistribution and modification subject to its conditions: distribute the license, identify changes, retain applicable notices, and carry applicable NOTICE material if supplied. The inspected repository tree contains no file named `NOTICE`. Any copied or translated source or prompts must be tracked as Apache-origin material; they must not be presented as solely MIT-authored code. TaskForces's own MIT files can remain MIT. [Pinned license](https://github.com/camel-ai/camel/blob/24fde60ad739b4be8f8f533fea9ba54256fbc4a2/LICENSE)
+The inspected code is Apache-2.0. Section 4 permits redistribution and modification subject to its conditions: distribute the license, identify changes, retain applicable notices, and carry applicable NOTICE material if supplied. The inspected repository tree contains no file named `NOTICE`. Any copied or translated source or prompts must be tracked as Apache-origin material; they must not be presented as solely MIT-authored code. NeoMind's own MIT files can remain MIT. [Pinned license](https://github.com/camel-ai/camel/blob/24fde60ad739b4be8f8f533fea9ba54256fbc4a2/LICENSE)
 
 Three reuse options are concrete:
 
 1. **Use coordination patterns now.** Independently implement the small objective lifecycle, typed discussion/assignment results, and documentation closure in the existing TypeScript core. Keep native clients responsible for actual agent invocation. This avoids adding a second model runtime or Python requirement to installation.
 2. **Reuse CAMEL as an optional sidecar later.** Its example exposes `Workforce.to_mcp()` as a local MCP server, with task processing and worker management. This can connect to an MCP-capable client, but the workers still run CAMEL `ChatAgent` model backends; it is not a native Codex, Claude Code, or Copilot subagent dispatcher. Credentials, Python dependencies, permission behavior, and evidence import would require a separate adapter and conformance tests. [Workforce MCP example](https://github.com/camel-ai/camel/blob/24fde60ad739b4be8f8f533fea9ba54256fbc4a2/examples/workforce/simple_workforce_mcp.py), [ChatAgent model and tool API](https://docs.camel-ai.org/key_modules/agents)
-3. **Port selected schemas or helpers only if needed.** The assignment and recovery structures are small enough to translate, with Apache attribution. TaskForces already has dependency validation, bounded context, records, and MCP operations; copying another task store adds little value. No CAMEL source or prompt text is copied by this research report.
+3. **Port selected schemas or helpers only if needed.** The assignment and recovery structures are small enough to translate, with Apache attribution. NeoMind already has dependency validation, bounded context, records, and MCP operations; copying another task store adds little value. No CAMEL source or prompt text is copied by this research report.
 
 ## Proposed native manager lifecycle
 
-The following is a TaskForces design recommendation, not a feature claimed for CAMEL:
+The following is a NeoMind design recommendation, not a feature claimed for CAMEL:
 
 ```mermaid
 flowchart LR
@@ -59,7 +59,7 @@ Human questions are limited to intent that changes the result, authority or scop
 
 CAMEL's quality evaluation uses a model-assigned score. The inspected implementation supplies score 80 when quality output cannot be parsed, and a low-quality result can enter completed-task handling after its repair limit. These are generic automation policies, not evidence-backed engineering acceptance. [Quality analysis and result handling](https://github.com/camel-ai/camel/blob/24fde60ad739b4be8f8f533fea9ba54256fbc4a2/camel/societies/workforce/workforce.py#L1645)
 
-Pipeline tests deliberately allow a join or downstream task to run after a failed dependency, to support recovery and error handling. TaskForces should allow diagnostic/recovery tasks while keeping dependent engineering acceptance blocked by unmet prerequisites. [Failure-continuation tests](https://github.com/camel-ai/camel/blob/24fde60ad739b4be8f8f533fea9ba54256fbc4a2/test/workforce/test_workforce_pipeline.py#L253)
+Pipeline tests deliberately allow a join or downstream task to run after a failed dependency, to support recovery and error handling. NeoMind should allow diagnostic/recovery tasks while keeping dependent engineering acceptance blocked by unmet prerequisites. [Failure-continuation tests](https://github.com/camel-ai/camel/blob/24fde60ad739b4be8f8f533fea9ba54256fbc4a2/test/workforce/test_workforce_pipeline.py#L253)
 
 Avoid treating shared conversation memory, a termination token, or a worker's successful summary as validated evidence. Use independent review, current artifact/evidence hashes, actual check receipts, and explicit documentation completeness. Bounded discussion should finish in a decision or a named unresolved question, rather than an unbounded consensus loop.
 
@@ -74,4 +74,4 @@ Avoid treating shared conversation memory, a termination token, or a worker's su
 - An authorized, configured upstream receives only a reviewed generalized candidate, with idempotent draft-PR submission; missing connectivity becomes a precise blocker.
 - The final manager report distinguishes accepted engineering work, contribution status, and platform limitations.
 
-These checks establish the implemented behavior. CAMEL's public descriptions do not prove that native tiered routing improves TaskForces quality, time, or cost; the comparative pilot evaluation remains necessary.
+These checks establish the implemented behavior. CAMEL's public descriptions do not prove that native tiered routing improves NeoMind quality, time, or cost; the comparative pilot evaluation remains necessary.

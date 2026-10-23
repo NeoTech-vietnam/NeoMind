@@ -40,7 +40,7 @@ export function strictRecord(
   visited = new Set<string>(),
 ): boolean {
   if (record.meta.data.routing_required === true) return true;
-  if (!existsSync(safePath(root, '.taskforces/routing.json'))) return false;
+  if (!existsSync(safePath(root, '.neomind/routing.json'))) return false;
   const byId = new Map(loadRecords(root).map((item) => [item.meta.id, item]));
   function walk(item: ProjectRecord): boolean {
     if (visited.has(item.meta.id)) return false;
@@ -189,7 +189,7 @@ function workRecordProblems(root: string, body: string): string[] {
   const scaffolding = [
     ...workRecordScaffolding,
     ...[
-      safePath(root, '.taskforces/templates/work-record.md'),
+      safePath(root, '.neomind/templates/work-record.md'),
       join(resourceRoot, 'templates/work-record.md'),
     ]
       .filter((path) => existsSync(path))
@@ -230,7 +230,7 @@ function workRecordProblems(root: string, body: string): string[] {
       scaffolding.some((scaffold) =>
         content.replace(/\s+/g, ' ').toLowerCase().includes(scaffold),
       ) ||
-      /^Run taskforces trace .* to inspect evidence\.$/i.test(content)
+      /^Run neomind trace .* to inspect evidence\.$/i.test(content)
     )
       errors.push(
         `Work record ${section} section needs substantive content, not template scaffolding.`,
@@ -252,7 +252,7 @@ function documentationSnapshot(root: string, task: ProjectRecord): Record<string
     const files = snapshotPaths(root, [canonicalPath]);
     if (!Object.keys(files).length)
       throw new Error(`Documentation path contains no files: ${path}`);
-    if (Object.keys(files).some((file) => file.startsWith('.taskforces/records/')))
+    if (Object.keys(files).some((file) => file.startsWith('.neomind/records/')))
       throw new Error(
         'Documentation paths cannot include managed records; use the linked work record.',
       );
@@ -527,11 +527,11 @@ function evidenceProblems(
   if (d.task_id !== task.meta.id) errors.push('Evidence was collected for another task.');
   if (d.check_fingerprint !== recordFingerprint(check))
     errors.push('Check procedure changed after this evidence was collected.');
-  const packLock = safePath(root, '.taskforces/pack-lock.json');
+  const packLock = safePath(root, '.neomind/pack-lock.json');
   if (d.pack_lock_hash !== (existsSync(packLock) ? hash(readFileSync(packLock)) : null))
     errors.push('Knowledge-pack baseline changed.');
   if (strictRecord(root, task) || strictRecord(root, evidence)) {
-    const toolLock = safePath(root, '.taskforces/tool-lock.json');
+    const toolLock = safePath(root, '.neomind/tool-lock.json');
     if (d.tool_lock_hash !== (existsSync(toolLock) ? hash(readFileSync(toolLock)) : null))
       errors.push('Verification tool baseline changed.');
   }
@@ -888,7 +888,7 @@ export function assignmentDocumentationProblems(root: string, workflowId: string
     }
     return [...new Set(problems)];
   }
-  const path = safePath(root, '.taskforces/native/receipts');
+  const path = safePath(root, '.neomind/native/receipts');
   if (!existsSync(path)) return problems;
   for (const file of readdirSync(path).filter((file) => /^[a-f0-9-]{36}\.json$/.test(file))) {
     const receipt = readInvocation(root, file.slice(0, -5));
@@ -1371,7 +1371,7 @@ export function submitTask(
     links: [{ type: 'documents', target: id }],
     body:
       workRecordBody ??
-      `# Objective\n${task.meta.title}\n\n# Inputs and Sources\n${requirementsFor(task).join('\n')}\n\n# Decisions and Rationale\nSee linked task and design records.\n\n# Results\n${summary}\n\n# Evidence\nRun taskforces trace ${id} to inspect evidence.\n\n# Limitations\nReview the verification report before acceptance.\n\n# Lessons\nRecord qualified lessons as separate knowledge records.\n`,
+      `# Objective\n${task.meta.title}\n\n# Inputs and Sources\n${requirementsFor(task).join('\n')}\n\n# Decisions and Rationale\nSee linked task and design records.\n\n# Results\n${summary}\n\n# Evidence\nRun neomind trace ${id} to inspect evidence.\n\n# Limitations\nReview the verification report before acceptance.\n\n# Lessons\nRecord qualified lessons as separate knowledge records.\n`,
   });
   const workRecordFingerprint = recordFingerprint(getRecord(root, workRecord.meta.id));
   return updateRecord(
@@ -1750,11 +1750,11 @@ function collectVerification(
   const timeout = Number(check.meta.data.timeout_ms ?? 60000);
   if (!Number.isFinite(timeout) || timeout < 1 || timeout > 600000)
     throw new Error('Check timeout must be between 1 and 600000 ms.');
-  const pack_lock_hash = existsSync(safePath(root, '.taskforces/pack-lock.json'))
-    ? hash(readFileSync(safePath(root, '.taskforces/pack-lock.json')))
+  const pack_lock_hash = existsSync(safePath(root, '.neomind/pack-lock.json'))
+    ? hash(readFileSync(safePath(root, '.neomind/pack-lock.json')))
     : null;
-  const tool_lock_hash = existsSync(safePath(root, '.taskforces/tool-lock.json'))
-    ? hash(readFileSync(safePath(root, '.taskforces/tool-lock.json')))
+  const tool_lock_hash = existsSync(safePath(root, '.neomind/tool-lock.json'))
+    ? hash(readFileSync(safePath(root, '.neomind/tool-lock.json')))
     : null;
   const input_snapshot = captureEvidenceInputs(root, {
     files: file_baseline,
@@ -1815,8 +1815,8 @@ function collectVerification(
   const log = inspected
     ? `Inspection observations submitted by ${invocationId ?? 'legacy observer'}; semantic correctness requires independent review.\n${JSON.stringify(inspected, (_key, value) => (_key === 'records' || _key === 'files' ? undefined : value), 2)}\n`
     : `Command: ${JSON.stringify(command)}\nExit code: ${executed!.status}\nSignal: ${executed!.signal}\nError: ${executed!.error?.message ?? 'none'}\n\nSTDOUT\n${executed!.stdout ?? ''}\nSTDERR\n${executed!.stderr ?? ''}`;
-  const log_path = `.taskforces/runs/${run}/output.log`;
-  const receipt_path = `.taskforces/runs/${run}/receipt.json`;
+  const log_path = `.neomind/runs/${run}/output.log`;
+  const receipt_path = `.neomind/runs/${run}/receipt.json`;
   const git = spawnSync('git', ['rev-parse', 'HEAD'], {
     cwd: root,
     shell: false,
@@ -1893,7 +1893,7 @@ export function archiveEvidence(root: string, id: string): ProjectRecord {
   const receipt = JSON.parse(readFileSync(safePath(root, String(data.receipt_path)), 'utf8'));
   if (hash(log) !== data.log_hash || receipt.log_hash !== data.log_hash)
     throw new Error('Evidence log or receipt hash does not match.');
-  const path = `.taskforces/evidence/${id}`;
+  const path = `.neomind/evidence/${id}`;
   const log_path = `${path}/output.log`;
   const receipt_path = `${path}/receipt.json`;
   atomicWrite(safePath(root, log_path), log);
@@ -1930,7 +1930,7 @@ export function contextPacket(root: string, id: string, maxChars = 18000): unkno
   };
   if (!Number.isSafeInteger(maxChars) || maxChars < 1000 || maxChars > 100000)
     throw new Error('Context budget must be an integer between 1000 and 100000 characters.');
-  const lockPath = safePath(root, '.taskforces/pack-lock.json');
+  const lockPath = safePath(root, '.neomind/pack-lock.json');
   const packs = existsSync(lockPath) ? JSON.parse(readFileSync(lockPath, 'utf8')).packs : [];
   const documentationRequired = task.meta.data.documentation_required === true;
   const documentPaths = documentationRequired ? documentationPaths(task) : [];
@@ -2006,7 +2006,7 @@ export function contextPacket(root: string, id: string, maxChars = 18000): unkno
           balanced: routingPolicy.worker_models[0],
         }
       : config.models,
-    role_path: `.taskforces/roles/${task.meta.owner}.md`,
+    role_path: `.neomind/roles/${task.meta.owner}.md`,
     knowledge_packs: packs.map(
       (p: { id: string; version: string; hash: string; path: string }) => ({
         id: p.id,

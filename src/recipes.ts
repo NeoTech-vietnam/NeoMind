@@ -450,7 +450,7 @@ const circuit = readFileSync(resolve(out, 'load-switch.cir'), 'utf8');
 for (const expected of ['DC ' + p.supply_v, 'drain ' + p.load_ohm, 'Ron=' + p.on_ohm, 'Roff=' + p.off_ohm]) assert.ok(circuit.includes(expected), 'Circuit parameter mismatch: ' + expected);
 let native = 'not requested'; let spice = 'not requested';
 if (p.compiler) {
-  const family = p.compiler_family ?? 'gcc'; const build = resolve(existsSync('.taskforces') ? '.taskforces/cache/recipe-native' : '.taskforces/cache/recipe-native', randomUUID()); mkdirSync(build, {recursive: true});
+  const family = p.compiler_family ?? 'gcc'; const build = resolve(existsSync('.neomind') ? '.neomind/cache/recipe-native' : '.neomind/cache/recipe-native', randomUUID()); mkdirSync(build, {recursive: true});
   for (const name of ['controller.c', 'controller.h', 'firmware-test.c']) copyFileSync(resolve(out, name), resolve(build, name));
   const executable = resolve(build, process.platform === 'win32' ? 'firmware-test.exe' : 'firmware-test');
   const args = family === 'dmc' ? ['controller.c', 'firmware-test.c', '-mn', '-wx', '-ofirmware-test.exe'] : ['-std=c11', '-Wall', '-Wextra', '-Werror', 'controller.c', 'firmware-test.c', '-o', executable];
@@ -871,7 +871,7 @@ function prepareRecipeInstance(
         },
         body: `# Recipe\n${descriptor.id}@${descriptor.version}\n\n# Applicability\n${descriptor.applicability}\n\n# Review\nThe design and verification plan require separate current reviews before implementation.\n`,
       });
-    const directory = `.taskforces/recipes/${instance.meta.id}`;
+    const directory = `.neomind/recipes/${instance.meta.id}`;
     const parameterPath = `${directory}/parameters.json`;
     const oraclePath = `${directory}/oracle.json`;
     const verifierPath = `${directory}/verify.mjs`;
@@ -1055,7 +1055,7 @@ function generateEmbedded(
     writePreserving(root, path, content, generated, prior);
   write(
     `${d}/controller.h`,
-    '#ifndef TASKFORCES_RECIPE_CONTROLLER_H\n#define TASKFORCES_RECIPE_CONTROLLER_H\nunsigned controller_step(unsigned adc, unsigned previous);\n#endif\n',
+    '#ifndef NEOMIND_RECIPE_CONTROLLER_H\n#define NEOMIND_RECIPE_CONTROLLER_H\nunsigned controller_step(unsigned adc, unsigned previous);\n#endif\n',
   );
   write(
     `${d}/controller.c`,
@@ -1066,7 +1066,7 @@ function generateEmbedded(
     `export function controllerStep(adc, previous) {\n  if (!Number.isInteger(adc) || adc < 0 || adc > ${p.adc_max} || ![0, 1].includes(previous) || adc <= ${p.fault_low} || adc >= ${p.fault_high}) return 2;\n  return adc >= ${p.on_threshold} ? 1 : adc <= ${p.off_threshold} ? 0 : previous;\n}\nexport function operatingPoint(on) { if (typeof on !== 'boolean') throw new TypeError('Boolean switch state required.'); const r = on ? ${p.on_ohm} : ${p.off_ohm}; const current = ${p.supply_v} / (${p.load_ohm} + r); return { current, drain: current * r }; }\n`,
   );
   const netlist = (on: boolean) =>
-    `TaskForces parameterized ideal load switch\n* Ideal switch; no selected transistor or physical board proof.\nVSUPPLY supply 0 DC ${p.supply_v}\nVCONTROL control 0 DC ${on ? 3.3 : 0}\nRLOAD supply drain ${p.load_ohm}\nSLOAD drain 0 control 0 LOADSWITCH\n.model LOADSWITCH SW(Ron=${p.on_ohm} Roff=${p.off_ohm} Vt=1.65 Vh=0.1)\n.op\n.control\nset numdgt=15\nop\nlet vt_current = -vsupply#branch\nlet vt_drain = v(drain)\nprint vt_current vt_drain\nquit\n.endc\n.end\n`;
+    `NeoMind parameterized ideal load switch\n* Ideal switch; no selected transistor or physical board proof.\nVSUPPLY supply 0 DC ${p.supply_v}\nVCONTROL control 0 DC ${on ? 3.3 : 0}\nRLOAD supply drain ${p.load_ohm}\nSLOAD drain 0 control 0 LOADSWITCH\n.model LOADSWITCH SW(Ron=${p.on_ohm} Roff=${p.off_ohm} Vt=1.65 Vh=0.1)\n.op\n.control\nset numdgt=15\nop\nlet vt_current = -vsupply#branch\nlet vt_drain = v(drain)\nprint vt_current vt_drain\nquit\n.endc\n.end\n`;
   write(`${d}/load-switch.cir`, netlist(true));
   write(`${d}/on.cir`, netlist(true));
   write(`${d}/off.cir`, netlist(false));
@@ -1168,7 +1168,7 @@ export function runRecipe(
       generateEmbedded(
         root,
         p,
-        JSON.parse(readFileSync(safePath(root, `.taskforces/recipes/${id}/oracle.json`), 'utf8')),
+        JSON.parse(readFileSync(safePath(root, `.neomind/recipes/${id}/oracle.json`), 'utf8')),
         generated,
         prior,
       );

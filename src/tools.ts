@@ -88,6 +88,7 @@ const common = [
   'note_validate',
   'pack_list',
   'pack_suggest',
+  'upstream_list',
 ];
 const writeRecords = [
   'record_create',
@@ -123,6 +124,12 @@ const roles: Record<string, Omit<RoleCapabilities, 'role'>> = {
       'knowledge_discover',
       'knowledge_research',
       'knowledge_publish',
+      'upstream_discover',
+      'upstream_track',
+      'upstream_check',
+      'upstream_clone',
+      'upstream_adopt',
+      'upstream_instructions',
     ],
     providers: ['codegraph', 'context7'],
     required: ['engineering-core', 'native-coordination'],
@@ -206,6 +213,10 @@ const roles: Record<string, Omit<RoleCapabilities, 'role'>> = {
       'manager_discuss',
       'capability_resolve',
       'capability_invoke',
+      'upstream_discover',
+      'upstream_check',
+      'upstream_clone',
+      'upstream_instructions',
     ],
     providers: ['codegraph', 'context7'],
     required: ['source-retrieval'],
@@ -307,7 +318,7 @@ export function roleCapabilities(role: string): RoleCapabilities {
   };
 }
 export function readToolPolicy(root: string): ToolPolicy | null {
-  const path = safePath(root, '.taskforces/tools.json');
+  const path = safePath(root, '.neomind/tools.json');
   if (!existsSync(path)) return null;
   const policy = JSON.parse(readFileSync(path, 'utf8'));
   if (
@@ -329,7 +340,7 @@ export function ensureToolPolicy(root: string): ToolPolicy {
       automatic_install: true,
       approved_providers: toolCatalog.map((tool) => tool.id),
     };
-    atomicWrite(safePath(root, '.taskforces/tools.json'), JSON.stringify(policy, null, 2) + '\n');
+    atomicWrite(safePath(root, '.neomind/tools.json'), JSON.stringify(policy, null, 2) + '\n');
     return policy;
   });
 }
@@ -369,8 +380,8 @@ function installProvider(root: string, id: ProviderId): string {
   const policy = readToolPolicy(root);
   if (!policy || !policy.approved_providers.includes(id))
     throw new Error(`Provider is outside the approved catalog: ${id}`);
-  const base = safePath(root, `.taskforces/tools/${id}/${provider.version}`);
-  const dependencyLockPath = `.taskforces/tool-locks/${id}-${provider.version}.json`;
+  const base = safePath(root, `.neomind/tools/${id}/${provider.version}`);
+  const dependencyLockPath = `.neomind/tool-locks/${id}-${provider.version}.json`;
   const dependencyLock = safePath(root, dependencyLockPath);
   const metadata = join(base, 'node_modules', provider.package, 'package.json');
   return withOperationLock(root, `provider-${id}`, () => {
@@ -422,7 +433,7 @@ function installProvider(root: string, id: ProviderId): string {
         `Provider dependency lock changed: ${id}. Review before selecting a new baseline.`,
       );
     if (!existsSync(dependencyLock)) atomicWrite(dependencyLock, dependencyBytes);
-    const lockPath = safePath(root, '.taskforces/tool-lock.json');
+    const lockPath = safePath(root, '.neomind/tool-lock.json');
     withLock(root, () => {
       const lock = existsSync(lockPath)
         ? JSON.parse(readFileSync(lockPath, 'utf8'))
@@ -531,7 +542,7 @@ async function connectProvider(
       : id === 'playwright'
         ? [...launch.args, '--headless', '--isolated']
         : launch.args;
-  const client = new Client({ name: 'taskforces-capability-gateway', version: '0.1.0-alpha.3' });
+  const client = new Client({ name: 'neomind-capability-gateway', version: '0.1.0-alpha.3' });
   try {
     await client.connect(
       new StdioClientTransport({
@@ -612,7 +623,7 @@ export async function resolveCapabilities(
     }
   }
   atomicWrite(
-    safePath(root, `.taskforces/capabilities/${input.role}.json`),
+    safePath(root, `.neomind/capabilities/${input.role}.json`),
     JSON.stringify({ role: input.role, observations }, null, 2) + '\n',
   );
   if (blockers.length) throw new Error(blockers.join('\n'));
@@ -685,7 +696,7 @@ export async function invokeCapability(
     atomicWrite(
       safePath(
         root,
-        `.taskforces/capabilities/call-${hash(input.invocation_id + now()).slice(0, 24)}.json`,
+        `.neomind/capabilities/call-${hash(input.invocation_id + now()).slice(0, 24)}.json`,
       ),
       JSON.stringify(
         {
@@ -721,7 +732,7 @@ export async function closeCapabilitySessions(root?: string, invocationId?: stri
 }
 export function toolObservations(root: string): unknown {
   const policy = readToolPolicy(root);
-  const path = safePath(root, '.taskforces/tool-lock.json');
+  const path = safePath(root, '.neomind/tool-lock.json');
   return {
     policy,
     installed: existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null,
@@ -734,7 +745,7 @@ export function toolObservations(root: string): unknown {
   };
 }
 export function toolLockProblems(root: string): string[] {
-  const path = safePath(root, '.taskforces/tool-lock.json');
+  const path = safePath(root, '.neomind/tool-lock.json');
   if (!existsSync(path)) return [];
   try {
     const lock = JSON.parse(readFileSync(path, 'utf8'));

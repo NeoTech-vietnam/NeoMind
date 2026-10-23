@@ -10,7 +10,7 @@ import {
   unlinkSync,
 } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { legacyManagedRoot, managedRoot, retryWindowsFileOperation } from './storage.js';
+import { legacyManagedRoot, legacyManagedRoots, managedRoot, retryWindowsFileOperation } from './storage.js';
 
 // Receipt states that represent native work that has not settled. Migrating while
 // any of these is present risks losing or corrupting an in-flight invocation.
@@ -33,23 +33,26 @@ export interface StorageMigration {
 export function migrateStorage(root: string): StorageMigration {
   if (!existsSync(resolve(root))) throw new Error(`Project root does not exist: ${root}`);
   const base = realpathSync(resolve(root));
-  const gate = join(base, '.taskforces-migration.lock');
+  const gate = join(base, '.neomind-migration.lock');
   if (existsSync(gate))
     throw new Error('Storage migration lock exists; inspect the active or interrupted migration before retrying.');
-  const legacy = join(base, legacyManagedRoot);
+  const present = [managedRoot, ...legacyManagedRoots].filter((name) => existsSync(join(base, name)));
+  if (present.length > 1)
+    throw new Error('Both the legacy and NeoMind storage roots exist. Resolve conflicting roots before migrating; migration never merges or overwrites.');
+  const legacy = join(base, present.find((name) => name !== managedRoot) ?? legacyManagedRoot);
   const target = join(base, managedRoot);
   const legacyExists = existsSync(legacy);
   const targetExists = existsSync(target);
 
   if (legacyExists && targetExists)
     throw new Error(
-      'Both the legacy and TaskForces storage roots exist. Resolve the dual root by hand before migrating; migration will never merge or overwrite either directory.',
+      'Both the legacy and NeoMind storage roots exist. Resolve the dual root by hand before migrating; migration will never merge or overwrite either directory.',
     );
   if (!legacyExists) {
     if (targetExists) {
       const targetStat = lstatSync(target);
       if (targetStat.isSymbolicLink() || !targetStat.isDirectory())
-        throw new Error('TaskForces storage root must be a real directory, not a link or junction.');
+        throw new Error('NeoMind storage root must be a real directory, not a link or junction.');
       return { root: base, from: legacy, to: target, moved: false };
     }
     throw new Error('No legacy storage root was found to migrate.');

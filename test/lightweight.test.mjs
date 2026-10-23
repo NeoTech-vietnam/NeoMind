@@ -17,13 +17,13 @@ import { adapterOutputs } from '../dist/adapters.js';
 import { vscodeSelection } from '../dist/vscode-policy.js';
 
 function setup(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-lightweight-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-lightweight-'));
   const config = initialize(root, { project_id: 'LIGHT', platforms: ['copilot'] });
   const policy = { ...ensureRoutingPolicy(root), platform: 'copilot', strong_provider: 'copilot',
     worker_provider: 'copilot', worker_models: ['worker-first', 'worker-second'], language_models_file: 'missing-external-catalog.json' };
-  writeFileSync(join(root, '.taskforces/routing.json'), JSON.stringify(policy));
+  writeFileSync(join(root, '.neomind/routing.json'), JSON.stringify(policy));
   const automation = { ...readAutomationPolicy(root), execution_mode: 'lightweight' };
-  writeFileSync(join(root, '.taskforces/automation.json'), JSON.stringify(automation));
+  writeFileSync(join(root, '.neomind/automation.json'), JSON.stringify(automation));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return { root, config, policy, automation };
 }
@@ -48,7 +48,7 @@ test('lightweight intake is idempotent, exact-intent and unsigned; never starts 
   const { root } = setup(t);
   const input = { requirement: 'Keep portable changes.', request_id: 'same-request' };
   const first = await managedRun(root, input);
-  assert.equal(first.handoff.agent, 'Manager Agent');
+  assert.equal(first.handoff.agent, 'NeoMind Manager Agent');
   assert.match(first.handoff.prompt, /Do not call manager_run recursively/);
   assert.equal(first.invocation, undefined);
   assert.equal(first.workflow.assurance, 'unsigned-native-report');
@@ -97,9 +97,9 @@ test('mode validation, disabled manager and saved strict workflows retain their 
   await assert.rejects(managedRun(root, { workflow_id: strict.meta.id, execution_mode: 'lightweight' }), /mode cannot be changed/);
   assert.throws(() => lightweightStatus(strict), /strict workflows cannot be converted/);
   assert.throws(() => checkpointLightweight(root, checkpoint({ workflow_id: strict.meta.id, revision: strict.meta.revision })), /strict workflows/);
-  writeFileSync(join(root, '.taskforces/automation.json'), JSON.stringify({ ...automation, manager_enabled: false }));
+  writeFileSync(join(root, '.neomind/automation.json'), JSON.stringify({ ...automation, manager_enabled: false }));
   await assert.rejects(managedRun(root, { requirement: 'Disabled.' }), /disabled/);
-  writeFileSync(join(root, '.taskforces/automation.json'), JSON.stringify({ ...automation, execution_mode: 'unknown' }));
+  writeFileSync(join(root, '.neomind/automation.json'), JSON.stringify({ ...automation, execution_mode: 'unknown' }));
   assert.throws(() => readAutomationPolicy(root), /Invalid manager automation policy/);
 });
 
@@ -151,15 +151,15 @@ test('generated native manager exposes subagents and MCP checkpoint; built-in Co
   const { root, config, policy } = setup(t);
   assert.deepEqual(vscodeSelection(root, 'manager', policy.strong_model), { vendor: 'copilot', id: policy.strong_model });
   const outputs = adapterOutputs(root, config);
-  const lightweight = outputs.find(output => output.path === '.github/agents/taskforces-manager.agent.md');
+  const lightweight = outputs.find(output => output.path === '.github/agents/neomind-manager.agent.md');
   assert.ok(lightweight);
   assert.ok(lightweight.content.includes(`model: ${JSON.stringify(policy.strong_model)}`));
-  assert.match(lightweight.content, /tools: .*agent.*taskforces\/lightweight_checkpoint/);
-  assert.match(lightweight.content, /Selected Manager Agent:.*continue the returned handoff.prompt and workflow directly/);
-  assert.match(lightweight.content, /Do not launch handoff.agent when it is Manager Agent/);
-  const developer = outputs.find(output => output.path === '.github/agents/taskforces-fnd.agent.md');
+  assert.match(lightweight.content, /tools: .*agent.*neomind\/lightweight_checkpoint/);
+  assert.match(lightweight.content, /Selected NeoMind Manager Agent:.*continue the returned handoff.prompt and workflow directly/);
+  assert.match(lightweight.content, /Do not launch handoff.agent when it is NeoMind Manager Agent/);
+  const developer = outputs.find(output => output.path === '.github/agents/neomind-fnd.agent.md');
   assert.ok(developer.content.includes(JSON.stringify(policy.worker_models)));
-  const reviewer = outputs.find(output => output.path === '.github/agents/taskforces-reviewer.agent.md');
+  const reviewer = outputs.find(output => output.path === '.github/agents/neomind-reviewer.agent.md');
   assert.ok(reviewer.content.includes(`model: ${JSON.stringify(policy.strong_model)}`));
 });
 

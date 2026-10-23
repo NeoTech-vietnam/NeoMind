@@ -1,4 +1,4 @@
-# TaskForces v1 requirement baseline
+# NeoMind v1 requirement baseline
 
 This baseline covers the approved engineering plan, autonomous-manager extension, and alpha.3 exact-routing/project-history/knowledge requirements. `0.1.0-alpha.3` remains a local prerelease. Native account access, client conformance, and the incomplete agent comparison remain explicit evidence boundaries. The [validation report](validation.md) separates implemented behavior, local measurements, and remaining gaps.
 

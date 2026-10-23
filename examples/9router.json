@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "base_url": "http://127.0.0.1:20128/v1",
+  "api_key_env": "NEOMIND_ROUTER_API_KEY",
+  "catalog_provider": "9Router"
+}

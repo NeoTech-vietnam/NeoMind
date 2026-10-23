@@ -12,6 +12,9 @@ export * from './lightweight.js';
 export * from './evidence-inputs.js';
 export * from './workspace.js';
 export * from './routing.js';
+export * from './agent-map.js';
+export * from './model-control.js';
+export * from './upstreams.js';
 export {
   ensureNativeRuntime,
   startNative,

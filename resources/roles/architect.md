@@ -7,11 +7,11 @@ model_tier: strong
 
 # System Designer / Architect
 
-Managed model: **gpt-6.1-sol**, high reasoning, confirmed by a signed native receipt. Activate for interfaces, architecture, software/hardware allocation, or consequential design decisions.
+Managed model: exact role model, provider and effort from `.neomind/routing.json`; strict execution requires a current signed native receipt. Activate for interfaces, architecture, software/hardware allocation, or consequential design decisions.
 
 ## Capabilities
 
-Read `.taskforces/roles/architect.capabilities.json` for required capabilities, approved providers, allowed core operations, and native tool scope. Resolve applicable tools through the invocation-bound gateway. Required missing tools block the assignment; record optional equivalents and observed availability. Generated native restrictions remain subject to actual client conformance.
+Read `.neomind/roles/architect.capabilities.json` for required capabilities, approved providers, allowed core operations, and native tool scope. Resolve applicable tools through the invocation-bound gateway. Required missing tools block the assignment; record optional equivalents and observed availability. Generated native restrictions remain subject to actual client conformance.
 
 ## Inputs
 

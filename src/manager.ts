@@ -114,7 +114,7 @@ export function nativeAutomationPolicy(): AutomationPolicy {
     knowledge_research_required: true, cornell_publication: 'project-branch' };
 }
 export function readAutomationPolicy(root: string): AutomationPolicy {
-  const path = safePath(root, '.taskforces/automation.json');
+  const path = safePath(root, '.neomind/automation.json');
   const policy = existsSync(path)
     ? JSON.parse(readFileSync(path, 'utf8'))
     : defaultAutomationPolicy();
@@ -144,7 +144,7 @@ export function readAutomationPolicy(root: string): AutomationPolicy {
 export function ensureAutomationPolicy(root: string): AutomationPolicy {
   readConfig(root);
   return withLock(root, () => {
-    const path = safePath(root, '.taskforces/automation.json');
+    const path = safePath(root, '.neomind/automation.json');
     if (!existsSync(path))
       atomicWrite(path, JSON.stringify(defaultAutomationPolicy(), null, 2) + '\n');
     return readAutomationPolicy(root);
@@ -474,7 +474,7 @@ function decideWorkflowClaimed(
     );
   const researchProblems = knowledgeResearchProblems(root, id, { check_workspace: true });
   if (researchProblems.length) throw new Error(researchProblems.join('\n'));
-  const archiveIntent = safePath(root, `.taskforces/archive-intents/${hash(id)}.json`);
+  const archiveIntent = safePath(root, `.neomind/archive-intents/${hash(id)}.json`);
   if (
     (parent.meta.data.archive &&
       (parent.meta.data.archive as { status?: string }).status !== 'deferred') ||
@@ -678,14 +678,14 @@ export function workflowStatus(root: string, id?: string): unknown {
   } catch (error) {
     archiveError = String(error);
   }
-  const intentPath = safePath(root, `.taskforces/archive-intents/${hash(id)}.json`);
+  const intentPath = safePath(root, `.neomind/archive-intents/${hash(id)}.json`);
   const intent = existsSync(intentPath)
     ? (JSON.parse(readFileSync(intentPath, 'utf8')) as { snapshot_id?: string; error?: string })
     : null;
   const completionPath =
     typeof parent.meta.data.invocation_id === 'string' &&
     /^[a-f0-9-]{36}$/.test(parent.meta.data.invocation_id)
-      ? safePath(root, `.taskforces/native/completion/${parent.meta.data.invocation_id}.json`)
+      ? safePath(root, `.neomind/native/completion/${parent.meta.data.invocation_id}.json`)
       : null;
   const completionError =
     completionPath && existsSync(completionPath)
@@ -981,7 +981,7 @@ function finishWorkflowClaimed(
         knowledge_id: knowledgeId,
         status: 'prepared-locally',
         reason: localOnly
-          ? 'Local-only policy defers remote knowledge publication. Set network_policy to "remote-enabled" in .taskforces/automation.json to opt in.'
+          ? 'Local-only policy defers remote knowledge publication. Set network_policy to "remote-enabled" in .neomind/automation.json to opt in.'
           : 'Project policy disables automatic knowledge publication.',
       });
     } else if (!policy.upstream) {
@@ -1061,7 +1061,7 @@ function finishWorkflowClaimed(
   const finalBody = cornellDelivery.length ? `${body}\n# Test Reports\n${testReports.map((report) => `${report.id}: ${JSON.stringify(report)}\n`).join('\n')}\n# Cornell Findings\n${cornellDelivery.map((note) => `${note.id}: ${note.path}\n\n${note.body}`).join('\n\n')}\n# Human Release Gate\nPending human review of test reports and Cornell findings. Engineering acceptance does not authorize release.\n` : body;
   let reportId =
     typeof parent.meta.data.final_report_id === 'string' ? parent.meta.data.final_report_id : null;
-  const closureIntentPath = safePath(root, `.taskforces/archive-intents/${hash(id)}.json`);
+  const closureIntentPath = safePath(root, `.neomind/archive-intents/${hash(id)}.json`);
   if (!reportId && remoteArchiveEnabled) {
     const intent = existsSync(closureIntentPath)
       ? JSON.parse(readFileSync(closureIntentPath, 'utf8'))
@@ -1106,10 +1106,10 @@ function finishWorkflowClaimed(
   if (localOnly && !archive)
     archive = {
       status: 'deferred',
-      reason: 'Local-only policy preserves local records and defers remote archive publication. Set network_policy to "remote-enabled" in .taskforces/automation.json to opt in.',
+      reason: 'Local-only policy preserves local records and defers remote archive publication. Set network_policy to "remote-enabled" in .neomind/automation.json to opt in.',
     };
   if (managerCompleted && remoteArchiveEnabled) {
-    const intentPath = safePath(root, `.taskforces/archive-intents/${hash(id)}.json`);
+    const intentPath = safePath(root, `.neomind/archive-intents/${hash(id)}.json`);
     try {
       assertCurrent(workflow(root, id));
       const priorSnapshot =

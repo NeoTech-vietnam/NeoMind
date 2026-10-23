@@ -1,4 +1,4 @@
-TaskForces resistive load switch operating-point pilot
+NeoMind resistive load switch operating-point pilot
 * Ideal voltage-controlled switch; not a selected MOSFET or a board validation.
 VSUPPLY supply 0 DC 12
 VCONTROL control 0 DC 3.3

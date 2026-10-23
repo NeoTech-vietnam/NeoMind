@@ -20,7 +20,7 @@ import {
 } from '../dist/routing.js';
 const fixture = fileURLToPath(new URL('../resources/native/fake-app-server.mjs', import.meta.url));
 function project(t) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-native-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-native-'));
   initialize(root, { project_id: 'NATIVE-TEST', name: 'Native protocol fixture' });
   ensureRoutingPolicy(root);
   t.after(async () => {
@@ -47,7 +47,7 @@ function bridge(scenario = 'success') {
 test('Copilot routing never installs Codex, including mixed-platform projects', async (t) => {
   for (const platforms of [['copilot'], ['codex', 'claude', 'copilot']]) {
     const root = project(t);
-    const path = join(root, '.taskforces/config.json');
+    const path = join(root, '.neomind/config.json');
     const config = JSON.parse(readFileSync(path, 'utf8'));
     config.platforms = platforms;
     writeFileSync(path, JSON.stringify(config));
@@ -60,7 +60,7 @@ test('Copilot routing never installs Codex, including mixed-platform projects', 
     assert.equal(receipt.inference_completed, false);
     assert.equal(receipt.native_thread_id, null);
     assert.match(receipt.error, /VS Code bridge.*disabled|descriptor.*stale/);
-    assert.equal(existsSync(join(root, '.taskforces/tools/codex')), false);
+    assert.equal(existsSync(join(root, '.neomind/tools/codex')), false);
   }
 });
 test('native receipts bind acknowledged model, completion and invocation identity', async (t) => {
@@ -150,7 +150,7 @@ test('worker fallback follows dynamically configured alternatives only after nat
     const root = project(t);
     const policy = ensureRoutingPolicy(root);
     policy.worker_models = ['gpt-5.4', 'gemini-2.5-flash-lite'];
-    writeFileSync(join(root, '.taskforces/routing.json'), JSON.stringify(policy));
+    writeFileSync(join(root, '.neomind/routing.json'), JSON.stringify(policy));
     const native = bridge(scenario);
     const started = await native.start(root, {
       role: 'developer',
@@ -245,9 +245,9 @@ test('signed receipt tampering and post-completion configuration changes are rej
   writeFileSync(path, JSON.stringify(forged));
   assert.throws(() => readInvocation(root, completed.id), /signature/);
   writeFileSync(path, source);
-  writeFileSync(join(root, '.taskforces/tools.json'), '{}');
+  writeFileSync(join(root, '.neomind/tools.json'), '{}');
   assert.match(routingProblems(root, 'reviewer', completed.id).join(' '), /configuration changed/);
-  assert.ok(existsSync(join(root, '.taskforces/native/trust.json')));
+  assert.ok(existsSync(join(root, '.neomind/native/trust.json')));
 });
 test('resume creates a new receipt and preserves the interrupted invocation', async (t) => {
   const root = project(t),
@@ -296,10 +296,10 @@ test('native tool preapproval is scoped to the approved role gateway and preserv
   assert.equal(observed.approvalPolicy, null);
   assert.equal(observed.sandbox, 'read-only');
   assert.deepEqual(Object.keys(observed.config).sort(), [
-    'mcp_servers.taskforces',
+    'mcp_servers.neomind',
     'model_reasoning_effort',
   ]);
-  const gateway = observed.config['mcp_servers.taskforces'];
+  const gateway = observed.config['mcp_servers.neomind'];
   assert.ok(gateway.enabled_tools.includes('record_review'));
   assert.ok(!gateway.enabled_tools.includes('record_update'));
   assert.ok(!gateway.enabled_tools.includes('task_file_write'));
@@ -310,7 +310,7 @@ test('native tool preapproval is scoped to the approved role gateway and preserv
     prompt: 'Inspect source only.',
   });
   assert.equal(rejected.state, 'blocked');
-  assert.match(rejected.error, /Authored TaskForces tool approval policy/);
+  assert.match(rejected.error, /Authored NeoMind tool approval policy/);
   assert.equal(rejected.native_turn_id, null);
 });
 
@@ -324,7 +324,7 @@ test('native scoped editing capability is exposed only to a new Developer invoca
   const completed = await native.wait(root, started.id, 5000);
   assert.equal(completed.state, 'completed');
   const observed = JSON.parse(completed.output),
-    gateway = observed.config['mcp_servers.taskforces'];
+    gateway = observed.config['mcp_servers.neomind'];
   assert.equal(observed.approvalPolicy, null);
   assert.equal(observed.sandbox, null);
   assert.ok(gateway.enabled_tools.includes('task_file_write'));
@@ -337,7 +337,7 @@ test('native scoped editing capability is exposed only to a new Developer invoca
   });
   const inspected = await native.wait(root, inspecting.id, 5000);
   assert.equal(inspected.state, 'completed');
-  const inspectionGateway = JSON.parse(inspected.output).config['mcp_servers.taskforces'];
+  const inspectionGateway = JSON.parse(inspected.output).config['mcp_servers.neomind'];
   assert.ok(inspectionGateway.enabled_tools.includes('check_inspect'));
   assert.ok(!inspectionGateway.enabled_tools.includes('task_file_write'));
   assert.equal(inspectionGateway.tools.check_inspect.approval_mode, 'approve');

@@ -8,11 +8,11 @@ import { existsSync, readFileSync } from 'node:fs';
  * Copilot CLI invocation returns session/turn/model provenance.
  * Adapter records what Copilot CLI actually attests; no inference claim without evidence.
  * Reasoning effort and sandbox are not attested by Copilot CLI; marked false.
- * Issuer is 'taskforces-copilot-cli' to distinguish from Codex app-server receipts.
+ * Issuer is 'neomind-copilot-cli' to distinguish from Codex app-server receipts.
  */
 export interface CopilotCliReceipt {
   schema_version: 1;
-  issuer: 'taskforces-copilot-cli';
+  issuer: 'neomind-copilot-cli';
   execution_mode: 'copilot-cli';
   id: string;
   receipt_path: string;
@@ -188,10 +188,10 @@ export async function invokeCopilotCli(
 
         const receipt: CopilotCliReceipt = {
           schema_version: 1,
-          issuer: 'taskforces-copilot-cli',
+          issuer: 'neomind-copilot-cli',
           execution_mode: 'copilot-cli',
           id,
-          receipt_path: `.taskforces/native/receipts/${id}.json`,
+          receipt_path: `.neomind/native/receipts/${id}.json`,
           project_id: 'unknown', // Set by caller
           role: 'unknown', // Set by caller
           workflow_id: null,

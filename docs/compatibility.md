@@ -1,6 +1,6 @@
 # Native client compatibility
 
-TaskForces installs project-local adapters. Generated files are checked by automated tests. Authenticated Codex App Server `0.162.1` observations confirm Sol and Luna selection and completed inference; [validation reports](validation.md) separately record engineering completion. Native skill-picker discovery and hook trust remain unverified. Finding an executable or a configuration file does not establish native behavior or model availability.
+NeoMind installs project-local adapters. Generated files are checked by automated tests. Authenticated Codex App Server `0.162.1` observations confirm Sol and Luna selection and completed inference; [validation reports](validation.md) separately record engineering completion. Native skill-picker discovery and hook trust remain unverified. Finding an executable or a configuration file does not establish native behavior or model availability.
 
 ## Supported installation targets
 
@@ -17,7 +17,7 @@ TaskForces installs project-local adapters. Generated files are checked by autom
 
 - Codex agent definitions use TOML files in `.codex/agents` with role instructions and an optional requested model. Project MCP uses `.codex/config.toml`. Hook groups use `SessionStart`, `PostToolUse`, and `Stop`, with Windows command overrides. New or changed hooks require native trust review. [Subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents), [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference), [hooks](https://learn.chatgpt.com/docs/hooks).
 - Claude Code uses project agent Markdown frontmatter. A missing requested model uses `inherit`. Current documented hooks support executable `command` plus `args` directly, with no shell. The generated session-start handler was executed locally from a project path containing spaces; client discovery remains unverified. Older clients require a separate conformance check. [Subagents](https://code.claude.com/docs/en/sub-agents), [hook execution](https://code.claude.com/docs/en/hooks).
-- Claude Code and current VS Code documentation both support portable root `.mcp.json` with `mcpServers`. TaskForces generates a single shared server entry. Older VS Code clients can require an explicit `.vscode/mcp.json` conversion; such clients remain unverified. [Claude MCP](https://code.claude.com/docs/en/mcp), [VS Code MCP configuration](https://code.visualstudio.com/docs/agent-customization/mcp-servers).
+- Claude Code and current VS Code documentation both support portable root `.mcp.json` with `mcpServers`. NeoMind generates a single shared server entry. Older VS Code clients can require an explicit `.vscode/mcp.json` conversion; such clients remain unverified. [Claude MCP](https://code.claude.com/docs/en/mcp), [VS Code MCP configuration](https://code.visualstudio.com/docs/agent-customization/mcp-servers).
 - Copilot repository hooks use the version 1 lower camel case format. VS Code documents conversion of this format to its local hook format. Effective hook support depends on the selected client surface. [Copilot hooks](https://docs.github.com/en/copilot/reference/hooks-reference), [VS Code hooks](https://code.visualstudio.com/docs/agent-customization/hooks).
 - Copilot agents use `.agent.md` frontmatter. Model selection remains subject to client support and account availability. [Custom agents configuration](https://docs.github.com/en/copilot/reference/custom-agents-configuration).
 
@@ -31,11 +31,11 @@ Historical alpha.2 records keep their requested/agent-reported observations and 
 
 Hooks are advisory: disabling or rejecting them does not bypass CLI verification. MCP configuration alone does not grant trust or prove that a tool was invoked.
 
-The authenticated Windows run encountered a host-specific sandbox refresh failure on a locked inherited Node REPL executable. Scoped TaskForces MCP operations still generated files and ran checks. This establishes neither universal Windows failure nor generic native editing compatibility; the [runtime observations](validation/native-alpha3-windows-runtime.json) preserve the exact limitation.
+The authenticated Windows run encountered a host-specific sandbox refresh failure on a locked inherited Node REPL executable. Scoped NeoMind MCP operations still generated files and ran checks. This establishes neither universal Windows failure nor generic native editing compatibility; the [runtime observations](validation/native-alpha3-windows-runtime.json) preserve the exact limitation.
 
 ## Installation and updates
 
-The installer tracks managed files, marked instruction blocks, and individual JSON configuration entries with SHA-256 hashes and a package version. It preserves comments and sibling settings. Existing user-owned TaskForces keys, malformed settings, edited files, and deleted managed content produce `.taskforces-update` candidates. Edited candidate files are also preserved by creating a numbered candidate. Review candidates explicitly; even `force` preserves user edits.
+The installer tracks managed files, marked instruction blocks, and individual JSON configuration entries with SHA-256 hashes and a package version. It preserves comments and sibling settings. Existing user-owned NeoMind keys, malformed settings, edited files, and deleted managed content produce `.neomind-update` candidates. Edited candidate files are also preserved by creating a numbered candidate. Review candidates explicitly; even `force` preserves user edits.
 
 Alpha.2 migration applies the selected defaults only to unset model mappings. Authored overrides and conflicting routing/configuration receive reviewable candidates. Accepted historical evidence stays attached to its original revision; new strict work requires valid native receipts. Twelve role contracts include a codebase analyst and a check executor; Cornell notes and three recipes add portable knowledge resources.
 
@@ -53,7 +53,7 @@ For Playwright, exact task `allowed_urls` checks apply to explicit `browser_navi
 
 For each available authenticated client, record the client version and selected execution surface, then:
 
-1. Confirm TaskForces instructions and skills are discovered.
+1. Confirm NeoMind instructions and skills are discovered.
 2. Invoke a generated agent with a bounded context packet; record requested and confirmed model information.
 3. Start the MCP server and invoke a read operation and an authorized mutation.
 4. Review native hook trust/settings; observe session-start, tool, and stop events.

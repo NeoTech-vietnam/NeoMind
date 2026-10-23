@@ -1,8 +1,8 @@
 # Research-first knowledge reuse and Cornell publication
 
-TaskForces researches the workspace and reuses reviewed framework knowledge before planning an implementation, then saves Cornell findings inside the project. Fresh native policies are local-first: `network_policy: local-only`, `automatic_pr: false`, and required workspace research. Later user opt-in to `remote-enabled` permits publication of qualified, independently reviewed sanitized findings to the configured destination; it does not itself approve public content. Reuse means adapting a verified pattern and implementing the feature delta, not copying an old project's implementation or treating a similarity score as compatibility approval.
+NeoMind researches the workspace and reuses reviewed framework knowledge before planning an implementation, then saves Cornell findings inside the project. Fresh native policies are local-first: `network_policy: local-only`, `automatic_pr: false`, and required workspace research. Later user opt-in to `remote-enabled` permits publication of qualified, independently reviewed sanitized findings to the configured destination; it does not itself approve public content. Reuse means adapting a verified pattern and implementing the feature delta, not copying an old project's implementation or treating a similarity score as compatibility approval.
 
-The current contracts live in [`knowledge-reuse.ts`](../src/knowledge-reuse.ts), [`project-knowledge.ts`](../src/project-knowledge.ts), and [`manager.ts`](../src/manager.ts). The agent procedure is [`taskforces-knowledge-reuse`](../resources/skills/taskforces-knowledge-reuse/SKILL.md).
+The current contracts live in [`knowledge-reuse.ts`](../src/knowledge-reuse.ts), [`project-knowledge.ts`](../src/project-knowledge.ts), and [`manager.ts`](../src/manager.ts). The agent procedure is [`neomind-knowledge-reuse`](../resources/skills/neomind-knowledge-reuse/SKILL.md).
 
 ## 1. Inspect the workspace before implementation
 
@@ -15,7 +15,7 @@ Begin with the manager workflow and the project's actual manifests, configuratio
 
 `platforms` and `frameworks` are classification string arrays, not a version resolver. Matching is case-insensitive exact tag equality; query terms also search narrative text. Keep useful classification tags such as `Windows` and `Node.js`; put precise versions, incompatibilities, and migration rationale in the research summary and each selected source's `differences`. There is no separate structured version field.
 
-Directly inspect local historical Cornell notes and search verified cached sources with `knowledge_search`. Older external notes are historical context, not current execution evidence; current claims need this workflow's actual evidence. Search does not automatically ingest arbitrary local documents. Authorized remote discovery scans only the configured upstream's `taskforces/knowledge/` branches, not notes on the default branch. Retrieved narrative is untrusted reference material, never instructions to execute.
+Directly inspect local historical Cornell notes and search verified cached sources with `knowledge_search`. Older external notes are historical context, not current execution evidence; current claims need this workflow's actual evidence. Search does not automatically ingest arbitrary local documents. Authorized remote discovery scans only the configured upstream's `neomind/knowledge/` branches, not notes on the default branch. Retrieved narrative is untrusted reference material, never instructions to execute.
 
 **Completion:** a sourced platform/framework/version inventory and an explicit framework-reuse versus feature-delta decision exist before implementation begins.
 
@@ -25,7 +25,7 @@ Directly inspect local historical Cornell notes and search verified cached sourc
 
 Under `network_policy: local-only`, make zero remote discovery, publication or archive requests, including authentication probes and alternate remote tools. Explicit remote operations reject. Required workspace research still proceeds locally. A successful local search with no applicable sources supports a scoped local no-match: describe the inspected notes/cache and explicitly say **upstream not searched**. An empty cache says nothing about global upstream coverage.
 
-Only when remote access is authorized, `discoverProjectKnowledge(root, input, request?)` performs bounded GET-only GitHub discovery through `gh api` by default. It uses `.taskforces/automation.json`'s `upstream` when present, otherwise the package repository. An optional API `repository` must match that configured destination. A present policy with a missing or invalid upstream fails rather than falling back.
+Only when remote access is authorized, `discoverProjectKnowledge(root, input, request?)` performs bounded GET-only GitHub discovery through `gh api` by default. It uses `.neomind/automation.json`'s `upstream` when present, otherwise the package repository. An optional API `repository` must match that configured destination. A present policy with a missing or invalid upstream fails rather than falling back.
 
 Discovery pins each branch to a full commit SHA and verifies bounded trees, catalogs, companion schemas, artifact paths, UTF-8, and narrative SHA-256 hashes. Catalogs, when present, must agree with companion notes. Authentication (including 401), connectivity, inaccessible repositories, incomplete pagination and truncated trees are failed remote operations, not evidence of no matching knowledge. Report them separately; policy-authorized local work can continue without claiming remote success. Malformed or hash-failing evidence still blocks reuse and dependent gates. A successful discovery returns only matches from that discovery, not stale matches from earlier calls.
 
@@ -38,7 +38,7 @@ The real input option is `--data` containing one JSON object. `--json` is a bool
 Examples below illustrate inputs; adapt paths, classifications, queries, and rationales to inspected evidence. They do not run as part of reading this guide.
 
 ```text
-taskforces knowledge search --data '{"platforms":["Windows"],"frameworks":["Node.js"],"query":"atomic replacement recovery"}'
+neomind knowledge search --data '{"platforms":["Windows"],"frameworks":["Node.js"],"query":"atomic replacement recovery"}'
 ```
 
 Remote-only equivalent after authorization: `knowledge discover --data JSON`; do not run it under local-only.
@@ -67,7 +67,7 @@ Workspace inputs exclude symlinks, traversal, hidden/managed paths, generated/ve
 After directly inspecting local notes and successfully searching verified local cache with no applicable sources, an illustrative local-only CLI record is:
 
 ```text
-taskforces knowledge research WORKFLOW_ID --data '{"platforms":["Windows"],"frameworks":["Node.js"],"workspace_paths":["package.json","src/configuration.ts"],"queries":["Windows Node.js durable configuration replacement"],"selected_sources":[],"no_match_reason":"Inspected local Cornell notes and successfully searched the verified local cache without finding an applicable replacement pattern; upstream not searched under local-only policy.","summary":"The inspected manifest declares Node.js 24 and the source uses a Windows configuration adapter; the executing runtime version remains unverified. No applicable local Cornell framework was found; upstream not searched. Implement a bounded replacement adapter and validate interrupted writes with focused tests."}'
+neomind knowledge research WORKFLOW_ID --data '{"platforms":["Windows"],"frameworks":["Node.js"],"workspace_paths":["package.json","src/configuration.ts"],"queries":["Windows Node.js durable configuration replacement"],"selected_sources":[],"no_match_reason":"Inspected local Cornell notes and successfully searched the verified local cache without finding an applicable replacement pattern; upstream not searched under local-only policy.","summary":"The inspected manifest declares Node.js 24 and the source uses a Windows configuration adapter; the executing runtime version remains unverified. No applicable local Cornell framework was found; upstream not searched. Implement a bounded replacement adapter and validate interrupted writes with focused tests."}'
 ```
 
 Replace `WORKFLOW_ID`, paths, and claims with actual evidence. For a selected source, supply its returned `source_id`, a substantive `applicability`, and `differences` covering versions and the feature delta; omit `no_match_reason`. Report any remote failure separately; never convert a 401 or another failed request into a successful no-match search. Local-only research needs no remote discovery: its no-match covers only the actually inspected local notes and successfully searched cache. The recorder validates supplied evidence but does not attest that a search call or semantic compatibility review actually happened.
@@ -134,10 +134,10 @@ Under local-only, stop at validated local findings and qualified candidate prepa
 
 The new route creates or updates:
 
-- Stable branch: `taskforces/knowledge/<first 16 hex characters of SHA-256(project_id)>`.
+- Stable branch: `neomind/knowledge/<first 16 hex characters of SHA-256(project_id)>`.
 - Narrative: `knowledge/projects/<full project hash>/notes/<pack_id>/<pack_version>.md`.
-- Companion: the same path ending in `.json`, with `schema_version: 1`, `schema: taskforces-project-knowledge-note`, `title`, `platforms`, `frameworks`, `applicability`, `provenance`, `artifact_path`, and narrative `sha256`.
-- Catalog: `knowledge/projects/<full project hash>/manifest.json`, with `schema_version: 1`, `schema: taskforces-project-knowledge-catalog`, and `notes` entries of that same companion schema.
+- Companion: the same path ending in `.json`, with `schema_version: 1`, `schema: neomind-project-knowledge-note`, `title`, `platforms`, `frameworks`, `applicability`, `provenance`, `artifact_path`, and narrative `sha256`.
+- Catalog: `knowledge/projects/<full project hash>/manifest.json`, with `schema_version: 1`, `schema: neomind-project-knowledge-catalog`, and `notes` entries of that same companion schema.
 
 Markdown contains Cue Column, Main Notes, Summary, Application, Applicability, and Provenance. Only the three rendered files are supplied to the Git tree update; the tree inherits the existing branch's other files. A new project branch starts from the upstream default branch's current commit. The publisher merges catalog entries, preserves existing notes, and refuses a different rendition at an already published version.
 
@@ -149,7 +149,7 @@ The project-branch route opens no PR, requests no merge, updates no default-bran
 
 ### Policy and compatibility
 
-Project policy is `.taskforces/automation.json`. The following is an illustrative complete native policy; use the project's deliberate upstream, not an example destination:
+Project policy is `.neomind/automation.json`. The following is an illustrative complete native policy; use the project's deliberate upstream, not an example destination:
 
 ```json
 {
@@ -180,7 +180,7 @@ Inspect saved state with `manager_status` and explicitly save `network_policy: l
 
 ### Publication receipt, recovery, and blockers
 
-Local `.taskforces/project-knowledge/<candidate-id>.json` freezes candidate/review/source validation identity, content, repository, branch, merged files, base commit/tree, and created tree/commit. States progress through `planned`, `base-frozen`, `tree-created`, `commit-created`, and `branch-published`. Preserve this receipt on interruption; retry the same unchanged reviewed candidate to reconcile an already applied ref update rather than inventing another publication.
+Local `.neomind/project-knowledge/<candidate-id>.json` freezes candidate/review/source validation identity, content, repository, branch, merged files, base commit/tree, and created tree/commit. States progress through `planned`, `base-frozen`, `tree-created`, `commit-created`, and `branch-published`. Preserve this receipt on interruption; retry the same unchanged reviewed candidate to reconcile an already applied ref update rather than inventing another publication.
 
 The publisher revalidates immediately before uploading tree content, creating its commit, and mutating the ref; it rejects divergence and uses non-force ref updates. If another publication advances the branch after a lost response, recovery fails closed and requires manual reconciliation; never force the frozen ref backward. A completed receipt is still locally revalidated before returning it; replaying it does not perform a fresh remote audit. Changed frozen identities require a new reviewed candidate. A branch deletion/divergence, stale review, changed Cornell bytes, invalid upstream, authentication/network failure, or unconfirmed ref is a blocker, not success or a reason to force-push. A failed response can follow a successful remote ref mutation, so preserve recovery state and inspect/reconcile before retrying differently.
 
@@ -188,8 +188,8 @@ Success returns `status: branch-published`, `branch`, `commit`, `repository`, `p
 
 ## Authority and disposable retrieval
 
-The authority chain is the public Git commit plus verified Cornell narrative/companion/catalog, preserved locally as immutable-source JSON/Markdown pairs in `.taskforces/knowledge-cache/<source_id>.json` and `.md`. Project research records and local Cornell records retain their own provenance and artifact checks.
+The authority chain is the public Git commit plus verified Cornell narrative/companion/catalog, preserved locally as immutable-source JSON/Markdown pairs in `.neomind/knowledge-cache/<source_id>.json` and `.md`. Project research records and local Cornell records retain their own provenance and artifact checks.
 
-`.taskforces/cache/knowledge.sqlite` is a disposable local FTS5 retrieval cache, **not authority, provenance, approval, compatibility evidence, or publication state**. Searches revalidate durable source pairs and rebuild the index from their bytes on every call. Deleting that SQLite file loses only a retrieval index; it does not erase knowledge or repair corrupted durable evidence. Preserve durable pairs used by research records, and treat missing/tampered pairs as blockers. Cached matches support local decisions without proving current upstream coverage. A failed remote discovery remains a failed operation; local-only requires no upstream search.
+`.neomind/cache/knowledge.sqlite` is a disposable local FTS5 retrieval cache, **not authority, provenance, approval, compatibility evidence, or publication state**. Searches revalidate durable source pairs and rebuild the index from their bytes on every call. Deleting that SQLite file loses only a retrieval index; it does not erase knowledge or repair corrupted durable evidence. Preserve durable pairs used by research records, and treat missing/tampered pairs as blockers. Cached matches support local decisions without proving current upstream coverage. A failed remote discovery remains a failed operation; local-only requires no upstream search.
 
 **Completion:** report inspected platform/framework/version evidence, selected/rejected Cornell sources or a substantive scoped local no-match with **upstream not searched**, framework reuse and feature delta, actual focused validation results and saved Cornell ID/path. For publication candidates, preserve current independent public-safe review; report confirmed publication identity only after authorized success, otherwise explicit prepared-locally/deferred/blocked status. Never attempt live publication merely to validate documentation.

@@ -16,7 +16,7 @@ import {
 const repository = 'example/shared';
 const sha = 'a'.repeat(40);
 const projectHash = 'b'.repeat(64);
-const branch = `taskforces/knowledge/${projectHash.slice(0, 16)}`;
+const branch = `neomind/knowledge/${projectHash.slice(0, 16)}`;
 const artifact = `knowledge/projects/${projectHash}/notes/atomic-updates/1.2.3.md`;
 const manifest = `knowledge/projects/${projectHash}/manifest.json`;
 const narrative = '# Durable replacements\n\n## Cue Column\n\nHow can a validated replacement remain crash safe?\n\n## Main Notes\n\nUse a write barrier and atomic replacement; the zephyr sentinel distinguishes this narrative from its title.\n\n## Summary\n\nKeep the original valid bytes until replacement succeeds.\n\n## Application\n\nReview filesystem and runtime version differences before applying.\n';
@@ -27,9 +27,9 @@ const differences = 'The source targets Node.js 22 while this workspace targets 
 const noMatchReason = 'The search found no applicable upstream sources after comparing platform constraints and the inspected local configuration lifecycle.';
 
 function project(t, required = true) {
-  const root = mkdtempSync(join(tmpdir(), 'taskforces-knowledge-reuse-'));
+  const root = mkdtempSync(join(tmpdir(), 'neomind-knowledge-reuse-'));
   t.after(() => {
-    const cache = join(root, '.taskforces/knowledge-cache');
+    const cache = join(root, '.neomind/knowledge-cache');
     if (existsSync(cache)) {
       for (const name of readdirSync(cache)) {
         try { chmodSync(join(cache, name), 0o600); } catch {}
@@ -39,7 +39,7 @@ function project(t, required = true) {
   });
   initialize(root, { project_id: 'REUSE-TEST' });
   // The reuse module reads policy JSON directly and must not import manager.ts.
-  writeFileSync(join(root, '.taskforces/automation.json'), JSON.stringify({
+  writeFileSync(join(root, '.neomind/automation.json'), JSON.stringify({
     schema_version: 1, manager_enabled: true, documentation_required: true,
     automatic_pr: true, upstream: repository, max_discussion_rounds: 3,
   }));
@@ -52,7 +52,7 @@ function project(t, required = true) {
 }
 function github(options = {}) {
   const entry = {
-    schema_version: 1, schema: 'taskforces-project-knowledge-note',
+    schema_version: 1, schema: 'neomind-project-knowledge-note',
     title: 'Atomic configuration replacement', ...classification,
     applicability: ['Applications with local durable configuration.'],
     provenance: ['https://nodejs.org/api/fs.html'], artifact_path: artifact, sha256: hash(narrative),
@@ -61,7 +61,7 @@ function github(options = {}) {
   const files = new Map([
     [artifact, narrative],
     [artifact.replace(/\.md$/, '.json'), JSON.stringify(entry)],
-    [manifest, JSON.stringify({ schema_version: 1, schema: 'taskforces-project-knowledge-catalog', notes: [entry] })],
+    [manifest, JSON.stringify({ schema_version: 1, schema: 'neomind-project-knowledge-catalog', notes: [entry] })],
   ]);
   const calls = [];
   const state = {
@@ -133,11 +133,11 @@ test('discovery pins trees/catalogs/companions/artifacts and caches verified rea
   assert.equal(result.sha256, hash(narrative));
   assert.equal(result.narrative, narrative);
   assert.match(result.source_id, /^[a-f0-9]{64}$/);
-  const stored = JSON.parse(readFileSync(join(work.root, '.taskforces/knowledge-cache', `${result.source_id}.json`), 'utf8'));
+  const stored = JSON.parse(readFileSync(join(work.root, '.neomind/knowledge-cache', `${result.source_id}.json`), 'utf8'));
   assert.equal(stored.entry.artifact_path, artifact);
   assert.equal(stored.sha256, hash(narrative));
   assert.equal(stored.commit, sha);
-  assert.equal(readFileSync(join(work.root, '.taskforces/knowledge-cache', `${result.source_id}.md`), 'utf8'), narrative);
+  assert.equal(readFileSync(join(work.root, '.neomind/knowledge-cache', `${result.source_id}.md`), 'utf8'), narrative);
   assert.equal(remote.calls.filter((call) => call.endpoint.includes('/contents/')).length, 3);
   // Idempotent discovery does not need to rewrite read-only source pairs.
   assert.equal(fetchSource(work, remote).source_id, result.source_id);
@@ -147,7 +147,7 @@ test('local-only discovery rejects before transport while verified cached resear
   const work = project(t);
   const remote = github();
   const source = fetchSource(work, remote);
-  const path = join(work.root, '.taskforces/automation.json');
+  const path = join(work.root, '.neomind/automation.json');
   const policy = JSON.parse(readFileSync(path, 'utf8'));
   writeFileSync(path, JSON.stringify({ ...policy, network_policy: 'local-only', upstream: null }));
   let calls = 0;
@@ -164,7 +164,7 @@ test('local-only discovery rejects before transport while verified cached resear
 
 test('discovery rejects invalid network policy before transport instead of treating it as remote opt-in', (t) => {
   const work = project(t);
-  const path = join(work.root, '.taskforces/automation.json');
+  const path = join(work.root, '.neomind/automation.json');
   const policy = JSON.parse(readFileSync(path, 'utf8'));
   for (const network_policy of [null, '', 'offline', true, 1, [], {}]) {
     writeFileSync(path, JSON.stringify({ ...policy, network_policy }));
@@ -198,7 +198,7 @@ test('FTS5 indexes narrative content, safely tokenizes query punctuation, and re
   const source = fetchSource(work);
   const query = { platforms: ['Unrelated platform'], frameworks: [], query: 'zephyr' };
   assert.equal(searchProjectKnowledge(work.root, query)[0].source_id, source.source_id);
-  const database = join(work.root, '.taskforces/cache/knowledge.sqlite');
+  const database = join(work.root, '.neomind/cache/knowledge.sqlite');
   const db = new DatabaseSync(database);
   try {
     assert.equal(db.prepare("SELECT count(*) AS count FROM narrative_search WHERE narrative_search MATCH 'zephyr'").get().count, 1);
@@ -253,7 +253,7 @@ test('source artifact tampering blocks searches and research even without worksp
   const work = project(t);
   const source = fetchSource(work);
   recordKnowledgeResearch(work.root, work.workflowId, research(source));
-  rewrite(join(work.root, '.taskforces/knowledge-cache', `${source.source_id}.md`), 'Changed upstream artifact');
+  rewrite(join(work.root, '.neomind/knowledge-cache', `${source.source_id}.md`), 'Changed upstream artifact');
   assert.throws(() => searchProjectKnowledge(work.root, classification), /hash mismatch/);
   assert.match(knowledgeResearchProblems(work.root, work.workflowId).join(' '), /artifact hash mismatch/);
   assert.throws(() => recordKnowledgeResearch(work.root, work.workflowId, research(source)), /hash mismatch/);
@@ -263,9 +263,9 @@ test('metadata fingerprints bind selected provenance and detect source removal',
   const work = project(t);
   const source = fetchSource(work);
   recordKnowledgeResearch(work.root, work.workflowId, research(source));
-  const metadataPath = join(work.root, '.taskforces/knowledge-cache', `${source.source_id}.json`);
+  const metadataPath = join(work.root, '.neomind/knowledge-cache', `${source.source_id}.json`);
   const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
-  rewrite(metadataPath, JSON.stringify({ ...metadata, branch: 'taskforces/knowledge/changed' }));
+  rewrite(metadataPath, JSON.stringify({ ...metadata, branch: 'neomind/knowledge/changed' }));
   assert.match(knowledgeResearchProblems(work.root, work.workflowId).join(' '), /stale source references/);
   chmodSync(metadataPath, 0o600);
   rmSync(metadataPath);
@@ -312,7 +312,7 @@ test('reject unsafe repository overrides, branches, commit identities, paths and
   }
   const work = project(t);
   assert.throws(() => discoverProjectKnowledge(work.root, { ...classification, repository: 'other/repository' }, github().request), /configured/);
-  for (const name of ['taskforces/knowledge/../private', 'taskforces/knowledge/.hidden', 'taskforces/knowledge/bad.lock']) {
+  for (const name of ['neomind/knowledge/../private', 'neomind/knowledge/.hidden', 'neomind/knowledge/bad.lock']) {
     assert.throws(() => discoverProjectKnowledge(work.root, classification,
       github({ pages: [[{ name, commit: { sha } }]] }).request), /branch/);
   }
@@ -327,7 +327,7 @@ test('reject unsafe repository overrides, branches, commit identities, paths and
     github({ tree: [{ path, type: 'blob', mode: '100644' }] }).request), /path/);
   assert.throws(() => discoverProjectKnowledge(work.root, classification,
     github({ tree: [{ path: artifact, type: 'blob', mode: '120000' }] }).request), /regular/);
-  assert.ok(!existsSync(join(work.root, '.taskforces/knowledge-cache')));
+  assert.ok(!existsSync(join(work.root, '.neomind/knowledge-cache')));
 });
 
 test('reject wrong hashes, companion/catalog disagreement, schemas and private remote content', (t) => {
@@ -339,7 +339,7 @@ test('reject wrong hashes, companion/catalog disagreement, schemas and private r
   ]) {
     const work = project(t);
     assert.throws(() => discoverProjectKnowledge(work.root, classification, github({ entry: patch }).request));
-    assert.ok(!existsSync(join(work.root, '.taskforces/knowledge-cache')));
+    assert.ok(!existsSync(join(work.root, '.neomind/knowledge-cache')));
   }
   const work = project(t);
   const disagreement = github();
@@ -380,7 +380,7 @@ test('oversize, malformed base64 and missing companion pairs never become succes
 test('reject sensitive, managed, lock, outside and generated workspace snapshots', (t) => {
   const work = project(t);
   for (const path of [
-    '../outside.ts', 'D:/private.ts', '.env', '.env.production', '.taskforces/config.json',
+    '../outside.ts', 'D:/private.ts', '.env', '.env.production', '.neomind/config.json',
     '.verythinker/config.json', '.git/config', 'credentials.json', 'config/private/settings.json',
     'package-lock.json', 'pnpm-lock.yaml', 'Cargo.lock', 'config/key.pem', 'node_modules/source.js',
     'dist/output.js', 'folder\\source.ts',
@@ -399,7 +399,7 @@ test('reject in-workspace symlink snapshots and cache-directory links', (t) => {
     research(null, { workspace_paths: ['linked.ts'] })), /links/);
   const target = join(work.root, 'external-cache');
   mkdirSync(target);
-  symlinkSync(target, join(work.root, '.taskforces/knowledge-cache'), process.platform === 'win32' ? 'junction' : 'dir');
+  symlinkSync(target, join(work.root, '.neomind/knowledge-cache'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.throws(() => searchProjectKnowledge(work.root, classification), /links/);
 });
 

@@ -4,14 +4,14 @@ Roles identify persisted responsibilities and output contracts, not the number o
 
 | Agent          | Core role responsibilities                              | Model tier |
 | -------------- | ------------------------------------------------------- | ---------- |
-| Manager Agent  | manager, researcher, codebase-analyst, curator, release | strong     |
-| SWSD Agent     | requirements                                            | strong     |
-| P-RES Agent    | architect, component-owner                              | strong     |
-| FnD Agent      | developer                                               | worker     |
-| Reviewer Agent | reviewer                                                | strong     |
-| Tester Agent   | verifier, check-executor                                | worker     |
+| NeoMind Manager Agent  | manager, researcher, codebase-analyst, curator, release | strong     |
+| NeoMind SWSD Agent     | requirements                                            | strong     |
+| NeoMind P-RES Agent    | architect, component-owner                              | strong     |
+| NeoMind FnD Agent      | developer                                               | worker     |
+| NeoMind Reviewer Agent | reviewer                                                | strong     |
+| NeoMind Tester Agent   | verifier, check-executor                                | worker     |
 
-The independent reviewer runs in a separate invocation from implementation. One `.taskforces/routing.json` and `npx taskforces update` select models for the whole squad. Installed contracts live under `.taskforces/roles/` (legacy: `.verythinker/roles/`). The catalog below preserves historical strict core identities; its Codex values are not current Copilot defaults. See [model configuration](model-routing.md) and [native workflow](../resources/guides/copilot-native.md).
+The independent reviewer runs in a separate invocation from implementation. One `.neomind/routing.json` and `npx neomind update` select models for the whole squad. Installed contracts live under `.neomind/roles/` (legacy: `.verythinker/roles/`). The catalog below preserves historical strict core identities; its Codex values are not current Copilot defaults. See [model configuration](model-routing.md) and [native workflow](../resources/guides/copilot-native.md).
 
 | Role ID            | Contract                                                                       | Strict Codex model |
 | ------------------ | ------------------------------------------------------------------------------ | ------------------ |

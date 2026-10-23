@@ -104,7 +104,7 @@ if (options['ngspice-library']) {
     reason: 'No ngspice shared library supplied.',
   });
 if (options.compiler) {
-  const dir = await mkdtemp(join(tmpdir(), 'taskforces-firmware-'));
+  const dir = await mkdtemp(join(tmpdir(), 'neomind-firmware-'));
   try {
     const result = execute(options.compiler, [
       '-std=c11',

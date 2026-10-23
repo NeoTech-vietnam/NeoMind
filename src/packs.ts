@@ -63,7 +63,7 @@ function fingerprint(source: string): string {
   );
 }
 function lockFor(root: string): PackLock {
-  const path = safePath(root, '.taskforces/pack-lock.json');
+  const path = safePath(root, '.neomind/pack-lock.json');
   return existsSync(path)
     ? JSON.parse(readFileSync(path, 'utf8'))
     : { schema_version: 1, packs: [] };
@@ -135,7 +135,7 @@ export function installPack(root: string, input: string, decisionId?: string): L
     }
     if (current && current.version === pack.version && current.hash !== checksum)
       throw new Error('Pack content changed without a version change.');
-    const path = `.taskforces/packs/${pack.id}/${pack.version}`;
+    const path = `.neomind/packs/${pack.id}/${pack.version}`;
     if (existsSync(safePath(root, path)) && fingerprint(safePath(root, path)) !== checksum)
       throw new Error('Installed pack was modified; preserve it before installing a replacement.');
     mkdirSync(safePath(root, path), { recursive: true });
@@ -151,7 +151,7 @@ export function installPack(root: string, input: string, decisionId?: string): L
     };
     lock.packs = lock.packs.filter((p) => p.id !== pack.id).concat(result);
     atomicWrite(
-      safePath(root, '.taskforces/pack-lock.json'),
+      safePath(root, '.neomind/pack-lock.json'),
       JSON.stringify(lock, null, 2) + '\n',
     );
     return result;
@@ -213,7 +213,7 @@ export function prepareContribution(root: string, id: string): unknown {
     strings(review.meta.data.findings).length
   )
     throw new Error('A current independent generalization review is required.');
-  const path = `.taskforces/contributions/${id.toLowerCase()}`;
+  const path = `.neomind/contributions/${id.toLowerCase()}`;
   const publicId =
     knowledge.meta.data.pack_id ??
     `lesson-${hash(knowledge.meta.title + '\n' + generalized).slice(0, 12)}`;
