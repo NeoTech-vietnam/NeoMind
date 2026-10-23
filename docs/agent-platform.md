@@ -1,12 +1,12 @@
 # Agent platform update
 
-Development branch: `codex/neomind-agent-platform`. Published alpha.4 remains a separate release. This update pairs runtime alpha.5 with extension0.5.0.
+Source branch: `codex/neomind-agent-platform`. This release pairs runtime `0.1.0-alpha.5` with extension `0.5.0`; alpha.4 remains available as a previous release.
 
 | Requirement | Implementation | Activation or limit |
 | --- | --- | --- |
 | Codex agent parity | Coordinator, Explorer, Researcher, Planner, Architect, Implementer, Debugger, Verifier and Reviewer profiles; `codex-native` workflow mode | Generate Codex integration and start a new trusted Codex session. Native child permissions inherit the parent. |
 | Accurate Universe | Current observations by default; explicit static history; native session/parent links from lifecycle hooks | Client must support and trust hooks and supply agent identity. Missing identity is ignored; unsigned reports remain a separate fallback. |
-| Linux | Portable runtime, VSIX, hook commands and Windows/Ubuntu CI | Node24 or26+, Git and VS Code; REA requires Node24.11+ or26+. |
+| Linux | Portable runtime, VSIX, hook commands and Windows/Ubuntu CI | Node 24 or 26+, Git and VS Code; REA requires Node 24.11+ or 26+. |
 | GitHub Actions | Daily public upstream metadata check; manual dedicated self-hosted Linux verification | Schedule runs from the default branch after merge. Register your own labeled runner for manual self-hosted jobs. |
 | Notes publication | Preview, immutable local export and separate create-only remote branch | Explicit export/publish commands; remote-enabled policy, existing Git remote and current independent note review. |
 | Research format | Requirement-bound abstract, objectives, methods, findings, discussion, worked example, questions, practice and separate answers | Compiler validates structure and references. Independent review assesses factual quality. |
@@ -35,7 +35,7 @@ neomind router configure --base-url http://127.0.0.1:20128/v1 --api-key-env NEOM
 neomind codex configure --data '{"mode":"9router"}' --project PROJECT
 ```
 
-Use the endpoint and model IDs from your actual9router setup; port20128 above is an example. Codex's gateway must support the Responses API. Keep the key in the named environment variable. GUI model changes regenerate profiles for subsequent invocations; they do not switch an already running native conversation. Inspect [Codex runtime](codex-runtime.md) for inheritance and model controls.
+Use the endpoint and model IDs from your actual 9router setup; port 20128 above is an example. Codex's gateway must support the Responses API. Keep the key in the named environment variable. GUI model changes regenerate profiles for subsequent invocations; they do not switch an already running native conversation. Inspect [Codex runtime](codex-runtime.md) for inheritance and model controls.
 
 Planet orbits are decorative. Only fresh activity observations produce pulses. Native hook observations, agent-reported assignments and signed receipts are labeled separately and may describe the same agent. The monitor does not inspect arbitrary chat transcripts. Stop means that a native turn stopped; task acceptance still requires the workflow gates. Hooks lacking explicit session and agent IDs are ignored. Unsigned observations expire after five minutes without an update, so a long quiet tool can become unknown. See [Codex hooks](https://learn.chatgpt.com/docs/hooks) and [Copilot hooks](https://docs.github.com/en/copilot/reference/hooks-reference).
 

@@ -1,6 +1,6 @@
 # Prerelease and stable release criteria
 
-The package version is `0.1.0-alpha.4`, distributed with VS Code extension `0.4.0` as one GitHub prerelease. It includes expert Copilot profiles, reported agent activity, the agent universe, Earth FocusSpace, local Git exclusions, guarded model controls and the Cornell optional-field fix. See [paired installation](install-release.md). GitHub release assets provide installable packages; npm registry and VS Code Marketplace publication are separate and are not claimed. Recorded native conformance and agent evaluation remain stable-release requirements.
+The package version is `0.1.0-alpha.5`, distributed with VS Code extension `0.5.0` as one GitHub prerelease. It adds nine expert Codex profiles, observed parent/agent lifecycle links, reviewed Cornell research export/publication, optional pinned REA MCP and scheduled upstream candidate checks to the existing universe, Earth FocusSpace and model controls. See [paired installation](install-release.md) and [activation limits](agent-platform.md). GitHub release assets provide installable packages; npm registry and VS Code Marketplace publication are separate and are not claimed. Recorded native conformance and agent evaluation remain stable-release requirements.
 
 ## Local validation and packaging
 
@@ -82,4 +82,4 @@ Publish only the reviewed artifact under an approved prerelease tag, then verify
 
 Template upgrades preserve user edits and expose conflicts for review. Compatibility claims identify their tested client/version. Pack changes require a new version when content changes; update project locks through a recorded decision. Keep historical evidence and knowledge provenance when baselines change.
 
-NeoMind retains MIT licensing and independently authored code/templates. Trellis is design inspiration under its own AGPL license; its code/templates are not included. Record any later third-party reuse and compatible attribution explicitly.
+NeoMind retains MIT licensing. The optional REA integration preserves the original reviewed skill, references, license and origin metadata; its separately installed runtime is integrity-pinned. See [REA provenance](rea.md). Trellis is design inspiration under its own AGPL license; its code/templates are not included. Record any later third-party reuse and compatible attribution explicitly.

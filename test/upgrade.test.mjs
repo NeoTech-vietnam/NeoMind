@@ -694,7 +694,7 @@ test('loaded installed supervisor and copied runner survive removal of the entir
   const installed = join(fixture.root, 'node_modules/neomind');
   // Use the actual built upgrade/storage core under the package that fake npm
   // deletes, not a second implementation or an import from the source checkout.
-  for (const file of ['upgrade.js', 'storage.js', 'types.js'])
+  for (const file of ['upgrade.js', 'storage.js', 'types.js', 'execution-mode.js'])
     cpSync(join(repository, 'dist', file), join(installed, 'dist', file));
   cpSync(join(repository, 'scripts/upgrade-runner.mjs'), join(installed, 'scripts/upgrade-runner.mjs'));
   const require = createRequire(new URL('../dist/storage.js', import.meta.url));

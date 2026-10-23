@@ -59,7 +59,14 @@ test('CLI role selection regenerates the native Copilot agent and exposes the re
   assert.equal(saved.applies_to, 'next-invocation');
   assert.deepEqual(saved.installation.conflicts, []);
   assert.match(readFileSync(join(root, '.github/agents/neomind-implementer.agent.md'), 'utf8'), /model: "new-worker"/);
-  assert.match(readFileSync(join(root, '.codex/agents/neomind-developer.toml'), 'utf8'), /model = "new-worker"/);
+  for (const profile of ['implementer', 'debugger']) {
+    const text = readFileSync(join(root, `.codex/agents/neomind-${profile}.toml`), 'utf8');
+    assert.match(text, new RegExp(`^name = "neomind-${profile}"$`, 'm'));
+    // Default Codex profiles inherit the parent's model/provider. Copilot's
+    // model catalog is only applied to Codex after explicit 9router opt-in.
+    assert.doesNotMatch(text, /^model\s*=/m);
+  }
+  assert.equal(existsSync(join(root, '.codex/agents/neomind-developer.toml')), false);
   const map = cli('map');
   assert.equal(map.project.id, 'FEATURES');
   assert.deepEqual(map.nodes, []);

@@ -1,8 +1,8 @@
 # NeoMind
 
-NeoMind embeds a manager-led engineering workflow into existing projects: requirements, design, implementation, checks, immutable evidence, independent review, private project archives, and reviewed reusable knowledge. **GitHub Copilot** is the default runtime. Standard VS Code named subagents perform visible bounded assignments; the [VS Code Model Bridge](docs/vscode-bridge.md) remains optional for signed local execution attestations. Legacy Claude Code and Codex adapters remain compatibility paths.
+NeoMind embeds a manager-led engineering workflow into existing projects: requirements, design, implementation, checks, immutable evidence, independent review, private project archives, and reviewed reusable knowledge. **GitHub Copilot** is the default runtime. Copilot and Codex receive nine expert profiles for bounded assignments; the [VS Code Model Bridge](docs/vscode-bridge.md) remains optional for signed local execution attestations. The Claude Code adapter remains a compatibility path.
 
-**Development: `0.1.0-alpha.5`, paired with VS Code extension `0.5.0`.** The published [alpha.4 release](https://github.com/NeoTech-vietnam/NeoMind/releases/tag/v0.1.0-alpha.4) contains runtime alpha.4 and extension0.4.0. This branch adds native Codex profiles, observed lifecycle links, research-note export/publication, optional pinned REA MCP and scheduled upstream candidate checks. See the [agent platform guide](docs/agent-platform.md) for activation and evidence limits. Optional signed Bridge and legacy receipts retain compatibility. See [installation](docs/install-release.md), [compatibility](docs/compatibility.md), [validation](docs/validation.md), and [release criteria](docs/release.md).
+**Release: `0.1.0-alpha.5`, paired with VS Code extension `0.5.0`.** Download both from the [GitHub prerelease](https://github.com/NeoTech-vietnam/NeoMind/releases/tag/v0.1.0-alpha.5). This update adds native Codex profiles, observed lifecycle links, research-note export/publication, optional pinned REA MCP and scheduled upstream candidate checks. See the [agent platform guide](docs/agent-platform.md) for activation and evidence limits. Optional signed Bridge and legacy receipts retain compatibility. See [installation](docs/install-release.md), [compatibility](docs/compatibility.md), [validation](docs/validation.md), and [release criteria](docs/release.md).
 
 Bundled instructions, skills, documentation, CLI output, and generated records are in English. Imported upstream guidance retains its source language.
 
@@ -10,7 +10,7 @@ Bundled instructions, skills, documentation, CLI output, and generated records a
 
 - **Agent universe:** the VS Code command **NeoMind: Open Agent Map** opens a solar-system observatory with rotating textured role planets, orbiting task moons and recorded communication trails. Its mission-control inspector keeps model policy, 9router controls and signed versus reported provenance visible. [Monitor setup and data contract](docs/agent-map.md).
 - **Earth FocusSpace:** choose **Enter Earth · Focus Space** in the universe for a persistent focus countdown, a calendar agenda with suggested focus windows, current-location/city weather, original ambient sound and a visible YouTube player. [Connections and controls](docs/focus-space.md).
-- **Reusable agents and skills:** discover GitHub candidates by stars, clone an exact commit without running repository code, and bind selected instruction files to an existing NeoMind role. `neomind upstream watch` continuously checks while its process runs; inspected updates are explicitly adopted with a reviewable pin and history. Run `neomind update` after initial caching or adoption to refresh generated native agents. REA reuse currently supplies guidance; its external analysis runtime is not connected. [Upstream reuse](docs/upstream-agents.md), [REA findings](docs/research/rea-adoption.md).
+- **Reusable agents and skills:** discover GitHub candidates by stars, clone an exact commit without running repository code, and bind selected instruction files to an existing NeoMind role. `neomind upstream watch` continuously checks while its process runs; inspected updates are explicitly adopted with a reviewable pin and history. Run `neomind update` after initial caching or adoption to refresh generated native agents. Optional REA integration supplies pinned original guidance and a bounded MCP analysis adapter. [Upstream reuse](docs/upstream-agents.md), [REA setup and evidence](docs/rea.md).
 - **Per-role models and 9router:** change role models from the monitor or `neomind models set`; generated Copilot agents refresh with conflict handling. Configure a local gateway for authenticated health, model listing and inference diagnostics. [Model controls](docs/model-control.md), [9router embedding plan](docs/research/9router-integration.md).
 
 9router currently runs as a separately configured local service. Managed sidecar installation and a direct HTTP agent executor are planned. The [delivery plan](docs/neomind-delivery.md) distinguishes implemented features from those next steps.
@@ -51,7 +51,7 @@ npm run package:smoke
 In a target project, install that tarball. The following PowerShell example uses this checkout's default path; replace it when needed:
 
 ```powershell
-npm install --save-dev ./neomind-0.1.0-alpha.4.tgz
+npm install --save-dev ./neomind-0.1.0-alpha.5.tgz
 npx neomind init --name "My project" --profile software --platforms copilot
 ```
 
@@ -64,7 +64,7 @@ For a separately installed runtime, `neomind init --local --platforms copilot --
 Stop active NeoMind/MCP/native sessions first. From an initialized npm project, replace its old local package and refresh integration with one command:
 
 ```powershell
-npx neomind upgrade --to /absolute/path/neomind-0.1.0-alpha.4.tgz
+npx neomind upgrade --to /absolute/path/neomind-0.1.0-alpha.5.tgz
 ```
 
 After registry publication, `--to next`, `--to latest`, or an exact version selects a published `neomind` release. The command validates/stages the target **before** uninstalling local `neomind`/legacy `verythinker`, installs the replacement in the original dependency section, then runs the **new CLI's** conflict-aware `update`. It preserves project records and configured policies; edited integrations produce review candidates instead of being overwritten. Storage migration is a separate explicit operation.

@@ -290,7 +290,7 @@ test('standalone CLI --public-safe review persists the actual invocation and bin
   assert.equal(api.prepareProjectKnowledge(work.root, lesson.meta.id).entry.title, changed.meta.title);
 });
 
-test('installer copies the knowledge reuse skill for every adapter without a seventh Copilot agent', (t) => {
+test('installer copies the knowledge reuse skill without adding agents to the nine-profile Copilot and Codex sets', (t) => {
   const work = project(t);
   const skillPath = 'skills/neomind-knowledge-reuse/SKILL.md';
   const resource = readFileSync(new URL('../resources/skills/neomind-knowledge-reuse/SKILL.md',
@@ -320,5 +320,9 @@ test('installer copies the knowledge reuse skill for every adapter without a sev
     'neomind-researcher.agent.md', 'neomind-reviewer.agent.md', 'neomind-verifier.agent.md',
   ]);
   assert.equal(readdirSync(join(work.root, '.claude/agents')).length, 12);
-  assert.equal(readdirSync(join(work.root, '.codex/agents')).length, 12);
+  assert.deepEqual(readdirSync(join(work.root, '.codex/agents')).sort(), [
+    'neomind-architect.toml', 'neomind-coordinator.toml', 'neomind-debugger.toml',
+    'neomind-explorer.toml', 'neomind-implementer.toml', 'neomind-planner.toml',
+    'neomind-researcher.toml', 'neomind-reviewer.toml', 'neomind-verifier.toml',
+  ]);
 });

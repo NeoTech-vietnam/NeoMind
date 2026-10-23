@@ -27,7 +27,7 @@ import {
   routingConfigurationHashes,
   strongRoles,
 } from '../dist/routing.js';
-import { invokeCapability } from '../dist/tools.js';
+import { ensureToolPolicy, invokeCapability } from '../dist/tools.js';
 
 // Private fabricated validation objects exercise core guards, never native access.
 // The production App Server factory still labels injected transports as fixtures.
@@ -256,6 +256,7 @@ test('repeated repairs require a completed Sol diagnosis covering the current fe
 
 test('capability invocation derives task scope when callers omit it and blocks browser escape before installation', async (t) => {
   const work = project(t);
+  ensureToolPolicy(work.root);
   const worker = validationFixture(work, 'developer', 'running', work.task.meta.id);
   await assert.rejects(
     invokeCapability(work.root, {
