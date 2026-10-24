@@ -630,11 +630,12 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
         ['codex-routing-root', 'codex-routing-provider'].includes(entry.key ?? '');
       const retiredCodexHook = entry.kind === 'json' && entry.path === '.codex/hooks.json' &&
         entry.key === 'hooks.SessionStart';
-      const retiredRea = (entry.kind === 'block' && entry.path === '.codex/config.toml' && entry.key === 'rea') ||
-        (entry.kind === 'json' && ((entry.path === '.vscode/mcp.json' && entry.key === 'servers.rea') ||
-          (entry.path === '.mcp.json' && entry.key === 'mcpServers.rea'))) ||
+      const optionalPlugins = ['rea', 'codegraph', 'context7', 'playwright'];
+      const retiredPlugin = (entry.kind === 'block' && entry.path === '.codex/config.toml' && optionalPlugins.includes(entry.key ?? '')) ||
+        (entry.kind === 'json' && ((entry.path === '.vscode/mcp.json' && optionalPlugins.some(plugin => entry.key === `servers.${plugin}`)) ||
+          (entry.path === '.mcp.json' && optionalPlugins.some(plugin => entry.key === `mcpServers.${plugin}`)))) ||
         (entry.kind === 'file' && /^\.(?:agents|claude|github)\/skills\/reverse-engineer-anything\//.test(entry.path));
-      if (currentIds.has(id) || (!renamed && !oldServer && !duplicateServer && !retiredSquadAgent && !retiredCodexProvider && !retiredCodexHook && !retiredRea)) continue;
+      if (currentIds.has(id) || (!renamed && !oldServer && !duplicateServer && !retiredSquadAgent && !retiredCodexProvider && !retiredCodexHook && !retiredPlugin)) continue;
       const path = safePath(root, entry.path);
       const source = text(path);
       if (source === undefined) { delete manifest.files[id]; continue; }
@@ -651,11 +652,13 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
         if (entry.kind === 'file') owned = hash(source) === entry.hash;
         else if (entry.kind === 'block') {
           const state = blockState(source, { path: entry.path, key: entry.key, kind: 'block', content: '' });
+          if (retiredPlugin && !state.malformed && state.value === undefined) { delete manifest.files[id]; continue; }
           owned = !state.malformed && state.value !== undefined && hash(state.value) === entry.hash;
           if (owned) updated = source.slice(0, state.start) + source.slice(state.end);
         } else {
           const keys = entry.key!.split('.');
           const value = jsonValue(parseJSON(source), keys);
+          if (retiredPlugin && value === undefined) { delete manifest.files[id]; continue; }
           owned = value !== undefined && hash(JSON.stringify(value)) === entry.hash;
           if (owned) updated = applyEdits(source, modify(source, keys, undefined, {}));
         }

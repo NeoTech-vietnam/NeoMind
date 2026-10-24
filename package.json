@@ -1,6 +1,6 @@
 {
   "name": "neomind",
-  "version": "0.1.0-alpha.5",
+  "version": "0.1.0-alpha.8",
   "description": "NeoMind agent orchestration, engineering traceability, and reviewed project knowledge.",
   "type": "module",
   "bin": {
@@ -55,6 +55,7 @@
     "@modelcontextprotocol/sdk": "1.32.1",
     "ical.js": "2.2.1",
     "jsonc-parser": "3.3.1",
+    "smol-toml": "1.9.1",
     "yaml": "2.9.1",
     "zod": "4.6.5"
   },

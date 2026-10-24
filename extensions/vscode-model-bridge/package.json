@@ -2,8 +2,8 @@
   "name": "neomind-model-bridge",
   "displayName": "NeoMind Agent Monitor",
   "publisher": "neomind",
-  "version": "0.5.0",
-  "description": "An agent universe with Earth FocusSpace, calendar planning, weather, ambient sound, YouTube and guarded 9router model controls.",
+  "version": "0.8.0",
+  "description": "An agent universe with plug-in and MCP controls, Earth FocusSpace, calendar planning, ambient sound and guarded 9router model controls.",
   "engines": {
     "vscode": "^1.109.0"
   },
@@ -26,6 +26,7 @@
     "monitor.cjs",
     "focus-host.cjs",
     "focus-location.cjs",
+    "focus-youtube.cjs",
     "focus-space.cjs",
     "resources/monitor/monitor.js",
     "resources/monitor/monitor.css",
@@ -33,7 +34,13 @@
     "resources/monitor/focus-space.js",
     "resources/monitor/focus-space.css",
     "README.md",
-    "LICENSE.txt"
+    "LICENSE.txt",
+    "plugin-panel.cjs",
+    "resources/monitor/plugins.js",
+    "resources/monitor/plugins.css",
+    "automation-panel.cjs",
+    "resources/monitor/automation.js",
+    "resources/monitor/automation.css"
   ],
   "contributes": {
     "commands": [
@@ -48,6 +55,14 @@
       {
         "command": "neomind.monitor.open",
         "title": "NeoMind: Open Agent Map"
+      },
+      {
+        "command": "neomind.plugins.open",
+        "title": "NeoMind: Manage Plug-ins"
+      },
+      {
+        "command": "neomind.automation.open",
+        "title": "NeoMind: Open Automation Library"
       }
     ],
     "configuration": {

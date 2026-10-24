@@ -3,6 +3,8 @@ const { realpathSync, readFileSync } = require('node:fs');
 const { isAbsolute, join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { activateMonitor } = require('./monitor.cjs');
+const { activatePluginPanel } = require('./plugin-panel.cjs');
+const { activateAutomationPanel } = require('./automation-panel.cjs');
 let bridge;
 let generation = 0;
 async function disable() {
@@ -12,7 +14,7 @@ async function disable() {
 }
 function activate(context) {
   let enabling = false;
-  activateMonitor(vscode, context, async (root) => {
+  const loadRuntime = async (root) => {
     if (!vscode.workspace.isTrusted) throw new Error('Workspace Trust required.');
     const open = vscode.workspace.workspaceFolders?.some(folder =>
       folder.uri.scheme === 'file' && realpathSync.native(folder.uri.fsPath) === root);
@@ -24,7 +26,10 @@ function activate(context) {
     if (JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')).name !== 'neomind')
       throw new Error('Selected runtime is not a NeoMind package.');
     return await import(pathToFileURL(join(packageRoot, 'dist/index.js')).href);
-  });
+  };
+  activateMonitor(vscode, context, loadRuntime);
+  activatePluginPanel(vscode, context, loadRuntime);
+  activateAutomationPanel(vscode, context, loadRuntime);
   context.subscriptions.push(
     vscode.commands.registerCommand('neomind.bridge.enable', async () => {
       if (enabling) return;

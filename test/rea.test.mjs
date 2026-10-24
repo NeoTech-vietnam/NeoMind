@@ -223,8 +223,9 @@ test('revoking REA approval blocks new discovery and an already connected strict
   assert.equal(readFileSync(join(root, 'fake-calls.log'), 'utf8'), before);
 });
 
-test('Windows case aliases in public absolute targets terminate and dispatch once', { skip: process.platform !== 'win32' }, t => {
+test('Windows case aliases in public absolute targets terminate and dispatch once', { skip: process.platform !== 'win32' }, async t => {
   const { root } = project(t, false);
+  await configureRea(root, { enabled: true });
   const publicTarget = join(root, 'public-app'); mkdirSync(publicTarget);
   writeFileSync(join(publicTarget, 'main.js'), 'export const value = 1;\n');
   const alias = publicTarget.replace(/[a-z]/gi, character => character === character.toLowerCase() ? character.toUpperCase() : character.toLowerCase());

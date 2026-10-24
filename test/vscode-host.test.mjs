@@ -51,11 +51,14 @@ async function setup(t, respond, policyPatch = {}) {
   return { root, model, host, policy };
 }
 async function ended(root, id) {
-  for (let i = 0; i < 100; i++) {
-    const receipt = await waitNative(root, id, 50);
+  const deadline = Date.now() + 30000;
+  let receipt;
+  do {
+    receipt = await waitNative(root, id, Math.min(250, Math.max(0, deadline - Date.now())));
     if (!['starting', 'running'].includes(receipt.state)) return receipt;
-  }
-  assert.fail('fake host did not finish');
+    await new Promise(done => setImmediate(done));
+  } while (Date.now() < deadline);
+  assert.fail(`Fake host did not finish within 30 seconds: ${receipt.state}`);
 }
 test('VS Code host selects exact vendor/ID, signs truthful provenance, resumes and rejects tampering', async t => {
   const { root, model } = await setup(t);

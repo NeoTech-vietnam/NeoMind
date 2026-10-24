@@ -18,6 +18,8 @@ The JSON report records commands, exit status, timings, stdout/stderr, environme
 
 ## Enable the reviewed provider in a project
 
+With runtime alpha.6 / extension 0.6.0 or later matching releases, use **NeoMind: Manage Plug-ins** → CodeGraph → **Enable**, **Install pinned version**, then **Verify setup & MCP**. Verification runs the existing isolated Windows fixture checks, saves the approved launch configuration and checks the MCP catalog. Connect the desired clients afterward and restart their MCP servers. See the [plug-in control guide](plugins.md) for client targets and the distinction between saved configuration and actual client execution. Linux native CodeGraph registration remains unsupported by this adapter.
+
 Use `neomind codegraph enable --report REPORT --executable EXECUTABLE --args JSON` after reviewing the pinned package and conformance report. `EXECUTABLE` must be an existing absolute executable path. On Windows, use the provider's bundled `node.exe` with its entry script as the first argument, rather than an npm `.cmd` shim. Supply the complete argument array, including `serve`, `--mcp`, and one `--path` followed by the absolute project root. The selected executable is not downloaded automatically.
 
 For a bundled runtime, the argument array has this shape:
@@ -26,7 +28,7 @@ For a bundled runtime, the argument array has this shape:
 ["--liftoff-only", "--disable-warning=ExperimentalWarning", "C:\\tools\\codegraph\\node_modules\\@colbymchenry\\codegraph-win32-x64\\lib\\dist\\bin\\codegraph.js", "serve", "--mcp", "--path", "D:\\projects\\example"]
 ```
 
-Enabling requires all twelve checks for version `1.6.2` to pass on the current Windows platform and architecture. NeoMind stores a hash-locked report and explicit command in `.neomind/optional`, then generates native MCP entries. Existing user-owned server entries receive review candidates. Changed reports, missing executables, and incompatible launch arguments restrict the integration. `doctor` reports **supported-for-fixture** with limitations; native client discovery and invocation remain unverified.
+The manual route requires all twelve checks for version `1.6.2` to pass on the current Windows platform and architecture. NeoMind stores a hash-locked report and explicit command in `.neomind/optional`. On runtime alpha.6 or later, also approve the provider with `neomind plugins enable codegraph --project PROJECT` or the panel's **Enable** button; the legacy `codegraph enable` command does not set this separate approval. Ready, approved providers can then receive project-owned MCP entries during update, unless explicitly disconnected. Existing user-owned server entries receive review candidates. Changed reports, missing executables, and incompatible launch arguments restrict the integration. `doctor` reports **supported-for-fixture** with limitations; native client discovery and invocation remain unverified.
 
 ## Recorded Windows execution
 

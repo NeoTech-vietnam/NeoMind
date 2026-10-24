@@ -45,6 +45,11 @@ function harness(t, overrides = {}) {
   runInNewContext(hostSource, {
     module, URL, AbortController, Error,
     require(name) {
+      if (name === './focus-youtube.cjs') return { async createYouTubePlayer(options) {
+        calls.push(['youtube-player', options]);
+        if (overrides.youtubePlayer) return overrides.youtubePlayer(options);
+        return { url: 'http://127.0.0.1:34567/player/fixture-token', async close() { calls.push(['youtube-player-close']); } };
+      } };
       assert.equal(name, './focus-location.cjs');
       return { async requestBrowserLocation(options) {
         calls.push(['location', options]);
@@ -100,6 +105,47 @@ test('focus host keeps calendar and YouTube credentials in SecretStorage and ret
   assert.equal(app.storage.has('neomind.focus.calendarFeed'), false);
   assert.equal(app.sent.at(-1).data.configured, false);
   noSecrets(app.sent);
+});
+
+test('YouTube player creates a native-approved loopback document and closes on explicit stop or disposal', async t => {
+  const app = harness(t);
+  await app.send('youtube-player', { url: 'https://www.youtube.com/watch?v=M7lc1UVf-VE' });
+  const launch = app.calls.find(item => item[0] === 'youtube-player');
+  assert.equal(launch[1].url, 'https://www.youtube.com/watch?v=M7lc1UVf-VE');
+  assert.equal(app.sent.at(-1).data.url, 'http://127.0.0.1:34567/player/fixture-token');
+  await app.send('youtube-player-stop');
+  assert.equal(app.calls.filter(item => item[0] === 'youtube-player-close').length, 1);
+  await app.send('youtube-player', { url: 'https://www.youtube.com/watch?v=M7lc1UVf-VE' });
+  app.host.dispose(); await Promise.resolve();
+  assert.equal(app.calls.filter(item => item[0] === 'youtube-player-close').length, 2);
+});
+
+test('forwarded remote player origins fail with explicit browser fallback and close their helper', async t => {
+  let closed = 0;
+  const app = harness(t, { youtubePlayer: async () => ({ url: 'https://forwarded.example/player/token', async close() { closed++; } }) });
+  await app.send('youtube-player', { url: 'https://www.youtube.com/watch?v=M7lc1UVf-VE' });
+  assert.equal(closed, 1); assert.equal(app.sent.at(-1).ok, false);
+  assert.match(app.sent.at(-1).error, /remote VS Code.*Open on YouTube/);
+  assert.equal(JSON.stringify(app.sent).includes('forwarded.example'), false);
+});
+
+test('helper remote-origin refusal remains actionable while arbitrary helper failures stay private', async t => {
+  const app = harness(t, { youtubePlayer: async () => { throw new Error('Embedded YouTube is unavailable through this remote connection. Choose Open on YouTube.'); } });
+  await app.send('youtube-player', { url: 'https://www.youtube.com/watch?v=M7lc1UVf-VE' });
+  assert.match(app.sent.at(-1).error, /remote VS Code.*Open on YouTube/);
+  const privateFailure = harness(t, { youtubePlayer: async () => { throw new Error('SECRET token route/private credentials'); } });
+  await privateFailure.send('youtube-player', { url: 'https://www.youtube.com/watch?v=M7lc1UVf-VE' });
+  assert.equal(JSON.stringify(privateFailure.sent).includes('SECRET'), false);
+  assert.match(privateFailure.sent.at(-1).error, /Open on YouTube/);
+});
+
+test('stopping while the native player starts closes its late result instead of reviving it', async t => {
+  const launched = deferred(), entered = deferred(); let closed = 0;
+  const app = harness(t, { youtubePlayer: async () => { entered.resolve(); await launched.promise; return { url: 'http://127.0.0.1:34567/player/token', async close() { closed++; } }; } });
+  const starting = app.send('youtube-player', { url: 'https://www.youtube.com/watch?v=M7lc1UVf-VE' }, 'start');
+  await entered.promise; await app.send('youtube-player-stop', {}, 'stop'); launched.resolve(); await starting;
+  assert.equal(closed, 1);
+  assert.equal(app.sent.some(item => item.request_id === 'start' && item.ok), false);
 });
 
 test('focus host rejects unknown actions and malformed envelopes without running services or opening links', async t => {

@@ -454,6 +454,7 @@ function logicalManagedPath(path: string): string {
 function prohibited(path: string): boolean {
   const envTemplate = /(?:^|\/)\.env\.(?:example|sample|template)$/i.test(path);
   return (
+    /^\.neomind\/native\/reported-assignments\/issuer\.key$/i.test(logicalManagedPath(path.toLowerCase())) ||
     /(?:^|\/)(?:\.git|node_modules|cache|operations|contributions|archives|archive-intents|archive-reassessments|runs)(?:\/|$)/i.test(
       path,
     ) ||

@@ -13,6 +13,8 @@ import {
   withOperationLock,
 } from './storage.js';
 import type { ProjectRecord } from './types.js';
+import { isNativeExecutionMode } from './execution-mode.js';
+import { agentProfiles } from './agent-profiles.js';
 
 const store = '.neomind/evidence/inputs';
 const digest = /^[a-f0-9]{64}$/;
@@ -44,6 +46,7 @@ export interface EvidenceInputManifest {
   context_files: Record<string, Artifact>;
   absent_context: string[];
   configuration_hashes: Record<string, string>;
+  reported_identity?: { invocation_id: string; workflow_id: string; role: string; assurance: 'unsigned-local-assignment' };
 }
 export interface EvidenceInputExpectations {
   files: Record<string, string>;
@@ -84,6 +87,7 @@ function excludeEphemeral(path: string): void {
     ) ||
     /(?:^|\/)\.git(?:\/|$)/.test(path) ||
     /(?:^|\/)private-key\.pem$/.test(path)
+    || /^\.(?:neomind|taskforces|verythinker)\/native\/reported-assignments\/issuer\.key$/i.test(path)
   )
     throw new Error(
       `Evidence capture excludes private runtime, recursive input storage, or raw sessions: ${path}`,
@@ -166,9 +170,11 @@ function configurationInputs(
   root: string,
   invocationId?: string | null,
   extras: string[] = [],
+  records: ProjectRecord[] = [],
 ): {
   paths: string[];
   absent: string[];
+  reported_identity?: EvidenceInputManifest['reported_identity'];
 } {
   const defaults = [
     '.neomind/config.json',
@@ -217,7 +223,21 @@ function configurationInputs(
         throw new Error(`Evidence tool dependency lock is missing or changed: ${path}`);
       paths.add(path);
     }
-  if (invocationId) {
+  let reported_identity: EvidenceInputManifest['reported_identity'];
+  if (invocationId && /^local-report-[a-f0-9]{40}$/.test(invocationId)) {
+    const path = `.neomind/native/reported-assignments/${invocationId}.json`;
+    const actor = JSON.parse(bytesAt(root, path).toString('utf8'));
+    const workflow = getRecord(root, String(actor.workflow_id));
+    if (actor.schema_version !== 1 || actor.id !== invocationId || actor.state !== 'claimed' ||
+        actor.assurance !== 'unsigned-local-assignment' ||
+        !agentProfiles.some(profile => profile.id === actor.profile_id && (profile.roles as readonly string[]).includes(actor.role)) ||
+        workflow.meta.data.kind !== 'manager-workflow' || !isNativeExecutionMode(workflow.meta.data.execution_mode) ||
+        workflow.meta.data.routing_required === true || !records.some(record => record.meta.type === 'task' &&
+          record.meta.data.workflow_id === actor.workflow_id && (!actor.task_id || actor.task_id === record.meta.id)))
+      throw new Error('Evidence local assignment identity must be claimed and belong to the captured native task scope.');
+    paths.add(path);
+    reported_identity = { invocation_id: invocationId, workflow_id: actor.workflow_id, role: actor.role, assurance: 'unsigned-local-assignment' };
+  } else if (invocationId) {
     if (!/^[a-f0-9-]{36}$/i.test(invocationId))
       throw new Error('Evidence execution invocation ID is invalid.');
     paths.add(`.neomind/native/receipts/${invocationId}.json`);
@@ -226,7 +246,7 @@ function configurationInputs(
       paths.add(path.replaceAll('\\', '/'));
   }
   for (const path of paths) excludeEphemeral(path);
-  return { paths: [...paths].sort(), absent };
+  return { paths: [...paths].sort(), absent, ...(reported_identity ? { reported_identity } : {}) };
 }
 export function captureEvidenceInputs(
   root: string,
@@ -284,7 +304,8 @@ export function captureEvidenceInputs(
     for (const id of Object.keys(input.record_fingerprints ?? {}))
       if (!manifest.records[id])
         throw new Error(`Evidence capture omits required engineering record: ${id}`);
-    const context = configurationInputs(root, input.invocation_id, input.additional_files);
+    const context = configurationInputs(root, input.invocation_id, input.additional_files, input.records);
+    if (context.reported_identity) manifest.reported_identity = context.reported_identity;
     manifest.absent_context = context.absent;
     for (const path of context.paths)
       manifest.context_files[path] = put(root, bytesAt(root, path), budget);
@@ -352,6 +373,23 @@ export function validateEvidenceInputs(
   for (const [path, checksum] of Object.entries(value.configuration_hashes)) {
     canonical(path);
     if (checksum !== 'absent') expectedHash(checksum);
+  }
+  const reportedPaths = Object.keys(value.context_files).filter(path => /^\.neomind\/native\/reported-assignments\/local-report-[a-f0-9]{40}\.json$/.test(path));
+  if (value.reported_identity || reportedPaths.length) {
+    const identity = value.reported_identity;
+    if (!identity || !/^local-report-[a-f0-9]{40}$/.test(identity.invocation_id) || identity.assurance !== 'unsigned-local-assignment')
+      throw new Error('Captured local assignment identity is missing or invalid.');
+    const path = `.neomind/native/reported-assignments/${identity.invocation_id}.json`, artifact = value.context_files[path];
+    if (!artifact || reportedPaths.length !== 1) throw new Error('Captured local assignment identity does not match its public metadata artifact.');
+    const actor = JSON.parse(bytesAt(root, artifact.blob_path).toString('utf8'));
+    if (actor.schema_version !== 1 || actor.id !== identity.invocation_id || actor.state !== 'claimed' ||
+        actor.assurance !== identity.assurance || actor.workflow_id !== identity.workflow_id || actor.role !== identity.role ||
+        !agentProfiles.some(profile => profile.id === actor.profile_id && (profile.roles as readonly string[]).includes(actor.role)) ||
+        !Object.values(value.records).some(item => {
+          const record = recordFromBytes(bytesAt(root, item.blob_path), item.path);
+          return record.meta.type === 'task' && record.meta.data.workflow_id === identity.workflow_id &&
+            (!actor.task_id || actor.task_id === record.meta.id) && record.meta.data.routing_required !== true;
+        })) throw new Error('Captured local assignment identity does not own the native task scope.');
   }
   for (const [id, item] of Object.entries(value.records)) {
     const record = recordFromBytes(bytesAt(root, item.blob_path), canonical(item.path));

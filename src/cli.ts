@@ -15,6 +15,11 @@ import {
   withOperationLock,
 } from './storage.js';
 import { rebuildIndex, searchMemory } from './indexing.js';
+import { registerProcedure, listProcedures, discoverProcedureScripts, resolveProcedure,
+  reviewProcedure, runProcedure, qualifyProcedure, suspendProcedure } from './procedures.js';
+import { prepareWork, rebuildProcedureIndex } from './procedure-reuse.js';
+import { runPreparedWork } from './work-runtime.js';
+import { openAssignment, assignmentContext, assignmentProgress, assignmentResult } from './assignment-runtime.js';
 import {
   acceptTask,
   assignmentReport,
@@ -68,6 +73,9 @@ import { reportAgentActivity } from './agent-activity.js';
 import { observeNativeHook, readNativeHooks } from './agent-hooks.js';
 import { readCodexRouting } from './codex-routing.js';
 import { configureRea, reaStatus, probeRea } from './rea.js';
+import { readPluginControlStatus, setPluginEnabled, installPlugin, probePlugin } from './plugin-control.js';
+import { readPluginConnections, setPluginConnection, type PluginConnectionClient } from './plugin-connections.js';
+import { homedir } from 'node:os';
 import { cornellResearchSchema, compileCornellResearch, prepareCornellResearch, readCornellDestination,
   configureCornellDestination, prepareCornellExport, applyCornellExport } from './cornell-workflow.js';
 import { prepareCornellPublication, publishCornellExport } from './cornell-publication.js';
@@ -113,6 +121,8 @@ Usage: neomind <command> [action] [id] [options]
   activity hooks | activity hook --provider codex|copilot --event EVENT (hook JSON on stdin)
   codex status | codex configure --data '{"mode":"inherit|9router"}' (regenerate integration)
   rea status|configure|probe --data JSON (explicit pinned optional MCP integration)
+  plugins status|enable|disable|install|probe PLUGIN
+  plugins connections|connect|disconnect PLUGIN --client codex|copilot-vscode|copilot-cli [--mcp-file FILE]
   cornell compile|prepare --data-file FILE (validated research input and reusable recipe)
   cornell destination|configure|export-plan|export-apply|publish-plan|publish --data JSON
   models status | models set --role ROLE --model MODEL [--provider PROVIDER] [--effort low|medium|high]
@@ -124,6 +134,10 @@ Usage: neomind <command> [action] [id] [options]
   migrate (move .taskforces or .verythinker storage to .neomind; never merges or overwrites)
   note create --data JSON | note revise ID --data JSON | note validate ID
   recipe list|resolve ID|prepare --data JSON|run ID|revise ID --data JSON
+  procedure discover|list|show ID|register|review|run|qualify|suspend ID --data-file FILE
+  procedure index (rebuild disposable procedure search index)
+  work prepare|run --data-file FILE (match requests; run requires eligible compatible procedure and explicit effects)
+  assignment open|context|progress|result --data-file FILE (private typed assignment context; keep credentials out of reports)
   capability describe ROLE|resolve --data JSON|invoke --data JSON
   workspace write --data JSON (actual Developer invocation and reviewed task scope required)
   codegraph enable --report FILE --executable FILE --args JSON
@@ -182,6 +196,8 @@ async function main(): Promise<void> {
       'base-url',
       'api-key-env',
       'catalog-provider',
+      'client',
+      'mcp-file',
     ].map((k) => [k, { type: 'string' }]),
   );
   for (const key of ['json', 'help', 'version', 'impact', 'generalization-review', 'public-safe', 'local'])
@@ -234,6 +250,68 @@ async function main(): Promise<void> {
     return;
   }
   switch (command) {
+    case 'procedure': {
+      const input = data();
+      if (action === 'list') result = listProcedures(root);
+      else if (action === 'discover') result = discoverProcedureScripts(root);
+      else if (action === 'show' || action === 'resolve') result = resolveProcedure(root, needed(id, 'PROCEDURE_ID'), input.version as string | undefined);
+      else if (action === 'index') result = rebuildProcedureIndex(root);
+      else if (action === 'register') result = registerProcedure(root, input as Parameters<typeof registerProcedure>[1]);
+      else if (action === 'review') result = reviewProcedure(root, { ...input, procedure_id: id ?? input.procedure_id } as Parameters<typeof reviewProcedure>[1]);
+      else if (action === 'run') result = await runProcedure(root, { ...input, procedure_id: id ?? input.procedure_id } as Parameters<typeof runProcedure>[1]);
+      else if (action === 'qualify') result = qualifyProcedure(root, { ...input, procedure_id: id ?? input.procedure_id } as Parameters<typeof qualifyProcedure>[1]);
+      else if (action === 'suspend') result = suspendProcedure(root, { ...input, procedure_id: id ?? input.procedure_id } as Parameters<typeof suspendProcedure>[1]);
+      else throw new Error('Use procedure discover|list|show|register|review|run|qualify|suspend|index.');
+      break;
+    }
+    case 'work': {
+      if (action === 'prepare') result = prepareWork(root, data() as unknown as Parameters<typeof prepareWork>[1]);
+      else if (action === 'run') result = await runPreparedWork(root, data() as unknown as Parameters<typeof runPreparedWork>[1]);
+      else throw new Error('Use work prepare|run --data-file FILE.');
+      break;
+    }
+    case 'assignment': {
+      const input = data();
+      if (action === 'open') result = openAssignment(root, input as unknown as Parameters<typeof openAssignment>[1]);
+      else if (action === 'context') result = assignmentContext(root, input.credential as Parameters<typeof assignmentContext>[1]);
+      else if (action === 'progress') result = assignmentProgress(root, input.credential as Parameters<typeof assignmentProgress>[1], input.progress as Parameters<typeof assignmentProgress>[2]);
+      else if (action === 'result') result = assignmentResult(root, input.credential as Parameters<typeof assignmentResult>[1], input.result as Parameters<typeof assignmentResult>[2]);
+      else if (action === 'report') {
+        if (!Array.isArray(input.target_ids) || input.target_ids.some((target) => typeof target !== 'string') ||
+            (input.role !== undefined && typeof input.role !== 'string') ||
+            (input.covered_invocation_ids !== undefined && (!Array.isArray(input.covered_invocation_ids) ||
+              input.covered_invocation_ids.some((target) => typeof target !== 'string'))))
+          throw new Error('Assignment report needs string target_ids, optional role and optional covered_invocation_ids.');
+        result = assignmentReport(root, {
+          target_ids: input.target_ids as string[], invocation_id: needed(input.invocation_id, 'Assignment invocation_id'),
+          role: input.role as string | undefined, covered_invocation_ids: input.covered_invocation_ids as string[] | undefined,
+          body: needed(body(), '--body'),
+        });
+      } else throw new Error('Use assignment open|context|progress|result|report.');
+      break;
+    }
+    case 'plugins': {
+      const targets = { codex: resolve(root, '.codex/config.toml'),
+        copilotCli: resolve(homedir(), '.copilot/mcp-config.json'),
+        ...(o['mcp-file'] && o.client === 'copilot-vscode' ? { copilotVscode: resolve(String(o['mcp-file'])) } : {}),
+        ...(o['mcp-file'] && o.client === 'copilot-cli' ? { copilotCli: resolve(String(o['mcp-file'])) } : {}) };
+      if (action === 'status') result = readPluginControlStatus(root);
+      else if (action === 'connections') result = readPluginConnections(root, targets);
+      else if (action === 'connect' || action === 'disconnect') {
+        const client = needed(o.client, '--client');
+        if (!['codex', 'copilot-vscode', 'copilot-cli'].includes(client)) throw new Error('Unknown plug-in client.');
+        if (client === 'copilot-vscode' && !o['mcp-file']) throw new Error('Select the intended VS Code profile with --mcp-file.');
+        result = setPluginConnection(root, { plugin: needed(id, 'PLUGIN'), client: client as PluginConnectionClient, connected: action === 'connect' }, targets);
+      } else if (action === 'enable' || action === 'disable') {
+        const status = setPluginEnabled(root, needed(id, 'PLUGIN'), action === 'enable');
+        result = { status, integration: updateProject(root), client_reload_required: true,
+          note: 'External MCP connections have separate connect/disconnect controls.' };
+      } else if (action === 'install' || action === 'probe') {
+        result = { status: await (action === 'install' ? installPlugin : probePlugin)(root, needed(id, 'PLUGIN')),
+          integration: updateProject(root) };
+      } else throw new Error('Use plugins status|enable|disable|install|probe|connections|connect|disconnect.');
+      break;
+    }
     case 'validate': result = validatePlatform(root); break;
     case 'codex': {
       if (action === 'status') result = readCodexRouting(root);
@@ -450,23 +528,6 @@ async function main(): Promise<void> {
           body(),
         );
       } else throw new Error('Unknown record action.');
-      break;
-    }
-    case 'assignment': {
-      if (action !== 'report') throw new Error('Unknown assignment action.');
-      const input = data();
-      if (!Array.isArray(input.target_ids) || input.target_ids.some((id) => typeof id !== 'string') ||
-          (input.role !== undefined && typeof input.role !== 'string') ||
-          (input.covered_invocation_ids !== undefined && (!Array.isArray(input.covered_invocation_ids) ||
-            input.covered_invocation_ids.some((id) => typeof id !== 'string'))))
-        throw new Error('Assignment report needs string target_ids, optional role and optional covered_invocation_ids.');
-      result = assignmentReport(root, {
-        target_ids: input.target_ids as string[],
-        invocation_id: needed(input.invocation_id, 'Assignment invocation_id'),
-        role: input.role as string | undefined,
-        covered_invocation_ids: input.covered_invocation_ids as string[] | undefined,
-        body: needed(body(), '--body'),
-      });
       break;
     }
     case 'task': {

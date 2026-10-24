@@ -24,6 +24,7 @@ import { getRecord, loadRecords, updateRecord, hash, safePath } from './storage.
 import { existsSync, readFileSync } from 'node:fs';
 import { resolveCapabilities, type ProviderId } from './tools.js';
 import { lightweightRun } from './lightweight.js';
+import { prepareWork } from './procedure-reuse.js';
 
 export interface ManagedRunInput extends WorkflowInput {
   workflow_id?: string;
@@ -234,6 +235,16 @@ export function nativeRun(root: string, input: ManagedRunInput): ManagedRunResul
   const delegation = client === 'codex' ? agentProfiles.filter(profile => profile.id !== 'coordinator')
     .map(profile => `neomind-${profile.id} (${profile.name}): ${profile.duty}`).join(' ') : agentDelegation;
   const dispatch = client === 'codex' ? 'Codex spawn_agent tool by exact agent_type' : 'standard VS Code agent tool by exact display name';
+  let reuseBrief: string;
+  try {
+    const reuse = prepareWork(root, { request: (originals as string[]).join('\n'),
+      request_id: typeof parent.meta.data.request_id === 'string' ? parent.meta.data.request_id : parent.meta.id,
+      environment: { client }, scope: { mode, assurance: String(parent.meta.data.assurance ?? ''),
+        network: policyAllowsRemote(root), publication: false } });
+    reuseBrief = `${reuse.manager_brief}\n${reuse.next_action}`;
+  } catch (error) {
+    reuseBrief = `Reuse inspection failed: ${error instanceof Error ? error.message : String(error)}. This is an integrity/availability issue, not a successful no-match. Continue the saved expert workflow without automatic procedure reuse; repair the index explicitly with procedure index after inspecting durable sources.`;
+  }
   const prompt = `Continue directly as NeoMind Coordinator Agent for the existing NeoMind increment ${parent.meta.id} in ${mode} mode. This is the returned manager handoff.prompt and workflow: do not call manager_run again or launch NeoMind Coordinator Agent (yourself). Delegate bounded assignments through the ${dispatch}: ${delegation} Use the specialists applicable to the authorized scope; record at least two separate specialist contributions. Manager may coordinate, consolidate and research, but must never perform production implementation or independent self-review. Wait for real delegate results and collect each actual invocation ID and seven-section assignment_report ID before consolidation; task producers also submit their task work record. Inline role impersonation, a proposed handoff or manager-authored specialist reports are not executed delegation. If a delegate cannot launch or its result/report is missing, report the blocker and next action rather than substituting inline work.
 For engineering changes preserve every ASPICE/V-model gate: refine measurable requirements, define and independently review design and verification plans, dispatch bounded implementation tasks, collect real check evidence with immutable input capture, obtain an independent acceptance review by a different owner and invocation, write substantive seven-section documentation, and curate qualified knowledge. Analysis/research-only requests still require bounded specialist contributions and a meaningful saved Cornell note with sources, findings, rationale, limitations and applicable verification; do not invent production changes, builds, code reviews or SIL runs. Full engineering gates remain unchanged; any unsatisfied closure gates must remain explicit blockers, not be bypassed.
 Resume this workflow under the current automation.json network_policy without changing its saved execution mode or publication route. New native policies default to local-only and automatic_pr: false; a missing network_policy retains legacy remote behavior. Under local-only make zero remote discovery, publication or archive requests; explicit remote tools reject. Inspect actual workspace evidence and local Cornell notes, search verified cache through knowledge_search, and save required knowledge_research inside the project before planning. Scope a local no-match explicitly as 'upstream not searched'; never describe a 401 or other failed request as no-match. Remote failures block that remote operation, not authorized local research; integrity failures still block reuse. Save research and Cornell locally and report remote work as deferred. Later publication requires user opt-in to remote-enabled plus independent current public-safety review and sanitization; automatic publication additionally requires automatic_pr: true. This deferral never waives checks, review or acceptance.
@@ -244,6 +255,10 @@ This mode is an unsigned native report: use honest reported invocation IDs for e
   return {
     workflow: current,
     handoff: { agent: client === 'codex' ? 'neomind-coordinator' : coordinatorAgentName,
-      prompt: `${client === 'codex' ? 'Read .neomind/guides/codex-native.md. Reuse existing source, local knowledge and applicable reviewed skills before new implementation.\n' : ''}${prompt}\n\n${nativeActivityInstructions}` },
+      prompt: `${client === 'codex' ? 'Read .neomind/guides/codex-native.md. Reuse existing source, local knowledge and applicable reviewed skills before new implementation.\n' : ''}${prompt}\n\nReuse assessment (advisory; retain the saved lifecycle):\n${reuseBrief}\n\n${nativeActivityInstructions}` },
   };
+}
+
+function policyAllowsRemote(root: string): boolean {
+  return readAutomationPolicy(root).network_policy === 'remote-enabled';
 }

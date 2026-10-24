@@ -95,7 +95,7 @@ function harness(saved = {}, options = {}) {
   for (const id of [...ids, 'enter-focus-space']) { const node = new Element(); node.id = id; elements.set(id, node); document.body.append(node); }
   for (const [id, value] of Object.entries({ 'fs-agenda-range': '1', 'fs-playlist': 'orbital', 'fs-volume': '35', 'fs-duration': '25' })) elements.get(id).value = value;
   const window = new Element('window');
-  Object.assign(window, { document, navigator: {}, innerWidth: 1280, innerHeight: 800, location: { origin: 'https://panel.example' }, matchMedia: () => ({ matches: options.reduced !== false }),
+  Object.assign(window, { document, navigator: {}, innerWidth: 1280, innerHeight: 800, location: { origin: options.origin ?? 'https://panel.example' }, matchMedia: () => ({ matches: options.reduced !== false }),
     setTimeout: (fn, delay) => { const id = ++timerId; timeouts.set(id, { fn, at: now + delay }); return id; }, clearTimeout: id => timeouts.delete(id),
     setInterval: (fn, delay) => { const id = ++timerId; intervals.set(id, { fn, delay }); return id; }, clearInterval: id => intervals.delete(id) });
   const vscode = { getState: () => structuredClone(state), setState: value => { state = structuredClone(value); }, postMessage: value => messages.push(structuredClone(value)) };
@@ -211,28 +211,56 @@ test('ordinary requests time out and cancel at 20 seconds while interactive prom
   app.ui.destroy(); assert.equal(app.timeouts.size, 0);
 });
 
-test('YouTube stays unloaded until explicit selection, reports embed errors, and stops when the view closes', async () => {
+test('YouTube stays unloaded until explicit selection and closes its native player when the view closes', async () => {
   const app = harness({ focusSpace: { youtubeUrl: 'https://youtu.be/M7lc1UVf-VE' } }); app.ui.open();
   app.answer(app.messages[0], { youtubeConfigured: true }); await app.flush();
   assert.equal(app.document.head.children.length, 0);
   assert.equal(app.elements.get('fs-youtube-player').children.length, 0, 'Restoring preferences never loads remote media');
-  let callbacks, destroyed = 0;
-  app.window.YT = { Player: class { constructor(_frame, options) { callbacks = options.events; } destroy() { destroyed++; } } };
   app.elements.get('fs-youtube-form').emit('submit'); await app.flush();
+  const player = app.messages.at(-1); assert.equal(player.action, 'youtube-player');
+  app.answer(player, { url: 'http://127.0.0.1:34567/player/fixture-token' }); await app.flush();
   const frame = app.elements.get('fs-youtube-player').children[0];
   assert.equal(frame.tagName, 'IFRAME');
-  assert.match(frame.src, /^https:\/\/www\.youtube-nocookie\.com\/embed\//);
-  assert.equal(new URL(frame.src).searchParams.get('autoplay'), '0');
-  callbacks.onError({ data: 153 });
-  assert.match(app.elements.get('fs-youtube-status').textContent, /Open on YouTube/);
+  assert.match(frame.src, /^http:\/\/127\.0\.0\.1:\d+\/player\//);
   app.elements.get('fs-youtube-open').click();
   const open = app.messages.at(-1); assert.equal(open.action, 'youtube-open'); assert.equal(open.url, 'https://www.youtube.com/watch?v=M7lc1UVf-VE');
   app.answer(open, {}); await app.flush();
-  app.ui.back(); assert.equal(destroyed, 1); assert.equal(app.elements.get('fs-youtube-player').children.length, 0);
+  app.ui.back(); assert.equal(app.messages.some(item => item.action === 'youtube-player-stop'), true); assert.equal(app.elements.get('fs-youtube-player').children.length, 0);
   app.ui.destroy();
 });
 
-test('original ambience starts only by user action, persists volume, and releases audio when hidden or destroyed', async () => {
+test('a delayed local player response cannot recreate YouTube after returning to Universe', async () => {
+  const app = harness({ focusSpace: { youtubeUrl: 'https://youtu.be/M7lc1UVf-VE' } }); app.ui.open(); app.answer(app.messages[0], {}); await app.flush();
+  app.elements.get('fs-youtube-form').emit('submit'); await app.flush(); const request = app.messages.at(-1);
+  app.ui.back(); app.answer(request, { url: 'http://127.0.0.1:34567/player/fixture-token' }); await app.flush();
+  assert.equal(app.elements.get('fs-youtube-player').children.length, 0);
+  assert.equal(app.document.body.dataset.view, 'universe'); app.ui.destroy();
+});
+
+test('opaque VS Code origin requests a real HTTP player document instead of loading an unidentified YouTube iframe', async () => {
+  const app = harness({ focusSpace: { youtubeUrl: 'https://youtu.be/M7lc1UVf-VE' } }, { origin: 'vscode-webview://fixture-window' }); app.ui.open();
+  app.answer(app.messages[0], {}); await app.flush();
+  app.elements.get('fs-youtube-form').emit('submit'); await app.flush();
+  const request = app.messages.at(-1);
+  assert.equal(request.action, 'youtube-player', 'The native host must create a genuine HTTP-origin player document');
+  assert.equal(request.url, 'https://www.youtube.com/watch?v=M7lc1UVf-VE');
+  assert.equal(app.elements.get('fs-youtube-player').children.length, 0, 'No broken custom-origin YouTube iframe is mounted');
+  app.answer(request, { url: 'http://127.0.0.1:34567/player/fixture-token' }); await app.flush();
+  const frame = app.elements.get('fs-youtube-player').children[0];
+  assert.equal(frame.src, 'http://127.0.0.1:34567/player/fixture-token');
+  frame.contentWindow = {};
+  app.window.emit('message', { origin: 'https://untrusted.example', source: frame.contentWindow, data: { type: 'neomind-youtube', event: 'error', code: 153 } });
+  assert.equal(app.elements.get('fs-youtube-player').children.length, 1, 'Unrelated origins cannot affect the player');
+  app.window.emit('message', { origin: 'http://127.0.0.1:34567', source: {}, data: { type: 'neomind-youtube', event: 'error', code: 153 } });
+  assert.equal(app.elements.get('fs-youtube-player').children.length, 1, 'Unrelated frames cannot affect the player');
+  app.window.emit('message', { origin: 'http://127.0.0.1:34567', source: frame.contentWindow, data: { type: 'neomind-youtube', event: 'error', code: 153 } });
+  assert.match(app.elements.get('fs-youtube-status').textContent, /153.*Open on YouTube/);
+  assert.equal(app.elements.get('fs-youtube-player').children.length, 0);
+  assert.equal(app.messages.at(-1).action, 'youtube-player-stop');
+  app.ui.destroy();
+});
+
+test('original ambience starts only by user action, persists volume, continues while hidden and releases audio when destroyed', async () => {
   const app = harness(); app.ui.open(); app.answer(app.messages[0], {}); await app.flush();
   let opened = 0, closed = 0;
   const audioNode = () => ({ connect() {}, start() {}, stop() {}, frequency: { value: 0 }, gain: { value: 0, setTargetAtTime() {} }, Q: { value: 0 } });
@@ -252,12 +280,35 @@ test('original ambience starts only by user action, persists volume, and release
   app.elements.get('fs-volume').value = '63'; app.elements.get('fs-volume').emit('input');
   assert.equal(app.state().focusSpace.volume, .63);
   app.document.hidden = true; app.document.body.emit('visibilitychange'); await app.flush();
-  assert.equal(closed, 1); assert.equal(app.elements.get('fs-audio-toggle').getAttribute('aria-pressed'), 'false');
+  assert.equal(closed, 0); assert.equal(app.elements.get('fs-audio-toggle').getAttribute('aria-pressed'), 'true');
   app.document.hidden = false; app.elements.get('fs-playlist').value = 'shore'; app.elements.get('fs-playlist').emit('change');
-  app.elements.get('fs-audio-toggle').click(); await app.flush();
+  await app.flush();
   assert.equal(opened, 2); assert.equal(app.state().focusSpace.playlist, 'shore');
   app.ui.destroy(); await app.flush(); assert.equal(closed, 2);
   assert.equal(app.timeouts.size, 0);
+});
+
+test('user-started ambience survives animated navigation to Universe with pause and volume controls', async () => {
+  const app = harness({}, { reduced: false }); app.ui.open(); await app.advance(1300); app.answer(app.messages[0], {}); await app.flush();
+  let closed = 0, opened = 0;
+  const audioNode = () => ({ connect() {}, start() {}, stop() {}, frequency: { value: 0 }, gain: { value: 0, setTargetAtTime() {} }, Q: { value: 0 } });
+  app.window.AudioContext = class {
+    constructor() { opened++; this.sampleRate = 8_000; this.currentTime = 0; this.destination = {}; }
+    resume() { return Promise.resolve(); }
+    close() { closed++; return Promise.resolve(); }
+    createGain() { return audioNode(); } createOscillator() { return audioNode(); } createBufferSource() { return audioNode(); } createBiquadFilter() { return audioNode(); }
+    createBuffer(_channels, size) { return { getChannelData: () => new Float32Array(size) }; }
+  };
+  app.elements.get('fs-audio-toggle').click(); await app.flush(); assert.equal(opened, 1);
+  app.ui.back(); assert.equal(closed, 0, 'Starting the morph transition must not close user-started ambience');
+  await app.advance(1300); assert.equal(closed, 0, 'Committing the Universe view must retain ambience');
+  assert.equal(app.elements.get('fs-background-audio').hidden, false);
+  app.elements.get('fs-background-volume').value = '42'; app.elements.get('fs-background-volume').emit('input');
+  assert.equal(app.state().focusSpace.volume, .42);
+  assert.equal(app.elements.get('fs-volume').value, '42');
+  app.elements.get('fs-background-toggle').click(); await app.flush(); assert.equal(closed, 1);
+  app.elements.get('fs-background-toggle').click(); await app.flush(); assert.equal(opened, 2);
+  app.ui.destroy(); await app.flush(); assert.equal(closed, 2, 'Panel destruction still closes audio');
 });
 
 test('Earth covers the current scene before revealing FocusSpace and returns without changing the monitor camera', async () => {

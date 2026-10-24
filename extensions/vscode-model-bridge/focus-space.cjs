@@ -1,6 +1,7 @@
 /** Original local FocusSpace shell. Dynamic provider data is rendered as text by its controller. */
 function renderFocusSpace() {
   return `<div id="fs-transition" class="fs-transition" aria-hidden="true" hidden><div class="fs-portal-globe"><div class="fs-earth"><i class="fs-continents"></i><i class="fs-clouds"></i></div></div></div>
+<aside id="fs-background-audio" class="fs-background-audio" aria-label="Background ambient sound" hidden><div><strong id="fs-background-track">Ambient sound</strong><p id="fs-background-status" role="status" aria-live="polite">Paused</p></div><button id="fs-background-toggle" class="fs-button fs-small" type="button" aria-pressed="false">▶ Play ambience</button><label for="fs-background-volume">Volume</label><input id="fs-background-volume" type="range" min="0" max="100" value="35"><button id="fs-background-focus" class="fs-button fs-small fs-ghost" type="button">Open FocusSpace</button></aside>
 <section id="focus-space" class="focus-space" aria-label="NeoMind FocusSpace" tabindex="-1">
   <div class="fs-sky" aria-hidden="true"><span class="fs-nebula"></span><span class="fs-horizon"></span></div>
   <header class="fs-header"><button id="fs-back" class="fs-button fs-ghost" type="button">← <span>Back to Universe</span></button><div class="fs-wordmark"><span class="fs-orbit-mark" aria-hidden="true">◉</span><div>NeoMind <strong>FocusSpace</strong><small>A little space for your next idea.</small></div></div><time id="fs-date"></time></header>

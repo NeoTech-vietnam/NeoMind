@@ -44,6 +44,18 @@ function bridge(scenario = 'success') {
     }),
   });
 }
+async function terminal(native, root, id) {
+  const deadline = Date.now() + 15000;
+  let receipt;
+  do {
+    receipt = await native.wait(root, id, Math.min(250, Math.max(0, deadline - Date.now())));
+    if (!['starting', 'running'].includes(receipt.state)) return receipt;
+    // A bounded wait reports an observation, not a terminal-state guarantee.
+    // Yield even if no owned session is currently registered during fallback.
+    await new Promise(done => setImmediate(done));
+  } while (Date.now() < deadline);
+  assert.fail(`Native fixture did not settle within 15 seconds: ${receipt.state}`);
+}
 test('Copilot routing never installs Codex, including mixed-platform projects', async (t) => {
   for (const platforms of [['copilot'], ['codex', 'claude', 'copilot']]) {
     const root = project(t);
@@ -82,7 +94,7 @@ test('native receipts bind acknowledged model, completion and invocation identit
     /Protocol fixture/,
   );
   assert.match(routingProblems(root, 'manager', running.id).join(' '), /not completed/);
-  const completed = await native.wait(root, running.id, 1000);
+  const completed = await terminal(native, root, running.id);
   assert.equal(completed.state, 'completed');
   assert.equal(completed.inference_completed, true);
   assert.match(
@@ -130,7 +142,7 @@ test('unavailable worker model blocks rather than retrying the same model as fal
       role: 'developer',
       prompt: 'Implement a prescribed bounded edit.',
     });
-    const completed = await native.wait(root, started.id, 1000);
+    const completed = await terminal(native, root, started.id);
     assert.equal(completed.state, scenario === 'unavailable' ? 'blocked' : 'failed');
     assert.equal(completed.inference_completed, false);
     assert.equal(completed.requested_model, 'gpt-5.4');
@@ -156,7 +168,7 @@ test('worker fallback follows dynamically configured alternatives only after nat
       role: 'developer',
       prompt: 'Implement a bounded change.',
     });
-    const completed = await native.wait(root, started.id, 1000);
+    const completed = await terminal(native, root, started.id);
     assert.equal(completed.state, 'completed');
     assert.equal(completed.confirmed_model, 'gemini-2.5-flash-lite');
     assert.equal(completed.fallback_evidence.model, 'gpt-5.4');
@@ -171,7 +183,7 @@ test('native rerouting and configuration mutation invalidate completion', async 
       role: 'reviewer',
       prompt: 'Review the bounded result.',
     });
-    const completed = await native.wait(root, started.id, 5000);
+    const completed = await terminal(native, root, started.id);
     assert.equal(completed.state, 'blocked');
     assert.equal(completed.inference_completed, false);
     assert.ok(routingProblems(root, 'reviewer', completed.id).length);
@@ -237,7 +249,7 @@ test('signed receipt tampering and post-completion configuration changes are rej
     role: 'reviewer',
     prompt: 'Inspect independent review evidence.',
   });
-  const completed = await native.wait(root, started.id, 1000);
+  const completed = await terminal(native, root, started.id);
   const path = join(root, completed.receipt_path),
     source = readFileSync(path, 'utf8');
   const forged = JSON.parse(source);
@@ -262,8 +274,7 @@ test('resume creates a new receipt and preserves the interrupted invocation', as
     prompt: 'Implement a prescribed change.',
     task_id: task.meta.id,
   });
-  await native.wait(root, first.id, 1000);
-  await new Promise((done) => setTimeout(done, 50));
+  await terminal(native, root, first.id);
   const second = await native.resume(root, first.id, {
     prompt: 'Continue with fresh task evidence.',
     request_id: 'resume-1',
@@ -271,7 +282,7 @@ test('resume creates a new receipt and preserves the interrupted invocation', as
   assert.notEqual(first.id, second.id);
   assert.equal(second.prior_invocation_id, first.id);
   assert.equal(second.native_thread_id, first.native_thread_id);
-  assert.equal((await native.wait(root, second.id, 1000)).state, 'completed');
+  assert.equal((await terminal(native, root, second.id)).state, 'completed');
   assert.equal(readInvocation(root, first.id).state, 'completed');
 });
 test('protocol timeout records a resumable blocker without claiming inference', async (t) => {
@@ -291,7 +302,7 @@ test('native tool preapproval is scoped to the approved role gateway and preserv
     role: 'reviewer',
     prompt: 'Inspect source and submit independent review.',
   });
-  const completed = await native.wait(root, started.id, 1000),
+  const completed = await terminal(native, root, started.id),
     observed = JSON.parse(completed.output);
   assert.equal(observed.approvalPolicy, null);
   assert.equal(observed.sandbox, 'read-only');
@@ -321,7 +332,7 @@ test('native scoped editing capability is exposed only to a new Developer invoca
     role: 'developer',
     prompt: 'Observe task editing scope mechanics only.',
   });
-  const completed = await native.wait(root, started.id, 5000);
+  const completed = await terminal(native, root, started.id);
   assert.equal(completed.state, 'completed');
   const observed = JSON.parse(completed.output),
     gateway = observed.config['mcp_servers.neomind'];
@@ -335,7 +346,7 @@ test('native scoped editing capability is exposed only to a new Developer invoca
     role: 'check-executor',
     prompt: 'Observe only the scoped inspection gateway mechanics.',
   });
-  const inspected = await native.wait(root, inspecting.id, 5000);
+  const inspected = await terminal(native, root, inspecting.id);
   assert.equal(inspected.state, 'completed');
   const inspectionGateway = JSON.parse(inspected.output).config['mcp_servers.neomind'];
   assert.ok(inspectionGateway.enabled_tools.includes('check_inspect'));

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import { initialize } from '../dist/storage.js';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -105,6 +105,13 @@ test('creation preserves existing user solutions and refuses generated artifact 
     '// My authored reasoning must remain intact.\n',
   );
   assert.throws(() => createCornellNote(root, input()), /Preserve existing artifact/);
+});
+test('invalid Cornell record metadata is rejected before writing any generated artifact', t => {
+  const root = fixture(t), value = input();
+  value.owner = '';
+  assert.throws(() => createCornellNote(root, value), /Invalid record metadata/);
+  for (const path of [value.path, value.practice.exercise_path, value.practice.answer_path, value.practice.solution_path].filter(Boolean))
+    assert.equal(existsSync(join(root, path)), false, `Validation must precede artifact creation: ${path}`);
 });
 
 test('Cornell practice permits intentional fenced learner scaffolds and inline tokens while preserving authored solutions', (t) => {
@@ -466,11 +473,22 @@ test('observed demonstrations require current execution inputs, logs, and receip
     },
   });
   const evidence = runCheck(root, check.meta.id, task.meta.id);
+  const secondEvidence = runCheck(root, check.meta.id, task.meta.id);
   assert.equal(evidence.meta.data.result, 'pass');
   const value = input();
   value.demonstration.observed = 'The native Node process printed 42 and exited successfully.';
-  value.demonstration.evidence_ids = [evidence.meta.id];
+  value.demonstration.evidence_ids = [evidence.meta.id, secondEvidence.meta.id];
+  value.sources.push({ id: 'S2', title: 'Actual numeric-export execution evidence', uri: evidence.path,
+    record_id: evidence.meta.id, retrieved_at: new Date().toISOString() });
+  value.main_notes += ' [observed] The recorded Node execution confirmed the numeric export [S2].';
+  value.sources.push({ id: 'S3', title: 'Repeated numeric-export execution evidence', uri: secondEvidence.path,
+    record_id: secondEvidence.meta.id, retrieved_at: new Date().toISOString() });
+  value.main_notes += ' [observed] A second recorded execution confirmed the same baseline [S3].';
   const note = createCornellNote(root, value);
+  assert.equal(note.meta.links.filter(link => link.type === 'references' && link.target === evidence.meta.id).length, 1,
+    'One evidence record may appear in the demonstration and source ledger without duplicate engineering links.');
+  assert.equal(note.meta.links.filter(link => link.type === 'references' && link.target === secondEvidence.meta.id).length, 1);
+  assert.equal(readFileSync(join(root, value.path), 'utf8').includes('[S2] Actual numeric-export execution evidence'), true);
   assert.equal(validateCornellNote(root, note.meta.id).ok, true);
   writeFileSync(
     join(root, evidence.meta.data.log_path),

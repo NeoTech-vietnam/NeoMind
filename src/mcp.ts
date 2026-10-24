@@ -3,6 +3,11 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { readFileSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { prepareReportedAssignment, claimReportedAssignment, resolveReportedAssignment, authorizeReportedAssignment, type ReportedAssignment } from './native-assignment.js';
+import { openAssignment, assignmentContext, assignmentProgress, assignmentResult, assignmentResultJsonSchema, AssignmentRuntimeError } from './assignment-runtime.js';
+import { listProcedures, discoverProcedureScripts, resolveProcedure, registerProcedure, registerProcedureSchema, reviewProcedure, qualifyProcedure, suspendProcedure, runProcedure } from './procedures.js';
+import { prepareWork } from './procedure-reuse.js';
 import { reportAgentActivity } from './agent-activity.js';
 import { agentProfiles } from './agent-profiles.js';
 import { relative } from 'node:path';
@@ -14,6 +19,7 @@ import {
   updateRecord,
   safePath,
   hash,
+  withOperationLock,
 } from './storage.js';
 import {
   acceptTask,
@@ -106,6 +112,16 @@ import { cornellResearchSchema, compileCornellResearch } from './cornell-workflo
 import { reaStatus } from './rea.js';
 import { validatePlatform } from './platform-validation.js';
 import { listUpstreams, discoverUpstreams, trackUpstream, checkUpstream, cloneUpstream, adoptUpstreamUpdate, readUpstreamInstructions } from './upstreams.js';
+
+/** Resolve execution compatibility at the native-receipt/MCP procedure boundary. */
+export function procedureExecutionClient(workflowMode: unknown, receipt?: Pick<NativeReceipt, 'issuer'> | null): 'codex' | 'copilot' {
+  if (receipt) {
+    if (receipt.issuer.endsWith('-codex-app-server')) return 'codex';
+    if (receipt.issuer.endsWith('-vscode-lm')) return 'copilot';
+    throw new Error('Procedure compatibility requires a recognized signed native client issuer.');
+  }
+  return workflowMode === 'codex-native' ? 'codex' : 'copilot';
+}
 
 const cornellNoteSchema = z
   .object({
@@ -236,7 +252,7 @@ function privateProjectPath(path: string): boolean {
   const lower = path.toLowerCase();
   return (
     lower.split('/').some((part) => part === '.git' || part === 'node_modules') ||
-    /^\.(?:verythinker|taskforces|neomind)\/(?:cache|tools|runs)(?:\/|$)/.test(lower) ||
+    /^\.(?:verythinker|taskforces|neomind)\/(?:cache|tools|runs|native\/reported-assignments)(?:\/|$)/.test(lower) ||
     /(?:^|\/)(?:\.env(?:\.[^/]*)?|auth\.json|credentials?(?:\.json)?|private[^/]*\.pem|id_(?:rsa|ed25519)(?:\.pub)?)$/.test(
       lower,
     )
@@ -373,7 +389,7 @@ export function projectRead(
 }
 export function assertTaskOutputPaths(
   root: string,
-  receipt: NativeReceipt | null,
+  receipt: { task_id?: string | null } | null | undefined,
   paths: unknown[],
 ): void {
   if (!receipt?.task_id) return;
@@ -594,7 +610,7 @@ function intakeArguments<T>(input: Record<string, unknown>): T {
 }
 export function assertGenericRecordMutation(
   record: ReturnType<typeof getRecord>,
-  receipt: NativeReceipt,
+  receipt: { role: string; task_id?: string | null },
 ): void {
   if (reservedKinds.has(String(record.meta.data.kind)))
     throw new Error(
@@ -624,6 +640,7 @@ export function assertGenericRecordMutation(
  * always resolves false, so this exception can never bypass the signed-session requirement.
  */
 function nativeWorkflowMutation(root: string, name: string, input: Record<string, unknown>): boolean {
+  if (name === 'assignment_prepare' || name === 'assignment_claim' || name === 'assignment_open') return true;
   if (name.startsWith('upstream_'))
     return isNativeExecutionMode(readAutomationPolicy(root).execution_mode);
   if (name === 'manager_begin')
@@ -692,6 +709,18 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     void closeCapabilitySessions(root, binding.invocation_id);
   };
   const bound = () => (binding.invocation_id ? readInvocation(root, binding.invocation_id) : null);
+  const reportedContext = new AsyncLocalStorage<ReportedAssignment>();
+  const privateHandles = new AsyncLocalStorage<{ id: string; token: string }>();
+  const reported = () => reportedContext.getStore();
+  const reportedData = (data: Record<string, unknown> = {}, taskPlanning = false) => {
+    const actor = reported();
+    if (!actor) return data;
+    const attributed: Record<string, unknown> = { ...data, ...(!taskPlanning ? { invocation_id: actor.id } : {}),
+      author_invocation_id: actor.id, identity_assurance: actor.assurance, reported_assignment_id: actor.id,
+      workflow_id: actor.workflow_id, ...(actor.task_id ? { task_id: actor.task_id } : {}) };
+    if (taskPlanning) delete attributed.invocation_id;
+    return attributed;
+  };
   const output = (value: unknown) => ({
     content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
   });
@@ -707,11 +736,13 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
       name,
       {
         description,
-        inputSchema: schema,
+        inputSchema: { ...schema, reported_assignment: z.object({ id: z.string().regex(/^local-report-[a-f0-9]{40}$/), token: z.string().min(1) }).strict().optional()
+          .describe('Optional unsigned local assignment credential returned by assignment_claim when the client omits invocation identity. Keep its token private.') },
         annotations: { readOnlyHint: readOnly, destructiveHint: false, openWorldHint: external },
       },
-      async (input) => {
+      async (input: any) => {
         try {
+          const credentialHandle = input.reported_assignment;
           if (name === 'note_create') {
             // Native tool clients can serialize absent optional revision fields as
             // null or blank text. Normalize only these placeholders before ownership
@@ -724,6 +755,26 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
             if (input.expected_revision === null) delete input.expected_revision;
           }
           const receipt = bound();
+          let actor: ReportedAssignment | undefined;
+          if (input.reported_assignment) {
+            if (receipt) throw new Error('Signed invocations cannot replace their identity with an unsigned local assignment.');
+            actor = resolveReportedAssignment(root, input.reported_assignment);
+            const { reported_assignment: _credential, ...operationInput } = input;
+            input = operationInput;
+            if (name === 'record_create' && input.data?.workflow_id === undefined)
+              input = { ...input, data: { ...input.data, workflow_id: actor.workflow_id } };
+            authorizeReportedAssignment(root, actor, name, input, readOnly);
+            if (['requested_model', 'confirmed_model'].some(key => input[key] !== undefined))
+              throw new Error('A local assignment identity cannot attest model observations.');
+            if (input.owner !== undefined && name !== 'record_create' && input.owner !== actor.role)
+              throw new Error('A reported assignment cannot impersonate another record owner.');
+            input = { ...input, invocation_id: actor.id, ...(['assignment_prepare', 'agent_activity'].includes(name) ? {} : { role: actor.role }) };
+            if (name === 'agent_activity') delete input.role; // Authorization checked any explicit role; the activity contract derives it from profile.
+            if (['record_review', 'task_review'].includes(name)) input.owner = actor.role;
+          } else if ([input.invocation_id, input.data?.invocation_id, input.data?.author_invocation_id]
+            .some(value => typeof value === 'string' && value.startsWith('local-report-'))) {
+            throw new Error('Server-issued local assignment IDs require their reported_assignment credential; another actor cannot reuse them.');
+          }
           const cornell = name === 'note_create' ||
             (name === 'recipe_prepare' && input.recipe_id === 'cornell-evidence-note');
           if (!receipt && cornell) {
@@ -764,7 +815,8 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
             !readOnly &&
             readRoutingPolicy(root) &&
             !['manager_run', 'lightweight_checkpoint', 'agent_activity'].includes(name) &&
-            !nativeWorkflowMutation(root, name, input)
+            !nativeWorkflowMutation(root, name, input) &&
+            !(actor && (name.startsWith('procedure_') || name.startsWith('assignment_')))
           ) {
             if (cornell) {
               const note = (name === 'note_create' ? input.note :
@@ -781,10 +833,13 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
               'Strict managed mutations require an invocation-bound MCP session. Start ordinary requirements through manager_run and launch its returned handoff agent. Reported invocation IDs have no signed native_status receipt.',
             );
           }
-          return output(await action(input));
+          return output(await (actor ? reportedContext.run(actor, () =>
+            privateHandles.run(credentialHandle, () => action(input))) : action(input)));
         } catch (error) {
           return {
-            ...output({ error: error instanceof Error ? error.message : String(error) }),
+            ...output({ error: error instanceof Error ? error.message : String(error),
+              ...(error instanceof AssignmentRuntimeError ? { code: error.code, phase: error.phase,
+                retryable: error.retryable, next_action: error.next_action } : {}) }),
             isError: true,
           };
         }
@@ -798,6 +853,110 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     () => doctor(root),
   );
   tool('agent_map', 'Read bounded saved agent activity, with provenance for each node and relationship.', {}, () => readAgentMap(root));
+  // High-level operations receive the already authenticated actor through a freshly
+  // resolved private handle; the shared MCP connection never stores a current actor.
+  tool('assignment_open', 'Actual delegate: open the exact prepared packet and keep its handle private. Omit reported_assignment during bootstrap. This does not launch an agent.', {
+    packet: z.object({ id: z.string().regex(/^local-report-[a-f0-9]{40}$/), claim_token: z.string().min(1) }).strict(),
+  }, input => {
+    if (bound() || reported()) throw new Error('An existing actor cannot open another assignment. Pass the prepared packet to the actual delegate.');
+    return openAssignment(root, { packet: input.packet });
+  }, false);
+  const currentHandle = () => {
+    const handle = privateHandles.getStore();
+    if (!handle) throw new Error('Use assignment_open with the prepared packet, then pass its private handle as reported_assignment. Strict sessions keep their signed lifecycle tools.');
+    return handle;
+  };
+  tool('assignment_context', 'Read derived role, workflow/task scope, permitted operations and result obligations for your private assignment handle.', {},
+    () => assignmentContext(root, currentHandle()));
+  tool('assignment_progress', 'Report actual progress using only state and summary. Workflow, task, role and correlation are derived from your private handle.', {
+    state: z.enum(['dispatched', 'running', 'waiting', 'blocked', 'completed', 'failed']), summary: z.string().min(1).max(240),
+  }, input => assignmentProgress(root, currentHandle(), { state: input.state, summary: input.summary }), false);
+  tool('assignment_result', 'Save substantive typed findings through the valid assignment context. Renders the work report and preserves current submission/verification gates.', {
+    result: z.fromJSONSchema(JSON.parse(JSON.stringify(assignmentResultJsonSchema))),
+  }, input => assignmentResult(root, currentHandle(), input.result), false);
+  tool('procedure_list', 'List registered project procedures and their current qualification/drift status. Does not execute scripts.', {}, () => listProcedures(root));
+  tool('procedure_discover', 'Find existing project Node scripts and package commands before writing new automation. Discovery executes nothing.', {}, () => discoverProcedureScripts(root));
+  tool('procedure_resolve', 'Resolve a registered versioned procedure, its contract, checks and history.', {
+    procedure_id: z.string(), version: z.string().optional(),
+  }, input => resolveProcedure(root, input.procedure_id, input.version));
+  tool('work_prepare', 'Match the original request against indexed procedures and return exact/adapt/new/blocked plus a compact reuse brief. Advisory only; never executes retrieved code.', {
+    input: z.record(z.string(), z.unknown()),
+  }, input => prepareWork(root, input.input as Parameters<typeof prepareWork>[1]));
+  const procedureActor = () => {
+    const actor = reported() ?? bound();
+    if (!actor) throw new Error('Procedure mutations require a current authenticated actor; use the CLI for explicit local administration.');
+    return actor.id;
+  };
+  tool('procedure_register', 'Register an actual existing parameterized script and independent check as a candidate. Registration never qualifies or executes it.', {
+    manifest: registerProcedureSchema.extend({ author: z.string().optional() }),
+  }, input => {
+    const actor = reported() ?? bound();
+    const manifest = registerProcedure(root, { ...input.manifest, author: procedureActor() } as Parameters<typeof registerProcedure>[1]);
+    if (!actor?.workflow_id) return manifest;
+    const sourceWorkflow = actor.workflow_id;
+    const sourceLinks: Link[] = [{ type: 'documents', target: sourceWorkflow }];
+    if (actor.task_id) sourceLinks.push({ type: 'documents', target: actor.task_id });
+    const capture = withOperationLock(root, `procedure-capture-${hash(`${sourceWorkflow}:${manifest.contract_hash}`)}`, () => {
+      const existing = loadRecords(root).find(record => record.meta.data.kind === 'procedure-candidate' &&
+        record.meta.data.workflow_id === actor.workflow_id && record.meta.data.procedure_contract_hash === manifest.contract_hash);
+      return existing ?? createRecord(root, {
+      type: 'knowledge', title: `Automation candidate: ${manifest.title}`, owner: actor.role,
+      links: sourceLinks,
+      data: { kind: 'procedure-candidate', workflow_id: actor.workflow_id, ...(actor.task_id ? { task_id: actor.task_id } : {}),
+        invocation_id: actor.id, procedure_id: manifest.id, procedure_version: manifest.version,
+        procedure_contract_hash: manifest.contract_hash, script: manifest.script, verification_script: manifest.verification_script,
+        qualification: 'candidate-only', identity_assurance: reported() ? 'unsigned-local-assignment' : 'signed-native-routing' },
+      body: `# Captured automation\n${manifest.description}\n\n# Applicability\n${manifest.task_family ?? 'Declared manifest contract'}\n\n# Next step\nIndependent contract review and checked representative pilots are required. Registration executes nothing and does not establish eligibility.\n`,
+      });
+    });
+    return { ...manifest, candidate_record_id: capture.meta.id };
+  }, false);
+  tool('procedure_review', 'Record an independent review and negative-case evidence for the exact procedure contract.', {
+    input: z.record(z.string(), z.unknown()),
+  }, input => reviewProcedure(root, { ...input.input, reviewer: procedureActor() } as Parameters<typeof reviewProcedure>[1]), false);
+  tool('procedure_qualify', 'Evaluate independent review and actual qualifying runs; does not manufacture maturity from catalog presence or search matches.', {
+    procedure_id: z.string(), version: z.string().optional(),
+  }, input => qualifyProcedure(root, { procedure_id: input.procedure_id, version: input.version, actor: procedureActor() }), false);
+  tool('procedure_suspend', 'Disable automatic use of a registered procedure while preserving its run and review history.', {
+    procedure_id: z.string(), version: z.string().optional(), reason: z.string().min(10),
+  }, input => suspendProcedure(root, { procedure_id: input.procedure_id, version: input.version, actor: procedureActor(), reason: input.reason }), false);
+  tool('procedure_run', 'Run a reviewed pilot or eligible procedure inside your current in-progress Developer task scope. Current engineering checks/review remain required after script execution.', {
+    procedure_id: z.string(), version: z.string().optional(), parameters: z.record(z.string(), z.unknown()),
+    request_id: z.string().min(1), mode: z.enum(['pilot', 'automatic']),
+    tool_versions: z.record(z.string().max(100), z.string().max(200)).optional(),
+  }, async input => {
+    const actor = reported() ?? bound();
+    if (!actor || actor.role !== 'developer' || !actor.task_id)
+      throw new Error('Procedure execution requires the actual Developer assignment bound to an in-progress task.');
+    const task = getRecord(root, actor.task_id);
+    if (task.meta.type !== 'task' || task.meta.status !== 'in-progress' || task.meta.data.workflow_id !== actor.workflow_id)
+      throw new Error('Procedure execution must retain the current same-workflow in-progress task.');
+    if (task.meta.data.invocation_id !== actor.id)
+      throw new Error('Only the current task producer can execute its procedure. Start or resume this task with the actual assigned Developer first.');
+    const readiness = verify(root, task.meta.id, 'design-ready');
+    if (!readiness.ok) throw new Error(`Procedure execution preserves task gates: ${readiness.findings.map(item => item.message).join('; ')}`);
+    const parent = getRecord(root, actor.workflow_id!);
+    const client = procedureExecutionClient(parent.meta.data.execution_mode, bound());
+    return runProcedure(root, { procedure_id: input.procedure_id, version: input.version, parameters: input.parameters,
+      request_id: input.request_id, actor: actor.id, client, mode: input.mode,
+      workflow_mode: String(parent.meta.data.execution_mode ?? 'strict'), assurance: String(parent.meta.data.assurance ?? ''), tool_versions: input.tool_versions,
+      authorized_effects: { write_roots: Array.isArray(task.meta.data.allowed_paths) ? task.meta.data.allowed_paths as string[] : [],
+        network: readAutomationPolicy(root).network_policy === 'remote-enabled', publication: false } });
+  }, false);
+  tool('assignment_prepare', 'Prepare a bounded unsigned local assignment packet when the native client omits invocation IDs. Pass its claim token to the actual delegate; Coordinator never claims or reports for specialists. This does not launch an agent or attest native execution.', {
+    workflow_id: z.string(), profile_id: z.enum(agentProfiles.map(profile => profile.id)), role: z.enum([...strongRoles, ...workerRoles]),
+    assignment_id: z.string().min(1).max(160), objective: z.string().min(20).max(4000), task_id: z.string().optional(),
+  }, input => {
+    if (bound()) throw new Error('Signed assignments already have their native invocation identity.');
+    const { invocation_id: _invocation, role, ...packet } = input;
+    return prepareReportedAssignment(root, { ...packet, role });
+  }, false);
+  tool('assignment_claim', 'Called by the actual delegate before work: claim its local packet and retain the credential privately for scoped research, reports and reviews. This unsigned identity does not prove a platform process or model.', {
+    assignment_id: z.string(), claim_token: z.string(),
+  }, input => {
+    if (bound() || reported()) throw new Error('An existing actor cannot claim another assignment. Launch the actual delegate with its packet.');
+    return claimReportedAssignment(root, input.assignment_id, input.claim_token);
+  }, false);
   tool('rea_status', 'Inspect pinned REA configuration and saved handshake observations without starting a server or downloading code.', {}, () => reaStatus(root));
   tool('platform_validate', 'Read-only local integration and reuse inspection. Separates configuration from actual observations and missing prerequisites.', {}, () => validatePlatform(root));
   tool('cornell_research_compile', 'Validate research against its current requirement and compile the consistent note, practice and answer format. Returns recipe_input for the existing recipe_prepare and recipe_run lifecycle; writes nothing.',
@@ -810,6 +969,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
   tool('agent_activity', 'Report unsigned native workflow dispatch, progress or completion for the universe. Does not run an agent, attest inference or change workflow gates.', {
     workflow_id: z.string().min(1), assignment_id: z.string().min(1).max(160),
     profile_id: z.enum(agentProfiles.map(profile => profile.id)),
+    role: z.enum([...strongRoles, ...workerRoles]).optional().describe('Optional reported-assignment compatibility field; must match its claimed role and is removed before profile-derived activity persistence.'),
     state: z.enum(['dispatched', 'running', 'waiting', 'completed', 'blocked', 'failed']),
     summary: z.string().min(1).max(240), invocation_id: z.string().min(1).max(160).optional(),
     task_id: z.string().min(1).optional(),
@@ -1049,6 +1209,8 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
         );
       if (receipt && !canAuthor(receipt.role, i.type))
         throw new Error(`Role ${receipt.role} cannot author ${i.type} records.`);
+      if (reported() && !canAuthor(reported()!.role, i.type))
+        throw new Error(`Role ${reported()!.role} cannot author ${i.type} records.`);
       if (
         receipt &&
         i.links?.some((link: { target: string }) => !recordScope(root, receipt).has(link.target))
@@ -1059,8 +1221,8 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
       assertRecordPreview(root, i);
       return createRecord(root, {
         ...i,
-        ...(receipt ? { owner: i.type === 'task' ? i.owner : receipt.role } : {}),
-        data: i.type === 'task' ? taskAuthorData(receipt, i.data) : authoredData(receipt, i.data),
+        ...(receipt || reported() ? { owner: i.type === 'task' ? i.owner : receipt?.role ?? reported()!.role } : {}),
+        data: reportedData(i.type === 'task' ? taskAuthorData(receipt, i.data) : authoredData(receipt, i.data), i.type === 'task'),
       });
     },
     false,
@@ -1097,6 +1259,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
       const receipt = bound();
       const record = scopedRecord(root, receipt, i.id);
       if (receipt) assertGenericRecordMutation(record, receipt);
+      if (reported()) assertGenericRecordMutation(record, reported()!);
       if (!receipt && nativeWorkflowRecord(root, record) && record.meta.type === 'task' &&
           Object.keys(i.data ?? {}).some((key) => executionFields.has(key) || key === 'escalation_invocation_id' || key === 'escalation_reason'))
         throw new Error('Task execution, submission and acceptance fields require dedicated core operations.');
@@ -1129,17 +1292,17 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
           );
         return updateRecord(root, i.id, { data: i.data });
       }
-      if (receipt && !canAuthor(receipt.role, record.meta.type))
-        throw new Error(`Role ${receipt.role} cannot author ${record.meta.type} records.`);
+      if ((receipt || reported()) && !canAuthor(receipt?.role ?? reported()!.role, record.meta.type))
+        throw new Error(`Role ${receipt?.role ?? reported()!.role} cannot author ${record.meta.type} records.`);
       assertRecordPreview(root, { type: record.meta.type, links: i.links, data: i.data }, record);
       return updateRecord(
         root,
         i.id,
         {
-          data:
+          data: reportedData(
             record.meta.type === 'task'
               ? taskAuthorData(receipt, i.data, record)
-              : authoredData(receipt, i.data),
+              : authoredData(receipt, i.data), record.meta.type === 'task'),
           ...(record.meta.type === 'task' && i.owner !== undefined
             ? { owner: i.owner }
             : receipt && record.meta.type !== 'task'
@@ -1270,7 +1433,8 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
       if (!receipt && !(i.invocation_id && i.role && i.target_ids.every((id: string) => nativeWorkflowRecord(root, getRecord(root, id)))))
         throw new Error('Assignment reporting requires a bound invocation or reported native workflow identity.');
       for (const id of i.target_ids) scopedRecord(root, receipt, id);
-      return assignmentReport(root, { ...i, role: receipt?.role ?? i.role, invocation_id: receipt?.id ?? i.invocation_id });
+      return assignmentReport(root, { ...i, role: receipt?.role ?? i.role, invocation_id: receipt?.id ?? i.invocation_id,
+        ...(reported() ? { assurance: reported()!.assurance } : {}) });
     },
     false,
   );
@@ -1306,7 +1470,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     'check_run',
     'Execute the project-defined verification command and collect real baseline-bound evidence.',
     { id: z.string(), task: z.string() },
-    (i) => runCheck(root, i.id, i.task, bound()?.id),
+    (i) => runCheck(root, i.id, i.task, bound()?.id ?? reported()?.id),
     false,
   );
   tool(
@@ -1463,7 +1627,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
       queries: z.array(z.string()).min(1), selected_sources: z.array(z.object({ source_id: z.string(), applicability: z.string(), differences: z.string() })),
       rejected_sources: z.array(z.object({ source_id: z.string(), reason: z.string() })).optional(),
       no_match_reason: z.string().optional(), summary: z.string() },
-    (i) => recordKnowledgeResearch(root, i.workflow_id, i), false);
+    (i) => recordKnowledgeResearch(root, i.workflow_id, i, reported()), false);
   tool('knowledge_publish', 'Publish independently reviewed public-safe Cornell findings to the configured stable project branch; never merge.',
     { id: z.string(), repository: z.string() }, (i) => publishProjectKnowledge(root, i.id, i.repository), false, true);
   tool('pack_list', 'Inspect available and locked knowledge packs.', {}, () => listPacks(root));
@@ -1722,7 +1886,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
           throw new Error('Cornell revision must preserve workflow ownership.');
       } else if (i.expected_revision !== undefined || i.revision_reason !== undefined)
         throw new Error('Cornell revision fields require revision_id.');
-      assertTaskOutputPaths(root, receipt, [
+      assertTaskOutputPaths(root, receipt ?? reported(), [
         i.note.path,
         i.note.practice?.exercise_path,
         i.note.practice?.answer_path,
@@ -1743,12 +1907,17 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
             projectRead(root, { path: source.uri, max_chars: 128 }, receipt);
       const input = {
         ...i.note,
-        ...(receipt ? { owner: receipt.role, workflow_id: receipt.workflow_id } : {}),
+        ...(receipt ? { owner: receipt.role, workflow_id: receipt.workflow_id } : reported() ? { owner: reported()!.role, workflow_id: reported()!.workflow_id } : {}),
       } as CornellInput;
       const note = i.revision_id
         ? reviseCornellNote(root, i.revision_id, input, i.expected_revision, i.revision_reason)
         : createCornellNote(root, input);
-      if (!receipt) return note;
+      if (!receipt) {
+        if (!reported()) return note;
+        return updateRecord(root, note.meta.id, { data: reportedData(note.meta.data) }, undefined, current => {
+          if (current.meta.revision !== note.meta.revision) throw new Error('Cornell note changed before reported assignment attribution; read it before retrying.');
+        });
+      }
       const attribution = authoredData(receipt);
       const links = [
         ...note.meta.links,
@@ -1822,13 +1991,13 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
       const before = new Set(loadRecords(root).map((record) => record.meta.id));
       const instance = prepareRecipe(root, {
         ...i,
-        owner: i.owner ?? 'developer',
+        owner: reported()?.role ?? i.owner ?? 'developer',
         ...(receipt?.workflow_id ? { workflow_id: receipt.workflow_id } : {}),
         ...(receipt?.task_id ? { task_id: receipt.task_id } : {}),
       } as RecipeInput);
-      if (receipt)
+      if (receipt || reported())
         for (const record of loadRecords(root).filter((record) => !before.has(record.meta.id)))
-          updateRecord(root, record.meta.id, { data: authoredData(receipt, record.meta.data) });
+          updateRecord(root, record.meta.id, { data: reportedData(authoredData(receipt, record.meta.data)) });
       return getRecord(root, instance.meta.id);
     },
     false,
@@ -1837,7 +2006,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     'recipe_run',
     'Execute the accepted parameterized generator and protected verification artifacts without weakening expectations.',
     { id: z.string() },
-    (i) => runRecipe(root, i.id, bound()?.id),
+    (i) => runRecipe(root, i.id, bound()?.id ?? reported()?.id),
     false,
   );
   tool(

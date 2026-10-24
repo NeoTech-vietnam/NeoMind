@@ -45,6 +45,14 @@ function configuration(root: string): ReaConfiguration | null {
   return value;
 }
 export function reaConfigured(root: string): boolean { return configuration(root)?.enabled === true; }
+/** Read and validate the saved integration baseline without spawning or changing it. */
+export function readReaConfiguration(root: string): Readonly<ReaConfiguration> | null { return configuration(root); }
+function approved(root: string): boolean {
+  const path = safePath(root, '.neomind/tools.json');
+  if (!existsSync(path)) return false;
+  const policy = JSON.parse(readFileSync(path, 'utf8'));
+  return policy.schema_version === 1 && Array.isArray(policy.approved_providers) && policy.approved_providers.includes('rea');
+}
 function regularWithin(base: string, path: string): string {
   const child = relative(base, path);
   if (!child || isAbsolute(child) || child === '..' || child.startsWith(`..${sep}`)) throw new Error('REA file escapes its verified directory.');
@@ -71,7 +79,7 @@ function installed(root: string) {
 }
 function launch(root: string) {
   const config = configuration(root);
-  if (!config?.enabled) throw new Error('REA is disabled. Configure the pinned integration explicitly.');
+  if (!config?.enabled || !approved(root)) throw new Error('REA is disabled. Configure the pinned integration explicitly.');
   const runtime = installed(root);
   if (!config.node_command || !config.entry_sha256 || runtime.entry_sha256 !== config.entry_sha256 ||
       !lstatSync(config.node_command).isFile() || realpathSync(config.node_command) !== config.node_command)
@@ -96,7 +104,7 @@ function observed(root: string) {
 }
 export function reaRegistration(root: string): ReaRegistration {
   try {
-    if (!configuration(root)?.enabled) return { status: 'disabled' };
+    if (!configuration(root)?.enabled || !approved(root)) return { status: 'disabled' };
     const server = launch(root);
     observed(root);
     return { status: 'ready', server };
@@ -117,13 +125,14 @@ function sameHashes(a: Record<string, string>, b: Record<string, string>): boole
   const keys = Object.keys(a);
   return keys.length === Object.keys(b).length && keys.every(key => a[key] === b[key]);
 }
-function noActiveInvocations(root: string): void {
+function noActiveInvocations(root: string, routing: typeof import('./routing.js')): void {
   const directory = safePath(root, '.neomind/native/receipts');
   if (!existsSync(directory)) return;
   for (const file of readdirSync(directory).filter(name => name.endsWith('.json'))) {
-    const state = JSON.parse(readFileSync(safePath(root, `.neomind/native/receipts/${file}`), 'utf8')).state;
-    if (!['completed', 'failed', 'interrupted', 'blocked', 'orphaned'].includes(state))
-      throw new Error('Active or malformed native receipts prevent REA configuration changes.');
+    try {
+      if (!routing.invocationIsActive(routing.readInvocation(root, file.slice(0, -5)))) continue;
+    } catch { /* Invalid signatures and malformed IDs fail closed too. */ }
+    throw new Error('Active or malformed native receipts prevent REA configuration changes.');
   }
 }
 export async function configureRea(root: string, input: { enabled: boolean; install?: boolean }) {
@@ -139,22 +148,23 @@ export async function configureRea(root: string, input: { enabled: boolean; inst
   if (input.install && existsSync(automation) && JSON.parse(readFileSync(automation, 'utf8')).network_policy === 'local-only')
     throw new Error('Local-only policy disables REA package downloads. Use an already verified installation or explicitly change network policy.');
   const { ensureToolPolicy, installProvider } = await import('./tools.js');
+  const routing = await import('./routing.js');
   let saved: ReaConfiguration;
-  withOperationLock(root, 'native-dispatch', () => {
-    noActiveInvocations(root);
+  withOperationLock(root, 'native-dispatch', () => withOperationLock(root, 'routing-policy', () => {
+    noActiveInvocations(root, routing);
     const previous = configuration(root);
     saved = { schema_version: 1, enabled: input.enabled, package: reaPin.package, version: reaPin.version, integrity: reaPin.integrity,
       ...(previous?.entry_sha256 ? { entry_sha256: previous.entry_sha256 } : {}),
       ...(previous?.skill_hashes ? { skill_hashes: previous.skill_hashes } : {}),
       ...(input.enabled ? { node_command: realpathSync(process.execPath), node_version: process.version } :
         previous?.node_command ? { node_command: previous.node_command, node_version: previous.node_version } : {}) };
-    if (input.enabled) {
-      const policy = ensureToolPolicy(root);
-      if (!policy.approved_providers.includes('rea')) atomicWrite(safePath(root, '.neomind/tools.json'), JSON.stringify({ ...policy, approved_providers: [...policy.approved_providers, 'rea'] }, null, 2) + '\n');
-    }
+    const policy = ensureToolPolicy(root);
+    const approvedProviders: typeof policy.approved_providers = policy.approved_providers.filter(id => id !== 'rea');
+    if (input.enabled) approvedProviders.push('rea');
+    atomicWrite(safePath(root, '.neomind/tools.json'), JSON.stringify({ ...policy, approved_providers: approvedProviders }, null, 2) + '\n');
     atomicWrite(safePath(root, configurationPath), JSON.stringify(saved, null, 2) + '\n');
-  });
-  if (input.install) installProvider(root, 'rea');
+    if (input.install) installProvider(root, 'rea');
+  }));
   if (input.enabled) {
     let runtime;
     try { runtime = installed(root); } catch { return reaStatus(root); }
@@ -162,11 +172,11 @@ export async function configureRea(root: string, input: { enabled: boolean; inst
     const bundle = originalSkillBundle(root);
     const skillHashes = Object.fromEntries(bundle.files.map(file => [file.path, file.sha256]));
     if (saved!.skill_hashes && !sameHashes(saved!.skill_hashes, skillHashes)) throw new Error('Pinned REA skill bytes changed. Reinstall the reviewed package before reconfiguration.');
-    withOperationLock(root, 'native-dispatch', () => {
-      noActiveInvocations(root);
+    withOperationLock(root, 'native-dispatch', () => withOperationLock(root, 'routing-policy', () => {
+      noActiveInvocations(root, routing);
       if (JSON.stringify(configuration(root)) !== JSON.stringify(saved!)) throw new Error('REA configuration changed concurrently; retry.');
       atomicWrite(safePath(root, configurationPath), JSON.stringify({ ...saved!, entry_sha256: runtime.entry_sha256, skill_hashes: skillHashes }, null, 2) + '\n');
-    });
+    }));
     await probeRea(root);
   }
   return reaStatus(root);
@@ -201,6 +211,7 @@ export async function connectRea(root: string, options: { signal?: AbortSignal }
   }
 }
 export async function callReaTool(root: string, connection: ReaConnection, name: string, args: Record<string, unknown> = {}, options: { signal?: AbortSignal } = {}) {
+  if (!configuration(root)?.enabled || !approved(root)) throw new Error('REA is disabled by the current provider policy.');
   if (!(reaToolAllowlist as readonly string[]).includes(name) || !connection.tools.has(name)) throw new Error('REA tool is outside the reviewed and observed static allowlist.');
   if (Buffer.byteLength(JSON.stringify(args)) > 256 * 1024) throw new Error('REA arguments exceed supported bounds.');
   const definition = connection.tools.get(name)!;
@@ -253,6 +264,10 @@ export async function callReaTool(root: string, connection: ReaConnection, name:
   return result;
 }
 export async function probeRea(root: string, options: { signal?: AbortSignal } = {}) {
+  readConfig(root);
+  const routing = await import('./routing.js');
+  noActiveInvocations(root, routing);
+  const fingerprint = hash(JSON.stringify(configuration(root)));
   const connection = await connectRea(root, options);
   try {
     const identity = await callReaTool(root, connection, 'binary_session', {}, options);
@@ -262,7 +277,11 @@ export async function probeRea(root: string, options: { signal?: AbortSignal } =
         const tool = connection.tools.get(name)!;
         return { name, input_schema_sha256: hash(JSON.stringify(tool.inputSchema)), output_schema_sha256: tool.outputSchema ? hash(JSON.stringify(tool.outputSchema)) : null };
       }), catalog_count: connection.tools.size, scope: 'Actual MCP handshake, schema discovery and target-free identity only; engines and target execution remain separate.' };
-    atomicWrite(safePath(root, observationPath), JSON.stringify(observed, null, 2) + '\n');
+    withOperationLock(root, 'native-dispatch', () => withOperationLock(root, 'routing-policy', () => {
+      noActiveInvocations(root, routing);
+      if (!approved(root) || fingerprint !== hash(JSON.stringify(configuration(root)))) throw new Error('REA configuration changed during its probe.');
+      atomicWrite(safePath(root, observationPath), JSON.stringify(observed, null, 2) + '\n');
+    }));
     return observed;
   } finally { await connection.client.close(); }
 }

@@ -1,6 +1,7 @@
 const { requestBrowserLocation } = require('./focus-location.cjs');
+const { createYouTubePlayer } = require('./focus-youtube.cjs');
 const calendarKey = 'neomind.focus.calendarFeed', youtubeKey = 'neomind.focus.youtubeApiKey';
-const approvedActions = new Set(['status', 'weather', 'weather-location', 'place-search', 'calendar-import', 'calendar-connect', 'calendar-refresh', 'calendar-disconnect', 'youtube-configure', 'youtube-search', 'youtube-open']);
+const approvedActions = new Set(['status', 'weather', 'weather-location', 'place-search', 'calendar-import', 'calendar-connect', 'calendar-refresh', 'calendar-disconnect', 'youtube-configure', 'youtube-search', 'youtube-open', 'youtube-player', 'youtube-player-stop']);
 const calendarActions = new Set(['calendar-import', 'calendar-connect', 'calendar-refresh', 'calendar-disconnect']);
 const safeErrors = new Set([
   'Weather requires valid latitude and longitude.', 'Weather is unavailable. Retry or choose a city; no default location was assumed.',
@@ -11,13 +12,16 @@ const safeErrors = new Set([
   'Configure a YouTube Data API key for search, or paste a video/playlist link.',
   'YouTube search is unavailable. Check the API key restrictions/quota, or paste a video or playlist link.',
   'Use an HTTPS YouTube link.', 'Request cancelled.', 'Location request cancelled.',
+  'YouTube embedding is unavailable in this remote VS Code window. Choose Open on YouTube.',
+  'The YouTube player could not start. Choose Open on YouTube or retry.',
   'Location request timed out. Search for a city or try again.', 'The browser location helper could not start. Search for a city.', 'Browser could not open. Search for a city.',
 ]);
 function createFocusHost({ vscode, context, runtime, alive, post }) {
   const pending = new Map();
-  let disposed = false, calendarEpoch = 0, calendarSecretTail = Promise.resolve();
+  let disposed = false, calendarEpoch = 0, calendarSecretTail = Promise.resolve(), youtubeEpoch = 0, youtubeSession = null;
   const live = () => !disposed && alive();
   const configured = async () => ({ calendarConfigured: Boolean(await context.secrets?.get(calendarKey)), youtubeConfigured: Boolean(await context.secrets?.get(youtubeKey)) });
+  async function closeYouTube() { const previous = youtubeSession; youtubeSession = null; try { await previous?.close(); } catch {} }
   function calendarSecret(action) {
     const operation = calendarSecretTail.then(action);
     calendarSecretTail = operation.catch(() => {});
@@ -37,12 +41,14 @@ function createFocusHost({ vscode, context, runtime, alive, post }) {
     if (message.action === 'cancel') { pending.get(message.request_id)?.controller.abort(); return; }
     if (!approvedActions.has(message.action) || pending.has(message.request_id)) return;
     const calendar = calendarActions.has(message.action), epoch = calendar ? ++calendarEpoch : calendarEpoch;
+    const youtube = message.action === 'youtube-player' || message.action === 'youtube-player-stop', playerEpoch = youtube ? ++youtubeEpoch : youtubeEpoch;
     if (calendar) for (const [id, request] of pending) if (request.calendar) {
       pending.delete(id); request.controller.abort();
     }
+    if (youtube) for (const [id, request] of pending) if (request.youtube) { pending.delete(id); request.controller.abort(); }
     if (pending.size >= 8) return;
-    const controller = new AbortController(); pending.set(message.request_id, { controller, calendar });
-    const current = () => live() && !controller.signal.aborted && (!calendar || epoch === calendarEpoch);
+    const controller = new AbortController(); pending.set(message.request_id, { controller, calendar, youtube });
+    const current = () => live() && !controller.signal.aborted && (!calendar || epoch === calendarEpoch) && (!youtube || playerEpoch === youtubeEpoch);
     const timeout = setTimeout(() => controller.abort(), ['weather-location', 'calendar-connect', 'youtube-configure'].includes(message.action) ? 125000 : 25000); timeout.unref?.();
     const options = { signal: controller.signal };
     try {
@@ -87,6 +93,27 @@ function createFocusHost({ vscode, context, runtime, alive, post }) {
           if (!key) throw new Error('Configure a YouTube Data API key for search, or paste a video/playlist link.');
           data = await runtime.focusYouTubeSearch(message.query, key, options); break;
         }
+        case 'youtube-player': {
+          await closeYouTube();
+          if (!current()) throw new Error('Request cancelled.');
+          let player;
+          try {
+            player = await createYouTubePlayer({ url: message.url, signal: controller.signal,
+              ...(typeof vscode.env.asExternalUri === 'function' ? { asExternalUri: async url => (await vscode.env.asExternalUri(vscode.Uri.parse(url))).toString() } : {}) });
+          } catch (error) {
+            if (error instanceof Error && error.message === 'Embedded YouTube is unavailable through this remote connection. Choose Open on YouTube.')
+              throw new Error('YouTube embedding is unavailable in this remote VS Code window. Choose Open on YouTube.');
+            throw new Error('The YouTube player could not start. Choose Open on YouTube or retry.');
+          }
+          if (!current()) { await player.close(); throw new Error('Request cancelled.'); }
+          let endpoint;
+          try { endpoint = new URL(player.url); } catch { await player.close(); throw new Error('The YouTube player could not start. Choose Open on YouTube or retry.'); }
+          if (endpoint.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(endpoint.hostname) || !endpoint.port || endpoint.username || endpoint.password) {
+            await player.close(); throw new Error('YouTube embedding is unavailable in this remote VS Code window. Choose Open on YouTube.');
+          }
+          youtubeSession = player; data = { url: endpoint.href }; break;
+        }
+        case 'youtube-player-stop': await closeYouTube(); data = { stopped: true }; break;
         case 'youtube-open': {
           let url;
           try { url = new URL(message.url); } catch { throw new Error('Use an HTTPS YouTube link.'); }
@@ -100,9 +127,9 @@ function createFocusHost({ vscode, context, runtime, alive, post }) {
     } catch (error) {
       // Never reflect provider URLs, keys, private feeds or response bodies in the webview.
       const text = error instanceof Error && safeErrors.has(error.message) ? error.message : 'Focus service unavailable. Retry, choose another source, or use an offline feature.';
-      if (live() && (!calendar || epoch === calendarEpoch)) await post({ type: 'focus-space-result', request_id: message.request_id, action: message.action, ok: false, error: controller.signal.aborted ? 'Request cancelled or timed out. Retry when ready.' : text });
+      if (live() && (!calendar || epoch === calendarEpoch) && (!youtube || playerEpoch === youtubeEpoch)) await post({ type: 'focus-space-result', request_id: message.request_id, action: message.action, ok: false, error: controller.signal.aborted ? 'Request cancelled or timed out. Retry when ready.' : text });
     } finally { clearTimeout(timeout); if (pending.get(message.request_id)?.controller === controller) pending.delete(message.request_id); }
   }
-  return { handle, dispose() { disposed = true; for (const item of pending.values()) item.controller.abort(); pending.clear(); } };
+  return { handle, dispose() { disposed = true; youtubeEpoch++; for (const item of pending.values()) item.controller.abort(); pending.clear(); void closeYouTube(); } };
 }
 module.exports = { createFocusHost };

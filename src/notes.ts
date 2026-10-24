@@ -13,6 +13,7 @@ import {
   updateRecord,
   withLock,
   withOperationLock,
+  validateMetadata,
 } from './storage.js';
 import type { ProjectRecord } from './types.js';
 import { evidenceRecordFingerprint } from './evidence-inputs.js';
@@ -513,7 +514,7 @@ function writeCornellNote(
         `Observed demonstration requires current passing evidence: ${id}: ${problems.join('; ')}`,
       );
   });
-  const links = [
+  const proposedLinks = [
     ...(input.requirement_ids ?? []).map((id) => {
       if (getRecord(root, id).meta.type !== 'requirement')
         throw new Error(`Expected requirement: ${id}`);
@@ -528,6 +529,9 @@ function writeCornellNote(
       .filter((source) => source.record_id)
       .map((source) => ({ type: 'references' as const, target: source.record_id! })),
   ];
+  // Evidence may support both the demonstration and a source-ledger entry.
+  // Preserve both narrative uses while storing one engineering link per pair.
+  const links = [...new Map(proposedLinks.map(link => [`${link.type}:${link.target}`, link])).values()];
   const path = contentPath(
     root,
     input.path ??
@@ -632,6 +636,12 @@ function writeCornellNote(
       source_review: 'structural-only',
     };
     const recordBody = `# ${input.topic}\n\nAuthoritative Cornell narrative: ${path}.\nThis record stores artifact hashes, source provenance, and engineering links. Content quality requires independent review.\n`;
+    // Check record metadata before creating any visible artifacts. The real ID
+    // remains allocated by createRecord; this preview does not reserve a record.
+    const timestamp = now();
+    validateMetadata({ schema_version: 1, id: 'NEOMIND-CORNELL-PREVIEW', type: 'knowledge',
+      title: input.topic, owner: input.owner ?? 'curator', status: 'draft', revision: 1,
+      created_at: timestamp, updated_at: timestamp, links, data });
     if (revision) {
       const existing = getRecord(root, revision.id);
       const oldPractice = existing.meta.data.practice as Record<string, unknown>;

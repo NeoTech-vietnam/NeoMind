@@ -6,6 +6,7 @@ import {
   atomicWrite, createRecord, getRecord, hash, loadRecords, safePath,
 } from './storage.js';
 import type { ProjectRecord } from './types.js';
+import { isNativeExecutionMode } from './execution-mode.js';
 
 /** GET-only, synchronous gh api seam; thrown authentication/network errors are blockers. */
 export type KnowledgeReuseRequest = (method: string, endpoint: string) => unknown;
@@ -500,19 +501,23 @@ function sourceReferences(root: string, input: KnowledgeResearchInput): Record<s
   });
 }
 /** Local record only. Applicability/differences (including versions) require explicit human/agent review. */
-export function recordKnowledgeResearch(root: string, workflowId: string, input: KnowledgeResearchInput): ProjectRecord {
+export function recordKnowledgeResearch(root: string, workflowId: string, input: KnowledgeResearchInput,
+  actor?: { role: string; id: string; assurance: 'unsigned-local-assignment' }): ProjectRecord {
   const owner = workflow(root, workflowId);
+  if (actor && (!isNativeExecutionMode(owner.meta.data.execution_mode) || owner.meta.data.routing_required === true))
+    throw new Error('Local reported research cannot replace strict invocation attribution.');
   const validated = researchInput(root, input);
   const references = sourceReferences(root, validated);
   const workspace_hashes = Object.fromEntries(validated.workspace_paths.map((path) => [path, hash(readBounded(root, path, 2 * 1024 * 1024))]));
   return createRecord(root, {
-    type: 'knowledge', owner: owner.meta.owner, title: `Preimplementation knowledge research: ${owner.meta.title}`,
+    type: 'knowledge', owner: actor?.role ?? owner.meta.owner, title: `Preimplementation knowledge research: ${owner.meta.title}`,
     links: [{ type: 'documents', target: owner.meta.id }],
     body: `# Knowledge research\n\n${validated.summary}\n\nSimilarity is advisory; applicability, versions, and differences require manual review.\n`,
     data: { kind: 'knowledge-research', workflow_id: owner.meta.id, schema_version: 1,
       complete: true, ...validated, provenance_refs: references,
       source_fingerprints: Object.fromEntries(references.map((ref) => [String(ref.source_id), ref.fingerprint])),
-      workspace_hashes },
+      workspace_hashes, ...(actor ? { invocation_id: actor.id, author_invocation_id: actor.id,
+        identity_assurance: actor.assurance, reported_assignment_id: actor.id } : {}) },
   });
 }
 

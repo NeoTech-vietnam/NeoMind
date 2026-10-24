@@ -1,6 +1,6 @@
 # Agent platform update
 
-Source branch: `codex/neomind-agent-platform`. This release pairs runtime `0.1.0-alpha.5` with extension `0.5.0`; alpha.4 remains available as a previous release.
+Source branch: `codex/procedure-automation`. This release pairs runtime `0.1.0-alpha.8` with extension `0.8.0`; earlier releases remain available on GitHub. Read [Reusable project automation](procedures.md) for the new procedure and assignment interfaces and [installation](install-release.md) for the matching packages.
 
 | Requirement | Implementation | Activation or limit |
 | --- | --- | --- |

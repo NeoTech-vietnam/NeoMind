@@ -185,7 +185,7 @@ const workRecordScaffolding = [
   'Review the verification report before acceptance.',
   'Record qualified lessons as separate knowledge records.',
 ];
-function workRecordProblems(root: string, body: string): string[] {
+export function workRecordProblems(root: string, body: string): string[] {
   const headings = [...body.matchAll(/^(#{1,6})\s+(.*?)\s*#*\s*$/gm)];
   const scaffolding = [
     ...workRecordScaffolding,
@@ -791,6 +791,12 @@ function hasReview(root: string, target: ProjectRecord, records: ProjectRecord[]
 export function hasCurrentReview(root: string, id: string): boolean {
   return hasReview(root, getRecord(root, id), loadRecords(root));
 }
+function assertCurrentReportedProducer(task: ProjectRecord, invocationId: string): void {
+  if (task.meta.type === 'task' && invocationId.startsWith('local-report-') &&
+      task.meta.data.invocation_id !== invocationId &&
+      Array.isArray(task.meta.data.prior_invocation_ids) && task.meta.data.prior_invocation_ids.includes(invocationId))
+    throw new Error('This reported producer has been superseded; resume with the current assignment.');
+}
 export function assignmentReport(
   root: string,
   input: {
@@ -799,6 +805,7 @@ export function assignmentReport(
     invocation_id: string;
     covered_invocation_ids?: string[];
     role?: string;
+    assurance?: 'unsigned-local-assignment';
   },
 ): ProjectRecord {
   const problems = workRecordProblems(root, input.body);
@@ -813,6 +820,12 @@ export function assignmentReport(
       ? target.meta.id : target.meta.data.workflow_id ?? target.meta.data.intake_workflow_id));
     if (workflowIds.size !== 1 || typeof [...workflowIds][0] !== 'string')
       throw new Error('Native assignment reports must document one workflow.');
+    if (input.invocation_id.startsWith('local-report-')) {
+      const parent = getRecord(root, [...workflowIds][0] as string);
+      if (input.role === 'manager' && parent.meta.data.reported_manager_invocation_id !== input.invocation_id)
+        throw new Error('This reported Coordinator has been superseded; use the current claimed Coordinator.');
+      for (const target of targets) assertCurrentReportedProducer(target, input.invocation_id);
+    }
     const identity = hash(JSON.stringify({ workflow: [...workflowIds][0], role: input.role,
       invocation_id: input.invocation_id, targets: targets.map((target) => target.meta.id).sort(), body: input.body }));
     const existing = loadRecords(root).find((record) => record.meta.data.assignment_report_hash === identity);
@@ -821,7 +834,8 @@ export function assignmentReport(
       type: 'knowledge', title: `${input.role} assignment report`, owner: input.role!,
       links: targets.map((target) => ({ type: 'documents', target: target.meta.id })),
       data: { kind: 'work-record', workflow_id: [...workflowIds][0], invocation_id: input.invocation_id,
-        assignment_report_hash: identity, assurance: 'unsigned-native-report' },
+        assignment_report_hash: identity, assurance: 'unsigned-native-report',
+        ...(input.assurance ? { identity_assurance: input.assurance, reported_assignment_id: input.invocation_id } : {}) },
       body: input.body,
     });
   }
@@ -1139,6 +1153,7 @@ function startTaskWithRecovery(
   if (typeof invocationId !== 'string' || !invocationId.trim())
     throw new Error('Task execution needs a non-empty invocation identity.');
   const task = getRecord(root, id);
+  assertCurrentReportedProducer(task, invocationId);
   if (typeof task.meta.data.workflow_id === 'string') {
     const findings = knowledgeResearchProblems(root, task.meta.data.workflow_id);
     if (findings.length) throw new Error(findings.join('\n'));
@@ -1216,6 +1231,7 @@ export function resumeTask(
   confirmedModel?: string,
   invocationId?: string,
 ): ProjectRecord {
+  if (typeof invocationId === 'string') assertCurrentReportedProducer(getRecord(root, id), invocationId);
   if (invocationId !== undefined && (typeof invocationId !== 'string' || !invocationId.trim()))
     throw new Error('Task execution needs a non-empty invocation identity.');
   const task = getRecord(root, id);

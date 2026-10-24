@@ -213,6 +213,14 @@ test('active invocations and loss of trust prevent model mutation', async t => {
   assert.equal(changes, 0);
 });
 
+test('trust loss disposes the media-bearing monitor before accepting another message', async t => {
+  const env = setup(t);
+  await env.open();
+  env.vscode.workspace.isTrusted = false;
+  await env.message({ type: 'refresh' });
+  assert.equal(env.panel.disposed, true, 'A retained webview must not keep background media after trust is revoked');
+});
+
 test('closing monitor while a model picker is pending cannot mutate routing', async t => {
   let choose, changes = 0;
   const env = setup(t, { setRoleModel: () => { changes++; } });
@@ -241,6 +249,9 @@ test('pure renderer keeps inline state out of the webview and exposes previewabl
   assert.match(html, /id="enter-focus-space"/);
   assert.match(html, /id="focus-space"/);
   assert.match(html, /frame-src https:\/\/www.youtube.com https:\/\/www.youtube-nocookie.com/);
+  assert.match(html, /frame-src[^;]*http:\/\/127\.0\.0\.1:\*/, 'The player uses a genuine loopback HTTP document');
+  assert.doesNotMatch(html, /script-src[^;]*https:/, 'YouTube scripts execute in their HTTP player document, outside the privileged webview');
+  assert.doesNotMatch(html, /frame-src[^;]*(?:\shttps:\s|\s\*\s)/, 'Frame permissions remain restricted to approved player hosts');
   assert.match(html, /default-src 'none'/);
   assert.doesNotMatch(html, /\son(?:click|load|error)\s*=/i);
 });

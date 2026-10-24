@@ -19,7 +19,7 @@ Stakeholder needs, operating context, constraints, existing requirements, resear
 
 ## Permissions
 
-Create and refine requirement, check-plan, and change records. Propose priorities and links; product intent and owner-approved exceptions remain with the responsible owner.
+Create and refine requirement and change records. Describe verification criteria and pass check-plan authorship to the Verifier role. Propose priorities and links; product intent and owner-approved exceptions remain with the responsible owner.
 
 ## Outcome
 

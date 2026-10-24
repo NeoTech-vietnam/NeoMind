@@ -367,6 +367,8 @@
     }
     updateStatus(); updateLists(); publishScene();
   });
+  byId('manage-plugins')?.addEventListener('click', () => vscode.postMessage({ type: 'open-plugins' }));
+  byId('open-automation')?.addEventListener('click', () => vscode.postMessage({ type: 'open-automation' }));
   byId('refresh')?.addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
   byId('motion')?.addEventListener('click', () => { motionEnabled = !motionEnabled; persist(); updateMotion(); });
   byId('show-history')?.addEventListener('click', () => { showHistory = !showHistory; persist(); publishScene(); });

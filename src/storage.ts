@@ -69,8 +69,12 @@ export function safePath(root: string, path: string): string {
   let ancestor = target;
   while (!existsSync(ancestor) && ancestor !== dirname(ancestor)) ancestor = dirname(ancestor);
   if (existsSync(ancestor)) {
-    const physical = realpathSync(ancestor);
-    const physicalRoot = realpathSync(base);
+    // Native resolution avoids repeating JavaScript's component-by-component
+    // filesystem walk on Windows. Re-resolve both paths on every call so a
+    // retargeted junction cannot inherit an earlier containment decision.
+    const resolvePhysical = process.platform === 'win32' ? realpathSync.native : realpathSync;
+    const physical = resolvePhysical(ancestor);
+    const physicalRoot = resolvePhysical(base);
     const physicalRel = relative(physicalRoot, physical);
     if (physicalRel === '..' || physicalRel.startsWith(`..${sep}`) || isAbsolute(physicalRel))
       throw new Error('Path follows a link outside the project.');

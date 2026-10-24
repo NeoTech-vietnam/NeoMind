@@ -321,6 +321,16 @@ export function bindManagerInvocation(
       throw new Error('Workflow changed before manager assignment.');
   });
 }
+/** Preserve intake identity while attributing new native decisions to the current claimed Coordinator. */
+function managerInvocationIdentity(root: string, parent: ProjectRecord): unknown {
+  const id = parent.meta.data.reported_manager_invocation_id;
+  if (!isNativeWorkflow(parent) || id === undefined) return parent.meta.data.invocation_id;
+  if (typeof id !== 'string' || !/^local-report-[a-f0-9]{40}$/.test(id)) throw new Error('Invalid reported manager identity.');
+  const actor = JSON.parse(readFileSync(safePath(root, `.neomind/native/reported-assignments/${id}.json`), 'utf8'));
+  if (actor.id !== id || actor.workflow_id !== parent.meta.id || actor.profile_id !== 'coordinator' || actor.role !== 'manager' ||
+      actor.state !== 'claimed' || actor.assurance !== 'unsigned-local-assignment') throw new Error('Reported manager identity is not a claimed Coordinator assignment.');
+  return id;
+}
 export const discussionRoles = [
   'researcher',
   'requirements',
@@ -355,7 +365,7 @@ export function discussWorkflow(
   const invocationId = text(input.invocation_id, 'Invocation ID', 256);
   if (parent.meta.data.routing_required === true)
     assertRouting(root, input.role, invocationId, { workflow_id: id, require_completed: false });
-  if (input.role !== 'manager' && invocationId === parent.meta.data.invocation_id)
+  if (input.role !== 'manager' && [parent.meta.data.invocation_id, managerInvocationIdentity(root, parent)].includes(invocationId))
     throw new Error('Specialist discussion needs its own invocation identity.');
   const round = input.round ?? 1;
   if (!Number.isInteger(round) || round < 1 || round > policy.max_discussion_rounds)
@@ -578,7 +588,8 @@ function decideWorkflowClaimed(
     data: {
       kind: 'manager-decision',
       workflow_id: id,
-      invocation_id: parent.meta.data.invocation_id,
+      invocation_id: managerInvocationIdentity(root, parent),
+      ...(parent.meta.data.reported_manager_invocation_id ? { identity_assurance: 'unsigned-local-assignment', reported_assignment_id: parent.meta.data.reported_manager_invocation_id } : {}),
       summary,
       rationale,
       discussion_ids: participants.map((r) => r.meta.id),
@@ -807,7 +818,7 @@ export function workflowStatus(root: string, id?: string): unknown {
     decision_findings: decisionFindings,
     native_completion_findings: nativeCompletionFindings,
     native_manager_attempt_id: !isNativeWorkflow(parent) && typeof managerAttemptId === 'string' ? managerAttemptId : null,
-    reported_manager_invocation_id: isNativeWorkflow(parent) ? parent.meta.data.invocation_id : null,
+    reported_manager_invocation_id: isNativeWorkflow(parent) ? managerInvocationIdentity(root, parent) : null,
     native_manager_state: managerAttempt?.state ?? null,
     native_manager_blocker: managerBlocker,
     archive: parent.meta.data.archive ?? recoveredArchive?.publication ?? null,
@@ -1093,7 +1104,8 @@ function finishWorkflowClaimed(
       type: 'knowledge',
       title: 'Manager final report',
       owner: 'manager',
-      data: { kind: 'work-record', workflow_id: id, invocation_id: parent.meta.data.invocation_id },
+      data: { kind: 'work-record', workflow_id: id, invocation_id: managerInvocationIdentity(root, parent),
+        ...(parent.meta.data.reported_manager_invocation_id ? { identity_assurance: 'unsigned-local-assignment', reported_assignment_id: parent.meta.data.reported_manager_invocation_id } : {}) },
       links: [{ type: 'documents', target: id }],
       body: finalBody,
     }).meta.id;

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, lstatSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -79,6 +79,12 @@ const common = [
   'project_status',
   'project_read',
   'assignment_report',
+  'assignment_claim',
+  'assignment_open',
+  'assignment_context',
+  'assignment_progress',
+  'assignment_result',
+  'agent_activity',
   'record_list',
   'record_get',
   'record_trace',
@@ -92,6 +98,10 @@ const common = [
   'capability_describe',
   'recipe_list',
   'recipe_resolve',
+  'procedure_list',
+  'procedure_discover',
+  'procedure_resolve',
+  'work_prepare',
   'note_validate',
   'pack_list',
   'pack_suggest',
@@ -100,6 +110,7 @@ const common = [
   'platform_validate',
 ];
 const writeRecords = [
+  'knowledge_research',
   'record_create',
   'record_update',
   'note_create',
@@ -116,6 +127,10 @@ const roles: Record<string, Omit<RoleCapabilities, 'role'>> = {
       ...writeRecords,
       ...submit,
       'manager_begin',
+      'assignment_prepare',
+      'procedure_register',
+      'procedure_qualify',
+      'procedure_suspend',
       'manager_discuss',
       'manager_decide',
       'manager_finish',
@@ -202,6 +217,7 @@ const roles: Record<string, Omit<RoleCapabilities, 'role'>> = {
   reviewer: {
     operations: [
       ...common,
+      'procedure_review',
       'task_review',
       'record_review',
       'note_validate',
@@ -265,6 +281,8 @@ const roles: Record<string, Omit<RoleCapabilities, 'role'>> = {
   developer: {
     operations: [
       ...common,
+      'procedure_register',
+      'procedure_run',
       ...submit,
       'note_create',
       'cornell_research_compile',
@@ -392,6 +410,7 @@ function npmScript(): string {
   return script;
 }
 export function installProvider(root: string, id: ProviderId): string {
+  if (!toolCatalog.some(tool => tool.id === id)) throw new Error('Unknown plug-in.');
   if (id === 'rea' && !reaConfigured(root)) throw new Error('Configure the pinned REA integration before installation.');
   const provider = toolCatalog.find((tool) => tool.id === id)!;
   const policy = readToolPolicy(root);
@@ -403,11 +422,9 @@ export function installProvider(root: string, id: ProviderId): string {
   const metadata = join(base, 'node_modules', provider.package, 'package.json');
   return withOperationLock(root, `provider-${id}`, () => {
     if (!existsSync(metadata)) {
-      if (id === 'rea') {
-        const automation = safePath(root, '.neomind/automation.json');
-        if (existsSync(automation) && JSON.parse(readFileSync(automation, 'utf8')).network_policy === 'local-only')
-          throw new Error('Local-only policy disables REA package downloads.');
-      }
+      const automation = safePath(root, '.neomind/automation.json');
+      if (existsSync(automation) && JSON.parse(readFileSync(automation, 'utf8')).network_policy === 'local-only')
+        throw new Error('Local-only policy disables approved provider package downloads.');
       if (!policy.automatic_install)
         throw new Error(`Provider ${id} is missing and automatic installation is disabled.`);
       mkdirSync(base, { recursive: true });
@@ -522,7 +539,35 @@ function providerLaunch(
     path !== packageRoot
   )
     throw new Error('Provider executable escapes its package.');
-  return { command: process.execPath, args: [path] };
+  return { command: process.versions.electron ? 'node' : process.execPath, args: [path] };
+}
+
+/** Inspect an existing pinned installation without installing, creating a baseline or starting it. */
+export function readInstalledProvider(root: string, id: ProviderId): { base: string; launch: { command: string; args: string[] } } {
+  const provider = toolCatalog.find(tool => tool.id === id);
+  if (!provider) throw new Error('Unknown plug-in.');
+  const base = safePath(root, `.neomind/tools/${id}/${provider.version}`);
+  const regular = (path: string) => {
+    let cursor = path;
+    while (cursor !== base) {
+      if (lstatSync(cursor).isSymbolicLink()) throw new Error('Pinned provider files must not follow symbolic links.');
+      const parent = dirname(cursor);
+      if (parent === cursor) throw new Error('Pinned provider file escapes its installation.');
+      cursor = parent;
+    }
+    if (lstatSync(base).isSymbolicLink() || !lstatSync(path).isFile()) throw new Error('Pinned provider requires regular installed files.');
+    return path;
+  };
+  const manifest = JSON.parse(readFileSync(regular(join(base, 'node_modules', provider.package, 'package.json')), 'utf8'));
+  const bytes = readFileSync(regular(join(base, 'package-lock.json')));
+  const lock = JSON.parse(bytes.toString('utf8'));
+  const baseline = readFileSync(safePath(root, `.neomind/tool-locks/${id}-${provider.version}.json`));
+  if (manifest.name !== provider.package || manifest.version !== provider.version ||
+      lock.packages?.[`node_modules/${provider.package}`]?.integrity !== provider.integrity || !bytes.equals(baseline))
+    throw new Error('Pinned provider installation or dependency baseline does not match.');
+  const launch = providerLaunch(root, id, base);
+  regular(id === 'codegraph' ? launch.command : launch.args[0]!);
+  return { base, launch };
 }
 const providerEnvironment = () =>
   Object.fromEntries(

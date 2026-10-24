@@ -1,6 +1,6 @@
 # Prerelease and stable release criteria
 
-The package version is `0.1.0-alpha.5`, distributed with VS Code extension `0.5.0` as one GitHub prerelease. It adds nine expert Codex profiles, observed parent/agent lifecycle links, reviewed Cornell research export/publication, optional pinned REA MCP and scheduled upstream candidate checks to the existing universe, Earth FocusSpace and model controls. See [paired installation](install-release.md) and [activation limits](agent-platform.md). GitHub release assets provide installable packages; npm registry and VS Code Marketplace publication are separate and are not claimed. Recorded native conformance and agent evaluation remain stable-release requirements.
+The package version is `0.1.0-alpha.8`, distributed with VS Code extension `0.8.0` as one GitHub prerelease. It adds a versioned procedure registry, SQLite/FTS5 intake, qualified reusable scripts, typed assignment results and an Automation Library to the existing agent profiles, plug-in controls, universe, Earth FocusSpace and reviewed Cornell workflows. See [paired installation](install-release.md) and [activation limits](agent-platform.md). GitHub release assets provide installable packages; npm registry and VS Code Marketplace publication are separate and are not claimed. Recorded native conformance and agent evaluation remain stable-release requirements.
 
 ## Local validation and packaging
 
@@ -16,7 +16,7 @@ npm pack --pack-destination artifacts
 
 Record the source revision and relevant working-tree hashes, Node/npm versions, test results, packaged file inventory, and tarball SHA-256. Install the resulting tarball into a separate temporary project and exercise `init`, `doctor`, a complete requirement/task/check/review lifecycle, a new-session resumption, and `update`. Confirm that generated resources and the MCP executable resolve from the installed package.
 
-Package smoke uses two clearly labelled environments: installed alpha.3 verifies twelve roles, all three recipes, scoped/native/archive/Cornell MCP discovery, configuration preservation, and rejection of unconfirmed invocations; a separately initialized legacy-policy fixture exercises record, documentation, evidence, review, closure, and resume mechanics. The latter never establishes authenticated native routing. Record actual Sol/Luna/Terra execution separately through the pinned bridge.
+Package smoke uses two clearly labelled environments: the current installed tarball verifies twelve roles, all three recipes, scoped/native/archive/Cornell MCP discovery, configuration preservation, and rejection of unconfirmed invocations; a separately initialized legacy-policy fixture exercises record, documentation, evidence, review, closure, and resume mechanics. The latter never establishes authenticated native routing. Record actual model execution separately through the configured client or bridge.
 
 Exercise `task resume TASK_ID` after interruption and `task repair TASK_ID --summary FEEDBACK` after review. The first repair returns work to readiness; repeated failure requires documented coordinator escalation and an explicit selected model for resumption. Confirm that a new implementation baseline requires fresh evidence and review.
 

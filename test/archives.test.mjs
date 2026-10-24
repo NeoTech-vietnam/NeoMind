@@ -405,6 +405,23 @@ test('archive cannot export arbitrary inputs, raw logs, credentials, or duplicat
   );
   assert.throws(() => prepareArchive(work.root, work.parent.meta.id), /Duplicate record ID/);
 });
+for (const prefix of ['.neomind', '.taskforces', '.verythinker']) {
+  test(`archive excludes ${prefix} local-assignment issuer keys while preserving public assignment metadata`, (t) => {
+    const work = fixture(t), directory = `${prefix}/native/reported-assignments`;
+    mkdirSync(safePath(work.root, directory), { recursive: true });
+    const publicPath = `${directory}/local-report-${'a'.repeat(40)}.json`;
+    writeFileSync(safePath(work.root, publicPath), JSON.stringify({ schema_version: 1, id: `local-report-${'a'.repeat(40)}`,
+      workflow_id: work.parent.meta.id, role: 'researcher', assurance: 'unsigned-local-assignment', state: 'claimed' }) + '\n');
+    const reference = createRecord(work.root, { type: 'knowledge', owner: 'manager', title: 'Public local-assignment attribution',
+      data: { workflow_id: work.parent.meta.id, outputs: [publicPath] } });
+    const snapshot = prepareArchive(work.root, work.parent.meta.id, { disposition: 'working' });
+    assert.ok(snapshot.manifest.files.some(file => file.path === publicPath), 'Unsigned public identity metadata stays portable.');
+    const privatePath = `${directory}/issuer.key`;
+    writeFileSync(safePath(work.root, privatePath), Buffer.alloc(32, 7));
+    updateRecord(work.root, reference.meta.id, { data: { outputs: [publicPath, privatePath] } });
+    assert.throws(() => prepareArchive(work.root, work.parent.meta.id, { disposition: 'working' }), /excluded or sensitive storage/);
+  });
+}
 for (const [name, automation] of [
   ['native', nativeAutomationPolicy()],
   ['legacy', { ...defaultAutomationPolicy(), network_policy: 'local-only' }],

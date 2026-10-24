@@ -4,6 +4,8 @@ Use this guide for Codex intake, delegated expert work and saved `codex-native` 
 
 ## Intake and delegation
 
+When the native client omits invocation identity, follow `reported-assignments.md`: Coordinator prepares each actual delegate packet; that delegate claims its server-issued local identity and persists its own reports with `reported_assignment`. Missing platform IDs do not prevent validated local research/report persistence. Local IDs remain unsigned and never replace signed strict receipts or prove independent execution.
+
 1. Generic intake calls `manager_run` once with the full request. Use the returned `handoff.agent` as Codex `spawn_agent.agent_type`, passing `handoff.prompt` unchanged. An assigned `neomind-coordinator` continues directly; it does not create another workflow or launch itself.
 2. Coordinator assigns bounded work to `neomind-explorer`, `neomind-researcher`, `neomind-planner`, `neomind-architect`, `neomind-implementer`, `neomind-debugger`, `neomind-verifier` and `neomind-reviewer` as applicable. Each packet names workflow, assignment, profile, core role, allowed paths, inputs, acceptance criteria and evidence. Keep at most three independent workers; serialize shared edits and terminal operations.
 3. Reuse first: inspect existing source, local knowledge and applicable skills. Use reviewed pinned upstream adapters with their licenses and provenance. Under `local-only`, discovery and research stay local; record upstream work as not searched. A failed request is not a no-match.

@@ -124,12 +124,13 @@
       const previous = document.body.dataset.view || 'universe'; clearTransition(); view = next; persist();
       const commit = () => {
         document.body.dataset.view = next;
-        if (next === 'universe') { haltMedia(); cancelRequests(); } else { byId('focus-space')?.focus(); if (calendarConfigured || importedICS) refreshAgenda(); }
+        if (next === 'universe') { stopYouTube(); cancelRequests(); } else { byId('focus-space')?.focus(); if (calendarConfigured || importedICS) refreshAgenda(); }
+        renderAudio();
         onViewChange(next);
       };
       const overlay = byId('fs-transition'), reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
       if (!animate || reduced || previous === next || !overlay) { commit(); return; }
-      haltMedia(); const from = transitionPoint(previous), width = window.innerWidth || 1280, height = window.innerHeight || 800;
+      stopYouTube(); const from = transitionPoint(previous), width = window.innerWidth || 1280, height = window.innerHeight || 800;
       const setPoint = (prefix, point) => { overlay.style.setProperty(`--fs-${prefix}-x`, `${point.x}px`); overlay.style.setProperty(`--fs-${prefix}-y`, `${point.y}px`); overlay.style.setProperty(`--fs-${prefix}-scale`, String(point.radius / 80)); };
       setPoint('from', from); setPoint('to', transitionPoint(next));
       overlay.style.setProperty('--fs-mid-x', `${width / 2}px`); overlay.style.setProperty('--fs-mid-y', `${height / 2}px`); overlay.style.setProperty('--fs-cover', String(Math.hypot(width, height) / 130));
@@ -278,45 +279,45 @@
       try { window.navigator.geolocation.getCurrentPosition(position => { if (alive && epoch === uiEpoch) loadWeather(position.coords.latitude, position.coords.longitude, 'Your location'); }, fallback, { timeout: 12_000, maximumAge: 600_000, enableHighAccuracy: false }); } catch { fallback(); }
     });
     for (const count of [3, 7]) bind(`fs-forecast-${count}`, 'click', () => { forecastDays = count; renderWeather(); });
-    let youtubePlayer = null, youtubeScript = null, youtubeReady = null, previousYouTubeReady, readyHandler, youtubeRevision = 0;
+    let youtubeFrame = null, youtubeOrigin = null, youtubeLoading = false, youtubeRevision = 0;
     function stopYouTube() {
-      youtubeRevision++; try { youtubePlayer?.destroy(); } catch {} youtubePlayer = null;
+      const started = youtubeFrame || youtubeLoading;
+      youtubeRevision++; youtubeFrame = null; youtubeOrigin = null; youtubeLoading = false;
       byId('fs-youtube-player')?.replaceChildren(); if (byId('fs-youtube-player')) byId('fs-youtube-player').hidden = true;
+      if (started) void request('youtube-player-stop').catch(() => {});
     }
-    function loadYouTubeAPI() {
-      if (window.YT?.Player) return Promise.resolve();
-      if (youtubeReady) return youtubeReady;
-      youtubeReady = new Promise((resolve, reject) => {
-        const previous = window.onYouTubeIframeAPIReady;
-        if (!youtubeScript) previousYouTubeReady = previous;
-        readyHandler = () => { try { if (typeof previous === 'function') previous(); } catch {} resolve(); };
-        window.onYouTubeIframeAPIReady = readyHandler;
-        youtubeScript = document.createElement('script'); youtubeScript.src = 'https://www.youtube.com/iframe_api'; youtubeScript.async = true;
-        youtubeScript.onerror = () => { reject(new Error('Player controls could not load. Use the visible player or Open on YouTube.')); };
-        document.head.appendChild(youtubeScript);
-      });
-      return youtubeReady;
-    }
-    function loadYouTube(input) {
-      const selected = parseYouTubeUrl(input, window.location?.origin);
+    async function loadYouTube(input) {
+      const selected = parseYouTubeUrl(input);
       if (!selected) { setText('fs-youtube-status', 'Choose a valid HTTPS YouTube video or playlist link.'); return; }
       stopYouTube(); haltAudio(); youtubeUrl = selected.url; persist();
       if (byId('fs-youtube-url')) byId('fs-youtube-url').value = youtubeUrl;
-      const frame = element('iframe'); frame.id = 'fs-youtube-iframe'; frame.title = 'YouTube music player'; frame.src = selected.embedUrl;
-      frame.allow = 'encrypted-media; picture-in-picture; fullscreen'; frame.referrerPolicy = 'strict-origin-when-cross-origin'; frame.setAttribute('allowfullscreen', '');
-      byId('fs-youtube-player')?.replaceChildren(frame); if (byId('fs-youtube-player')) byId('fs-youtube-player').hidden = false;
       if (byId('fs-youtube-open')) byId('fs-youtube-open').hidden = false;
-      setText('fs-youtube-status', 'Press play in the visible player. Nothing starts automatically.');
-      const revision = youtubeRevision;
-      void loadYouTubeAPI().then(() => {
-        if (!alive || view !== 'focus' || revision !== youtubeRevision || !window.YT?.Player) return;
-        youtubePlayer = new window.YT.Player(frame, { host: 'https://www.youtube-nocookie.com', events: {
-          onError: event => setText('fs-youtube-status', Number(event.data) === 153 ? 'This window could not identify the embedded player. Choose Open on YouTube.' : 'This video cannot play here. Try another video or Open on YouTube.'),
-          onAutoplayBlocked: () => setText('fs-youtube-status', 'Press play in the visible player, or Open on YouTube.'),
-        } });
-      }).catch(error => { if (alive && revision === youtubeRevision) setText('fs-youtube-status', error.message); });
+      setText('fs-youtube-status', 'Preparing a local player with its own HTTP identity…');
+      const revision = youtubeRevision; youtubeLoading = true;
+      try {
+        const result = await request('youtube-player', { url: selected.url });
+        if (!alive || view !== 'focus' || revision !== youtubeRevision) return;
+        const endpoint = new URL(result.url);
+        if (endpoint.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(endpoint.hostname) || !endpoint.port || endpoint.username || endpoint.password) throw new Error('This player is unavailable in the current window. Choose Open on YouTube.');
+        const frame = element('iframe'); frame.id = 'fs-youtube-iframe'; frame.title = 'YouTube music player'; frame.src = endpoint.href;
+        frame.allow = 'encrypted-media; picture-in-picture; fullscreen'; frame.referrerPolicy = 'strict-origin-when-cross-origin'; frame.setAttribute('allowfullscreen', '');
+        youtubeFrame = frame; youtubeOrigin = endpoint.origin;
+        byId('fs-youtube-player')?.replaceChildren(frame); if (byId('fs-youtube-player')) byId('fs-youtube-player').hidden = false;
+        setText('fs-youtube-status', 'Press play in the visible player. Nothing starts automatically.');
+      } catch (error) {
+        if (alive && revision === youtubeRevision && error?.name !== 'AbortError') setText('fs-youtube-status', error instanceof Error ? error.message : 'The player could not start. Choose Open on YouTube.');
+      } finally { if (revision === youtubeRevision) youtubeLoading = false; }
     }
-    bind('fs-youtube-form', 'submit', event => { event.preventDefault(); loadYouTube(byId('fs-youtube-url')?.value); });
+    listen(window, 'message', event => {
+      if (!alive || !youtubeFrame || event.source !== youtubeFrame.contentWindow || event.origin !== youtubeOrigin) return;
+      const value = plain(event.data);
+      if (value.type !== 'neomind-youtube') return;
+      if (value.event === 'error') {
+        const code = Number(value.code); stopYouTube();
+        setText('fs-youtube-status', code === 153 ? 'YouTube error 153: player identity was rejected. Choose Open on YouTube.' : 'This video cannot play here. Try another video or Open on YouTube.');
+      } else if (value.event === 'ready') setText('fs-youtube-status', 'Player ready. Press play in the visible player.');
+    });
+    bind('fs-youtube-form', 'submit', event => { event.preventDefault(); void loadYouTube(byId('fs-youtube-url')?.value); });
     bind('fs-youtube-open', 'click', () => { if (youtubeUrl) void perform('youtube-open', { url: youtubeUrl }, null, 'Opening YouTube in your browser…'); });
     bind('fs-youtube-configure', 'click', () => { void perform('youtube-configure', {}, () => setText('fs-youtube-status', 'Search connection saved. Choose a search below.'), 'Complete the YouTube search configuration prompt in VS Code.'); });
     bind('fs-youtube-search-form', 'submit', event => {
@@ -330,23 +331,33 @@
         byId('fs-youtube-results')?.replaceChildren(...rows); setText('fs-youtube-status', rows.length ? 'Choose a result to load its visible player.' : 'No videos found. Try another search.');
       }, 'Searching YouTube…');
     });
-    let audio = null, master = null, audioSources = [], audioStarting = false, audioEpoch = 0;
+    let audio = null, master = null, audioSources = [], audioStarting = false, audioEpoch = 0, backgroundAudioShown = false;
+    function renderAudio() {
+      const playing = Boolean(audio && !audioStarting);
+      for (const id of ['fs-audio-toggle', 'fs-background-toggle']) {
+        byId(id)?.setAttribute('aria-pressed', String(playing)); setText(id, playing ? 'Ⅱ Pause ambience' : '▶ Play ambience');
+      }
+      if (byId('focus-space')) byId('focus-space').dataset.sound = playing ? 'playing' : 'paused';
+      if (byId('fs-background-audio')) byId('fs-background-audio').hidden = view !== 'universe' || !backgroundAudioShown;
+      setText('fs-background-track', { orbital: 'Orbital drift', shore: 'Quiet shore', rain: 'Distant rain' }[playlist]);
+      setText('fs-background-status', playing ? 'Playing across NeoMind views' : 'Paused · resume when ready');
+      for (const id of ['fs-volume', 'fs-background-volume']) if (byId(id)) byId(id).value = String(Math.round(volume * 100));
+    }
     function haltAudio() {
       audioEpoch++; audioStarting = false;
       for (const source of audioSources) { try { source.stop(); } catch {} } audioSources = [];
       const previous = audio; audio = null; master = null;
       try { const closed = previous?.close(); closed?.catch?.(() => {}); } catch {}
-      byId('fs-audio-toggle')?.setAttribute('aria-pressed', 'false'); setText('fs-audio-toggle', '▶ Play ambience');
-      if (byId('focus-space')) byId('focus-space').dataset.sound = 'paused';
+      renderAudio();
     }
     async function startAudio() {
-      if (audio || audioStarting || !alive || view !== 'focus' || document.hidden) return;
+      if (audio || audioStarting || !alive || document.hidden) return;
       const Context = window.AudioContext ?? window.webkitAudioContext;
       if (!Context) { setText('fs-audio-status', 'Ambient sound is unavailable in this browser. You can still use a YouTube link.'); return; }
-      stopYouTube(); audioStarting = true; const epoch = ++audioEpoch;
+      stopYouTube(); backgroundAudioShown = true; audioStarting = true; const epoch = ++audioEpoch; renderAudio();
       try {
         const context = new Context(); audio = context; await context.resume();
-        if (!alive || epoch !== audioEpoch || view !== 'focus' || document.hidden) { if (audio === context) haltAudio(); return; }
+        if (!alive || epoch !== audioEpoch) { if (audio === context) haltAudio(); return; }
         master = context.createGain(); master.gain.value = 0; master.gain.setTargetAtTime(volume * .22, context.currentTime, .8); master.connect(context.destination);
         const notes = playlist === 'orbital' ? [130.8128, 196, 261.6256] : playlist === 'shore' ? [146.8324, 220] : [174.6141, 261.6256];
         for (const [index, frequency] of notes.entries()) {
@@ -360,21 +371,24 @@
         const source = context.createBufferSource(), filter = context.createBiquadFilter(), gain = context.createGain();
         source.buffer = buffer; source.loop = true; filter.type = 'lowpass'; filter.frequency.value = playlist === 'rain' ? 2200 : playlist === 'shore' ? 650 : 280; filter.Q.value = .5;
         gain.gain.value = playlist === 'orbital' ? .12 : .55; source.connect(filter); filter.connect(gain); gain.connect(master); source.start(); audioSources.push(source);
-        byId('fs-audio-toggle')?.setAttribute('aria-pressed', 'true'); setText('fs-audio-toggle', 'Ⅱ Pause ambience'); setText('fs-audio-status', 'Original synthesized sound · playing in this view.');
-        if (byId('focus-space')) byId('focus-space').dataset.sound = 'playing';
+        setText('fs-audio-status', 'Original synthesized sound · continues in Universe.');
       } catch { if (epoch === audioEpoch) { haltAudio(); setText('fs-audio-status', 'Sound could not start. Try Play again, or use a YouTube link.'); } }
-      finally { if (epoch === audioEpoch) audioStarting = false; }
+      finally { if (epoch === audioEpoch) { audioStarting = false; renderAudio(); } }
     }
     bind('fs-audio-toggle', 'click', () => { if (audio || audioStarting) haltAudio(); else void startAudio(); });
+    bind('fs-background-toggle', 'click', () => { if (audio || audioStarting) haltAudio(); else void startAudio(); });
+    bind('fs-background-focus', 'click', () => showView('focus'));
     bind('fs-playlist', 'change', () => { const wasPlaying = !!audio; haltAudio(); playlist = ['orbital', 'shore', 'rain'].includes(byId('fs-playlist')?.value) ? byId('fs-playlist').value : 'orbital'; persist(); if (wasPlaying) void startAudio(); });
-    bind('fs-volume', 'input', () => { volume = clamp(Number(byId('fs-volume')?.value) || 0, 0, 100) / 100; if (master && audio) master.gain.setTargetAtTime(volume * .22, audio.currentTime, .05); setText('fs-volume-value', `${Math.round(volume * 100)}%`); persist(); });
+    function changeVolume(id) { volume = clamp(Number(byId(id)?.value) || 0, 0, 100) / 100; if (master && audio) master.gain.setTargetAtTime(volume * .22, audio.currentTime, .05); setText('fs-volume-value', `${Math.round(volume * 100)}%`); renderAudio(); persist(); }
+    bind('fs-volume', 'input', () => changeVolume('fs-volume'));
+    bind('fs-background-volume', 'input', () => changeVolume('fs-background-volume'));
     haltMedia = () => { stopYouTube(); haltAudio(); };
     const pulse = window.setInterval(() => {
       if (!alive || timer.status !== 'running') return;
       const previous = timer.status; timer = updateTimer(timer, 'tick'); renderTimer();
       if (previous !== timer.status) { persist(); notice('Focus session complete. Take a breath before the next one.'); }
     }, 1000);
-    listen(document, 'visibilitychange', () => { if (byId('focus-space')) byId('focus-space').dataset.hidden = String(document.hidden); if (document.hidden) haltMedia(); });
+    listen(document, 'visibilitychange', () => { if (byId('focus-space')) byId('focus-space').dataset.hidden = String(document.hidden); if (document.hidden) stopYouTube(); });
     listen(window, 'pagehide', () => { timer = updateTimer(timer, 'tick'); persist(); haltMedia(); cancelRequests(); });
     setText('fs-date', new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }));
     if (byId('fs-playlist')) byId('fs-playlist').value = playlist;
@@ -385,7 +399,7 @@
     const statusRevision = agendaRevision;
     void request('status').then(data => { setText('fs-youtube-configure', plain(data).youtubeConfigured ? 'Change search connection' : 'Configure search'); if (statusRevision === agendaRevision) { calendarConfigured = plain(data).calendarConfigured === true; if (calendarConfigured && view === 'focus') refreshAgenda(); } }, () => {});
     return { open: () => showView('focus'), back: () => showView('universe'), getState: () => ({ view, timer: { ...timer }, playlist, volume, youtubeUrl, pending: pending.size }),
-      destroy() { if (!alive) return; timer = updateTimer(timer, 'tick'); persist(); alive = false; window.clearInterval(pulse); clearTransition(); haltMedia(); cancelRequests(); youtubeScript?.remove(); if (window.onYouTubeIframeAPIReady === readyHandler) window.onYouTubeIframeAPIReady = previousYouTubeReady; for (const dispose of disposers) dispose(); } };
+      destroy() { if (!alive) return; timer = updateTimer(timer, 'tick'); persist(); haltMedia(); alive = false; window.clearInterval(pulse); clearTransition(); cancelRequests(); for (const dispose of disposers) dispose(); } };
   }
   return { createTimer, restoreTimer, updateTimer, parseYouTubeUrl, create };
 });

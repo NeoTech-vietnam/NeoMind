@@ -60,6 +60,8 @@ function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'n
     module,
     require(name) {
       if (name === './monitor.cjs') return { activateMonitor() {} };
+      if (name === './plugin-panel.cjs') return require('../extensions/vscode-model-bridge/plugin-panel.cjs');
+      if (name === './automation-panel.cjs') return require('../extensions/vscode-model-bridge/automation-panel.cjs');
       if (name === 'vscode') return vscode;
       if (name === 'node:fs') return {
         realpathSync: { native: path => path },

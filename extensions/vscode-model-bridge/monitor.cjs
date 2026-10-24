@@ -27,12 +27,12 @@ function modelChangeRefusal(error) {
 
 function renderMonitorHtml({ cspSource, script, style, universe = 'universe.js', focusScript = 'focus-space.js', focusStyle = 'focus-space.css', nonce }) {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource}; script-src 'nonce-${nonce}' https://www.youtube.com; img-src ${cspSource} https://i.ytimg.com data:; frame-src https://www.youtube.com https://www.youtube-nocookie.com; connect-src https://www.youtube.com https://www.youtube-nocookie.com; media-src blob:; base-uri 'none';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource}; script-src 'nonce-${nonce}'; img-src ${cspSource} https://i.ytimg.com data:; frame-src https://www.youtube.com https://www.youtube-nocookie.com http://127.0.0.1:*; connect-src https://www.youtube.com https://www.youtube-nocookie.com; media-src blob:; base-uri 'none';">
 <link rel="stylesheet" href="${style}"><link rel="stylesheet" href="${focusStyle}"><title>NeoMind Universe</title></head><body><div id="universe-view">
 <header class="app-header">
   <div class="brand"><span class="brand-orbit" aria-hidden="true"></span><div><h1>NeoMind <span>UNIVERSE</span></h1><p>Agent observatory</p></div></div>
   <div class="project-heading"><span class="eyebrow">PROJECT SYSTEM</span><strong id="project-name">Connecting…</strong></div>
-  <div class="header-actions"><button id="enter-focus-space" class="button secondary" type="button">◉ Enter Earth <span>· Focus Space</span></button><span id="router-status" class="pill">Reading routing</span><button id="refresh" class="button secondary" type="button">↻ <span>Refresh</span></button></div>
+  <div class="header-actions"><button id="open-automation" class="button secondary" type="button">Automation</button><button id="manage-plugins" class="button secondary" type="button">Plug-ins</button><button id="enter-focus-space" class="button secondary" type="button">◉ Enter Earth <span>· Focus Space</span></button><span id="router-status" class="pill">Reading routing</span><button id="refresh" class="button secondary" type="button">↻ <span>Refresh</span></button></div>
 </header>
 <div class="telemetry"><p id="status" role="status">Loading local project state…</p><span id="observed-summary"></span></div>
 <main class="observatory">
@@ -88,8 +88,13 @@ function activateMonitor(vscode, context, loadRuntime) {
       const focusStyle = current.webview.asWebviewUri(vscode.Uri.file(join(resources.fsPath, 'focus-space.css')));
       current.webview.html = renderMonitorHtml({ cspSource: current.webview.cspSource, script, style, universe, focusScript, focusStyle, nonce });
       const alive = () => panel === current && token === generation && vscode.workspace.isTrusted;
+      const closeIfUntrusted = () => {
+        if (panel === current && token === generation && !vscode.workspace.isTrusted) { stop(); return true; }
+        return false;
+      };
       const focusHost = createFocusHost({ vscode, context, runtime, alive, post: message => current.webview.postMessage(message) });
       async function refresh() {
+        if (closeIfUntrusted()) return;
         if (!alive() || refreshBusy || current.visible === false) return;
         refreshBusy = true;
         try {
@@ -111,7 +116,10 @@ function activateMonitor(vscode, context, loadRuntime) {
       }
       let selecting = false;
       current.webview.onDidReceiveMessage(async message => {
+        if (closeIfUntrusted()) return;
         if (!alive() || !message || typeof message !== 'object') return;
+        if (message.type === 'open-plugins') { await vscode.commands.executeCommand('neomind.plugins.open'); return; }
+        if (message.type === 'open-automation') { await vscode.commands.executeCommand('neomind.automation.open'); return; }
         if (message.type === 'focus-space') { await focusHost.handle(message); return; }
         if (message.type === 'refresh') { await refresh(); return; }
         if (message.type !== 'select-model' || selecting || typeof message.role !== 'string') return;

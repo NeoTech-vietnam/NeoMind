@@ -31,6 +31,8 @@ A successful local search with no applicable sources supports only a local no-ma
 
 ## 3. Record research before planning
 
+An assigned native Researcher or Explorer persists this operation directly through its exposed MCP tool; terminal access is unnecessary. If the client omits its invocation ID, follow `.neomind/guides/reported-assignments.md`, claim the prepared packet and include its private `reported_assignment` credential. Never fabricate hashes, use generic record writes for gate-qualified research, or ask the human to perform ordinary persistence. Correct validation inputs using inspected evidence and retry within the same saved workflow.
+
 Use `recordKnowledgeResearch(root, workflowId, input)`, MCP `knowledge_research`, or CLI `knowledge research WORKFLOW_ID --data JSON`. MCP includes `workflow_id` in the object; API/CLI supply it separately. The workflow must be a `knowledge` record with `kind: manager-workflow`.
 
 Required research input:
