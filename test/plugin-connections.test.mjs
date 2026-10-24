@@ -298,15 +298,39 @@ test('Windows inherited MCP permissions remain exact across connection changes',
 test('Windows native short-path aliases can update credential-bearing MCP settings', { skip: process.platform !== 'win32' }, t => {
   const { root, targets } = fixture(t);
   put(targets.copilotVscode, '{"servers":{"private":{"command":"private","env":{"SECRET":"fixture-only"}}}}\n');
-  const shortPath = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+  const nativeShortPath = () => execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
     "$ErrorActionPreference='Stop'; $files=New-Object -ComObject Scripting.FileSystemObject; $files.GetFile($env:NEOMIND_TEST_MCP_ACL).ShortPath"],
   { env: { ...process.env, NEOMIND_TEST_MCP_ACL: targets.copilotVscode }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 10_000 }).trim();
+  const shortPath = nativeShortPath();
   if (shortPath.toLowerCase() === targets.copilotVscode.toLowerCase()) { t.skip('Host does not expose a distinct native short alias.'); return; }
   assert.equal(realpathSync.native(shortPath), realpathSync.native(targets.copilotVscode));
   const selected = { ...targets, copilotVscode: shortPath };
   assert.equal(change(root, selected, 'context7', 'copilot-vscode', true).status, 'connected');
+  assert.equal(existsSync(targets.copilotVscode), true, 'Replacing an 8.3 alias must retain its original long filename.');
   assert.equal(parseJsonc(readFileSync(targets.copilotVscode, 'utf8')).servers.private.env.SECRET, 'fixture-only');
-  assert.equal(change(root, selected, 'context7', 'copilot-vscode', false).status, 'disconnected');
+  assert.equal(status(root, targets, 'context7', 'copilot-vscode').status, 'connected');
+  assert.equal(status(root, { ...targets, copilotVscode: nativeShortPath() }, 'context7', 'copilot-vscode').status, 'connected');
+  assert.equal(change(root, targets, 'context7', 'copilot-vscode', false).status, 'disconnected');
+  assert.equal(change(root, targets, 'context7', 'copilot-vscode', true).status, 'connected');
+  assert.equal(change(root, { ...targets, copilotVscode: nativeShortPath() }, 'context7', 'copilot-vscode', false).status, 'disconnected');
+  const absent = join(dirname(shortPath), 'new-client', 'mcp-config.json');
+  const originalAbsent = join(dirname(targets.copilotVscode), 'new-client', 'mcp-config.json');
+  assert.equal(change(root, { ...targets, copilotCli: absent }, 'context7', 'copilot-cli', true).status, 'connected');
+  assert.equal(existsSync(originalAbsent), true);
+  assert.equal(change(root, { ...targets, copilotCli: originalAbsent }, 'context7', 'copilot-cli', false).status, 'disconnected');
+});
+
+test('Windows unavailable filesystem targets fail without an unbounded parent walk', { skip: process.platform !== 'win32' }, t => {
+  const { root } = fixture(t);
+  const drive = [...'ZYXWVUTSRQPONMLKJIHGFEDCBA'].find(letter => !existsSync(`${letter}:\\`));
+  if (!drive) { t.skip('Host has no unavailable drive letter.'); return; }
+  const moduleUrl = new URL('../dist/plugin-connections.js', import.meta.url).href;
+  const program = `import {readPluginConnections,setPluginConnection} from ${JSON.stringify(moduleUrl)}; ` +
+    'const targets={copilotVscode:process.argv[2]}; ' +
+    "if(readPluginConnections(process.argv[1],targets).find(row=>row.plugin==='context7'&&row.client==='copilot-vscode').status!=='blocked')process.exit(1); " +
+    "try{setPluginConnection(process.argv[1],{plugin:'context7',client:'copilot-vscode',connected:true},targets);process.exit(2)}catch(error){if(!/filesystem is unavailable/.test(error.message))throw error}";
+  execFileSync(process.execPath, ['--input-type=module', '-e', program, root, `${drive}:\\missing\\mcp.json`],
+    { stdio: 'pipe', windowsHide: true, timeout: 5000 });
 });
 
 test('Windows ACL-copy diagnostics preserve rollback and never echo helper secrets', { skip: process.platform !== 'win32' }, t => {
@@ -336,4 +360,50 @@ test('Windows ACL-copy diagnostics preserve rollback and never echo helper secre
   assert.equal(readFileSync(targets.copilotVscode, 'utf8'), originalSource);
   assert.equal(existsSync(join(root, '.neomind/plugin-connections.json')), false);
   assert.equal(readdirSync(dirname(targets.copilotVscode)).some(name => name.endsWith('.tmp')), false);
+});
+
+test('Windows ACL copy accepts only an added auto-inherited marker and rejects changed permissions', { skip: process.platform !== 'win32' }, async t => {
+  const clearSourceAI = '$observedSource.SetFlags($observedSource.ControlFlags -band (-bnot [int][System.Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited)); ';
+  const setCopyAI = '$observedCopy.SetFlags($observedCopy.ControlFlags -bor [System.Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited); ';
+  const scenarios = [
+    { name: 'OS adds only the auto-inherited marker', accepted: true, mutation: clearSourceAI + setCopyAI },
+    { name: 'OS removes the auto-inherited marker', mutation: '$observedSource.SetFlags($observedSource.ControlFlags -bor [System.Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited); $observedCopy.SetFlags($observedCopy.ControlFlags -band (-bnot [int][System.Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited)); ' },
+    { name: 'inheritance protection changes', mutation: clearSourceAI + setCopyAI + '$observedCopy.SetFlags($observedCopy.ControlFlags -bxor [System.Security.AccessControl.ControlFlags]::DiscretionaryAclProtected); ' },
+    { name: 'owner changes', mutation: clearSourceAI + setCopyAI + "$observedCopy.Owner=[System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-546'); " },
+    { name: 'group changes', mutation: clearSourceAI + setCopyAI + "$observedCopy.Group=[System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-546'); " },
+    { name: 'an ordered ACE changes', mutation: clearSourceAI + setCopyAI + '$observedCopy.DiscretionaryAcl[0].AccessMask=$observedCopy.DiscretionaryAcl[0].AccessMask -bxor 1; ' },
+    { name: 'different ACE bytes have case-only Base64 differences', mutation: clearSourceAI + setCopyAI + '$observedSource.DiscretionaryAcl[0].AccessMask=0x1f01ff; $observedCopy.DiscretionaryAcl[0].AccessMask=0x0501ff; ' },
+  ];
+  for (const scenario of scenarios) await t.test(scenario.name, t => {
+    const { root, targets } = fixture(t);
+    const originalSource = '{"servers":{"private":{"command":"private","env":{"SECRET":"fixture-only"}}}}\n';
+    put(targets.copilotVscode, originalSource);
+    const originalExec = childProcess.execFileSync;
+    childProcess.execFileSync = (command, args, options) => {
+      if (options?.env?.NEOMIND_MCP_ACL_TEMP) {
+        // Inject descriptor observations at the child-process boundary, then run
+        // the production PowerShell copy, comparison and refusal path unchanged.
+        const marker = '$copySddl=$copied.GetSecurityDescriptorSddlForm($sections); ';
+        const scriptIndex = args.indexOf('-Command') + 1;
+        assert.equal(args[scriptIndex].split(marker).length, 2);
+        const observation = '$observedSource=[System.Security.AccessControl.RawSecurityDescriptor]::new($sddl); $observedCopy=[System.Security.AccessControl.RawSecurityDescriptor]::new($copySddl); ' +
+          scenario.mutation + '$sddl=$observedSource.GetSddlForm($sections); $copySddl=$observedCopy.GetSddlForm($sections); ';
+        args = [...args]; args[scriptIndex] = args[scriptIndex].replace(marker, marker + observation);
+      }
+      return originalExec(command, args, options);
+    };
+    syncBuiltinESMExports();
+    try {
+      if (scenario.accepted) {
+        assert.equal(change(root, targets, 'context7', 'copilot-vscode', true).status, 'connected');
+        assert.equal(change(root, targets, 'context7', 'copilot-vscode', false).status, 'disconnected');
+        assert.equal(parseJsonc(readFileSync(targets.copilotVscode, 'utf8')).servers.private.env.SECRET, 'fixture-only');
+      } else {
+        assert.throws(() => change(root, targets, 'context7', 'copilot-vscode', true), /ACL_DESCRIPTOR_MISMATCH/);
+        assert.equal(readFileSync(targets.copilotVscode, 'utf8'), originalSource);
+        assert.equal(existsSync(join(root, '.neomind/plugin-connections.json')), false);
+      }
+    } finally { childProcess.execFileSync = originalExec; syncBuiltinESMExports(); }
+    assert.equal(readdirSync(dirname(targets.copilotVscode)).some(name => name.endsWith('.tmp')), false);
+  });
 });

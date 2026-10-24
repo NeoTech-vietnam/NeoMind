@@ -1,7 +1,7 @@
-import { existsSync, lstatSync, readFileSync, mkdirSync, openSync, closeSync, unlinkSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync, readFileSync, mkdirSync, openSync, closeSync, unlinkSync, writeFileSync, renameSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { applyEdits, modify, parse, parseTree, type Node, type ParseError } from 'jsonc-parser';
 import { atomicWrite, hash, readConfig, safePath, withOperationLock, retryWindowsFileOperation } from './storage.js';
@@ -45,6 +45,19 @@ function noLinks(path: string): void {
     }
     if (dirname(current) === current) break;
   }
+}
+/** Preserve the existing long filename when a native Windows picker supplies an 8.3 alias. */
+function physicalTarget(path: string): string {
+  const selected = resolve(path);
+  noLinks(selected);
+  if (process.platform !== 'win32') return selected;
+  let existing = selected;
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) throw new Error('MCP configuration filesystem is unavailable.');
+    existing = parent;
+  }
+  return resolve(realpathSync.native(existing), relative(existing, selected));
 }
 function readText(path: string): string | undefined {
   noLinks(path);
@@ -99,10 +112,17 @@ function writeConfiguration(path: string, value: string, expectedHash: string): 
           '$replacement.SetSecurityDescriptorSddlForm($sddl,$sections); ' +
           '[System.IO.File]::SetAccessControl($env:NEOMIND_MCP_ACL_TEMP,$replacement); ' +
           "$stage='verify-descriptor'; $copied=[System.IO.File]::GetAccessControl($env:NEOMIND_MCP_ACL_TEMP); $copySddl=$copied.GetSecurityDescriptorSddlForm($sections); " +
-          'if ($sddl -ne $copySddl) { ' +
+          'if ($sddl -cne $copySddl) { ' +
           '$originalRaw=[System.Security.AccessControl.RawSecurityDescriptor]::new($sddl); $copiedRaw=[System.Security.AccessControl.RawSecurityDescriptor]::new($copySddl); ' +
           "function DaclBytes($raw) { if ($null -eq $raw.DiscretionaryAcl) { return 'null' }; $bytes=New-Object byte[] $raw.DiscretionaryAcl.BinaryLength; $raw.DiscretionaryAcl.GetBinaryForm($bytes,0); return [Convert]::ToBase64String($bytes) }; " +
-          "[pscustomobject]@{code='ACL_DESCRIPTOR_MISMATCH'; owner_equal=($originalRaw.Owner.Value -eq $copiedRaw.Owner.Value); group_equal=($originalRaw.Group.Value -eq $copiedRaw.Group.Value); ordered_dacl_equal=((DaclBytes $originalRaw) -eq (DaclBytes $copiedRaw)); source_flags=([regex]::Match($sddl,'D:([^\\(]*)').Groups[1].Value); copy_flags=([regex]::Match($copySddl,'D:([^\\(]*)').Groups[1].Value)} | ConvertTo-Json -Compress; exit 42 } " +
+          '$ownerEqual=$originalRaw.Owner.Value -eq $copiedRaw.Owner.Value; $groupEqual=$originalRaw.Group.Value -eq $copiedRaw.Group.Value; $daclEqual=(DaclBytes $originalRaw) -ceq (DaclBytes $copiedRaw); ' +
+          // Windows may mark an otherwise identical inherited DACL as auto-inherited.
+          // Allow only that unset-to-set control bit transition; ordered ACE bytes,
+          // owner, group, protection and every other control bit must remain identical.
+          '$autoInherited=[int][System.Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited; ' +
+          '$sourceControl=[int]$originalRaw.ControlFlags; $copyControl=[int]$copiedRaw.ControlFlags; ' +
+          '$onlyAutoInherited=$ownerEqual -and $groupEqual -and $daclEqual -and (($sourceControl -band $autoInherited) -eq 0) -and (($copyControl -band $autoInherited) -ne 0) -and (($sourceControl -bxor $copyControl) -eq $autoInherited); ' +
+          "if (-not $onlyAutoInherited) { [pscustomobject]@{code='ACL_DESCRIPTOR_MISMATCH'; owner_equal=$ownerEqual; group_equal=$groupEqual; ordered_dacl_equal=$daclEqual; source_flags=([regex]::Match($sddl,'D:([^\\(]*)').Groups[1].Value); copy_flags=([regex]::Match($copySddl,'D:([^\\(]*)').Groups[1].Value)} | ConvertTo-Json -Compress; exit 42 } } " +
           "} catch { $fault=$_.Exception; if ($fault.InnerException) { $fault=$fault.InnerException }; " +
           "[pscustomobject]@{code='ACL_COPY_FAILED';stage=$stage;kind=$fault.GetType().Name;hresult=$fault.HResult} | ConvertTo-Json -Compress; exit 43 }"],
         { env: { ...process.env, NEOMIND_MCP_ACL_SOURCE: path, NEOMIND_MCP_ACL_TEMP: temporary }, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 });
@@ -141,16 +161,14 @@ export function pluginClientConnectionEnabled(root: string, plugin: string, clie
 }
 function target(root: string, client: PluginConnectionClient, trusted: PluginConnectionTargets): string | undefined {
   if (client === 'codex') {
-    const fixed = safePath(root, '.codex/config.toml');
-    if (trusted.codex && resolve(trusted.codex) !== resolve(fixed)) throw new Error('Codex MCP configuration must belong to this project.');
-    noLinks(fixed);
+    const fixed = physicalTarget(safePath(root, '.codex/config.toml'));
+    if (trusted.codex && physicalTarget(trusted.codex) !== fixed) throw new Error('Codex MCP configuration must belong to this project.');
     return fixed;
   }
   const supplied = client === 'copilot-vscode' ? trusted.copilotVscode : trusted.copilotCli;
   if (!supplied) return undefined;
   if (!isAbsolute(supplied)) throw new Error('MCP target must be selected by the native host.');
-  noLinks(supplied);
-  return resolve(supplied);
+  return physicalTarget(supplied);
 }
 function rejectDuplicateJsonKeys(node: Node | undefined): void {
   if (!node) return;
@@ -209,7 +227,7 @@ function inspect(source: string | undefined, plugin: Plugin, client: PluginConne
 function installerOwns(root: string, plugin: Plugin, client: PluginConnectionClient, path: string, state: EntryState): boolean {
   if (client === 'copilot-cli') return false;
   const relative = client === 'codex' ? '.codex/config.toml' : '.vscode/mcp.json';
-  if (resolve(path) !== resolve(safePath(root, relative))) return false;
+  if (path !== physicalTarget(safePath(root, relative))) return false;
   const source = readText(safePath(root, '.neomind/install-manifest.json'));
   if (source === undefined) return false;
   try {
