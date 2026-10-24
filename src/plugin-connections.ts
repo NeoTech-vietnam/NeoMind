@@ -52,6 +52,33 @@ function readText(path: string): string | undefined {
   if (lstatSync(path).size > 1024 * 1024) throw new Error('MCP configuration exceeds the supported size.');
   try { return readFileSync(path, 'utf8'); } catch { throw new Error('MCP configuration cannot be read.'); }
 }
+class ConfigurationPermissionsError extends Error {
+  constructor(readonly diagnostic: string) { super('The existing MCP configuration permissions could not be preserved.'); }
+}
+/** Fixed diagnostics only: never propagate PowerShell stderr, paths, SIDs, or security descriptors. */
+function aclFailureDetail(error: unknown): string {
+  const failure = error as { stdout?: unknown; code?: unknown } | null;
+  if (failure?.code === 'ETIMEDOUT') return 'ACL_HELPER_TIMEOUT';
+  try {
+    const output = Buffer.isBuffer(failure?.stdout) ? failure.stdout.toString('utf8') : failure?.stdout;
+    if (typeof output !== 'string' || output.length > 4096) return 'ACL_HELPER_FAILED';
+    const diagnostic = JSON.parse(output);
+    if (diagnostic.code === 'ACL_DESCRIPTOR_MISMATCH') {
+      const flags = (value: unknown): string => typeof value === 'string' && /^(?:P|AR|AI)*$/.test(value) ? value : 'other';
+      const equal = (value: unknown): string => value === true ? 'true' : value === false ? 'false' : 'unknown';
+      return `ACL_DESCRIPTOR_MISMATCH(owner_equal=${equal(diagnostic.owner_equal)},group_equal=${equal(diagnostic.group_equal)},ordered_dacl_equal=${equal(diagnostic.ordered_dacl_equal)},source_flags=${flags(diagnostic.source_flags)},copy_flags=${flags(diagnostic.copy_flags)})`;
+    }
+    if (diagnostic.code === 'ACL_COPY_FAILED') {
+      const stages = ['read-source', 'copy-descriptor', 'verify-descriptor'];
+      const kinds = ['UnauthorizedAccessException', 'SecurityException', 'IOException', 'MethodInvocationException'];
+      const stage = stages.includes(diagnostic.stage) ? diagnostic.stage : 'unknown';
+      const kind = kinds.includes(diagnostic.kind) ? diagnostic.kind : 'other';
+      const hresult = Number.isInteger(diagnostic.hresult) && diagnostic.hresult >= -2147483648 && diagnostic.hresult <= 2147483647 ? diagnostic.hresult : 'unknown';
+      return `ACL_COPY_FAILED(stage=${stage},kind=${kind},hresult=${hresult})`;
+    }
+  } catch { /* Non-contract output stays private. */ }
+  return 'ACL_HELPER_FAILED';
+}
 /** Retain restrictive permissions for user settings containing unrelated credentials. */
 function writeConfiguration(path: string, value: string, expectedHash: string): void {
   const temporary = `${path}.${randomUUID()}.tmp`;
@@ -65,15 +92,21 @@ function writeConfiguration(path: string, value: string, expectedHash: string): 
       // Fixed code and environment paths avoid command interpolation and module autoload.
       try {
         execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-          "$ErrorActionPreference='Stop'; $sections=[System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Group; " +
+          "$ErrorActionPreference='Stop'; $stage='read-source'; try { " +
+          '$sections=[System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Group; ' +
           '$acl=[System.IO.File]::GetAccessControl($env:NEOMIND_MCP_ACL_SOURCE); ' +
-          '$sddl=$acl.GetSecurityDescriptorSddlForm($sections); $replacement=New-Object System.Security.AccessControl.FileSecurity; ' +
+          "$sddl=$acl.GetSecurityDescriptorSddlForm($sections); $stage='copy-descriptor'; $replacement=New-Object System.Security.AccessControl.FileSecurity; " +
           '$replacement.SetSecurityDescriptorSddlForm($sddl,$sections); ' +
           '[System.IO.File]::SetAccessControl($env:NEOMIND_MCP_ACL_TEMP,$replacement); ' +
-          '$copied=[System.IO.File]::GetAccessControl($env:NEOMIND_MCP_ACL_TEMP); ' +
-          'if ($sddl -ne $copied.GetSecurityDescriptorSddlForm($sections)) { exit 1 }'],
-        { env: { ...process.env, NEOMIND_MCP_ACL_SOURCE: path, NEOMIND_MCP_ACL_TEMP: temporary }, windowsHide: true, stdio: 'ignore', timeout: 10_000 });
-      } catch { throw new Error('The existing MCP configuration permissions could not be preserved.'); }
+          "$stage='verify-descriptor'; $copied=[System.IO.File]::GetAccessControl($env:NEOMIND_MCP_ACL_TEMP); $copySddl=$copied.GetSecurityDescriptorSddlForm($sections); " +
+          'if ($sddl -ne $copySddl) { ' +
+          '$originalRaw=[System.Security.AccessControl.RawSecurityDescriptor]::new($sddl); $copiedRaw=[System.Security.AccessControl.RawSecurityDescriptor]::new($copySddl); ' +
+          "function DaclBytes($raw) { if ($null -eq $raw.DiscretionaryAcl) { return 'null' }; $bytes=New-Object byte[] $raw.DiscretionaryAcl.BinaryLength; $raw.DiscretionaryAcl.GetBinaryForm($bytes,0); return [Convert]::ToBase64String($bytes) }; " +
+          "[pscustomobject]@{code='ACL_DESCRIPTOR_MISMATCH'; owner_equal=($originalRaw.Owner.Value -eq $copiedRaw.Owner.Value); group_equal=($originalRaw.Group.Value -eq $copiedRaw.Group.Value); ordered_dacl_equal=((DaclBytes $originalRaw) -eq (DaclBytes $copiedRaw)); source_flags=([regex]::Match($sddl,'D:([^\\(]*)').Groups[1].Value); copy_flags=([regex]::Match($copySddl,'D:([^\\(]*)').Groups[1].Value)} | ConvertTo-Json -Compress; exit 42 } " +
+          "} catch { $fault=$_.Exception; if ($fault.InnerException) { $fault=$fault.InnerException }; " +
+          "[pscustomobject]@{code='ACL_COPY_FAILED';stage=$stage;kind=$fault.GetType().Name;hresult=$fault.HResult} | ConvertTo-Json -Compress; exit 43 }"],
+        { env: { ...process.env, NEOMIND_MCP_ACL_SOURCE: path, NEOMIND_MCP_ACL_TEMP: temporary }, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 });
+      } catch (error) { throw new ConfigurationPermissionsError(aclFailureDetail(error)); }
     }
     if (hash(readText(path) ?? '') !== expectedHash) throw new Error('MCP configuration changed during this operation.');
     writeFileSync(descriptor, value);
@@ -277,9 +310,10 @@ export function setPluginConnection(root: string, input: { plugin: string; clien
           inspect(next, plugin, client); // Validate edited configuration before replacing any bytes.
           writeConfiguration(path, next, before);
         }
-      } catch {
+      } catch (error) {
         if (ledgerText === undefined) unlinkSync(ledgerPath); else atomicWrite(ledgerPath, ledgerText);
-        throw new Error('MCP configuration could not be updated; existing connection ownership was restored.');
+        const detail = error instanceof ConfigurationPermissionsError ? ` ${error.diagnostic}.` : '';
+        throw new Error(`MCP configuration could not be updated; existing connection ownership was restored.${detail}`);
       }
       if (!input.connected) {
         // Only a pending disconnect retains ownership. Once removal is verified,

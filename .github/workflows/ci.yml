@@ -26,6 +26,11 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Verify Windows MCP permission preservation
+        if: runner.os == 'Windows'
+        run: |
+          npm run build
+          node --test test/plugin-connections.test.mjs test/automation-panel.test.mjs
       - name: Build and test
         run: npm test
       - name: Inspect package contents

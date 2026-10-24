@@ -36,7 +36,10 @@ function createAutomationHost({ vscode, runtime, root, post, alive = () => true 
         const selected = await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: false,
           defaultUri: vscode.Uri.file(root), filters: { 'Procedure manifest': ['json'] }, openLabel: 'Register candidate' });
         if (!alive() || !selected?.length || selected[0].scheme !== 'file') return;
-        const file = selected[0].fsPath, child = relative(root, realpathSync.native(file));
+        // Windows may spell the same workspace through an 8.3 alias (RUNNER~1)
+        // while the selected file resolves to its long name. Compare both
+        // physical identities, retaining the original runtime project binding.
+        const file = selected[0].fsPath, child = relative(realpathSync.native(root), realpathSync.native(file));
         if (!child || isAbsolute(child) || child === '..' || child.startsWith('../') || child.startsWith('..\\') || lstatSync(file).isSymbolicLink() || !lstatSync(file).isFile() || lstatSync(file).size > 256 * 1024) throw new Error('invalid-selection');
         await runtime.registerProcedure(root, JSON.parse(readFileSync(file, 'utf8')));
         await send({ type: 'automation-notice', message: 'Candidate registered. Independent review and checked pilots are required before automatic use.' });

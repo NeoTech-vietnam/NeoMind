@@ -1,13 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 const { createAutomationHost, renderAutomationPanelHtml } = createRequire(import.meta.url)('../extensions/vscode-model-bridge/automation-panel.cjs');
-function app(t) {
-  const root = mkdtempSync(join(tmpdir(), 'neomind-automation-panel-'));
-  t.after(() => { assert.equal(dirname(resolve(root)), resolve(tmpdir())); rmSync(root, { recursive: true, force: true }); });
+function app(t, { aliasedRoot = false } = {}) {
+  const directory = mkdtempSync(join(tmpdir(), 'neomind-automation-panel-'));
+  const root = aliasedRoot ? `${directory}-alias` : directory;
+  if (aliasedRoot) symlinkSync(directory, root, process.platform === 'win32' ? 'junction' : 'dir');
+  t.after(() => {
+    assert.equal(dirname(resolve(root)), resolve(tmpdir()));
+    assert.equal(dirname(resolve(directory)), resolve(tmpdir()));
+    if (aliasedRoot) rmSync(root, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true });
+  });
   let active = true, selected;
   const calls = [], sent = [];
   const manifest = { id: 'existing-procedure', version: '1.0.0', title: '<img src=x onerror=evil()>', status: 'reviewed', script: 'scripts/run.mjs',
@@ -43,6 +50,27 @@ test('candidate registration uses a native project-file picker and ignores suppl
   assert.deepEqual(a.calls[0], ['register', a.root, { id: 'picked-native-file' }]);
   a.active(false); await a.send('qualify', { id: 'existing-procedure', version: '1.0.0' });
   assert.equal(a.calls.length, 1);
+});
+test('picker containment compares physical project identity across root aliases and still refuses outside files', async t => {
+  // A junction/symlink produces the same lexical/physical mismatch as Windows
+  // RUNNER~1 temp roots while remaining reproducible on case-sensitive hosts.
+  const a = app(t, { aliasedRoot: true }), path = join(a.root, 'procedure.json');
+  writeFileSync(path, JSON.stringify({ id: 'picked-through-project-alias' }));
+  a.select([{ scheme: 'file', fsPath: path }]);
+  await a.send('register');
+  assert.deepEqual(a.calls[0], ['register', a.root, { id: 'picked-through-project-alias' }]);
+  const outside = app(t), outsidePath = join(outside.root, 'outside.json');
+  writeFileSync(outsidePath, JSON.stringify({ id: 'outside-project-must-not-register' }));
+  a.select([{ scheme: 'file', fsPath: outsidePath }]);
+  await a.send('register');
+  assert.equal(a.calls.length, 1);
+  // An outside file remains forbidden when reached through an in-project link.
+  const escape = join(a.root, 'outside-link');
+  symlinkSync(outside.root, escape, process.platform === 'win32' ? 'junction' : 'dir');
+  a.select([{ scheme: 'file', fsPath: join(escape, 'outside.json') }]);
+  await a.send('register');
+  assert.equal(a.calls.length, 1);
+  assert.ok(a.sent.some(item => item.type === 'automation-notice' && item.error));
 });
 test('request matching is advisory and refuses malformed JSON without invoking the runtime', async t => {
   const a = app(t);
