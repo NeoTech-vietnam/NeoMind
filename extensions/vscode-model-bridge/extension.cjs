@@ -5,6 +5,7 @@ const { pathToFileURL } = require('node:url');
 const { activateMonitor } = require('./monitor.cjs');
 const { activatePluginPanel } = require('./plugin-panel.cjs');
 const { activateAutomationPanel } = require('./automation-panel.cjs');
+const { activateNativeValidation } = require('./native-validation.cjs');
 let bridge;
 let generation = 0;
 async function disable() {
@@ -30,6 +31,7 @@ function activate(context) {
   activateMonitor(vscode, context, loadRuntime);
   activatePluginPanel(vscode, context, loadRuntime);
   activateAutomationPanel(vscode, context, loadRuntime);
+  activateNativeValidation(vscode, context, loadRuntime);
   context.subscriptions.push(
     vscode.commands.registerCommand('neomind.bridge.enable', async () => {
       if (enabling) return;

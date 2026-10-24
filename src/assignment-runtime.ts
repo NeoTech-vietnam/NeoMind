@@ -1,9 +1,9 @@
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { posix } from 'node:path';
 import { assignmentReport, contextPacket, recordFingerprint, strings, submitTask, workRecordProblems } from './engineering.js';
-import { reportAgentActivity, type AgentActivityState } from './agent-activity.js';
+import { readAgentActivity, reportAgentActivity, type AgentActivityState } from './agent-activity.js';
 import {
-  authorizeReportedAssignment, claimReportedAssignment, resolveReportedAssignment,
+  assignmentAllowedPaths, assignmentTaskOptions, authorizeReportedAssignment, claimReportedAssignment, resolveReportedAssignment,
   type ReportedAssignment, type ReportedAssignmentCredential,
 } from './native-assignment.js';
 import { atomicWrite, getRecord, hash, safePath, withOperationLock } from './storage.js';
@@ -115,22 +115,33 @@ export function assignmentContext(root: string, handle: ReportedAssignmentCreden
     authorizeReportedAssignment(root, actor, 'record_get', { id: actor.workflow_id }, true);
     const task = actor.task_id ? getRecord(root, actor.task_id) : undefined;
     if (task) authorizeReportedAssignment(root, actor, 'task_context', { id: task.meta.id }, true);
+    const taskContext = task ? contextPacket(root, task.meta.id, 18000, actor.role) : null;
+    if (taskContext !== null && (typeof taskContext !== 'object' || Array.isArray(taskContext)))
+      fail('Task context must be a structured object.');
     const capabilities = roleCapabilities(actor.role);
     const retiredProducer = task?.meta.owner === actor.role && task.meta.data.invocation_id !== actor.id &&
       strings(task.meta.data.prior_invocation_ids).includes(actor.id);
     const current = (actor.role !== 'manager' || workflow.meta.data.reported_manager_invocation_id === actor.id) && !retiredProducer;
     const closed = /^completed/.test(String(workflow.meta.data.phase)) ||
       ['completed', 'cancelled', 'superseded'].includes(workflow.meta.status);
+    const lifecycle_warning = current && !closed ? observeOpenedAssignment(root, actor) : undefined;
     return {
       schema_version: 1 as const, assignment_id: actor.assignment_id, invocation_id: actor.id,
       profile_id: actor.profile_id, role: actor.role, objective: actor.objective,
       workflow_id: actor.workflow_id, task_id: actor.task_id ?? null, assurance: actor.assurance,
       current_actor: current, can_mutate: current && !closed, workflow_phase: workflow.meta.data.phase ?? null,
-      allowed_paths: task ? strings(task.meta.data.allowed_paths) : [],
+      allowed_paths: task ? assignmentAllowedPaths(actor, task) : [],
+      ...(actor.recovery ? { recovery: actor.recovery } : {}),
+      ...(actor.role === 'manager' ? { task_options: assignmentTaskOptions(root, actor.workflow_id).map(({ record: _record, ...option }) => option) } : {}),
+      ...(lifecycle_warning ? { lifecycle_warning } : {}),
       baseline: { workflow_fingerprint: recordFingerprint(workflow),
         task_fingerprint: task ? recordFingerprint(task) : null },
-      task_context: task ? contextPacket(root, task.meta.id) : null,
+      task_context: task && taskContext ? { ...taskContext, allowed_paths: assignmentAllowedPaths(actor, task) } : null,
       permitted_operations: capabilities.operations,
+      progress_contract: actor.profile_id !== 'coordinator' || actor.role === 'manager'
+        ? { tool: 'assignment_progress', required: ['reported_assignment', 'state', 'summary'],
+          derived: ['workflow_id', 'profile_id', 'assignment_id', 'invocation_id', 'task_id'] }
+        : null,
       result_contract: { schema_version: 1, required: ['outcome', 'summary', 'inputs', 'decisions',
         'evidence_refs', 'evidence_notes', 'limitations', 'lessons'],
       optional: ['changes', 'submit_task'],
@@ -140,6 +151,22 @@ export function assignmentContext(root: string, handle: ReportedAssignmentCreden
       boundary: 'Unsigned local attribution. This handle does not attest launch, independent process, model identity or signed execution.',
     };
   });
+}
+
+const telemetryWarning = 'Advisory lifecycle telemetry is unavailable; the saved result and required engineering gates remain authoritative.';
+function observeOpenedAssignment(root: string, actor: ReportedAssignment): string | undefined {
+  if (actor.profile_id === 'coordinator' && actor.role !== 'manager') return;
+  try {
+    const journalPath = safePath(root, `.neomind/native/assignment-runtime/${actor.id}.json`);
+    if (existsSync(journalPath) && JSON.parse(readFileSync(journalPath, 'utf8')).output) return;
+    const latest = readAgentActivity(root).latest.find(event => event.invocation_id === actor.id);
+    if (latest) return;
+    const value = { workflow_id: actor.workflow_id, assignment_id: actor.profile_id === 'coordinator' ? 'coordinator' : actor.assignment_id,
+      profile_id: actor.profile_id, invocation_id: actor.id, ...(actor.task_id ? { task_id: actor.task_id } : {}),
+      state: 'running' as const, summary: `Opened bounded ${actor.profile_id} assignment context.` };
+    authorizeReportedAssignment(root, actor, 'agent_activity', value);
+    reportAgentActivity(root, value);
+  } catch { return telemetryWarning; }
 }
 
 export function assignmentProgress(root: string, handle: ReportedAssignmentCredential,
@@ -175,8 +202,9 @@ export interface AssignmentResultInput {
 interface Artifact { path: string; description: string; sha256: string }
 interface ResultOutput {
   schema_version: 1; assignment_id: string; outcome: AssignmentResultInput['outcome'];
-  report_id: string; submitted_task_id: string | null; artifacts: Artifact[];
+  report_id: string; report_fingerprint?: string; submitted_task_id: string | null; artifacts: Artifact[];
   remaining_gates: string[]; activity_event_id: string | null;
+  telemetry_warning?: string;
 }
 interface Journal { schema_version: 1; input_hash: string; baseline_hash?: string; output?: ResultOutput }
 function validateResult(value: AssignmentResultInput): AssignmentResultInput {
@@ -208,7 +236,7 @@ function artifact(root: string, actor: ReportedAssignment, change: { path: strin
     /^(?:\.git|\.neomind|\.taskforces|\.verythinker)(?:\/|$)/i.test(path))
     fail('Changed artifacts require canonical project-relative public output paths.');
   const task = actor.task_id ? getRecord(root, actor.task_id) : undefined;
-  const allowed = task ? strings(task.meta.data.allowed_paths).map(value => posix.normalize(value.replaceAll('\\', '/')).replace(/\/$/, '')) : [];
+  const allowed = task ? assignmentAllowedPaths(actor, task).map(value => posix.normalize(value.replaceAll('\\', '/')).replace(/\/$/, '')) : [];
   if (!task || !allowed.some(prefix => prefix === '.' || path === prefix || path.startsWith(`${prefix}/`)))
     throw new AssignmentRuntimeError('SCOPE_DENIED', 'result', 'Changed artifact is outside the assigned task allowed_paths.',
       'Request an explicitly scoped task before reporting this artifact.');
@@ -273,11 +301,15 @@ export function assignmentResult(root: string, handle: ReportedAssignmentCredent
       if (task && task.meta.status !== 'submitted') submitTask(root, task.meta.id, input.summary, body);
       // Some composed specialist roles use the Coordinator profile but cannot own its activity key.
       const canProgress = actor.profile_id !== 'coordinator' || actor.role === 'manager';
-      const event = canProgress ? assignmentProgress(root, handle,
-        { state: input.outcome, summary: input.summary.slice(0, 240).replace(/\s+/g, ' ') }) : undefined;
+      let event: ReturnType<typeof assignmentProgress> | undefined;
+      let telemetry_warning: string | undefined;
+      if (canProgress) try {
+        event = assignmentProgress(root, handle, { state: input.outcome, summary: input.summary.slice(0, 240).replace(/\s+/g, ' ') });
+      } catch { telemetry_warning = telemetryWarning; }
       const output: ResultOutput = { schema_version: 1, assignment_id: actor.assignment_id, outcome: input.outcome,
-        report_id: report.meta.id, submitted_task_id: input.submit_task ? actor.task_id! : null,
+        report_id: report.meta.id, report_fingerprint: recordFingerprint(report), submitted_task_id: input.submit_task ? actor.task_id! : null,
         artifacts, activity_event_id: event?.id ?? null,
+        ...(telemetry_warning ? { telemetry_warning } : {}),
         remaining_gates: input.outcome === 'completed' ? ['Run or inspect required checks.',
           'Obtain independent review and Coordinator acceptance where required.'] :
           ['Resolve the reported limitation and prepare a fresh bounded follow-up assignment.'] };

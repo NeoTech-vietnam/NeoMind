@@ -47,11 +47,14 @@ test('Codex install offers nine expert profiles and inherits parent model, permi
     const source = read(root, `.codex/agents/neomind-${id}.toml`);
     assert.equal(field(source, 'name'), `neomind-${id}`);
     assert.match(field(source, 'description'), /\S/);
-    assert.match(field(source, 'developer_instructions'), /\.neomind\/guides\/codex-native\.md/);
+    assert.match(field(source, 'developer_instructions'), /## NeoMind native workflow/);
+    assert.match(field(source, 'developer_instructions'), /Local handles are unsigned correlation, not model or process attestations/);
     assert.doesNotMatch(source, /^model\s*=|^model_provider\s*=|^sandbox_mode\s*=|^approval_policy\s*=|\[mcp_servers\./m);
   }
-  assert.match(field(read(root, '.codex/agents/neomind-coordinator.toml'), 'developer_instructions'), /reuse/i);
-  assert.match(read(root, 'AGENTS.md'), /codex-native/);
+  assert.match(field(read(root, '.codex/agents/neomind-coordinator.toml'), 'developer_instructions'), /Resume matching work|reuse/i);
+  assert.match(read(root, '.neomind/guides/codex-native.md'), /existing.*tools|reuse/i);
+  assert.match(read(root, 'AGENTS.md'), /NeoMind in Codex/);
+  assert.match(read(root, 'AGENTS.md'), /Codex spawn_agent/);
   assert.equal(readAutomationPolicy(root).execution_mode, 'codex-native');
   assert.ok(existsSync(join(root, '.neomind/guides/codex-native.md')));
   const again = updateProject(root);

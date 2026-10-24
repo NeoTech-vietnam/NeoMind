@@ -211,14 +211,15 @@ test('installed profiles can report activity and native/lightweight packets expl
   for (const mode of ['copilot-native', 'lightweight']) {
     const run = await workflow(root, mode, `packet-${mode}`), prompt = run.handoff.prompt;
     assert.ok(prompt.includes(run.workflow.workflow_id));
-    assert.match(prompt, /neomind\/agent_activity/);
-    assert.match(prompt, /assignment_id.*profile_id/);
-    assert.match(prompt, /dispatched.*launch attempt/);
-    assert.match(prompt, /state: running before beginning work/);
-    assert.match(prompt, /completed only after.*actual result/);
-    assert.match(prompt, /expires after five minutes.*unknown/);
-    assert.match(prompt, /never replaces assignment_report, lightweight_checkpoint, checks or saved closure gates/);
-    assert.match(prompt, /strict Bridge work.*existing receipts/);
+    assert.match(prompt, /assignment_progress is optional for a meaningful state change/);
+    assert.match(prompt, /Workflow\/task\/profile\/correlation fields are derived/);
+    assert.match(prompt, /Timer heartbeats and repeated progress-only calls are unnecessary/);
+    assert.match(prompt, /Coordinator reports only its own state/);
+    assert.match(prompt, /Raw agent_activity is a compatibility path for unbound lightweight observations/);
+    assert.match(prompt, /An old observation becomes unknown rather than proving a worker still runs/);
+    assert.match(prompt, /Telemetry failure never blocks implementation, required report persistence, verification or workflow continuation/);
+    assert.match(prompt, /Actual delegate callbacks and saved evidence determine completion/);
+    assert.match(prompt, /Strict Bridge uses signed receipts/);
   }
   assert.equal(existsSync(join(root, '.neomind/runs/agent-activity')), false, 'Instructions do not manufacture agent activity.');
   assert.equal(existsSync(join(root, '.neomind/native/receipts')), false);

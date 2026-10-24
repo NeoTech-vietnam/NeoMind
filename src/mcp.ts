@@ -4,10 +4,13 @@ import { z } from 'zod';
 import { readFileSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { prepareReportedAssignment, claimReportedAssignment, resolveReportedAssignment, authorizeReportedAssignment, type ReportedAssignment } from './native-assignment.js';
+import { createRuntimeInfo } from './runtime-info.js';
+import { prepareReportedAssignment, recoverPreparedAssignment, claimReportedAssignment, resolveReportedAssignment, authorizeReportedAssignment, delegateAssignment, AssignmentContextError, type ReportedAssignment } from './native-assignment.js';
+import { followUpNativeAssignment } from './native-recovery.js';
+import { nativeSoftwarePlanSchema, planNativeSoftware, nextNativeSoftware, nativeSoftwareTaskContract } from './native-software.js';
 import { openAssignment, assignmentContext, assignmentProgress, assignmentResult, assignmentResultJsonSchema, AssignmentRuntimeError } from './assignment-runtime.js';
 import { listProcedures, discoverProcedureScripts, resolveProcedure, registerProcedure, registerProcedureSchema, reviewProcedure, qualifyProcedure, suspendProcedure, runProcedure } from './procedures.js';
-import { prepareWork } from './procedure-reuse.js';
+import { prepareWork, type WorkPrepareInput } from './procedure-reuse.js';
 import { reportAgentActivity } from './agent-activity.js';
 import { agentProfiles } from './agent-profiles.js';
 import { relative } from 'node:path';
@@ -122,6 +125,28 @@ export function procedureExecutionClient(workflowMode: unknown, receipt?: Pick<N
   }
   return workflowMode === 'codex-native' ? 'codex' : 'copilot';
 }
+
+const preparationText = z.string().regex(/\S/, 'Use a nonblank string.');
+/** Advertise the authoritative parser's semantic fields without transforming original request or parameter bytes. */
+const workPreparationSchema = z.strictObject({
+  request: preparationText.max(20_000).describe('The complete original request. Preserve its text; workflow IDs are derived elsewhere and are not accepted here.'),
+  request_id: preparationText.max(200).optional(),
+  intent_id: preparationText.max(200).optional(),
+  parameters: z.record(z.string(), z.unknown()).optional(),
+  tags: z.array(preparationText).max(100).optional(),
+  outputs: z.array(preparationText).max(100).optional(),
+  procedure_id: preparationText.max(200).optional(),
+  procedure_version: preparationText.max(200).optional().describe('An optional exact version; requires procedure_id.'),
+  environment: z.strictObject({
+    platform: preparationText.optional(), arch: preparationText.optional(), client: preparationText.optional(),
+    node: preparationText.optional(), tools: z.record(z.string(), preparationText).optional(),
+  }).optional(),
+  scope: z.strictObject({
+    allowed_paths: z.array(preparationText).max(100).optional(), network: z.boolean().optional(),
+    publication: z.boolean().optional(), mode: preparationText.optional(), assurance: preparationText.optional(),
+  }).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+}) satisfies z.ZodType<WorkPrepareInput>;
 
 const cornellNoteSchema = z
   .object({
@@ -640,7 +665,7 @@ export function assertGenericRecordMutation(
  * always resolves false, so this exception can never bypass the signed-session requirement.
  */
 function nativeWorkflowMutation(root: string, name: string, input: Record<string, unknown>): boolean {
-  if (name === 'assignment_prepare' || name === 'assignment_claim' || name === 'assignment_open') return true;
+  if (['assignment_prepare', 'assignment_bootstrap', 'assignment_recover', 'assignment_claim', 'assignment_open'].includes(name)) return true;
   if (name.startsWith('upstream_'))
     return isNativeExecutionMode(readAutomationPolicy(root).execution_mode);
   if (name === 'manager_begin')
@@ -700,6 +725,7 @@ import { discoverProjectKnowledge, searchProjectKnowledge, recordKnowledgeResear
 import { publishProjectKnowledge } from './project-knowledge.js';
 
 export function createMcpServer(root: string, binding: McpBinding = {}): McpServer {
+  const runtimeInfo = createRuntimeInfo(root);
   readConfig(root);
   const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const server = new McpServer({ name: 'neomind', version: packageJson.version });
@@ -732,17 +758,26 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     readOnly = true,
     external = false,
   ) => {
+    // Creating/recovering packets requires no session; opening/claiming validates
+    // packet credentials. Advertising a session here caused fabricated handles.
+    const bootstrap = ['assignment_bootstrap', 'assignment_recover', 'assignment_open', 'assignment_claim'].includes(name);
     server.registerTool(
       name,
       {
         description,
-        inputSchema: { ...schema, reported_assignment: z.object({ id: z.string().regex(/^local-report-[a-f0-9]{40}$/), token: z.string().min(1) }).strict().optional()
-          .describe('Optional unsigned local assignment credential returned by assignment_claim when the client omits invocation identity. Keep its token private.') },
+        inputSchema: bootstrap ? z.strictObject(schema) : z.object({ ...schema,
+          reported_assignment: z.object({ id: z.string().regex(/^local-report-[a-f0-9]{40}$/), token: z.string().min(1) }).strict().optional()
+            .describe('Use only the private handle returned by assignment_open (or access credential from assignment_claim). Omit this entire field until that call succeeds. A packet claim_token is not an access token; never copy it here.') }).apply(schema => ['assignment_delegate', 'assignment_followup', 'assignment_start', 'assignment_check', 'assignment_review', 'workflow_plan', 'workflow_next'].includes(name) ? schema.strict() : schema),
         annotations: { readOnlyHint: readOnly, destructiveHint: false, openWorldHint: external },
       },
       async (input: any) => {
         try {
           const credentialHandle = input.reported_assignment;
+          if (['assignment_prepare', 'assignment_bootstrap'].includes(name) &&
+              (input.task_id === null || (typeof input.task_id === 'string' && !input.task_id.trim()))) {
+            input = { ...input };
+            delete input.task_id;
+          }
           if (name === 'note_create') {
             // Native tool clients can serialize absent optional revision fields as
             // null or blank text. Normalize only these placeholders before ownership
@@ -758,7 +793,15 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
           let actor: ReportedAssignment | undefined;
           if (input.reported_assignment) {
             if (receipt) throw new Error('Signed invocations cannot replace their identity with an unsigned local assignment.');
-            actor = resolveReportedAssignment(root, input.reported_assignment);
+            try {
+              actor = resolveReportedAssignment(root, input.reported_assignment);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              if (!/Invalid or unclaimed local assignment session|Invalid local reported assignment identity|ENOENT.*reported-assignments/i.test(message))
+                throw error;
+              throw new AssignmentRuntimeError('AUTH_REQUIRED', 'authenticate', message,
+                'Coordinator: use credential-free assignment_bootstrap to prepare a bounded packet, or assignment_recover with workflow_id and packet_id for an existing unclaimed packet. Pass the returned handoff unchanged to the actual local delegate. The delegate calls assignment_open with exactly open_input; omit reported_assignment on bootstrap, recover, open and claim. Use only the returned handle on later scoped calls. Never use a claim token as an access token.');
+            }
             const { reported_assignment: _credential, ...operationInput } = input;
             input = operationInput;
             if (name === 'record_create' && input.data?.workflow_id === undefined)
@@ -816,7 +859,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
             readRoutingPolicy(root) &&
             !['manager_run', 'lightweight_checkpoint', 'agent_activity'].includes(name) &&
             !nativeWorkflowMutation(root, name, input) &&
-            !(actor && (name.startsWith('procedure_') || name.startsWith('assignment_')))
+            !(actor && (name.startsWith('procedure_') || name.startsWith('assignment_') || name.startsWith('workflow_')))
           ) {
             if (cornell) {
               const note = (name === 'note_create' ? input.note :
@@ -839,7 +882,8 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
           return {
             ...output({ error: error instanceof Error ? error.message : String(error),
               ...(error instanceof AssignmentRuntimeError ? { code: error.code, phase: error.phase,
-                retryable: error.retryable, next_action: error.next_action } : {}) }),
+                retryable: error.retryable, next_action: error.next_action } : {}),
+              ...(error instanceof AssignmentContextError ? { code: error.code, retryable: false, next_action: error.next_action } : {}) }),
             isError: true,
           };
         }
@@ -853,6 +897,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     () => doctor(root),
   );
   tool('agent_map', 'Read bounded saved agent activity, with provenance for each node and relationship.', {}, () => readAgentMap(root));
+  tool('runtime_info', 'Inspect the running MCP instance and its startup build fingerprint; updated files require restarting this server.', {}, () => runtimeInfo);
   // High-level operations receive the already authenticated actor through a freshly
   // resolved private handle; the shared MCP connection never stores a current actor.
   tool('assignment_open', 'Actual delegate: open the exact prepared packet and keep its handle private. Omit reported_assignment during bootstrap. This does not launch an agent.', {
@@ -866,6 +911,59 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     if (!handle) throw new Error('Use assignment_open with the prepared packet, then pass its private handle as reported_assignment. Strict sessions keep their signed lifecycle tools.');
     return handle;
   };
+  const softwareTaskActor = (role: string, operation: string) => {
+    const actor = resolveReportedAssignment(root, currentHandle());
+    if (actor.role !== role || !actor.task_id)
+      throw new AssignmentContextError('SCOPE_DENIED', 'This operation requires its actual task-bound specialist.', 'Use your own assigned role and private handle.');
+    const task = getRecord(root, actor.task_id), contract = nativeSoftwareTaskContract(root, task);
+    if (!contract) throw new AssignmentContextError('CONTEXT_MISMATCH', 'This derived operation requires a saved supporting-software contract.', 'Use the saved workflow process and its existing core lifecycle tools.');
+    authorizeReportedAssignment(root, actor, operation, { id: task.meta.id });
+    return { actor, task, contract };
+  };
+  tool('assignment_start', 'Actual Implementer: start your own assigned software task. Workflow, task and invocation are derived from your handle.', {}, () => {
+    const { actor, task } = softwareTaskActor('developer', 'task_start');
+    if (task.meta.status === 'in-progress' && task.meta.data.invocation_id === actor.id) return task;
+    return task.meta.status === 'blocked' || task.meta.status === 'in-progress'
+      ? resumeTask(root, task.meta.id, undefined, undefined, actor.id)
+      : startTask(root, task.meta.id, undefined, undefined, actor.id);
+  }, false);
+  tool('assignment_check', 'Actual independent Verifier: execute all saved software check commands for your assigned task and collect current immutable evidence. No check/task IDs are supplied.', {}, () => {
+    const { actor, task, contract } = softwareTaskActor('check-executor', 'check_run');
+    return { task_id: task.meta.id, evidence: contract.check_ids.map(id => runCheck(root, id, task.meta.id, actor.id)),
+      verification: verify(root, task.meta.id, 'verified') };
+  }, false);
+  tool('assignment_review', 'Actual independent Reviewer: save your decision on your assigned software task and current baseline. Task and reviewer identity are derived.', {
+    decision: z.enum(['pass', 'fail']), findings: z.array(z.string().min(1)).max(128),
+  }, input => {
+    const { actor, task } = softwareTaskActor('reviewer', 'task_review');
+    return reviewTask(root, task.meta.id, 'reviewer', input.decision, input.findings, actor.id);
+  }, false);
+  tool('workflow_plan', 'Coordinator: establish a bounded supporting-software contract. Backend creates and links requirements, task, check plans and decision; derives their IDs and applies only relevant gates. Existing strict/embedded behavior retains its full process.', nativeSoftwarePlanSchema.shape,
+    input => planNativeSoftware(root, currentHandle(), Object.fromEntries(
+      Object.keys(nativeSoftwarePlanSchema.shape).filter(key => input[key] !== undefined).map(key => [key, input[key]]),
+    ) as Parameters<typeof planNativeSoftware>[2]), false);
+  tool('workflow_next', 'Coordinator: obtain the next valid private handoff for implementation, independent verification or review. Pass an actual native callback observation after each delegate. Backend reuses saved results and returns derived closure references when complete.', {
+    observation: z.object({ packet_id: z.string().regex(/^(?:local-report-[a-f0-9]{40}|\s*)$/).nullable().optional()
+        .describe('Normally omit: the backend derives the current managed stage. Supply only an actual packet ID for callback compatibility; null or blank means absent.'),
+      state: z.enum(['completed', 'completed-without-output', 'failed', 'cancelled', 'running', 'unknown']),
+      observation_id: z.string().min(1).max(160) }).strict().nullable().optional(),
+  }, input => nextNativeSoftware(root, currentHandle(), input.observation ? { observation: input.observation } : {}), false);
+  tool('assignment_delegate', 'Coordinator: generate a valid private specialist handoff from the current authenticated workflow. Backend derives role, task and correlation. Dispatch the returned handoff through the actual native agent tool.', {
+    profile_id: z.enum(agentProfiles.filter(profile => profile.id !== 'coordinator').map(profile => profile.id)),
+    objective: z.string().min(20).max(4000), scope: z.enum(['workflow', 'task']).optional(),
+    task_selector: z.string().nullable().optional().describe('Use only an opaque selector returned by assignment_context or this tool when multiple tasks are eligible. Null or blank means no selection; the backend derives a sole eligible task or returns choices.'),
+  }, input => delegateAssignment(root, currentHandle(), {
+    profile_id: input.profile_id, objective: input.objective,
+    ...(input.scope !== undefined ? { scope: input.scope } : {}),
+    ...(input.task_selector !== undefined ? { task_selector: input.task_selector } : {}),
+  }), false);
+  tool('assignment_followup', 'Coordinator: reconcile an actual delegate callback with its durable result. Reuse completed work; prepare at most two bounded follow-ups for missing/failed results. Running or unknown observations wait without duplicate dispatch.', {
+    packet_id: z.string().regex(/^local-report-[a-f0-9]{40}$/),
+    observation: z.enum(['completed', 'completed-without-output', 'failed', 'cancelled', 'running', 'unknown']),
+    observation_id: z.string().min(1).max(160).describe('Stable correlation from the actual native agent call/callback.'),
+  }, input => followUpNativeAssignment(root, currentHandle(), {
+    packet_id: input.packet_id, observation: input.observation, observation_id: input.observation_id,
+  }), false);
   tool('assignment_context', 'Read derived role, workflow/task scope, permitted operations and result obligations for your private assignment handle.', {},
     () => assignmentContext(root, currentHandle()));
   tool('assignment_progress', 'Report actual progress using only state and summary. Workflow, task, role and correlation are derived from your private handle.', {
@@ -880,7 +978,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     procedure_id: z.string(), version: z.string().optional(),
   }, input => resolveProcedure(root, input.procedure_id, input.version));
   tool('work_prepare', 'Match the original request against indexed procedures and return exact/adapt/new/blocked plus a compact reuse brief. Advisory only; never executes retrieved code.', {
-    input: z.record(z.string(), z.unknown()),
+    input: workPreparationSchema,
   }, input => prepareWork(root, input.input as Parameters<typeof prepareWork>[1]));
   const procedureActor = () => {
     const actor = reported() ?? bound();
@@ -943,16 +1041,34 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
       authorized_effects: { write_roots: Array.isArray(task.meta.data.allowed_paths) ? task.meta.data.allowed_paths as string[] : [],
         network: readAutomationPolicy(root).network_policy === 'remote-enabled', publication: false } });
   }, false);
-  tool('assignment_prepare', 'Prepare a bounded unsigned local assignment packet when the native client omits invocation IDs. Pass its claim token to the actual delegate; Coordinator never claims or reports for specialists. This does not launch an agent or attest native execution.', {
+  const assignmentPreparationSchema = {
     workflow_id: z.string(), profile_id: z.enum(agentProfiles.map(profile => profile.id)), role: z.enum([...strongRoles, ...workerRoles]),
-    assignment_id: z.string().min(1).max(160), objective: z.string().min(20).max(4000), task_id: z.string().optional(),
+    assignment_id: z.string().min(1).max(160), objective: z.string().min(20).max(4000), task_id: z.string().nullable().optional(),
+  };
+  tool('assignment_bootstrap', 'Coordinator: prepare a bounded unsigned native assignment without credentials. Pass the returned handoff unchanged to the actual local delegate. Prepares only; never claims or launches an agent.', {
+    ...assignmentPreparationSchema, task_id: z.string().nullable().optional(),
   }, input => {
+    if (bound()) throw new Error('Signed assignments already have their native invocation identity.');
+    const { task_id, ...packet } = input;
+    return prepareReportedAssignment(root, { ...packet,
+      ...(typeof task_id === 'string' && task_id.trim() ? { task_id } : {}),
+    }, { requirePrepared: true });
+  }, false);
+  tool('assignment_recover', 'Coordinator: recover the private handoff for an existing unclaimed prepared packet in the same open unsigned native workflow. Requires no credentials; never claims, creates an identity or rotates the issuer key.', {
+    workflow_id: z.string().min(1),
+    packet_id: z.string().regex(/^local-report-[a-f0-9]{40}$/, 'Use the actual packet.id returned by assignment_bootstrap or assignment_prepare, not its correlation assignment_id.'),
+  }, input => {
+    if (bound()) throw new Error('Signed assignments already have their native invocation identity.');
+    return recoverPreparedAssignment(root, input);
+  }, false);
+  tool('assignment_prepare', 'Prepare a bounded unsigned local assignment packet, optionally using an already opened Coordinator handle. Without a handle prefer assignment_bootstrap. Pass the returned handoff unchanged to the actual delegate; preparation does not launch or claim an agent.', assignmentPreparationSchema, input => {
     if (bound()) throw new Error('Signed assignments already have their native invocation identity.');
     const { invocation_id: _invocation, role, ...packet } = input;
     return prepareReportedAssignment(root, { ...packet, role });
   }, false);
   tool('assignment_claim', 'Called by the actual delegate before work: claim its local packet and retain the credential privately for scoped research, reports and reviews. This unsigned identity does not prove a platform process or model.', {
-    assignment_id: z.string(), claim_token: z.string(),
+    assignment_id: z.string().regex(/^local-report-[a-f0-9]{40}$/, 'Use the actual packet.id returned by Coordinator, not the correlation assignment_id. Prefer assignment_open with the returned open_input.'),
+    claim_token: z.string().regex(/^[a-f0-9]{64}$/, 'Use the real nonblank packet.claim_token from Coordinator. If it was lost, Coordinator must use assignment_recover; never invent a token.'),
   }, input => {
     if (bound() || reported()) throw new Error('An existing actor cannot claim another assignment. Launch the actual delegate with its packet.');
     return claimReportedAssignment(root, input.assignment_id, input.claim_token);
@@ -966,7 +1082,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
         ...i.input.sources.map((source: { record_id?: string }) => source.record_id), ...(i.input.worked_example.evidence_ids ?? [])].filter((id): id is string => !!id)) scopedRecord(root, receipt, id);
       return compileCornellResearch(root, i.input);
     });
-  tool('agent_activity', 'Report unsigned native workflow dispatch, progress or completion for the universe. Does not run an agent, attest inference or change workflow gates.', {
+  tool('agent_activity', 'Low-level unsigned native telemetry with explicit actual identity fields. Opened assignments should use assignment_progress with their own handle, state and summary; its identity fields are derived. Does not run an agent, attest inference or change workflow gates.', {
     workflow_id: z.string().min(1), assignment_id: z.string().min(1).max(160),
     profile_id: z.enum(agentProfiles.map(profile => profile.id)),
     role: z.enum([...strongRoles, ...workerRoles]).optional().describe('Optional reported-assignment compatibility field; must match its claimed role and is removed before profile-derived activity persistence.'),
@@ -1266,7 +1382,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
       if (!receipt && nativeWorkflowRecord(root, record) &&
           (['evidence', 'review'].includes(record.meta.type) ||
            reservedKinds.has(String(record.meta.data.kind)) ||
-           Object.keys(i.data ?? {}).some((key) => ['kind', 'workflow_id', 'intake_workflow_id', 'routing_required', 'execution_mode', 'assurance', 'original_requirement', 'original_requirements'].includes(key))))
+           Object.keys(i.data ?? {}).some((key) => ['kind', 'workflow_id', 'intake_workflow_id', 'routing_required', 'execution_mode', 'assurance', 'original_requirement', 'original_requirements', 'native_software_contract'].includes(key))))
         throw new Error('Native updates cannot rewrite workflow ownership, assurance, or reserved lifecycle state.');
       for (const link of i.links ?? []) {
         const target = scopedRecord(root, receipt, link.target);

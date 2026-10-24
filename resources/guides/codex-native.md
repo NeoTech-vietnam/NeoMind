@@ -11,13 +11,17 @@ When the native client omits invocation identity, follow `reported-assignments.m
 3. Reuse first: inspect existing source, local knowledge and applicable skills. Use reviewed pinned upstream adapters with their licenses and provenance. Under `local-only`, discovery and research stay local; record upstream work as not searched. A failed request is not a no-match.
 4. Wait for actual delegate results. Specialists keep their declared duties, return actual invocation IDs when available and escalate blockers. Profile names never replace the twelve persisted core role IDs. Implementer and Debugger share `developer` model policy; Verifier uses the strong `verifier` policy.
 
-## Saved lifecycle
+## Supporting software
+
+For bounded supporting software/tooling, use [native-software.md](native-software.md): `workflow_plan` derives linked records and task-specific gates, then `workflow_next` coordinates actual Implementer, independent Verifier and Reviewer callbacks. Coordinator authors one final evidence-linked Cornell note. Other technical experts are optional when a real decision needs them. Partial results use bounded `assignment_followup` recovery.
+
+## Full engineering lifecycle
 
 For full `codex-native` increments, keep requirements, independent design/check review, scoped implementation, immutable verification evidence, independent acceptance, seven-section assignment reports, substantive Cornell delivery and manager closure. Research-only assignments save real source findings and applicable inspection evidence. Preserve unmet gates as blockers. Native IDs and observations are unsigned reports, never runtime attestations or confirmed model claims.
 
 For a `lightweight-workflow`, follow `lightweight.md`: a short plan, actual checks, risk-based independent review and revision-checked `lightweight_checkpoint`. Assignment reports, `manager_finish` and Cornell closure do not apply to that lightweight contract. A saved lightweight backend is immutable; use a new increment to change clients.
 
-Report actual progress through `agent_activity` with the supplied workflow/assignment/profile binding. A dispatch is a launch attempt; running starts only when observed. Missing activity expires to unknown. Progress and native lifecycle hooks do not prove completion, acceptance or a model identity.
+Opening an assignment and saving its result record advisory lifecycle observations automatically. Optional `assignment_progress` reports a meaningful state change using only the handle, state and summary. Timer heartbeats are unnecessary. Expired observations become unknown; telemetry errors do not block substantive work, durable results or verification. Actual native callbacks determine whether recovery can launch another worker. See [reported assignments](reported-assignments.md).
 
 ## Native limits and models
 

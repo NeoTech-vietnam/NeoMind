@@ -76,6 +76,7 @@ export interface RoleCapabilities {
   native_tools: string[];
 }
 const common = [
+  'runtime_info',
   'project_status',
   'project_read',
   'assignment_report',
@@ -128,6 +129,12 @@ const roles: Record<string, Omit<RoleCapabilities, 'role'>> = {
       ...submit,
       'manager_begin',
       'assignment_prepare',
+      'assignment_bootstrap',
+      'assignment_recover',
+      'assignment_delegate',
+      'assignment_followup',
+      'workflow_plan',
+      'workflow_next',
       'procedure_register',
       'procedure_qualify',
       'procedure_suspend',
@@ -217,6 +224,7 @@ const roles: Record<string, Omit<RoleCapabilities, 'role'>> = {
   reviewer: {
     operations: [
       ...common,
+      'assignment_review',
       'procedure_review',
       'task_review',
       'record_review',
@@ -281,6 +289,7 @@ const roles: Record<string, Omit<RoleCapabilities, 'role'>> = {
   developer: {
     operations: [
       ...common,
+      'assignment_start',
       'procedure_register',
       'procedure_run',
       ...submit,
@@ -301,6 +310,7 @@ const roles: Record<string, Omit<RoleCapabilities, 'role'>> = {
   'check-executor': {
     operations: [
       ...common,
+      'assignment_check',
       ...submit,
       'check_run',
       'check_inspect',

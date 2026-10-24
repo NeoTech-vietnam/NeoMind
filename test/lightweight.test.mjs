@@ -150,16 +150,20 @@ test('unbound MCP exposes lightweight intake/checkpoint without enabling generic
 test('generated native manager exposes subagents and MCP checkpoint; built-in Copilot bypasses external catalog', t => {
   const { root, config, policy } = setup(t);
   assert.deepEqual(vscodeSelection(root, 'manager', policy.strong_model), { vendor: 'copilot', id: policy.strong_model });
-  const outputs = adapterOutputs(root, config);
+  const outputs = adapterOutputs(root, { ...config, platforms: ['copilot', 'codex'] });
   const lightweight = outputs.find(output => output.path === '.github/agents/neomind-coordinator.agent.md');
   assert.ok(lightweight);
   assert.ok(lightweight.content.includes(`model: ${JSON.stringify(policy.strong_model)}`));
   assert.match(lightweight.content, /tools: .*agent.*neomind\/lightweight_checkpoint/);
   assert.match(lightweight.content, /Selected NeoMind Coordinator Agent:.*continue the returned handoff.prompt and workflow directly/);
   assert.match(lightweight.content, /Do not launch handoff.agent when it is NeoMind Coordinator Agent/);
-  for (const output of outputs.filter(output => output.path.startsWith('.github/agents/'))) {
-    assert.match(output.content, /Do not call assignment_report, manager_finish or require Cornell closure for a lightweight-workflow/);
-    assert.match(output.content, /Full lifecycle\/reporting instructions and profile output-record requirements below apply only to copilot-native\/strict mode/);
+  const nativeProfiles = outputs.filter(output => /^\.(?:github|codex)\/agents\//.test(output.path));
+  assert.equal(nativeProfiles.length, 18, 'every Copilot and Codex profile receives the mode guard');
+  for (const output of nativeProfiles) {
+    assert.match(output.content, /Only a manager-workflow saved in copilot-native or codex-native mode uses the assignment protocol below/, output.path);
+    assert.match(output.content, /A lightweight-workflow uses lightweight_checkpoint.*do not call assignment_bootstrap, assignment_open, assignment_report, assignment_result or manager_finish, and do not require Cornell closure/, output.path);
+    assert.match(output.content, /Existing strict workflows retain their signed Bridge lifecycle and do not use this unsigned protocol/, output.path);
+    assert.ok(output.content.indexOf('Only a manager-workflow') < output.content.indexOf('Once per manager invocation, call assignment_bootstrap'), `${output.path}: select the saved mode before bootstrapping`);
   }
   const developer = outputs.find(output => output.path === '.github/agents/neomind-implementer.agent.md');
   assert.ok(developer.content.includes(JSON.stringify(policy.worker_models)));

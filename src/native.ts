@@ -1143,7 +1143,10 @@ export async function shutdownNative(root?: string, ownerToken?: string): Promis
       (!root || session.root === resolve(root)) &&
       (!ownerToken || session.options.owner_token === ownerToken),
   )) {
-    await interruptNative(session.root, session.receipt.id);
+    // Earlier awaits can finish another snapshot entry's owned cleanup. Never
+    // interrupt an absent/replaced session or rewrite a refusal already closing.
+    if (active.get(`${session.root}:${session.receipt.id}`) !== session) continue;
+    if (!session.closing) await interruptNative(session.root, session.receipt.id);
     await session.releaseTransport();
     await session.completion;
   }

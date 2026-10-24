@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
-import { atomicWrite, hash, now, safePath, withOperationLock } from './storage.js';
+import { atomicWrite, hash, now, retryWindowsFileOperation, safePath, withOperationLock } from './storage.js';
 
 const registryPath = '.neomind/upstreams.json';
 const maxInstructionBytes = 128 * 1024;
@@ -312,8 +312,11 @@ function cacheCommit(root: string, source: UpstreamSource, deps: UpstreamDepende
     if (runGit(['--git-dir', bare, 'rev-parse', 'FETCH_HEAD'], staging, deps).toString('utf8').trim() !== source.commit)
       throw new Error('Fetched upstream commit does not match the pin.');
     atomicWrite(join(staging, 'cache.json'), JSON.stringify({ schema_version: 1, repository: source.repository, commit: source.commit, cached_at: now() }) + '\n');
-    safePath(root, relative);
-    renameSync(staging, target);
+    retryWindowsFileOperation(() => {
+      checkedCachePath(root, relative, false);
+      if (existsSync(target)) throw new Error('Upstream cache destination appeared during commit; existing destination preserved.');
+      renameSync(staging, target);
+    });
     return verifyCache(root, source, deps);
   } finally {
     // The staging pathname is generated within the checked project cache.

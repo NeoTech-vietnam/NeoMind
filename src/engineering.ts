@@ -21,7 +21,7 @@ import {
 import { ensureIndex } from './indexing.js';
 import { listPacks } from './packs.js';
 import { assertRouting, readInvocation, readRoutingPolicy, routingProblems, strongRoles, workerRoles } from './routing.js';
-import { noteFreshnessProblems } from './notes.js';
+import { noteFreshnessProblems, validateCornellNote } from './notes.js';
 import { verifyFrozenRecipe } from './recipes.js';
 import { workspaceHistoryProblems, workspaceResumeOperations } from './workspace.js';
 import { toolLockProblems } from './tools.js';
@@ -32,6 +32,8 @@ import {
   type EvidenceInputSnapshot,
 } from './evidence-inputs.js';
 import type { Finding, Gate, ProjectRecord, Verification } from './types.js';
+import { nativeSoftwareTaskContract, nativeSoftwareCheckContract, readNativeSoftwareContract, assertSoftwareActor,
+  effectiveNativeSoftwareCriteria, type NativeSoftwareContract } from './native-software.js';
 
 export const strings = (value: unknown): string[] =>
   Array.isArray(value) && value.every((v) => typeof v === 'string') ? value : [];
@@ -360,10 +362,11 @@ export function dependenciesFor(task: ProjectRecord): string[] {
     ]),
   ];
 }
-export function structuralFindings(records: ProjectRecord[]): Finding[] {
+export function structuralFindings(records: ProjectRecord[], inspectIds?: ReadonlySet<string>): Finding[] {
   const findings: Finding[] = [];
   const map = new Map(records.map((r) => [r.meta.id, r]));
-  for (const record of records) {
+  const inspected = inspectIds ? records.filter(record => inspectIds.has(record.meta.id)) : records;
+  for (const record of inspected) {
     for (const link of record.meta.links)
       if (!map.has(link.target))
         findings.push({
@@ -413,7 +416,7 @@ export function structuralFindings(records: ProjectRecord[]): Finding[] {
   try {
     requirementScope(
       records,
-      records
+      inspected
         .filter((record) => record.meta.type === 'requirement')
         .map((record) => record.meta.id),
     );
@@ -438,7 +441,7 @@ export function structuralFindings(records: ProjectRecord[]): Finding[] {
     active.delete(id);
     visited.add(id);
   }
-  for (const task of records.filter((r) => r.meta.type === 'task')) walk(task.meta.id);
+  for (const task of inspected.filter((r) => r.meta.type === 'task')) walk(task.meta.id);
   return findings;
 }
 export function traceRecord(root: string, id: string, impact = false): unknown {
@@ -479,7 +482,9 @@ export function traceRecord(root: string, id: string, impact = false): unknown {
       : [],
   };
 }
-function verificationScope(records: ProjectRecord[], record: ProjectRecord): string[] {
+function verificationScope(root: string, records: ProjectRecord[], record: ProjectRecord): string[] {
+  const software = nativeSoftwareTaskContract(root, record);
+  if (software) return [record.meta.id, ...software.requirement_ids];
   const ids = new Set<string>([record.meta.id]);
   if (record.meta.type === 'task')
     for (const id of requirementScope(records, requirementsFor(record))) ids.add(id);
@@ -503,6 +508,9 @@ function evidenceProblems(
 ): string[] {
   const d = evidence.meta.data;
   const errors: string[] = [];
+  const software = nativeSoftwareTaskContract(root, task);
+  if (software && (d.software_applicability_hash ?? null) !== effectiveNativeSoftwareCriteria(root, software).policy_hash)
+    errors.push('Software applicability policy changed after evidence collection.');
   let capturedInputs: ReturnType<typeof validateEvidenceInputs> | undefined;
   if (d.input_snapshot) {
     try {
@@ -544,7 +552,7 @@ function evidenceProblems(
       if (!r || recordFingerprint(r) !== fingerprint)
         errors.push(`Record requires reassessment: ${id}`);
     }
-  for (const id of verificationScope(records, task))
+  for (const id of verificationScope(root, records, task))
     if (!(d.record_baseline as Record<string, unknown> | undefined)?.[id])
       errors.push(`Evidence baseline omits required record: ${id}`);
   if (
@@ -641,12 +649,13 @@ function evidenceProblems(
   return errors;
 }
 function reviewBaseline(root: string, target: ProjectRecord, records = loadRecords(root)): string {
-  const ids = new Set(verificationScope(records, target));
+  const software = nativeSoftwareTaskContract(root, target);
+  const ids = new Set(verificationScope(root, records, target));
   if (target.meta.type === 'check')
     for (const link of target.meta.links.filter((link) => link.type === 'verifies')) {
       const referenced = records.find((record) => record.meta.id === link.target);
       if (referenced) {
-        for (const id of verificationScope(records, referenced)) ids.add(id);
+        for (const id of verificationScope(root, records, referenced)) ids.add(id);
         if (referenced.meta.type === 'design')
           for (const id of requirementScope(
             records,
@@ -666,10 +675,12 @@ function reviewBaseline(root: string, target: ProjectRecord, records = loadRecor
   const checks = records.filter(
     (r) =>
       r.meta.type === 'check' &&
+      (!software || software.check_ids.includes(r.meta.id)) &&
       r.meta.status !== 'superseded' &&
       r.meta.links.some((l) => l.type === 'verifies' && ids.has(l.target)),
   );
   const baseline: Record<string, unknown> = {
+    ...(software ? { software_applicability_hash: effectiveNativeSoftwareCriteria(root, software).policy_hash } : {}),
     records: Object.fromEntries(
       records
         .filter((r) => ids.has(r.meta.id))
@@ -893,8 +904,10 @@ export function assignmentDocumentationProblems(root: string, workflowId: string
   );
   const problems: string[] = [];
   if (nativeWorkflowRecord(root, getRecord(root, workflowId))) {
+    const historical = new Set(readNativeSoftwareContract(root, workflowId)?.historical_planning?.administrative_records.map(record => record.id) ?? []);
     for (const assignment of records.filter((record) =>
       record.meta.data.workflow_id === workflowId &&
+      !historical.has(record.meta.id) &&
       ['manager-discussion', 'review'].includes(String(record.meta.data.kind ?? record.meta.type)))) {
       const invocation = assignment.meta.data.invocation_id;
       if (!reports.some((report) => report.meta.owner === assignment.meta.owner &&
@@ -935,7 +948,8 @@ export function verify(
 ): Verification {
   ensureIndex(root);
   const records = loadRecords(root);
-  const findings = structuralFindings(records);
+  const structural = structuralFindings(records), findings: Finding[] = [];
+  let globalStructureApplied = false;
   const config = readConfig(root);
   const packs = listPacks(root) as { installed: { id: string; integrity: string }[] };
   for (const pack of packs.installed)
@@ -949,8 +963,10 @@ export function verify(
     : records.filter((r) => r.meta.type === 'task' && r.meta.status !== 'superseded');
   if (!tasks.length)
     findings.push({ code: 'no-tasks', message: 'Create a task before verifying completion.' });
+  if (!tasks.length) { findings.push(...structural); globalStructureApplied = true; }
   for (const task of tasks) {
     if (task.meta.type !== 'task') {
+      if (!globalStructureApplied) { findings.push(...structural); globalStructureApplied = true; }
       findings.push({
         code: 'not-task',
         record: task.meta.id,
@@ -962,13 +978,31 @@ export function verify(
       findings.push({ code, record: task.meta.id, message });
     const strict = strictRecord(root, task);
     const native = nativeWorkflowRecord(root, task);
+    let software: ReturnType<typeof nativeSoftwareTaskContract> = null;
+    try { software = nativeSoftwareTaskContract(root, task); }
+    catch (error) { add('software-contract-integrity', (error as Error).message); }
+    if (software) {
+      const activeIds = new Set([task.meta.id, ...software.requirement_ids, ...software.check_ids, ...dependenciesFor(task)]);
+      for (const checkId of software.check_ids) {
+        const evidence = latestEvidence(records, checkId, task.meta.id); if (evidence) activeIds.add(evidence.meta.id);
+      }
+      const review = records.filter(record => record.meta.type === 'review' && record.meta.links.some(link => link.type === 'reviews' && link.target === task.meta.id))
+        .sort((a, b) => b.meta.created_at.localeCompare(a.meta.created_at) || b.meta.id.localeCompare(a.meta.id))[0];
+      if (review) activeIds.add(review.meta.id);
+      const workRecordId = (task.meta.data.submission as { work_record_id?: string } | undefined)?.work_record_id;
+      if (workRecordId) activeIds.add(workRecordId);
+      findings.push(...structuralFindings(records, activeIds));
+    } else if (!globalStructureApplied) { findings.push(...structural); globalStructureApplied = true; }
     if (strict) for (const problem of toolLockProblems(root)) add('tool-integrity', problem);
     if (strict && !readRoutingPolicy(root))
       add(
         'native-routing-missing',
         'The strict routing policy is missing; restore the approved policy before continuing.',
       );
-    for (const problem of noteFreshnessProblems(root, task)) add('knowledge-freshness', problem);
+    const noteProblems = software ? [...new Set([...strings(task.meta.data.knowledge_ids), ...task.meta.links.map(link => link.target)])]
+      .filter(id => records.find(record => record.meta.id === id)?.meta.data.format === 'cornell-v1')
+      .flatMap(id => validateCornellNote(root, id).problems.map(problem => `${id}: ${problem}`)) : noteFreshnessProblems(root, task);
+    for (const problem of noteProblems) add('knowledge-freshness', problem);
     for (const problem of verifyFrozenRecipe(root, task)) add('protected-recipe', problem);
     for (const problem of workspaceHistoryProblems(root, task)) add('workspace-history', problem);
     const reqs = requirementsFor(task);
@@ -1003,7 +1037,7 @@ export function verify(
     if (task.meta.status === 'blocked' && gate !== 'ready') add('blocked', 'Task is blocked.');
     let scope: string[];
     try {
-      scope = verificationScope(records, task);
+      scope = verificationScope(root, records, task);
     } catch (error) {
       add('invalid-requirement-ancestry', (error as Error).message);
       continue;
@@ -1015,12 +1049,13 @@ export function verify(
     const checks = records.filter(
       (r) =>
         r.meta.type === 'check' &&
+        (!software || software.check_ids.includes(r.meta.id)) &&
         r.meta.status !== 'superseded' &&
         r.meta.links.some((l) => l.type === 'verifies' && scope.includes(l.target)),
     );
     if (native)
       for (const check of checks)
-        if (!hasReview(root, check, records))
+        if (!software?.check_ids.includes(check.meta.id) && !hasReview(root, check, records))
           add('missing-verification-plan-review', `Verification plan needs current independent review: ${check.meta.id}`);
     if (strict) {
       for (const problem of escalationProblems(root, task))
@@ -1060,14 +1095,14 @@ export function verify(
         add('requirement-not-measurable', `Requirement needs acceptance criteria: ${req}`);
     }
     if (gate === 'ready') continue;
-    if (config.profile !== 'basic')
+    if (!software && config.profile !== 'basic')
       for (const req of reqs)
         if (
           !designs.some((d) => d.meta.links.some((l) => l.type === 'satisfies' && l.target === req))
         )
           add('missing-design', `Requirement lacks design allocation: ${req}`);
     if (
-      config.profile === 'embedded' &&
+      !software && config.profile === 'embedded' &&
       !designs.some((d) => d.meta.data.hardware_software_interface)
     )
       add('missing-hsi', 'Embedded tasks require a recorded hardware–software interface.');
@@ -1154,7 +1189,7 @@ function startTaskWithRecovery(
     throw new Error('Task execution needs a non-empty invocation identity.');
   const task = getRecord(root, id);
   assertCurrentReportedProducer(task, invocationId);
-  if (typeof task.meta.data.workflow_id === 'string') {
+  if (typeof task.meta.data.workflow_id === 'string' && !nativeSoftwareTaskContract(root, task)) {
     const findings = knowledgeResearchProblems(root, task.meta.data.workflow_id);
     if (findings.length) throw new Error(findings.join('\n'));
   }
@@ -1237,7 +1272,7 @@ export function resumeTask(
   const task = getRecord(root, id);
   if (task.meta.type !== 'task') throw new Error('Resume requires a task.');
   const assertResearch = (record: ProjectRecord) => {
-    if (typeof record.meta.data.workflow_id === 'string') {
+    if (typeof record.meta.data.workflow_id === 'string' && !nativeSoftwareTaskContract(root, record)) {
       const findings = knowledgeResearchProblems(root, record.meta.data.workflow_id);
       if (findings.length) throw new Error(findings.join('\n'));
     }
@@ -1464,6 +1499,7 @@ export function reviewRecord(
     throw new Error('Submit the task before recording its acceptance review.');
   if (owner === target.meta.owner || workerInvocations(target).includes(invocationId))
     throw new Error('Review must use a different owner and invocation.');
+  if (target.meta.type === 'task') assertSoftwareActor(root, target, invocationId, 'reviewer');
   if (
     !['pass', 'fail'].includes(decision) ||
     !Array.isArray(findings) ||
@@ -1715,8 +1751,9 @@ function collectVerification(
   if (nativeWorkflowRecord(root, task)) {
     if (!nativeWorkflowRecord(root, check) || check.meta.data.workflow_id !== task.meta.data.workflow_id)
       throw new Error('Native verification procedure and task must belong to the same workflow.');
-    if (!hasCurrentReview(root, id))
+    if (!nativeSoftwareCheckContract(root, task, check) && !hasCurrentReview(root, id))
       throw new Error('The verification procedure requires current independent review.');
+    if (nativeSoftwareCheckContract(root, task, check)) assertSoftwareActor(root, task, invocationId, 'check-executor');
   }
   if (strictExecution(root, task)) {
     if (!readRoutingPolicy(root)) throw new Error('Strict routing policy is missing.');
@@ -1741,7 +1778,7 @@ function collectVerification(
     if (errors.length) throw new Error(errors.join('\n'));
   }
   const records = loadRecords(root);
-  const scope = verificationScope(records, task);
+  const scope = verificationScope(root, records, task);
   if (!check.meta.links.some((l) => l.type === 'verifies' && scope.includes(l.target)))
     throw new Error('Check does not verify this task or its requirements/design.');
   const command = strings(check.meta.data.command);
@@ -1843,6 +1880,7 @@ function collectVerification(
   });
   const receipt = {
     schema_version: 1,
+    ...(nativeSoftwareTaskContract(root, task) ? { software_applicability_hash: effectiveNativeSoftwareCriteria(root, nativeSoftwareTaskContract(root, task)!).policy_hash } : {}),
     execution_invocation_id: invocationId ?? null,
     run_id: run,
     task_id: taskId,
@@ -1925,13 +1963,51 @@ export function archiveEvidence(root: string, id: string): ProjectRecord {
     `# Results\n${data.result}; exit code ${data.exit_code}.\n\n# Evidence\n[Archived verification log](../evidence/${id}/output.log)\n\n# Limitations\nEvidence applies to its recorded baseline. Inspect exported logs before sharing.\n`,
   );
 }
-export function contextPacket(root: string, id: string, maxChars = 18000): unknown {
+function softwareContextPacket(root: string, task: ProjectRecord, contract: NativeSoftwareContract, records: ProjectRecord[], actualRole: string) {
+  const effective = effectiveNativeSoftwareCriteria(root, contract);
+  const roleField = actualRole === 'developer' ? 'implementation_paths' : ['verifier', 'check-executor'].includes(actualRole) ? 'verification_paths' : 'allowed_paths';
+  const evidence = records.filter(record => record.meta.type === 'evidence' && record.meta.data.task_id === task.meta.id).slice(-32);
+  const submission = task.meta.data.submission as { work_record_id?: string } | undefined;
+  return {
+    schema_version: 1, process: 'software-tools', task_id: task.meta.id, objective: contract.plan.objective,
+    task_status: task.meta.status, role: actualRole, role_path: `.neomind/roles/${actualRole}.md`,
+    repair_feedback: task.meta.data.feedback ?? null, repair_attempt: task.meta.data.attempts ?? 0,
+    requirements: contract.requirement_ids, acceptance_criteria: effective.acceptance_criteria,
+    allowed_paths: strings(task.meta.data[roleField]), outputs: contract.plan.outputs,
+    applicability: effective.disposition ? { policy: effective.disposition.policy, policy_hash: effective.policy_hash,
+      declared_by: effective.disposition.declared_by, authorization_reference: effective.disposition.input.authorization_reference,
+      rationale: effective.disposition.input.rationale, dispositions: effective.disposition.input.criteria,
+      status: 'Original criteria remain historical; exact listed administrative ceremony is superseded by the effective replacement, never marked completed.' } : null,
+    historical_planning: contract.historical_planning,
+    baseline: { task_fingerprint: recordFingerprint(task), contract_hash: hash(JSON.stringify(contract)), software_applicability_hash: effective.policy_hash },
+    inputs: contract.requirement_ids.map(id => { const source = getRecord(root, id); return {
+      id, type: source.meta.type, title: source.meta.title, path: source.path, revision: source.meta.revision,
+      trust: 'Read source wording if needed; historical administrative ceremony does not override the explicit current software process.' }; }),
+    verification_procedures: contract.check_ids.map(id => { const check = getRecord(root, id); return {
+      id, title: check.meta.title, command: strings(check.meta.data.command), baseline_paths: strings(check.meta.data.baseline_paths),
+      expected_exit_code: check.meta.data.expected_exit_code ?? 0, timeout_ms: check.meta.data.timeout_ms ?? 60000 }; }),
+    evidence: evidence.map(record => ({ id: record.meta.id, result: record.meta.data.result, exit_code: record.meta.data.exit_code,
+      check_ids: record.meta.links.filter(link => link.type === 'evidence-for').map(link => link.target),
+      log_path: record.meta.data.log_path, receipt_path: record.meta.data.receipt_path })),
+    documentation: { required: true, paths: contract.plan.documentation_paths, work_record_id: submission?.work_record_id ?? null,
+      final_cornell: 'One current evidence-linked final Cornell note at workflow closure; no internal worker note or pre-pilot report ceremony.' },
+    stage_tools: actualRole === 'developer' ? ['assignment_start', 'assignment_result (submit_task:true after actual changes)'] :
+      actualRole === 'check-executor' ? ['assignment_check', 'assignment_result (actual evidence_refs)'] :
+        actualRole === 'reviewer' ? ['assignment_review', 'assignment_result (actual independent findings)'] : [],
+    process_contract: 'Implementer or Debugger → independent Verifier with actual checks and negative controls → independent final Reviewer → one Cornell note and Coordinator closure. Historical pre-execution approval is not an added stage unless an explicit current contract disposition retains it.',
+  };
+}
+export function contextPacket(root: string, id: string, maxChars = 18000, actualRole?: string): unknown {
+  if (!Number.isSafeInteger(maxChars) || maxChars < 1000 || maxChars > 100000)
+    throw new Error('Context budget must be an integer between 1000 and 100000 characters.');
   const task = getRecord(root, id);
   if (task.meta.type !== 'task') throw new Error('Context target must be a task.');
   const records = loadRecords(root);
+  const software = nativeSoftwareTaskContract(root, task);
+  if (software) return softwareContextPacket(root, task, software, records, actualRole ?? task.meta.owner);
   const config = readConfig(root);
   const routingPolicy = readRoutingPolicy(root);
-  const ids = new Set([...verificationScope(records, task), ...dependenciesFor(task)]);
+  const ids = new Set([...verificationScope(root, records, task), ...dependenciesFor(task)]);
   const relevant = records.filter(
     (r) => ids.has(r.meta.id) || r.meta.links.some((l) => ids.has(l.target)),
   );
@@ -2023,7 +2099,7 @@ export function contextPacket(root: string, id: string, maxChars = 18000): unkno
           balanced: routingPolicy.worker_models[0],
         }
       : config.models,
-    role_path: `.neomind/roles/${task.meta.owner}.md`,
+    role_path: `.neomind/roles/${actualRole ?? task.meta.owner}.md`,
     knowledge_packs: packs.map(
       (p: { id: string; version: string; hash: string; path: string }) => ({
         id: p.id,

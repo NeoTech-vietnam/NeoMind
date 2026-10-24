@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { threadId } from 'node:worker_threads';
-import { initialize } from '../dist/storage.js';
+import { initialize, retryWindowsFileOperation } from '../dist/storage.js';
 import { UpgradeError, upgradeProject } from '../dist/upgrade.js';
 
 const repository = fileURLToPath(new URL('../', import.meta.url));
@@ -235,7 +235,15 @@ function project(t, options = {}) {
   });
   initialize(root, { project_id: 'UPGRADE-TEST', platforms: ['copilot'] });
   const managed = options.legacyStorage ? '.verythinker' : '.neomind';
-  if (options.legacyStorage) renameSync(join(root, '.neomind'), join(root, managed));
+  if (options.legacyStorage) {
+    const source = resolve(root, '.neomind'), destination = resolve(root, managed);
+    assert.equal(dirname(sandbox), realpathSync(tmpdir()));
+    assert.ok(basename(sandbox).startsWith('neomind upgrade-'));
+    assert.equal(dirname(resolve(root)), sandbox);
+    assert.equal(dirname(source), resolve(root));
+    assert.equal(dirname(destination), resolve(root));
+    retryWindowsFileOperation(() => renameSync(source, destination));
+  }
   const section = options.section ?? 'devDependencies';
   const names = options.names ?? ['neomind'];
   const manifest = {

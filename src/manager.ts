@@ -72,6 +72,7 @@ export function normalizeWorkflowInput<T extends WorkflowInput>(input: T): T {
 
 import { knowledgeResearchProblems } from './knowledge-reuse.js';
 import { publishProjectKnowledge } from './project-knowledge.js';
+import { readNativeSoftwareContract, currentNativeSoftwareNotes, nativeSoftwareClosureProblems, effectiveNativeSoftwareCriteria } from './native-software.js';
 
 export interface AutomationPolicy {
   schema_version: 1;
@@ -441,6 +442,9 @@ function taskContract(task: ProjectRecord): string {
       requirements: requirementsFor(task),
       acceptance_criteria: task.meta.data.acceptance_criteria,
       allowed_paths: task.meta.data.allowed_paths,
+      implementation_paths: task.meta.data.implementation_paths,
+      verification_paths: task.meta.data.verification_paths,
+      native_software_plan_hash: task.meta.data.native_software_plan_hash,
       dependencies: task.meta.data.dependencies,
       links: task.meta.links,
       documentation_paths: task.meta.data.documentation_paths,
@@ -487,7 +491,10 @@ function decideWorkflowClaimed(
     throw new Error(
       'Legacy workflow planning requires alpha.3 migration and Sol reassessment; use a new increment for closed history.',
     );
-  const researchProblems = knowledgeResearchProblems(root, id, { check_workspace: true });
+  const software = readNativeSoftwareContract(root, id);
+  if (software && (input.task_ids.length !== 1 || input.task_ids[0] !== software.task_id))
+    throw new Error('An immutable software workflow decision must retain its exact contract-bound task.');
+  const researchProblems = software ? [] : knowledgeResearchProblems(root, id, { check_workspace: true });
   if (researchProblems.length) throw new Error(researchProblems.join('\n'));
   const archiveIntent = safePath(root, `.neomind/archive-intents/${hash(id)}.json`);
   if (
@@ -507,14 +514,14 @@ function decideWorkflowClaimed(
   const summary = text(input.summary, 'Summary');
   const rationale = text(input.rationale, 'Rationale');
   const rootRequirement = getRecord(root, String(parent.meta.data.requirement_id));
-  if (!strings(rootRequirement.meta.data.acceptance_criteria).length)
+  if (!software && !strings(rootRequirement.meta.data.acceptance_criteria).length)
     throw new Error('Refine the stakeholder requirement into measurable acceptance criteria.');
   if (strings(parent.meta.data.open_questions).length)
     throw new Error('Resolve recorded product questions before deciding execution.');
   const participants = currentDiscussions(root, id).filter((r) => r.meta.owner !== 'manager');
   if (
-    new Set(participants.map((r) => r.meta.owner)).size < 2 ||
-    new Set(participants.map((r) => r.meta.data.invocation_id)).size < 2
+    !software && (new Set(participants.map((r) => r.meta.owner)).size < 2 ||
+    new Set(participants.map((r) => r.meta.data.invocation_id)).size < 2)
   )
     throw new Error(
       'Execution needs current contributions from two specialist roles in separate invocations.',
@@ -536,7 +543,7 @@ function decideWorkflowClaimed(
     ? strings(parent.meta.data.requirement_ids)
     : [rootRequirement.meta.id];
   for (const requirementId of leafRequirements) {
-    if (!strings(getRecord(root, requirementId).meta.data.acceptance_criteria).length)
+    if (!software && !strings(getRecord(root, requirementId).meta.data.acceptance_criteria).length)
       throw new Error(
         `Refine measurable acceptance criteria for every requirement: ${requirementId}`,
       );
@@ -581,7 +588,13 @@ function decideWorkflowClaimed(
   const requirements = Object.fromEntries(
     requirementIds.map((source) => [source, recordFingerprint(getRecord(root, source))]),
   );
-  const decision = createRecord(root, {
+  const taskContracts = Object.fromEntries(readyTasks.map(task => [task.meta.id, taskContract(task)]));
+  const existingDecisions = software ? loadRecords(root).filter(record => record.meta.data.kind === 'manager-decision' &&
+    record.meta.data.workflow_id === id && record.meta.data.summary === summary && record.meta.data.rationale === rationale &&
+    JSON.stringify(record.meta.data.requirement_baseline) === JSON.stringify(requirements) &&
+    JSON.stringify(record.meta.data.task_contracts) === JSON.stringify(taskContracts)) : [];
+  if (existingDecisions.length > 1) throw new Error('Ambiguous interrupted software execution decisions; inspect history before continuing.');
+  const decision = existingDecisions[0] ?? createRecord(root, {
     type: 'knowledge',
     title: 'Manager execution decision',
     owner: 'manager',
@@ -594,9 +607,7 @@ function decideWorkflowClaimed(
       rationale,
       discussion_ids: participants.map((r) => r.meta.id),
       requirement_baseline: requirements,
-      task_contracts: Object.fromEntries(
-        readyTasks.map((task) => [task.meta.id, taskContract(task)]),
-      ),
+      task_contracts: taskContracts,
     },
     links: [
       { type: 'documents', target: id },
@@ -893,7 +904,10 @@ function finishWorkflowClaimed(
   }
   if (strings(parent.meta.data.open_questions).length)
     throw new Error('Resolve outstanding product questions before closing the workflow.');
-  const decisionFindings = [...decisionProblems(root, parent), ...knowledgeResearchProblems(root, id)];
+  const software = readNativeSoftwareContract(root, id);
+  if (software && JSON.stringify(strings(parent.meta.data.task_ids)) !== JSON.stringify([software.task_id]))
+    throw new Error('Software closure must retain its immutable contract-bound task.');
+  const decisionFindings = [...decisionProblems(root, parent), ...(software ? nativeSoftwareClosureProblems(root, id) : knowledgeResearchProblems(root, id))];
   if (decisionFindings.length) throw new Error(decisionFindings.join('\n'));
   const taskIds = strings(parent.meta.data.task_ids);
   if (!taskIds.length) throw new Error('Workflow has no assigned tasks.');
@@ -909,7 +923,7 @@ function finishWorkflowClaimed(
     if (!report.ok)
       throw new Error(report.findings.map((f) => `${taskId}: ${f.message}`).join('\n'));
   }
-  const cornellNotes = isNativeWorkflow(parent) ? loadRecords(root).filter((record) =>
+  const cornellNotes = software ? currentNativeSoftwareNotes(root, software) : isNativeWorkflow(parent) ? loadRecords(root).filter((record) =>
     record.meta.data.workflow_id === id && record.meta.data.format === 'cornell-v1') : [];
   if (isNativeWorkflow(parent) && !cornellNotes.length)
     throw new Error('Native closure requires an evidence-linked Cornell note. Call note_create with note.workflow_id and requirement_ids before manager_finish.');
@@ -1028,7 +1042,10 @@ function finishWorkflowClaimed(
       throw new Error(
         'Workflow changed during closure; preserve publication state and reassess the current decision.',
       );
-    const findings = [...decisionProblems(root, current), ...knowledgeResearchProblems(root, id)];
+    const currentSoftware = readNativeSoftwareContract(root, id);
+    const findings = [...decisionProblems(root, current), ...(currentSoftware ? nativeSoftwareClosureProblems(root, id) : knowledgeResearchProblems(root, id))];
+    if (currentSoftware && JSON.stringify(currentNativeSoftwareNotes(root, currentSoftware).map(note => note.meta.id)) !== JSON.stringify(cornellNotes.map(note => note.meta.id)))
+      findings.push('Current evidence-linked final Cornell note selection changed during closure.');
     for (const note of cornellNotes) {
       if (recordFingerprint(getRecord(root, note.meta.id)) !== recordFingerprint(note))
         findings.push(`Cornell findings changed during closure: ${note.meta.id}`);
@@ -1068,7 +1085,11 @@ function finishWorkflowClaimed(
         publications: batch,
       });
   }
-  const assuranceNote = (isNativeWorkflow(parent)
+  const history = software?.historical_planning;
+  const applicability = software ? effectiveNativeSoftwareCriteria(root, software).disposition : null;
+  const historicalDisclosure = history ? `The explicit software-tools contract superseded pre-contract planning for this increment. Earlier administrative records ${history.administrative_records.map(record => record.id).join(', ') || '(none)'} and planning notes ${history.cornell_notes.map(record => record.id).join(', ') || '(none)'} remain historical; missing old actor reports are not retrospectively completed. Only the current scoped software process and its final evidence-linked Cornell findings are accepted. ` : '';
+  const applicabilityDisclosure = applicability ? `A declared local administrative applicability policy (${applicability.input_hash}) retained behavioral acceptance, actual independent verification, negative controls and independent final review while replacing only its exact recorded historical ceremony clauses. Original criteria are preserved, not retrospectively marked fulfilled. ` : '';
+  const assuranceNote = historicalDisclosure + applicabilityDisclosure + (isNativeWorkflow(parent)
     ? 'This increment is an unsigned native report: full engineering gates, independent review and immutable evidence capture apply, but no signed bridge receipt attests the executing model. '
     : '') + (localOnly
       ? 'Local-only policy defers remote knowledge and archive publication; local records are retained. '

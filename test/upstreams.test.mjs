@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -138,6 +140,55 @@ test('local-only blocks transport while previously verified instruction reads re
   assert.equal(readRoleUpstreamInstructions(root, 'developer'), '');
   policy(root, null);
   await assert.rejects(checkUpstream(root, 'research', deps), /Invalid network_policy/);
+});
+
+test('Windows cache commit retries one transient EPERM at the actual staging rename', { skip: process.platform !== 'win32' }, async (t) => {
+  const root = project(t), source = fixture(t), remote = github(source);
+  await tracked(root, source, remote);
+  const target = join(root, '.neomind/cache/upstreams/research', source.first);
+  const originalRename = fs.renameSync;
+  let attempts = 0;
+  fs.renameSync = (from, to) => {
+    if (to === target) {
+      assert.match(from, /\.stage-/);
+      if (++attempts === 1) throw Object.assign(new Error('Transient Windows cache commit lock.'), { code: 'EPERM' });
+    }
+    return originalRename(from, to);
+  };
+  syncBuiltinESMExports();
+  try {
+    const cloned = await cloneUpstream(root, 'research', { request: remote.request, git: source.transport });
+    assert.equal(cloned.commit, source.first);
+  } finally { fs.renameSync = originalRename; syncBuiltinESMExports(); }
+  assert.equal(attempts, 2, 'Only the failed cache commit rename is retried.');
+  assert.equal(readUpstreamInstructions(root, 'research').provenance.commit, source.first);
+  assert.match(readUpstreamInstructions(root, 'research').instructions[0].text, /Find primary sources/);
+  assert.deepEqual(fs.readdirSync(join(root, '.neomind/cache/upstreams/research')), [source.first]);
+});
+
+test('Windows cache commit preserves a destination created during a transient rename failure', { skip: process.platform !== 'win32' }, async (t) => {
+  const root = project(t), source = fixture(t), remote = github(source);
+  await tracked(root, source, remote);
+  const registryBefore = readFileSync(join(root, '.neomind/upstreams.json'));
+  const target = join(root, '.neomind/cache/upstreams/research', source.first);
+  const originalRename = fs.renameSync;
+  let attempts = 0;
+  fs.renameSync = (from, to) => {
+    if (to === target && ++attempts === 1) {
+      mkdirSync(target);
+      writeFileSync(join(target, 'user-owned.txt'), 'Preserve the competing destination.\n');
+      throw Object.assign(new Error('Transient Windows cache commit lock.'), { code: 'EPERM' });
+    }
+    return originalRename(from, to);
+  };
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(cloneUpstream(root, 'research', { request: remote.request, git: source.transport }), /destination.*preserved/i);
+  } finally { fs.renameSync = originalRename; syncBuiltinESMExports(); }
+  assert.equal(attempts, 1, 'An appeared destination is refused before another rename.');
+  assert.equal(readFileSync(join(target, 'user-owned.txt'), 'utf8'), 'Preserve the competing destination.\n');
+  assert.deepEqual(readFileSync(join(root, '.neomind/upstreams.json')), registryBefore);
+  assert.deepEqual(fs.readdirSync(join(root, '.neomind/cache/upstreams/research')), [source.first]);
 });
 
 test('two concurrent adoptions compare the adopted pin again after network observation', async (t) => {

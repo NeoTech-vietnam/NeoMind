@@ -2,12 +2,15 @@
   "name": "neomind-model-bridge",
   "displayName": "NeoMind Agent Monitor",
   "publisher": "neomind",
-  "version": "0.8.0",
+  "version": "0.9.2",
   "description": "An agent universe with plug-in and MCP controls, Earth FocusSpace, calendar planning, ambient sound and guarded 9router model controls.",
   "engines": {
     "vscode": "^1.109.0"
   },
   "main": "./extension.cjs",
+  "activationEvents": [
+    "onUri"
+  ],
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false
@@ -39,6 +42,7 @@
     "resources/monitor/plugins.js",
     "resources/monitor/plugins.css",
     "automation-panel.cjs",
+    "native-validation.cjs",
     "resources/monitor/automation.js",
     "resources/monitor/automation.css"
   ],
@@ -63,6 +67,10 @@
       {
         "command": "neomind.automation.open",
         "title": "NeoMind: Open Automation Library"
+      },
+      {
+        "command": "neomind.validation.copilot",
+        "title": "NeoMind: Validate Native Copilot Workflow"
       }
     ],
     "configuration": {

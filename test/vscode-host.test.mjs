@@ -79,7 +79,12 @@ test('VS Code host selects exact vendor/ID, signs truthful provenance, resumes a
   const resumed = await resumeNative(root, done.id, { prompt: 'Continue bounded review.' });
   assert.equal(resumed.native_thread_id, done.native_thread_id);
   assert.notEqual(resumed.native_turn_id, done.native_turn_id);
-  assert.equal((await ended(root, resumed.id)).state, 'completed');
+  const resumedDone = await ended(root, resumed.id);
+  const publicBlocker = /VS Code bridge connection timed out/.test(resumedDone.error ?? '') ? 'bridge-connection-timeout'
+    : /VS Code bridge request timed out/.test(resumedDone.error ?? '') ? 'bridge-request-timeout'
+    : /VS Code model request blocked during/.test(resumedDone.error ?? '') ? 'model-request-blocked'
+    : 'other-redacted-blocker';
+  assert.equal(resumedDone.state, 'completed', `Resumed host receipt diagnostic: ${publicBlocker}.`);
   const path = join(root, done.receipt_path), original = readFileSync(path, 'utf8');
   writeFileSync(path, JSON.stringify({ ...done, model_provider: 'forged-provider' }));
   assert.throws(() => readInvocation(root, done.id), /signature/);

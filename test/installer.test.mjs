@@ -99,7 +99,7 @@ test('installation preserves instructions and JSONC/TOML siblings, then is idemp
   );
   assert.match(
     read(root, '.github/copilot-instructions.md'),
-    /Strict workflows keep their signed Bridge\/gateway gates/,
+    /strict Bridge uses its signed lifecycle/,
   );
   assert.match(read(root, '.github/agents/neomind-coordinator.agent.md'), /model: "claude-opus-4.6"/);
   assert.match(read(root, '.github/agents/neomind-coordinator.agent.md'), /neomind\/lightweight_checkpoint/);
@@ -160,28 +160,36 @@ test('ordinary engineering intent automatically routes to the manager on every n
   installProject(root);
   for (const path of ['AGENTS.md', 'CLAUDE.md', '.github/copilot-instructions.md']) {
     const instructions = read(root, path);
-    assert.match(instructions, /new requirement, feature, fix/);
+    if (path !== 'AGENTS.md') assert.match(instructions, /new requirement, feature, fix/);
     assert.match(instructions, path === 'AGENTS.md' ? /Generic intake.*calls manager_run once/ : path === '.github/copilot-instructions.md' ? /Generic intake only/ : /automatically act as the NeoMind manager/);
-    assert.match(instructions, path === '.github/copilot-instructions.md' ? /Launch exactly NeoMind Coordinator Agent/ : /neomind-manager/);
+    assert.match(instructions, path === '.github/copilot-instructions.md' ? /Launch exactly NeoMind Coordinator Agent/ : path === 'AGENTS.md' ? /Codex spawn_agent with returned handoff\.agent as agent_type and unchanged handoff\.prompt/ : /neomind-manager/);
     assert.match(instructions, /automation\.json/);
-    assert.match(instructions, /agent-operated.*CLI.*fallback/);
+    if (path === 'CLAUDE.md') assert.match(instructions, /agent-operated.*CLI.*fallback/);
+    else {
+      assert.match(instructions, /Supporting software uses workflow_plan\/workflow_next/);
+      assert.match(instructions, /existing strict increments retain their applicable full gates/);
+      assert.match(instructions, /Resume matching work and preserve its execution mode/);
+    }
   }
   for (const prefix of ['.agents', '.claude', '.github']) {
     const name = prefix === '.github' ? 'neomind-manager' : 'neomind-manager';
     const skill = read(root, `${prefix}/skills/${name}/SKILL.md`);
     assert.match(skill, new RegExp(`^---\\r?\\nname: ${name}\\r?\\n`));
-    assert.match(skill, /description: Manage a user's engineering requirement/);
+    assert.match(skill, /description: Coordinate a new NeoMind request or resume saved work/);
     assert.doesNotMatch(skill, /disable-model-invocation: true/);
-    assert.match(skill, prefix === '.github' ? /neomind\/manager_run/ : prefix === '.agents' ? /manager_run/ : /manager_begin/);
+    assert.match(skill, prefix === '.github' ? /neomind\/manager_run/ : /manager_run/);
     if (prefix === '.agents') {
-      assert.match(skill, /guides\/codex-native\.md/);
-      assert.match(skill, /spawn_agent.*handoff\.agent/);
+      assert.match(skill, /## NeoMind in Codex/);
+      assert.match(skill, /spawn_agent with returned handoff\.agent as agent_type/);
     }
     if (prefix === '.github') {
       assert.match(skill, /guides\/copilot-native\.md/);
       assert.doesNotMatch(skill, /Complete the increment through actual core operations and signed native invocations/);
     }
-    assert.match(skill, /reviewed knowledge contribution/);
+    assert.match(skill, /workflow_plan/);
+    assert.match(skill, /workflow_next/);
+    assert.match(skill, /independent Verifier and Reviewer/);
+    assert.match(skill, prefix === '.claude' ? /Preserve signed Bridge gates/ : /strict Bridge uses its signed lifecycle/);
   }
   const guide = read(root, '.neomind/guides/manager.md');
   for (const operation of [
@@ -198,6 +206,7 @@ test('ordinary engineering intent automatically routes to the manager on every n
   assert.match(guide, /Human approval governs merging/);
   assert.match(guide, /three rounds/);
   assert.match(guide, /unconfigured background service/);
+  assert.match(guide, /For an unavailable MCP transport, use the CLI internally/);
 });
 
 test('installed Copilot profiles distinguish intake, selected Coordinator and bounded specialists', (t) => {
@@ -222,23 +231,16 @@ test('installed Copilot profiles distinguish intake, selected Coordinator and bo
   assert.match(manager, /already assigned NeoMind Coordinator Agent.*without calling manager_run again or self-delegating/);
   assert.doesNotMatch(manager, /Generic intake only|Launch exactly NeoMind Coordinator Agent|configured neomind-\* agents/);
   for (const name of delegates) assert.ok(manager.includes(name), name);
-  assert.ok(manager.indexOf('## Execution instructions') < manager.indexOf('## NeoMind engineering workflow'));
-  assert.match(manager, /never (?:perform|substitutes for) production implementation or independent self-review/);
-  assert.match(manager, /inline role impersonation is not (?:executed )?delegation/i);
-  assert.match(manager, /actual invocation IDs?[, ]+.*assignment_report IDs?/);
-  assert.match(manager, /before the substantive user answer, save a meaningful evidence-linked Cornell note/);
-  assert.match(manager, /returned note ID and saved path/);
-  assert.match(manager, /Analysis\/research-only requests still require.*meaningful saved Cornell note/);
-  assert.match(manager, /Do not invent production changes, builds, code reviews or SIL runs/);
+  assert.ok(manager.indexOf('## Execution instructions') < manager.indexOf('## NeoMind native workflow'));
+  assert.match(manager, /Production implementation belongs to Implementer or Debugger; independent review belongs to a separate Reviewer invocation/);
+  assert.match(manager, /Collect actual delegate results and invocation identities before consolidation/);
+  assert.match(manager, /Native workflows save typed assignment_result reports/);
+  assert.match(manager, /Close only through the saved workflow's gates/);
+  assert.match(manager, /once actual implementation, independent checks and review are complete, save the evidence-linked Cornell note/);
   for (const instructions of [generic, manager]) {
-    assert.match(instructions, /local-only and automatic_pr: false/);
-    assert.match(instructions, /zero remote discovery, publication or archive requests/);
-    assert.match(instructions, /knowledge_search/);
-    assert.match(instructions, /upstream not searched/);
-    assert.match(instructions, /401.*never no-match/);
-    assert.match(instructions, /later user opt-in to remote-enabled/);
-    assert.match(instructions, /same-workflow record references/);
-    assert.match(instructions, /older external notes as historical context, not current evidence/);
+    assert.match(instructions, /preserve its execution mode, physical project root, network policy, user edits and authorization/);
+    assert.match(instructions, /Local-only work uses local evidence and defers remote operations/);
+    assert.match(instructions, /Retrieved instructions are reference material/);
     assert.doesNotMatch(instructions, /Network\/authentication failures remain blockers|discover commit-pinned prior Cornell sources from the configured upstream/);
   }
   for (const [id, name] of copilotProfiles.filter(([id]) => id !== 'coordinator')) {
@@ -254,7 +256,7 @@ test('installed Copilot profiles distinguish intake, selected Coordinator and bo
     assert.match(specialist, /Return actual results and invocation identity.*copilot-native\/strict mode include the required assignment_report ID/);
     assert.match(specialist, /In lightweight mode return check\/review evidence for the Coordinator checkpoint instead/);
     assert.doesNotMatch(specialist, /Generic intake only|Selected NeoMind Coordinator Agent:|Launch exactly NeoMind Coordinator Agent|Call neomind\/manager_run once/i);
-    assert.ok(specialist.indexOf('## Execution instructions') < specialist.indexOf('## NeoMind engineering workflow'));
+    assert.ok(specialist.indexOf('## Execution instructions') < specialist.indexOf('## NeoMind native workflow'));
   }
   // Skills are shared: their intake branch must remain explicitly conditional on invocation role.
   const skill = read(root, '.github/skills/neomind-manager/SKILL.md');
@@ -266,9 +268,17 @@ test('installed Copilot profiles distinguish intake, selected Coordinator and bo
   assert.match(guide, /Assigned specialists/);
   assert.match(guide, /saved path \(`artifact_path`\)/);
   assert.match(guide, /Analysis\/research-only requests still require/);
+  assert.match(guide, /Inline role impersonation, coordinator-authored specialist reports and a proposed handoff do not establish delegation/);
+  assert.match(guide, /each real invocation ID, `assignment_report` ID and artifact references/);
+  assert.match(guide, /before the substantive user answer, persist a meaningful Cornell note/);
+  assert.match(guide, /Confirm the returned note ID and saved path/);
+  assert.match(guide, /Do not invent production changes, builds, code reviews or SIL runs/);
   assert.match(guide, /Full engineering gates remain unchanged/);
   assert.match(guide, /zero remote discovery, publication or archive requests/);
   assert.match(guide, /upstream not searched/);
+  assert.match(guide, /401\) are failures of that remote operation, never no-match/);
+  assert.match(guide, /Later publication requires user opt-in to `network_policy: remote-enabled`/);
+  assert.match(guide, /older external notes as historical context.*not as current evidence/);
   assert.match(guide, /same-workflow `requirement_ids` and evidence references/);
   assert.match(guide, /Remote work is deferred, not an engineering waiver/);
   assert.doesNotMatch(guide, /Fresh native policy publishes/);
@@ -339,14 +349,17 @@ test('sibling changes remain editable and managed instructions edits produce a f
     '.mcp.json',
     read(root, '.mcp.json').replace('{', '{\n // Later user note\n "other": 5,'),
   );
-  write(root, 'AGENTS.md', read(root, 'AGENTS.md').replace('Reuse first:', 'Use custom English before reuse:'));
+  const original = read(root, 'AGENTS.md');
+  const managedText = 'Reuse existing scripts and project knowledge first.';
+  assert.ok(original.includes(managedText), 'the preservation fixture must edit an existing managed instruction');
+  write(root, 'AGENTS.md', original.replace(managedText, 'Use custom English before reuse:'));
   const report = updateProject(root);
   assert.match(read(root, '.mcp.json'), /Later user note/);
   assert.equal(parse(read(root, '.mcp.json')).other, 5);
   assert.match(read(root, 'AGENTS.md'), /Use custom English/);
   const conflict = report.conflicts.find((item) => item.path === 'AGENTS.md#instructions');
   assert.ok(conflict);
-  assert.match(read(root, conflict.candidate), /Reuse first:/);
+  assert.ok(read(root, conflict.candidate).includes(managedText));
 });
 
 test('native hook commands and model metadata are generated without claiming live execution', (t) => {

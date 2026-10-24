@@ -36,16 +36,17 @@ test('Copilot installation defaults to full native mode with visible named subag
   const agent = readFileSync(join(root, '.github/agents/neomind-coordinator.agent.md'), 'utf8');
   assert.match(agent, /"agent"/);
   assert.match(agent, /agents: .*NeoMind Implementer Agent/);
-  assert.match(agent, /unsigned-native-report/);
+  assert.match(agent, /Local handles are unsigned correlation, not model or process attestations/);
   const server = JSON.parse(readFileSync(join(root, '.vscode/mcp.json'), 'utf8'));
   assert.equal(server.servers.neomind.type, 'stdio');
   const result = await managedRun(root, { requirement: 'Export one with documentation.', request_id: 'visible' });
   assert.equal(result.handoff.agent, 'NeoMind Coordinator Agent');
+  assert.equal(result.workflow.assurance, 'unsigned-native-report');
   assert.equal(result.invocation, undefined);
   assert.equal(existsSync(safePath(root, '.neomind/native/receipts')), false);
 });
 
-test('native handoffs require named delegation, real reports and saved Cornell before answering', async (t) => {
+test('native handoffs use backend-owned software steps, bounded recovery and final Coordinator knowledge', async (t) => {
   const root = project(t);
   installProject(root);
   for (const requirement of [
@@ -64,18 +65,26 @@ test('native handoffs require named delegation, real reports and saved Cornell b
     assert.match(prompt, /standard VS Code agent tool by exact display name/);
     assert.match(prompt, /at least two separate specialist contributions/);
     assert.match(prompt, /Manager may coordinate, consolidate and research, but must never perform production implementation or independent self-review/);
-    assert.match(prompt, /Wait for real delegate results.*actual invocation ID and seven-section assignment_report ID/);
+    assert.match(prompt, /Wait for real delegate results/);
+    assert.match(prompt, /assignment_result.*report_id/);
     assert.match(prompt, /Inline role impersonation.*are not executed delegation/);
-    assert.match(prompt, /result\/report is missing, report the blocker and next action/);
-    assert.match(prompt, /Before manager_finish and before the substantive user answer, save an evidence-linked Cornell note with note\.workflow_id=/);
+    assert.match(prompt, /workflow_plan/);
+    assert.match(prompt, /workflow_next/);
+    assert.match(prompt, /software-tools/);
+    assert.match(prompt, /assignment_followup/);
+    assert.match(prompt, /running or unknown.*wait.*duplicate/);
+    assert.doesNotMatch(prompt, /result\/report is missing, report the blocker and next action/);
+    assert.doesNotMatch(prompt, /For engineering changes preserve every ASPICE/);
+    assert.match(prompt, /Only the Coordinator.*one final evidence-linked Cornell note/);
+    assert.match(prompt, /note\.workflow_id=/);
     assert.match(prompt, /Confirm its returned note ID and saved path/);
     assert.match(prompt, /Under local-only make zero remote discovery, publication or archive requests/);
     assert.match(prompt, /upstream not searched/);
     assert.match(prompt, /If saving fails, report the blocker without claiming Cornell delivery or closure/);
-    assert.match(prompt, /Analysis\/research-only requests still require.*meaningful saved Cornell note/);
+    assert.match(prompt, /Analysis\/research-only requests.*actual bounded findings/);
     assert.match(prompt, /do not invent production changes, builds, code reviews or SIL runs/);
     assert.match(prompt, /Full engineering gates remain unchanged/);
-    assert.match(prompt, /independent acceptance review by a different owner and invocation/);
+    assert.match(prompt, /independent.*different owner and invocation/);
     assert.match(prompt, /not runtime attestations or signed receipts/);
     assert.match(prompt, /Use manager_status for progress/);
     assert.ok(prompt.includes(JSON.stringify(requirement)));

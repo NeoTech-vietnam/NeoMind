@@ -20,7 +20,7 @@ const expected = [
   ['architect', 'Architect', ['architect', 'component-owner'], 'architect', ['read', 'search', 'web']],
   ['implementer', 'Implementer', ['developer'], 'developer', ['read', 'search', 'edit', 'execute']],
   ['debugger', 'Debugger', ['developer'], 'developer', ['read', 'search', 'edit', 'execute']],
-  ['verifier', 'Verifier', ['verifier', 'check-executor'], 'verifier', ['read', 'search', 'web', 'execute']],
+  ['verifier', 'Verifier', ['verifier', 'check-executor'], 'verifier', ['read', 'search', 'web', 'edit', 'execute']],
   ['reviewer', 'Reviewer', ['reviewer'], 'reviewer', ['read', 'search', 'web']],
 ];
 const coreRoles = ['manager', 'requirements', 'architect', 'component-owner', 'verifier', 'reviewer',
@@ -71,7 +71,7 @@ test('installed profiles enforce distinct native tools and ship actionable proce
     const { metadata, content } = agent(root, id);
     const native = metadata.tools.filter(tool => !tool.startsWith('neomind/'));
     assert.deepEqual(new Set(native), new Set(nativeTools), id);
-    assert.ok(metadata.tools.includes('neomind/assignment_report'), `${id} can return actual saved evidence`);
+    assert.ok(metadata.tools.includes('neomind/assignment_result'), `${id} can return actual saved evidence`);
     assert.ok(content.includes(`Core record roles: ${roles.join(', ')}.`), id);
     assert.ok(content.includes(`Model policy: ${modelRole}.`), id);
     assert.match(content, /Inputs:/);
@@ -94,6 +94,7 @@ test('installed profiles enforce distinct native tools and ship actionable proce
   assert.ok(verifier.metadata.tools.includes('neomind/check_run'));
   assert.ok(verifier.metadata.tools.includes('neomind/check_inspect'));
   assert.match(verifier.content, /tools only when actually available and authorized/);
+  assert.match(verifier.content, /Author independent checker artifacts only within verification_paths; preserve production files and approved expectations/);
   const reviewer = agent(root, 'reviewer');
   assert.ok(reviewer.metadata.tools.includes('neomind/task_review'));
   assert.match(reviewer.content, /Review in a separate invocation from the producer/);
