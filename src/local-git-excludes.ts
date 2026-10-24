@@ -13,6 +13,9 @@ const localPatterns = [
   '.github/skills/neomind-*/',
   '.github/instructions/neomind.instructions.md',
   '.github/instructions/neomind.instructions.md.neomind-update*',
+  // Review candidates use this reserved suffix across Copilot, Codex and
+  // shared instructions. Keep original integration/user files visible.
+  '**/*.neomind-update*',
 ];
 
 interface LocalGitExclusions {
