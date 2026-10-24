@@ -181,3 +181,26 @@ test('capture excludes recursive, raw-session, and private runtime source baseli
   );
   assert.equal(existsSync(join(work.root, '.neomind/evidence/inputs/blobs')), false);
 });
+
+test('additional context rejects absent private path aliases before filesystem probing on every platform', t => {
+  const { root } = fixture(t);
+  for (const path of [
+    '.neomind/native/reported-assignments/issuer.key',
+    '.neomind/native/reported-assignments/ISSUER.KEY',
+    '.taskforces/native/reported-assignments/issuer.key',
+    '.verythinker/native/reported-assignments/ISSUER.KEY',
+    '.NeoMind/native/reported-assignments/ISSUER.KEY',
+    '.NEOMIND/CACHE',
+    '.NEOMIND/CACHE/native/PRIVATE-KEY.PEM',
+    '.TaskForces/native/PRIVATE-KEY.PEM',
+    '.VeryThinker/RAW/session.json',
+    '.GIT/config',
+    'src/.GIT/config',
+    'src/PRIVATE-KEY.PEM',
+    '.neomind/EVIDENCE/INPUTS/missing.json',
+  ]) {
+    assert.throws(() => captureEvidenceInputs(root, { files: {}, records: [], additional_files: [path] }), /excludes private runtime/);
+    assert.throws(() => captureEvidenceInputs(root, { files: { [path]: '0'.repeat(64) }, records: [] }), /excludes private runtime/);
+  }
+  assert.equal(existsSync(join(root, '.neomind/evidence/inputs/blobs')), false);
+});

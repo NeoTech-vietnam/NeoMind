@@ -82,11 +82,11 @@ function bytesAt(root: string, path: string): Buffer {
 }
 function excludeEphemeral(path: string): void {
   if (
-    /^\.(?:verythinker|taskforces|neomind)\/(?:cache|runs|raw|sessions|tools|operations|archives|capabilities|contributions|evidence\/inputs)\//.test(
+    /^\.(?:verythinker|taskforces|neomind)\/(?:cache|runs|raw|sessions|tools|operations|archives|capabilities|contributions|evidence\/inputs)(?:\/|$)/i.test(
       path,
     ) ||
-    /(?:^|\/)\.git(?:\/|$)/.test(path) ||
-    /(?:^|\/)private-key\.pem$/.test(path)
+    /(?:^|\/)\.git(?:\/|$)/i.test(path) ||
+    /(?:^|\/)private-key\.pem$/i.test(path)
     || /^\.(?:neomind|taskforces|verythinker)\/native\/reported-assignments\/issuer\.key$/i.test(path)
   )
     throw new Error(
@@ -189,6 +189,9 @@ function configurationInputs(
   const absent = defaults.filter((path) => !existsSync(safePath(root, path)));
   for (const path of extras) {
     canonical(path);
+    // Classify reserved paths before probing existence. A case-sensitive host
+    // must reject issuer-key aliases just as Windows does, without reading them.
+    excludeEphemeral(path);
     for (const file of lstatSync(safePath(root, path)).isDirectory()
       ? filesUnder(root, path)
       : [path])
