@@ -730,7 +730,7 @@ class Controller {
       recovery.length ? `Earlier backend validation in this same execution, retained across resume. These are diagnostic constraints, not an accepted plan or instructions to replay a request:\n${JSON.stringify(recovery)}` : '',
       contract ? `Immutable plan:\n${JSON.stringify(contract.plan)}` : '',
       contract?.knowledge_directory ? `Managed final knowledge destination: ${contract.knowledge_directory}. Coordinator synthesis must compile a separate evidence-derived research Cornell bundle after checks and before final review.` : '',
-      contract?.continuation ? `Continuation uses a NEW execution task linked to the unchanged historical task. Required obligations: ${JSON.stringify(contract.continuation.obligations)}. Preservation inputs are backend-fingerprinted. A planned intended-use check is separate from fixture checks; the backend appends --neomind-pilot-root <owned-temp-directory> and --neomind-pilot-nonce <nonce>. That independently authored checker mode must prepare pilot-input.json in that directory: {schema_version:1,kind:"intended-use",nonce,note:"relative/note.md",python:"absolute configured Python",case_classes:[at least ten meaningful classes],solutions:[{language:"c11",source:"relative/program.c",compiler:"absolute configured gcc",local_test:true|false},{language:"cpp17",source:"relative/program.cpp",compiler:"absolute configured g++",local_test:true|false}]}. Generate an explicitly disposable intended-use exercise via the actual adapter, with problem-specific notes and independently authored per-language oracle/harness; do not copy fixture outcomes. The backend independently runs the canonical Cornell validator, fresh strict builds and each executable, retaining actual evidence. Do not remove the owned pilot directory before the backend collects it.` : '',
+      contract?.continuation ? `Continuation uses a NEW execution task linked to the unchanged historical task. Required obligations: ${JSON.stringify(contract.continuation.obligations)}. Preservation inputs are backend-fingerprinted. A planned intended-use check is separate from fixture checks; the backend appends --neomind-pilot-root <owned-temp-directory> and --neomind-pilot-nonce <nonce>. The backend supplies fresh owned root/nonce flags to both the intended-use check and each associated negative control; negatives retain their declared failing exit and never create positive pilot proof. That independently authored checker mode must prepare pilot-input.json in that directory: {schema_version:1,kind:"intended-use",nonce,note:"relative/note.md",python:"absolute configured Python",case_classes:[at least ten meaningful classes],solutions:[{language:"c11",source:"relative/program.c",compiler:"absolute configured gcc",local_test:true|false},{language:"cpp17",source:"relative/program.cpp",compiler:"absolute configured g++",local_test:true|false}]}. Generate an explicitly disposable intended-use exercise via the actual adapter, with problem-specific notes and independently authored per-language oracle/harness; do not copy fixture outcomes. The backend independently runs the canonical Cornell validator, fresh strict builds and each executable, retaining actual evidence. Do not remove the owned pilot directory before the backend collects it.` : '',
       original ? `Original saved plan, scope, outputs, criteria and positive checks must be retained. Reuse these exact scope values and argv:\n${JSON.stringify(original.plan)}` : '',
       obligations ? `Required continuation plan additions: ${[
         'Explicit negative controls in the existing independent verification scope.',
@@ -754,9 +754,13 @@ class Controller {
     if (!attempt?.invocation_id || attempt.stage !== 'verification') throw new Error('Only the bound Verifier can run planned checks.');
     if (contract.precheck_review && !this.checkApproval(run, contract))
       return { status: 'awaiting-independent-check-review', next: 'Save a completed preparation report with verdict pass and the actual checker artifacts. Runtime obtains exact-byte review before executing these checks.' };
-    const selected = contract.plan.checks.filter(check => title === undefined || check.title === title).flatMap(check => [
-      { ...check, negative: false }, ...(check.negative_controls ?? []).map(negative => ({ ...negative, timeout_ms: check.timeout_ms, negative: true })),
-    ]);
+    const selected = contract.plan.checks.filter(check => title === undefined || check.title === title).flatMap(check => {
+      // Associated negative commands need the same adapter context as their
+      // parent, without inheriting its positive-proof or acceptance semantics.
+      const runtimePilotContext = check.purpose === 'intended-use' && contract.continuation?.obligations.pilot_kind === 'leetcode-c11-cpp17';
+      return [{ ...check, negative: false, runtimePilotContext }, ...(check.negative_controls ?? []).map(negative =>
+        ({ ...negative, timeout_ms: check.timeout_ms, negative: true, runtimePilotContext }))];
+    });
     if (!selected.length) throw new Error('Choose a check title from the assigned plan.');
     for (const check of selected) {
       run = readState(this.root, id);
@@ -768,8 +772,8 @@ class Controller {
       // A generic check's purpose describes its evidence, not its task family.
       // Only the explicitly bound continuation adapter may add argv or impose
       // the independent Cornell/C11/C++17 pilot proof on the declared command.
-      const requiresPilotProof = purpose === 'intended-use' && contract.continuation?.obligations.pilot_kind === 'leetcode-c11-cpp17';
-      const pilotRoot = requiresPilotProof ? realpathSync.native(mkdtempSync(join(realpathSync.native(tmpdir()), 'neomind-intended-use-'))) : undefined;
+      const requiresPilotProof = !check.negative && check.runtimePilotContext;
+      const pilotRoot = check.runtimePilotContext ? realpathSync.native(mkdtempSync(join(realpathSync.native(tmpdir()), 'neomind-intended-use-'))) : undefined;
       const pilotNonce = pilotRoot ? randomUUID() : undefined;
       const command = pilotRoot ? [...check.command, '--neomind-pilot-root', pilotRoot, '--neomind-pilot-nonce', pilotNonce!] : check.command;
       const evidenceInput = prepareControlledCheckEvidence(this.root, run, contract, check, baseline, attempt.invocation_id);
@@ -782,7 +786,7 @@ class Controller {
         onStart: pid => { const current = readState(this.root, id), intent = current.check_intents!.find(item => item.id === checkId)!;
           intent.state = 'running'; intent.pid = pid; save(this.root, current); } });
       let pilot: { path: string; sha256: string } | undefined, pilotError: string | undefined;
-      if (pilotRoot && result.exit_code === 0 && !result.cancelled && !result.timed_out && !result.output_limited && !result.error) {
+      if (requiresPilotProof && pilotRoot && result.exit_code === 0 && !result.cancelled && !result.timed_out && !result.output_limited && !result.error) {
         try { pilot = await executeControlledPilot(this.root, run, checkId, pilotRoot, pilotNonce!, signal, deadline); }
         catch { pilotError = 'The intended-use pilot did not produce valid retained artifacts and passing independent validation/build/run results.'; }
       }
