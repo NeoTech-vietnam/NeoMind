@@ -113,8 +113,17 @@ test('MCP receipts bound model observations and blockers and retain completed ar
   assert.equal(blocked.active_invocations[0].provider, 'observed-vendor');
   assert.equal(blocked.blocker.code, 'PRODUCT_CHECK_FAILED');
   assert.equal(blocked.next_action, run.blocker.next_action);
+  const feedback = JSON.stringify(run.blocker);
+  for (const status of ['queued', 'running', 'paused', 'interrupted', 'cancelled', 'completed']) {
+    run.status = status;
+    const resumed = await invoke();
+    assert.equal('blocker' in resumed, false, `${status} must not label retained repair feedback as a current blocker.`);
+    assert.equal('next_action' in resumed, false, `${status} must not repeat an obsolete recovery instruction.`);
+    assert.equal(JSON.stringify(run.blocker), feedback, 'Public projection preserves the private diagnostic history.');
+  }
+  run.status = 'uncertain';
+  assert.equal((await invoke()).blocker.code, 'PRODUCT_CHECK_FAILED');
   run.status = 'completed'; run.phase = 'completed'; run.active_invocations = [];
-  delete run.blocker;
   run.final_report_id = 'COMMAND-RECEIPT-KNW-0009'; run.cornell_note_ids = ['COMMAND-RECEIPT-KNW-0010'];
   const completed = await invoke();
   assert.equal(completed.final_report_id, run.final_report_id);

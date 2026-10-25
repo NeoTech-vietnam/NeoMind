@@ -44,6 +44,8 @@ New plan submissions receive backend-generated baseline metadata for delivered o
 
 A generic check labelled `intended-use` runs its declared command unchanged. Only an explicitly bound supported continuation adapter adds its own pilot protocol. The LeetCode continuation adapter still requires the separate disposable Cornell/C11/C++17 pilot and actual independent evidence; that contract is not imposed on unrelated Node.js tasks.
 
+When a committed legacy contract requires review before checks execute, that review assesses checker readiness: the exact oracle, negative controls and safe bounded execution. Results from those unrun checks are not prerequisites for readiness. Passing this review authorizes checks; it does not accept the product. The separate final product review still requires fresh execution evidence and every committed acceptance condition.
+
 ## Models, recovery and limits
 
 - Workers use the role/vendor/model configured for the VS Code Bridge, including a registered 9router custom provider. Codex remains a submission client; its parent provider/model is not rewritten by controlled adapter generation.

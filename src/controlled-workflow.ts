@@ -14,7 +14,7 @@ import { prepareWork, type WorkPreparation } from './procedure-reuse.js';
 import { runCommand } from './command-runner.js';
 import { readNativeSoftwareContract } from './native-software.js';
 import type { ControlledBinding, ControlledCallbacks, ControlledPlan, ControlledReport } from './controlled-tools.js';
-import { ControlledToolError } from './controlled-tools.js';
+import { ControlledToolError, controlledReviewInstructions } from './controlled-tools.js';
 import { registerProcedure, resolveProcedure, runProcedure } from './procedures.js';
 import { compileCornellResearch, readCornellDestination, type CornellResearchInput } from './cornell-workflow.js';
 import { createCornellNote, validateCornellNote } from './notes.js';
@@ -521,6 +521,7 @@ class Controller {
       save(this.root, run, 'dispatch', `NeoMind dispatches ${role} for ${stage}.`);
       const binding: ControlledBinding = { workflow_id: id, task_id: stage === 'planning' ? undefined : contract?.task_id,
         stage, role, implementation_paths: contract?.plan.allowed_paths ?? [], verification_paths: contract?.plan.verification_paths ?? [],
+        ...(stage === 'review' ? { review_purpose: attempt.purpose === 'check-review' ? 'checker-readiness' as const : 'final-product' as const } : {}),
         approved_inputs: [...(contract?.plan.input_paths ?? []), ...(run.continuation ? [
           '.agents/skills/leetcode-notes/assets/cornell-note-template.md', '.agents/skills/leetcode-notes/scripts/validate_notes.py',
         ] : [])],
@@ -645,7 +646,7 @@ class Controller {
           if (dispatch) { dispatch.invocation_id = invocation; save(this.root, current); }
         } });
       try {
-        const prompt = this.prompt(run, stage, contract) + (specialist ? `\n\nBounded specialist consultation: ${specialist.objective}. Inspect and report your findings; this is a consultation, not a repair diagnosis.` : '');
+        const prompt = this.prompt(run, stage, contract, binding.review_purpose) + (specialist ? `\n\nBounded specialist consultation: ${specialist.objective}. Inspect and report your findings; this is a consultation, not a repair diagnosis.` : '');
         let receipt = await this.launch({ role, prompt, workflow_id: id, task_id: binding.task_id, request_id: attempt.request_id }, signal);
         while (invocationIsActive(receipt) && !signal.aborted) receipt = await waitNative(this.root, receipt.id, 1000);
         if (signal.aborted) { await interruptNative(this.root, receipt.id); return; }
@@ -718,7 +719,7 @@ class Controller {
       } finally { attemptAbort.abort(); signal.removeEventListener('abort', abortAttempt); unregister(); }
     }
   }
-  private prompt(run: ControlledSnapshot, stage: Stage, contract?: Contract): string {
+  private prompt(run: ControlledSnapshot, stage: Stage, contract?: Contract, reviewPurpose: ControlledBinding['review_purpose'] = 'final-product'): string {
     const original = run.continuation && !contract ? readNativeSoftwareContract(this.root, run.workflow_id) : undefined;
     const obligations = original ? continuationObligations(original.plan.acceptance_criteria) : undefined;
     const recovery = stage === 'planning' ? controlledPlanningRecovery(this.root, run) : [];
@@ -730,7 +731,6 @@ class Controller {
       contract ? `Immutable plan:\n${JSON.stringify(contract.plan)}` : '',
       contract?.knowledge_directory ? `Managed final knowledge destination: ${contract.knowledge_directory}. Coordinator synthesis must compile a separate evidence-derived research Cornell bundle after checks and before final review.` : '',
       contract?.continuation ? `Continuation uses a NEW execution task linked to the unchanged historical task. Required obligations: ${JSON.stringify(contract.continuation.obligations)}. Preservation inputs are backend-fingerprinted. A planned intended-use check is separate from fixture checks; the backend appends --neomind-pilot-root <owned-temp-directory> and --neomind-pilot-nonce <nonce>. That independently authored checker mode must prepare pilot-input.json in that directory: {schema_version:1,kind:"intended-use",nonce,note:"relative/note.md",python:"absolute configured Python",case_classes:[at least ten meaningful classes],solutions:[{language:"c11",source:"relative/program.c",compiler:"absolute configured gcc",local_test:true|false},{language:"cpp17",source:"relative/program.cpp",compiler:"absolute configured g++",local_test:true|false}]}. Generate an explicitly disposable intended-use exercise via the actual adapter, with problem-specific notes and independently authored per-language oracle/harness; do not copy fixture outcomes. The backend independently runs the canonical Cornell validator, fresh strict builds and each executable, retaining actual evidence. Do not remove the owned pilot directory before the backend collects it.` : '',
-      run.pending_check_review ? 'This is the original contract required pre-execution check review. Read the exact checker source and protected cases; pass only if the checker/oracle and negative controls are adequate. No check execution is claimed yet.' : '',
       original ? `Original saved plan, scope, outputs, criteria and positive checks must be retained. Reuse these exact scope values and argv:\n${JSON.stringify(original.plan)}` : '',
       obligations ? `Required continuation plan additions: ${[
         'Explicit negative controls in the existing independent verification scope.',
@@ -744,7 +744,7 @@ class Controller {
       `Prior reports:\n${JSON.stringify(run.attempts.filter(item => item.report).slice(-4).map(item => ({ stage: item.stage, report: item.report })))}`,
       stage === 'synthesis' ? `Current actual evidence: ${JSON.stringify(run.checks.filter(check => !check.negative && check.passed).map(check => ({ title: check.title, evidence_id: check.evidence_id, log: check.log_path })))}. The compiler binds evidence IDs automatically; describe observed facts supported by these actual checks.` : '',
       stage === 'verification' ? 'Independently inspect implementation, author only checker files, execute check_run, and report pass/fail. Include negative controls that prove bad output fails. Distinguish product defects from checker defects.' : '',
-      stage === 'review' ? 'Review the actual change, acceptance criteria and current checks independently. Read check_evidence for actual stdout/stderr and intended-use build/run receipts; private runtime files remain unavailable. Save assignment_report with verdict pass or fail.' : '',
+      stage === 'review' ? controlledReviewInstructions(reviewPurpose) : '',
       stage === 'diagnosis' ? 'Diagnose existing evidence without modifying files. Report failure_kind implementation/checker/protocol/environment, concrete findings, and bounded repair direction.' : '',
     ].filter(Boolean).join('\n\n');
   }

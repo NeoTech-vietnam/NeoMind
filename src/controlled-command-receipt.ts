@@ -32,7 +32,9 @@ export function controlledCommandReceipt(run: ControlledSnapshot) {
     confirmed_model: text(item.confirmed_model, limits.model) ?? null,
     provider: text(item.provider, limits.model) ?? null,
   }));
-  const blocker = run.blocker && typeof run.blocker === 'object' ? {
+  // Recovery keeps prior feedback internally while work is queued/running.
+  // Only stopped/uncertain states expose that field as a public blocker.
+  const blocker = ['blocked', 'uncertain'].includes(run.status) && run.blocker && typeof run.blocker === 'object' ? {
     kind: text(run.blocker.kind, 32), message: text(run.blocker.message, limits.diagnostic),
     code: text(run.blocker.code, 96), trace_id: identifier(run.blocker.trace_id),
     owner: text(run.blocker.owner, 64), next_action: text(run.blocker.next_action, limits.diagnostic),

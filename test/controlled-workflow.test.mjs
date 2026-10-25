@@ -51,6 +51,10 @@ function lastToolResult(messages) {
   let decoded = JSON.parse(result.content[0].value);
   return decoded;
 }
+function semanticToolValue(messages) {
+  const result = lastToolResult(messages), content = result?.content?.[0];
+  return content?.type === 'text' ? JSON.parse(content.text) : result;
+}
 function planFor(name, options = {}) {
   const output = `${name}/src/value.txt`, checker = `${name}/verify/check.cjs`, bad = `${name}/verify/bad.txt`;
   const baseline = [output, checker];
@@ -68,7 +72,7 @@ function scriptFor(name, stage, attempt, options, held) {
     findings: [`Independent ${stage} result recorded.`], ...extra });
   if (stage === 'planning') return [call('project_list', { path: '.' }), call('workflow_plan', plan), report()];
   if (stage === 'implementation') {
-    const value = options.productFailure && attempt === 1 ? '2\n' : '1\n';
+    const value = options.precheckProductFailure || options.productFailure && attempt === 1 ? '2\n' : '1\n';
     return [call('project_read', { path: output }), call('task_file_write', { path: output, content: value }),
       ...(options.holdImplementation && attempt === 1 ? [async ({ token }) => {
         held.entered = true;
@@ -79,17 +83,35 @@ function scriptFor(name, stage, attempt, options, held) {
   }
   if (stage === 'verification') {
     const wrongChecker = options.checkerFailure && attempt === 1;
-    const content = options.exitZeroChecker ? 'process.exit(0);\n'
+    const content = options.unsafeChecker ? "require('node:fs').writeFileSync(require('node:path').join(__dirname,'../../escape.txt'),'outside assigned scope');\n"
+      : options.exitZeroChecker ? 'process.exit(0);\n'
       : `const assert=require('node:assert/strict'); const fs=require('node:fs'); assert.equal(Number(fs.readFileSync(process.argv[2],'utf8')),${wrongChecker ? 2 : 1}); console.log('scalar validated');\n`;
     const defect = wrongChecker || options.productFailure && attempt === 1;
     return [call('project_read', { path: output }), call('project_read', { path: checker }), call('task_file_write', { path: checker, content }),
       call('project_read', { path: bad }), call('task_file_write', { path: bad, content: '2\n' }), call('check_run', {}),
+      ...(options.reviewScope && attempt > 1 ? [async ({ token, messages }) => {
+        held.postCheckEvidence = semanticToolValue(messages); held.postChecksEntered = true;
+        while (!token.isCancellationRequested && !held.postChecksRelease) await delay(10);
+        return new Text('Actual diagnostic check checkpoint; no product acceptance is claimed.');
+      }] : []),
       report({ outcome: defect ? 'failed' : 'completed', verdict: defect ? 'fail' : 'pass', artifacts: [output, checker, bad],
         negative_controls: ['The prescribed incorrect scalar fixture must exit one.'],
         ...(defect ? { failure_kind: wrongChecker ? 'checker' : 'implementation' } : {}) })];
   }
-  if (stage === 'review') return [call('project_read', { path: output }), call('project_read', { path: checker }),
-    report({ verdict: 'pass', artifacts: [output, checker, bad] })];
+  if (stage === 'review') {
+    const scopeReview = options.reviewScope || options.unsafeChecker;
+    const result = report({ verdict: options.unsafeChecker ? 'fail' : 'pass', artifacts: [output, checker, bad],
+      ...(options.unsafeChecker ? { failure_kind: 'checker', findings: ['Checker writes escape.txt outside its assigned/disposable execution scope; do not execute it.'] }
+        : options.reviewScope ? { findings: ['The product scalar is two; the sound independent checker will safely diagnose that product defect by rejecting it.'],
+          limitations: ['Pre-execution checker readiness is separate from product acceptance; no execution evidence exists yet.'] } : {}) });
+    return [call('project_read', { path: output }), call('project_read', { path: checker }),
+      ...(scopeReview || options.holdFinalReview ? [call('check_evidence', {})] : []),
+      ...(options.reviewScope || options.holdFinalReview ? [async ({ token, messages }) => {
+        held.reviewEvidence = semanticToolValue(messages); held.reviewEntered = true;
+        while (!token.isCancellationRequested && !held.reviewRelease) await delay(10);
+        return held.reviewRelease ? new Call('fixture-review-result', result.name, result.input) : new Text('Canceled held review fixture.');
+      }] : [result])];
+  }
   if (stage === 'diagnosis') return [call('project_read', { path: checker }), report({ failure_kind: 'checker' })];
   throw new Error(`Unexpected fixture stage ${stage}`);
 }
@@ -122,7 +144,8 @@ async function setup(t, scenarios) {
         const key = `${name}:${stage}`, attempt = (counts.get(key) ?? 0) + 1; counts.set(key, attempt);
         conversation = { name, stage, attempt, actions: scriptFor(name, stage, attempt, scenarios[name] ?? {}, held), round: 0 };
         conversations.set(messages, conversation);
-        observed.push({ name, stage, attempt, tools: options.tools.map(tool => tool.name) });
+        observed.push({ name, stage, attempt, tools: options.tools.map(tool => tool.name),
+          promptLayers: messages.filter(message => typeof message.content === 'string').map(message => message.content) });
       }
       const prior = lastToolResult(messages);
       if (prior?.isError) {
@@ -157,6 +180,15 @@ async function until(root, workflow, predicate, message, errors = []) {
   assert.fail(`${message}: ${JSON.stringify({ status: snapshot.status, phase: snapshot.phase, errors })}`);
 }
 const submit = (root, name) => startControlledWorkflow(root, { requirement: `Scenario: ${name}\nCreate and independently verify the requested scalar.`, request_id: `fixture-${name}` });
+async function submitContinuation(root, name) {
+  const workflow = beginWorkflow(root, { requirement: `Scenario: ${name}\nCreate and independently verify the requested scalar.`, execution_mode: 'copilot-native' });
+  const packet = prepareReportedAssignment(root, { workflow_id: workflow.meta.id, profile_id: 'coordinator', role: 'manager',
+    assignment_id: `legacy-${name}`, objective: 'Freeze the original scalar contract before its controlled continuation.' });
+  const handle = openAssignment(root, packet.open_input).handle;
+  const { risk, checks, ...plan } = planFor(name);
+  planNativeSoftware(root, handle, { ...plan, process: 'software-tools', checks: checks.map(({ negative_controls, ...check }) => check) });
+  return startControlledWorkflow(root, { workflow_id: workflow.meta.id });
+}
 
 function countRecordReads(root, action) {
   const original = fs.readFileSync, prefix = safePath(root, '.neomind/records').replaceAll('\\', '/').toLowerCase() + '/', seen = new Map();
@@ -171,6 +203,78 @@ function countRecordReads(root, action) {
 
 test('controlled execution mode is explicit and distinct from unsigned native modes', () => {
   assert.ok(executionModes.includes('neomind-controlled'));
+});
+
+test('both real Bridge prompt layers scope readiness to safe checker execution before any diagnostic evidence exists', async t => {
+  const env = await setup(t, { readiness: { reviewScope: true, precheckProductFailure: true } });
+  const initial = await submitContinuation(env.root, 'readiness');
+  const preparing = await until(env.root, initial.workflow_id, () => env.held.reviewEntered,
+    'the frozen continuation must request independent checker readiness', env.errors);
+  assert.equal(preparing.attempts.at(-1).purpose, 'check-review');
+  assert.equal(preparing.checks.length, 0);
+  assert.deepEqual(env.held.reviewEvidence, []);
+  const prompts = env.observed.find(item => item.name === 'readiness' && item.stage === 'review').promptLayers;
+  assert.equal(prompts.length, 2, 'Inspect both bound role instructions and the controller request actually delivered to the Bridge.');
+  for (const prompt of prompts) {
+    assert.match(prompt, /Review purpose: checker-readiness/);
+    assert.match(prompt, /negative controls/);
+    assert.match(prompt, /safe bounded execution/);
+    assert.match(prompt, /not-yet-run evidence is expected/);
+    assert.doesNotMatch(prompt, /Independently inspect the delivered artifacts and actual verification evidence|Review the actual change, acceptance criteria and current checks independently/);
+  }
+  env.held.reviewRelease = true;
+  const diagnosed = await until(env.root, initial.workflow_id, () => env.held.postChecksEntered,
+    'approved checker readiness must permit actual diagnostic execution', env.errors);
+  assert.ok(diagnosed.attempts.some(attempt => attempt.purpose === 'check-review' && attempt.report?.verdict === 'pass'));
+  assert.ok(diagnosed.checks.some(check => !check.negative && !check.passed), 'Actual checks diagnose the deliberately incorrect product.');
+  assert.ok(diagnosed.checks.some(check => check.negative && check.passed));
+  assert.notEqual(diagnosed.status, 'completed');
+  assert.equal(diagnosed.final_report_id, undefined);
+  const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.epoch_id === diagnosed.epoch_id);
+  assert.equal(verifyControlledTask(env.root, task, 'accepted').ok, false, 'Readiness approval cannot substitute for independent passing checks and final review.');
+});
+
+test('unsafe checker readiness can still fail without executing any prescribed command', async t => {
+  const env = await setup(t, { unsafe: { unsafeChecker: true } });
+  const initial = await submitContinuation(env.root, 'unsafe');
+  const blocked = await until(env.root, initial.workflow_id, run => run.status === 'blocked',
+    'an unsafe checker must retain the pre-execution gate', env.errors);
+  assert.equal(blocked.checks.length, 0);
+  assert.ok(blocked.attempts.filter(attempt => attempt.purpose === 'check-review').every(attempt =>
+    attempt.report?.verdict === 'fail' && attempt.report.failure_kind === 'checker'));
+  assert.ok(blocked.attempts.some(attempt => attempt.purpose === 'check-review'));
+  assert.equal(existsSync(safePath(env.root, 'escape.txt')), false, 'The scope-escaping checker was never executed.');
+  assert.equal(blocked.final_report_id, undefined);
+});
+
+test('final-product review still requires fresh execution evidence and cannot accept a missing-evidence journal', async t => {
+  const env = await setup(t, { finalscope: { highRisk: true, holdFinalReview: true } });
+  const initial = await submit(env.root, 'finalscope');
+  const reviewing = await until(env.root, initial.workflow_id, () => env.held.reviewEntered,
+    'risk-based final review must follow actual passing verification', env.errors);
+  assert.ok(reviewing.checks.length >= 2);
+  assert.ok(env.held.reviewEvidence.length >= 2);
+  const prompts = env.observed.find(item => item.name === 'finalscope' && item.stage === 'review').promptLayers;
+  for (const prompt of prompts) {
+    assert.match(prompt, /Review purpose: final-product/);
+    assert.match(prompt, /fresh positive and negative execution evidence/);
+    assert.match(prompt, /intended-use/);
+    assert.match(prompt, /Cornell/);
+    assert.doesNotMatch(prompt, /not-yet-run evidence is expected/);
+  }
+  const path = safePath(env.root, `.neomind/controlled/workflows/${hash(initial.workflow_id)}.json`);
+  const missing = JSON.parse(readFileSync(path, 'utf8')); missing.checks = [];
+  atomicWrite(path, JSON.stringify(missing));
+  env.held.reviewRelease = true;
+  const blocked = await until(env.root, initial.workflow_id, run => run.status === 'blocked',
+    'a final pass report cannot override lost current check evidence', env.errors);
+  assert.equal(blocked.attempts.at(-1).report.verdict, 'pass');
+  assert.equal(blocked.final_report_id, undefined);
+  const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.epoch_id === blocked.epoch_id);
+  assert.notEqual(task.meta.status, 'accepted');
+  const validation = verifyControlledTask(env.root, task, 'accepted');
+  assert.equal(validation.ok, false);
+  assert.ok(validation.findings.some(finding => /execution evidence is missing/.test(finding.message)));
 });
 
 test('real signed Bridge/MCP drives normal and risk-based workflows with actual command evidence', async t => {

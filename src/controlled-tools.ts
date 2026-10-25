@@ -9,10 +9,13 @@ import { cornellResearchSchema } from './cornell-workflow.js';
 import { controlledModelInput, controlledValidation, redactControlledValue } from './controlled-observability.js';
 
 export type ControlledStage = 'planning' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
+export type ControlledReviewPurpose = 'checker-readiness' | 'final-product';
 export const controlledConsultationRoles = ['explorer', 'planner', 'architect', 'researcher', 'curator', 'component-owner'] as const;
 export interface ControlledBinding {
   workflow_id: string; task_id?: string; invocation_id?: string;
   stage: ControlledStage; role: string;
+  /** Backend-owned review scope; workers never select or mutate this purpose. */
+  review_purpose?: ControlledReviewPurpose;
   implementation_paths: string[]; verification_paths: string[];
   read_paths?: string[]; protected_paths?: string[]; check_titles?: string[];
   approved_inputs?: string[];
@@ -144,16 +147,23 @@ export function controlledToolNames(binding: ControlledBinding): string[] {
     ...(['verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage) ? ['check_evidence'] : []),
     ...(binding.stage === 'verification' ? ['check_run'] : [])];
 }
+/** Both Bridge prompt layers use the same scope so precheck cannot inherit final acceptance duties. */
+export function controlledReviewInstructions(purpose: ControlledReviewPurpose): string {
+  return purpose === 'checker-readiness'
+    ? 'Review purpose: checker-readiness. Independently inspect the exact checker source/argv, oracle, protected cases and negative controls against the unchanged criteria. Judge checker adequacy and safe bounded execution in the declared scope and disposable pilot workspace when required, including any generator or product code the planned commands execute. This review precedes execution: not-yet-run evidence is expected, and an empty check_evidence result is not a readiness failure. Product defects that the planned checker can safely diagnose belong in findings and limitations; they are not final acceptance decisions. Fail readiness for an unsound/incomplete checker or a real execution-safety defect, including scope escape, destructive effects or unauthorized data access/publication. Classify the actual cause with failure_kind. Do not execute checks in this read-only review. Save assignment_report with verdict pass or fail; readiness approval does not establish product correctness or workflow completion.'
+    : 'Review purpose: final-product. Independently inspect the delivered artifacts against all unchanged acceptance criteria. Require fresh positive and negative execution evidence, required intended-use pilot receipts and the requested evidence-derived Cornell bundle. Read check_evidence for actual stdout/stderr and intended-use build/run results; absent, stale or failing required evidence cannot support a pass. Private runtime files remain unavailable. Save assignment_report with verdict pass or fail and substantive findings; pre-execution checker readiness is not final product acceptance.';
+}
 export function controlledInstructions(binding: ControlledBinding): string {
   const writable = binding.stage === 'implementation' && binding.role === 'developer' ? binding.implementation_paths
     : binding.stage === 'verification' && ['verifier', 'check-executor'].includes(binding.role) ? binding.verification_paths : [];
   const ownership = { your_role: binding.role, your_stage: binding.stage, your_writable_paths: writable,
+    ...(binding.stage === 'review' ? { review_purpose: binding.review_purpose ?? 'final-product' } : {}),
     implementation: { owner: 'developer', paths: binding.implementation_paths }, verification: { owner: 'verifier', paths: binding.verification_paths } };
   const duties: Record<ControlledStage, string> = {
     planning: 'Inspect relevant files and existing reusable tools. Submit one bounded semantic workflow_plan with acceptance criteria, separate implementation/checker paths and actual check commands. Declare negative_controls using the same checker with verifier-owned deliberately invalid fixtures/inputs and their expected nonzero exits; runtime executes them as evidence. Elevate risk or suggest a bounded specialist only when needed. Allowed consultation roles are explorer, planner, architect, researcher, curator and component-owner. Reviewer and Verifier are backend-owned stages; do not add them as consultations or remove their required gates.',
     implementation: 'Read existing files before editing. Implement only the assigned outputs with task_file_write. Backend handles file versions, operation identity and task lifecycle. Preserve independent checker and acceptance files.',
     verification: 'Inspect the delivered implementation. Author and repair only the independent checker paths, including deliberately invalid fixtures for the prescribed negative_controls. Run the prescribed checks with check_run; backend executes both positive and negative commands. Report prose alone is not negative-control evidence. Distinguish a product defect from a checker or environment failure.',
-    review: 'Independently inspect the delivered artifacts and actual verification evidence. Report pass or fail and substantive findings against the unchanged acceptance criteria.',
+    review: controlledReviewInstructions(binding.review_purpose ?? 'final-product'),
     diagnosis: 'Inspect available evidence and identify the root cause. Classify failure_kind as implementation, checker, protocol, environment or unknown and recommend one bounded recovery action.',
     synthesis: 'Derive the final requested Cornell research note from actual artifacts and independent evidence. Use cornell_research_compile to preserve the standard format and separate practice/answers. Record limitations and actual sources, then assignment_report. Source implementation and checker files are read-only.',
   };

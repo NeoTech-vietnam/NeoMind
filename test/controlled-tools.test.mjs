@@ -78,6 +78,19 @@ test('identity spoofing is rejected before the bound report callback and no supp
   assert.equal(c.reports.length, 0);
 });
 
+test('review purpose is backend-bound and cannot be selected through a worker report or tool schema', async t => {
+  const actor = binding('review', { review_purpose: 'checker-readiness' });
+  const c = await connect(t, project(t), actor), tools = (await c.client.listTools()).tools;
+  assert.match(controlledInstructions(actor), /Review purpose: checker-readiness/);
+  assert.match(controlledInstructions(actor), /including any generator or product code the planned commands execute/);
+  for (const tool of tools) assert.equal('review_purpose' in tool.inputSchema.properties, false, tool.name);
+  const response = await c.call('assignment_report', { outcome: 'completed', summary: 'Attempted scope change.',
+    verdict: 'pass', review_purpose: 'final-product' });
+  assert.equal(response.isError, true);
+  assert.equal(c.reports.length, 0);
+  assert.match(controlledInstructions(binding('review')), /Review purpose: final-product/);
+});
+
 test('explicit canonical skill assets are readable as data without exposing private client configuration or write access', async t => {
   const root = project(t), input = '.agents/skills/cornell/assets/template.md';
   mkdirSync(join(root, '.agents/skills/cornell/assets'), { recursive: true });
