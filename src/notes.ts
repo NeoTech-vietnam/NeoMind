@@ -277,7 +277,8 @@ function fingerprint(record: ProjectRecord): string {
     }),
   );
 }
-function demonstrationEvidenceProblems(root: string, evidence: ProjectRecord): string[] {
+function demonstrationEvidenceProblems(root: string, evidence: ProjectRecord,
+  resolveRecord: (id: string) => ProjectRecord = id => getRecord(root, id)): string[] {
   const problems: string[] = [];
   const data = evidence.meta.data;
   if (evidence.meta.type !== 'evidence' || data.result !== 'pass')
@@ -294,12 +295,12 @@ function demonstrationEvidenceProblems(root: string, evidence: ProjectRecord): s
         if (snapshotPaths(root, [path])[path] !== digest)
           problems.push(`Demonstration evidence input changed: ${path}`);
     const checkId = evidence.meta.links.find((link) => link.type === 'evidence-for')?.target;
-    if (!checkId || fingerprint(getRecord(root, checkId)) !== data.check_fingerprint)
+    if (!checkId || fingerprint(resolveRecord(checkId)) !== data.check_fingerprint)
       problems.push('Demonstration verification procedure is missing or changed.');
     for (const [id, digest] of Object.entries(
       (data.record_baseline as Record<string, string>) ?? {},
     ))
-      if (fingerprint(getRecord(root, id)) !== digest)
+      if (fingerprint(resolveRecord(id)) !== digest)
         problems.push(`Demonstration evidence record baseline changed: ${id}`);
     if (
       typeof data.log_path !== 'string' ||
@@ -812,7 +813,16 @@ export function validateCornellNote(
   root: string,
   id: string,
 ): { ok: boolean; problems: string[]; checked_at: string } {
-  const record = getRecord(root, id);
+  // One fresh synchronous authority inventory belongs to this validation only.
+  // loadRecords still reads current bytes and rejects duplicate/malformed IDs;
+  // cloned lookups cannot mutate another check's view or outlive this call.
+  const records = new Map(loadRecords(root).map(record => [record.meta.id, record]));
+  const resolveRecord = (id: string): ProjectRecord => {
+    const record = records.get(id);
+    if (!record) throw new Error(`Record not found: ${id}`);
+    return structuredClone(record);
+  };
+  const record = resolveRecord(id);
   const problems: string[] = [];
   if (record.meta.type !== 'knowledge' || record.meta.data.format !== 'cornell-v1')
     throw new Error('Expected a Cornell knowledge record.');
@@ -839,7 +849,7 @@ export function validateCornellNote(
     if (data.research) {
       const research = data.research as NonNullable<CornellInput['research']>;
       try {
-        const requirement = getRecord(root, research.requirement_id);
+        const requirement = resolveRecord(research.requirement_id);
         if (requirement.meta.type !== 'requirement' || requirement.meta.revision !== research.requirement_revision ||
           evidenceRecordFingerprint(requirement) !== research.requirement_fingerprint ||
           !record.meta.links.some((link) => link.type === 'documents' && link.target === requirement.meta.id))
@@ -874,7 +884,7 @@ export function validateCornellNote(
     problems.push(...sourceLinks(body, sources), ...linkProblems(root, path, body));
     for (const source of sources) {
       try {
-        if (source.record_id && fingerprint(getRecord(root, source.record_id)) !== source.baseline)
+        if (source.record_id && fingerprint(resolveRecord(source.record_id)) !== source.baseline)
           problems.push(`Cornell source record changed: ${source.record_id}`);
         else if (
           !source.record_id &&
@@ -889,9 +899,9 @@ export function validateCornellNote(
     const demonstration = data.demonstration as CornellInput['demonstration'];
     for (const evidenceId of demonstration?.evidence_ids ?? []) {
       try {
-        const evidence = getRecord(root, evidenceId);
+        const evidence = resolveRecord(evidenceId);
         problems.push(
-          ...demonstrationEvidenceProblems(root, evidence).map(
+          ...demonstrationEvidenceProblems(root, evidence, resolveRecord).map(
             (problem) => `${evidenceId}: ${problem}`,
           ),
         );

@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -17,6 +19,7 @@ import { beginWorkflow } from '../dist/manager.js';
 import { prepareReportedAssignment } from '../dist/native-assignment.js';
 import { openAssignment } from '../dist/assignment-runtime.js';
 import { planNativeSoftware, readNativeSoftwareContract } from '../dist/native-software.js';
+import { controlledContractForTask, verifyControlledTask } from '../dist/controlled-acceptance.js';
 
 // These tests exercise the actual signed local Bridge, MCP, filesystem and child runner.
 // The language model and editor API are deterministic fixtures, not actual Copilot/Codex inference.
@@ -154,6 +157,17 @@ async function until(root, workflow, predicate, message, errors = []) {
   assert.fail(`${message}: ${JSON.stringify({ status: snapshot.status, phase: snapshot.phase, errors })}`);
 }
 const submit = (root, name) => startControlledWorkflow(root, { requirement: `Scenario: ${name}\nCreate and independently verify the requested scalar.`, request_id: `fixture-${name}` });
+
+function countRecordReads(root, action) {
+  const original = fs.readFileSync, prefix = safePath(root, '.neomind/records').replaceAll('\\', '/').toLowerCase() + '/', seen = new Map();
+  fs.readFileSync = function (path, ...args) {
+    if (typeof path === 'string' && path.replaceAll('\\', '/').toLowerCase().startsWith(prefix)) seen.set(path, (seen.get(path) ?? 0) + 1);
+    return original.call(this, path, ...args);
+  };
+  syncBuiltinESMExports();
+  try { return { result: action(), reads: [...seen.values()].reduce((a, b) => a + b, 0), maximum: Math.max(0, ...seen.values()) }; }
+  finally { fs.readFileSync = original; syncBuiltinESMExports(); }
+}
 
 test('controlled execution mode is explicit and distinct from unsigned native modes', () => {
   assert.ok(executionModes.includes('neomind-controlled'));
@@ -372,4 +386,50 @@ test('changing a controlled role model affects the next invocation without inval
   const done = await until(env.root, initial.workflow_id, run => run.status === 'completed', 'policy update must preserve active provenance', env.errors);
   assert.equal(readInvocation(env.root, old.id).requested_model, old.requested_model);
   assert.equal(done.status, 'completed');
+});
+
+test('completed signed verification uses one fresh record inventory and observes next-call evidence or requirement edits', async t => {
+  const env = await setup(t, { metadata: {} });
+  const initial = await submit(env.root, 'metadata');
+  const done = await until(env.root, initial.workflow_id, run => run.status === 'completed', 'real signed fixture must complete before authority snapshot checks', env.errors);
+  for (let index = 0; index < 64; index++) {
+    const at = new Date().toISOString(), meta = { schema_version: 1, id: `CONTROLLED-KNW-${9000 + index}`, type: 'knowledge', title: `Unrelated history ${index}`,
+      owner: 'manager', status: 'draft', revision: 1, created_at: at, updated_at: at, links: [], data: {} };
+    atomicWrite(safePath(env.root, `.neomind/records/${meta.id}.md`), `---\n${JSON.stringify(meta)}\n---\n# Independent unrelated history\n`);
+  }
+  const records = loadRecords(env.root), task = records.find(record => record.meta.type === 'task' && record.meta.data.epoch_id === done.epoch_id);
+  assert.ok(task); assert.ok(done.checks.length >= 2);
+  const contract = countRecordReads(env.root, () => controlledContractForTask(env.root, task));
+  assert.equal(contract.reads, records.length); assert.equal(contract.maximum, 1);
+  const accepted = countRecordReads(env.root, () => verifyControlledTask(env.root, task, 'accepted'));
+  assert.equal(accepted.result.ok, true, JSON.stringify(accepted.result.findings));
+  assert.equal(accepted.reads, records.length, 'All contract/report/check/evidence metadata lookups share one freshly read store.');
+  assert.equal(accepted.maximum, 1);
+  const rewrite = record => atomicWrite(safePath(env.root, record.path), `---\n${JSON.stringify(record.meta)}\n---\n${record.body}`);
+  const requirement = getRecord(env.root, contract.result.contract.requirement_ids[0]), requirementPath = safePath(env.root, requirement.path), originalRequirement = readFileSync(requirementPath);
+  try {
+    requirement.body += '\nUser changed the accepted requirement after the previous call.\n'; rewrite(requirement);
+    const changed = verifyControlledTask(env.root, task, 'accepted');
+    assert.equal(changed.ok, false); assert.match(changed.findings[0].message, /requirement baseline changed/);
+  } finally { fs.writeFileSync(requirementPath, originalRequirement); }
+  assert.equal(verifyControlledTask(env.root, task, 'accepted').ok, true);
+  const evidence = getRecord(env.root, done.checks[0].evidence_id), evidencePath = safePath(env.root, evidence.path), originalEvidence = readFileSync(evidencePath);
+  try {
+    evidence.meta.data.result = 'fail'; rewrite(evidence);
+    assert.equal(verifyControlledTask(env.root, task, 'accepted').ok, false, 'An earlier accepted read cannot cache a passing evidence value.');
+    fs.writeFileSync(evidencePath, originalEvidence); fs.unlinkSync(evidencePath);
+    const deleted = verifyControlledTask(env.root, task, 'accepted'); assert.equal(deleted.ok, false); assert.match(deleted.findings[0].message, /Record not found/);
+  } finally { fs.writeFileSync(evidencePath, originalEvidence); }
+  const duplicate = safePath(env.root, '.neomind/records/duplicate-evidence.md');
+  try {
+    fs.writeFileSync(duplicate, originalEvidence);
+    const changed = verifyControlledTask(env.root, task, 'accepted'); assert.equal(changed.ok, false); assert.match(changed.findings[0].message, /Duplicate record ID/);
+    assert.throws(() => controlledContractForTask(env.root, task), /Duplicate record ID/);
+  } finally { fs.unlinkSync(duplicate); }
+  const signed = done.attempts.find(attempt => attempt.stage === 'verification'), receiptPath = safePath(env.root, `.neomind/native/receipts/${signed.invocation_id}.json`), originalReceipt = readFileSync(receiptPath);
+  try {
+    const receipt = JSON.parse(originalReceipt); receipt.signature = 'invalid-current-signature'; atomicWrite(receiptPath, JSON.stringify(receipt));
+    assert.equal(verifyControlledTask(env.root, task, 'accepted').ok, false, 'Signed receipt files are re-read rather than included in the metadata snapshot.');
+  } finally { fs.writeFileSync(receiptPath, originalReceipt); }
+  assert.equal(verifyControlledTask(env.root, task, 'accepted').ok, true);
 });

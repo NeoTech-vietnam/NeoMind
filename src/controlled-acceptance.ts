@@ -171,7 +171,29 @@ export async function controlledFingerprintsAsync(root: string, paths: string[],
   budget.check(); return result;
 }
 
+type RecordAt = (id: string) => ProjectRecord;
+function freshRecords(root: string, checkBudget: () => void): RecordAt {
+  checkBudget();
+  const records = new Map(loadRecords(root).map(record => [record.meta.id, record]));
+  checkBudget();
+  return id => {
+    checkBudget();
+    const record = records.get(id);
+    if (!record) throw new Error(`Record not found: ${id}`);
+    return structuredClone(record);
+  };
+}
+function currentTask(task: ProjectRecord, recordAt: RecordAt): ProjectRecord {
+  const current = recordAt(task.meta.id);
+  if (evidenceRecordFingerprint(current) !== evidenceRecordFingerprint(task)) throw new Error('Controlled task changed after it was supplied for verification.');
+  return current;
+}
 export function controlledContractForTask(root: string, task: ProjectRecord, checkBudget: () => void = () => {}): { run: ControlledSnapshot; contract: ControlledContract } {
+  const recordAt = freshRecords(root, checkBudget);
+  return contractForTask(root, currentTask(task, recordAt), recordAt, checkBudget);
+}
+/** A fresh snapshot lives only within this synchronous authority evaluation. */
+function contractForTask(root: string, task: ProjectRecord, recordAt: RecordAt, checkBudget: () => void): { run: ControlledSnapshot; contract: ControlledContract } {
   checkBudget();
   const id = String(task.meta.data.workflow_id), epoch = String(task.meta.data.epoch_id);
   if (!/^[a-f0-9-]{36}$/.test(epoch)) throw new Error('Controlled execution epoch is invalid.');
@@ -182,7 +204,7 @@ export function controlledContractForTask(root: string, task: ProjectRecord, che
       contract.schema_version !== 2 || contract.workflow_id !== id || contract.epoch_id !== epoch || contract.task_id !== task.meta.id ||
       hash(bytes) !== run.contract_hash || contract.plan_hash !== hash(JSON.stringify(contract.plan)) || task.meta.data.controlled_contract_hash !== run.contract_hash)
     throw new Error('Controlled task, journal and immutable contract do not match.');
-  const parent = getRecord(root, id);
+  const parent = recordAt(id);
   if (parent.meta.data.controlled_epoch_id !== epoch || parent.meta.data.controlled_contract_hash !== run.contract_hash)
     throw new Error('Workflow does not point to this controlled execution.');
   for (const key of ['acceptance_criteria', 'allowed_paths', 'verification_paths', 'outputs', 'documentation_paths'] as const)
@@ -191,11 +213,11 @@ export function controlledContractForTask(root: string, task: ProjectRecord, che
     throw new Error('Controlled execution must retain all requirement links.');
   for (const [id, fingerprint] of Object.entries(contract.requirement_fingerprints)) {
     checkBudget();
-    if (evidenceRecordFingerprint(getRecord(root, id)) !== fingerprint) throw new Error('Controlled requirement baseline changed.');
+    if (evidenceRecordFingerprint(recordAt(id)) !== fingerprint) throw new Error('Controlled requirement baseline changed.');
   }
   if (contract.continuation) {
     checkBudget();
-    const prior = contract.continuation, oldTask = getRecord(root, prior.original_task_id);
+    const prior = contract.continuation, oldTask = recordAt(prior.original_task_id);
     if (prior.original_task_id === task.meta.id || hash(JSON.stringify(oldTask)) !== prior.original_task_fingerprint ||
         hash(readFileSync(safePath(root, prior.original_contract_path))) !== prior.original_contract_sha256 ||
         !task.meta.links.some(link => link.type === 'derives-from' && link.target === prior.original_task_id))
@@ -250,16 +272,16 @@ export function controlledAcceptanceBudget(root: string, maxMs = 8000) {
   } };
 }
 function evidenceProblems(root: string, run: ControlledSnapshot, contract: ControlledContract, receipt: ControlledCheckReceipt,
-  budget: ReturnType<typeof controlledAcceptanceBudget>): void {
+  budget: ReturnType<typeof controlledAcceptanceBudget>, recordAt: RecordAt): void {
   budget.check();
   const input = receipt.evidence_input;
   if (!input || !receipt.evidence_id) throw new Error('Actual check needs a materialized evidence record.');
-  const record = getRecord(root, receipt.evidence_id), data = record.meta.data;
+  const record = recordAt(receipt.evidence_id), data = record.meta.data;
   if (record.meta.type !== 'evidence' || data.controlled_check_id !== receipt.id || data.controlled_epoch_id !== run.epoch_id ||
       data.task_id !== contract.task_id || data.workflow_id !== run.workflow_id || data.result !== 'pass' ||
       data.execution_invocation_id !== receipt.invocation_id || !same(data.file_baseline, receipt.baseline) ||
       !same(data.command, receipt.command) || data.log_hash !== receipt.log_sha256 || data.log_path !== receipt.log_path ||
-      data.check_fingerprint !== evidenceRecordFingerprint(getRecord(root, input.check_id))) throw new Error('Typed check evidence no longer matches its actual receipt.');
+      data.check_fingerprint !== evidenceRecordFingerprint(recordAt(input.check_id))) throw new Error('Typed check evidence no longer matches its actual receipt.');
   if (!receipt.passed || receipt.cancelled || receipt.exit_code !== receipt.expected_exit_code ||
       hash(readFileSync(safePath(root, receipt.log_path))) !== receipt.log_sha256 ||
       !same(receipt.baseline, budget.fingerprints(Object.keys(receipt.baseline)))) throw new Error('Check evidence is failed, stale or incomplete.');
@@ -273,7 +295,7 @@ function evidenceProblems(root: string, run: ControlledSnapshot, contract: Contr
   budget.check();
   for (const [id, digest] of Object.entries(input.record_baseline)) {
     budget.check();
-    if (evidenceRecordFingerprint(getRecord(root, id)) !== digest) throw new Error('Check evidence record baseline changed.');
+    if (evidenceRecordFingerprint(recordAt(id)) !== digest) throw new Error('Check evidence record baseline changed.');
   }
   const saved = JSON.parse(readFileSync(safePath(root, String(data.receipt_path)), 'utf8'));
   if (!same(saved.file_baseline, data.file_baseline) || saved.result !== data.result || saved.log_hash !== data.log_hash ||
@@ -289,7 +311,9 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
   const add = (code: string, message: string) => findings.push({ code, record: task.meta.id, message });
   const budget = controlledAcceptanceBudget(root);
   try {
-    const { run, contract } = controlledContractForTask(root, task, budget.check);
+    const recordAt = freshRecords(root, budget.check);
+    task = currentTask(task, recordAt);
+    const { run, contract } = contractForTask(root, task, recordAt, budget.check);
     if (['cancelled', 'uncertain', 'interrupted'].includes(run.status)) throw new Error('Controlled effects require reconciliation before acceptance.');
     if (['ready', 'design-ready'].includes(gate)) return { ok: true, gate, findings, checked_at: now() };
     if (run.attempts.some(attempt => ['starting', 'running'].includes(attempt.state)) || run.check_intents?.some(intent => intent.state !== 'completed'))
@@ -301,7 +325,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
     for (const attempt of required) {
       budget.check();
       if (!attempt?.invocation_id || !attempt.report_id || attempt.report?.outcome !== 'completed') throw new Error('Required independently completed result is missing.');
-      const receipt = readInvocation(root, attempt.invocation_id), report = getRecord(root, attempt.report_id);
+      const receipt = readInvocation(root, attempt.invocation_id), report = recordAt(attempt.report_id);
       if (routingProblems(root, attempt.role, receipt.id, { workflow_id: run.workflow_id, task_id: contract.task_id, require_completed: true }).length ||
           receipt.issuer !== 'neomind-vscode-lm' || !receipt.inference_completed || receipt.state !== 'completed' || receipt.task_id !== contract.task_id ||
           receipt.request_id !== attempt.request_id || receipt.controlled_execution?.epoch_id !== run.epoch_id || receipt.controlled_execution.stage !== attempt.stage ||
@@ -321,7 +345,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
       const result = checks.find(item => item.title === selected.title && item.negative === selected.negative &&
         same(item.planned_command ?? item.command, selected.command) && item.expected_exit_code === (selected.expected_exit_code ?? 0));
       if (!result || result.invocation_id !== verifier!.invocation_id) throw new Error('Actual prescribed positive/negative execution evidence is missing.');
-      evidenceProblems(root, run, contract, result, budget);
+      evidenceProblems(root, run, contract, result, budget, recordAt);
     }
     if (contract.precheck_review) {
       const precheck = [...run.attempts].reverse().find(item => item.purpose === 'check-review' && item.state === 'completed' && item.report?.verdict === 'pass');
@@ -329,7 +353,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
       if (!precheck?.invocation_id || !Object.entries(hashes).every(([path, digest]) => precheck.bound_hashes?.[path] === digest))
         throw new Error('Exact current checker bytes require independent pre-execution review.');
       const receipt = readInvocation(root, precheck.invocation_id);
-      if (!precheck.report_id || precheck.report_fingerprint !== evidenceRecordFingerprint(getRecord(root, precheck.report_id)))
+      if (!precheck.report_id || precheck.report_fingerprint !== evidenceRecordFingerprint(recordAt(precheck.report_id)))
         throw new Error('The independently saved checker review changed.');
       if (receipt.controlled_execution?.epoch_id !== run.epoch_id || receipt.controlled_execution.stage !== 'review' || receipt.task_id !== contract.task_id ||
           receipt.request_id !== precheck.request_id || routingProblems(root, 'reviewer', receipt.id, { workflow_id: run.workflow_id, task_id: contract.task_id, require_completed: true }).length)
@@ -366,7 +390,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
         if (!run.cornell_note_ids?.length) throw new Error('Requested evidence-derived Cornell note is missing.');
         for (const id of run.cornell_note_ids) {
           budget.check();
-          const note = getRecord(root, id), evidence = (note.meta.data.demonstration as { evidence_ids?: string[] })?.evidence_ids ?? [];
+          const note = recordAt(id), evidence = (note.meta.data.demonstration as { evidence_ids?: string[] })?.evidence_ids ?? [];
           if (!validateCornellNote(root, id).ok || note.meta.data.workflow_id !== run.workflow_id || !positive.every(id => evidence.includes(id)))
             throw new Error('Final Cornell output must reference every current passing positive execution.');
         }
