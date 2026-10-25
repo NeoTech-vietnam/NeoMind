@@ -163,7 +163,7 @@ test('generated native manager exposes subagents and MCP checkpoint; built-in Co
     assert.match(output.content, /Only a manager-workflow saved in copilot-native or codex-native mode uses the assignment protocol below/, output.path);
     assert.match(output.content, /A lightweight-workflow uses lightweight_checkpoint.*do not call assignment_bootstrap, assignment_open, assignment_report, assignment_result or manager_finish, and do not require Cornell closure/, output.path);
     assert.match(output.content, /Existing strict workflows retain their signed Bridge lifecycle and do not use this unsigned protocol/, output.path);
-    assert.ok(output.content.indexOf('Only a manager-workflow') < output.content.indexOf('Once per manager invocation, call assignment_bootstrap'), `${output.path}: select the saved mode before bootstrapping`);
+    assert.ok(output.content.indexOf('Only a manager-workflow') < output.content.indexOf('Coordinator: resume the saved workflow'), `${output.path}: select the saved mode before entering Coordinator authentication`);
   }
   const developer = outputs.find(output => output.path === '.github/agents/neomind-implementer.agent.md');
   assert.ok(developer.content.includes(JSON.stringify(policy.worker_models)));
