@@ -1,6 +1,8 @@
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { constants, existsSync, fstatSync, lstatSync, openSync, closeSync, opendirSync, readSync, readFileSync, realpathSync, type Stats } from 'node:fs';
+import { lstat, open, opendir, realpath } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { atomicWrite, createRecord, getRecord, hash, loadRecords, now, safePath } from './storage.js';
+import { assertNoStorageMigration, atomicWrite, createRecord, getRecord, hash, loadRecords, now, safePath } from './storage.js';
 import { captureEvidenceInputs, evidenceRecordFingerprint, validateEvidenceInputs } from './evidence-inputs.js';
 import { readInvocation, routingProblems } from './routing.js';
 import { validateCornellNote } from './notes.js';
@@ -21,23 +23,156 @@ export function continuationObligations(criteria: string[]): ContinuationObligat
     preservation: /preserv|byte.identical|pre.existing[^\n]*unchanged/i.test(text),
     pilot_kind: intended ? leetcode ? 'leetcode-c11-cpp17' : 'unsupported-generic' : null };
 }
-/** Public input fingerprints reject links and preserve missing files as missing. */
-export function controlledFingerprints(root: string, paths: string[]): Record<string, string> {
-  const result: Record<string, string> = {};
-  function visit(path: string) {
-    const full = safePath(root, path);
-    if (!existsSync(full)) { result[path] = 'missing'; return; }
-    const info = lstatSync(full);
-    if (info.isSymbolicLink()) throw new Error('Controlled evidence cannot follow links.');
-    if (Object.keys(result).length >= 4096) throw new Error('Controlled evidence exceeds 4096 files.');
-    if (info.isDirectory()) for (const name of readdirSync(full).sort()) visit(`${path}/${name}`);
-    else if (info.isFile() && info.nlink === 1) result[path] = hash(readFileSync(full));
-    else throw new Error('Controlled evidence requires ordinary unlinked files.');
+interface ControlledFingerprintLimits { max_files: number; max_entries: number; max_file_bytes: number; max_total_bytes: number; max_ms: number }
+export const controlledFingerprintLimits: Readonly<ControlledFingerprintLimits> = Object.freeze({ max_files: 4096, max_entries: 8192,
+  max_file_bytes: 8 * 1024 * 1024, max_total_bytes: 32 * 1024 * 1024, max_ms: 10000 });
+interface FingerprintOptions { signal?: AbortSignal; limits?: Partial<typeof controlledFingerprintLimits> }
+interface InventoryEntry { path: string; full: string; info: Stats | null; children?: string[] }
+const absent = (error: unknown) => ['ENOENT', 'ENOTDIR'].includes(String((error as NodeJS.ErrnoException).code));
+const sameStat = (a: Stats | null, b: Stats | null) => a === null || b === null ? a === b
+  : a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs &&
+    a.nlink === b.nlink && a.isFile() === b.isFile() && a.isDirectory() === b.isDirectory() && a.isSymbolicLink() === b.isSymbolicLink();
+function fingerprintBudget(options: FingerprintOptions, synchronous: boolean) {
+  const limits = { ...controlledFingerprintLimits, max_ms: synchronous ? 2000 : controlledFingerprintLimits.max_ms };
+  for (const name of Object.keys(limits) as (keyof typeof limits)[]) {
+    const value = options.limits?.[name];
+    if (value !== undefined) {
+      if (!Number.isSafeInteger(value) || value < 1 || value > limits[name]) throw new Error('Controlled evidence limits may only be tightened.');
+      limits[name] = value;
+    }
   }
-  paths.forEach(visit); return result;
+  const deadline = performance.now() + limits.max_ms;
+  let files = 0, bytes = 0, entries = 0, listed = 0, path = '';
+  const location = () => path ? ` at ${JSON.stringify(path.slice(0, 300))}` : '';
+  const check = (current?: string) => {
+    if (current !== undefined) path = current;
+    options.signal?.throwIfAborted();
+    if (performance.now() > deadline) throw new Error(`Controlled evidence exceeded its bounded scan time (${limits.max_ms} ms)${location()}; select narrower preservation inputs.`);
+  };
+  return { limits, check, listed: () => { check(); if (++listed > limits.max_entries) throw new Error(`Controlled evidence exceeds its directory entry limit (${limits.max_entries})${location()}.`); },
+    add: (info: Stats | null, current: string) => {
+      check(current);
+      if (++entries > limits.max_entries) throw new Error(`Controlled evidence exceeds its directory entry limit (${limits.max_entries})${location()}.`);
+      if (info?.isSymbolicLink()) throw new Error('Controlled evidence cannot follow links.');
+      if (info && !info.isDirectory() && (!info.isFile() || info.nlink !== 1)) throw new Error('Controlled evidence requires ordinary unlinked files.');
+      if (!info || info.isFile()) {
+        if (++files > limits.max_files) throw new Error(`Controlled evidence exceeds its file count limit (${limits.max_files})${location()}.`);
+        if ((info?.size ?? 0) > limits.max_file_bytes) throw new Error(`Controlled evidence exceeds its per-file byte limit (${limits.max_file_bytes})${location()}.`);
+        bytes += info?.size ?? 0;
+        if (bytes > limits.max_total_bytes) throw new Error(`Controlled evidence exceeds its total byte limit (${limits.max_total_bytes})${location()}.`);
+      }
+    } };
+}
+function fingerprintPaths(paths: string[]) {
+  if (paths.length > controlledFingerprintLimits.max_files) throw new Error('Controlled evidence exceeds its file count limit.');
+  for (const path of paths) if (!path || isAbsolute(path) || /[\\:\x00-\x1f]/.test(path) ||
+      path.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('Controlled evidence needs canonical project-relative paths.');
+  return [...new Set(paths)];
+}
+function changed(): never { throw new Error('Controlled evidence inputs changed while their baseline was captured; retry after edits finish.'); }
+/** Public input fingerprints keep the existing hash map format, with bounded synchronous replay. */
+export function controlledFingerprints(root: string, paths: string[], options: FingerprintOptions = {}): Record<string, string> {
+  const selected = fingerprintPaths(paths), budget = fingerprintBudget(options, true), base = realpathSync.native(root);
+  assertNoStorageMigration(base);
+  const entries = new Map<string, InventoryEntry>(), leaves = new Map<string, InventoryEntry>();
+  const stat = (full: string) => { budget.check(); try { return lstatSync(full); } catch (error) { if (absent(error)) return null; throw error; } };
+  const observe = (path: string) => {
+    let entry = entries.get(path);
+    if (!entry) { budget.check(path); const full = resolve(base, path), info = stat(full); budget.add(info, path); entry = { path, full, info }; entries.set(path, entry); }
+    return entry;
+  };
+  const names = (full: string) => {
+    budget.check(); const dir = opendirSync(full), result: string[] = [];
+    try { for (let item; (item = dir.readSync());) { budget.listed(); result.push(item.name); } }
+    finally { dir.closeSync(); }
+    return result.sort();
+  };
+  const visit = (path: string) => {
+    const parts = path.split('/');
+    for (let index = 1; index < parts.length; index++) {
+      const ancestor = observe(parts.slice(0, index).join('/'));
+      if (ancestor.info && !ancestor.info.isDirectory()) throw new Error('Controlled evidence ancestor is not an ordinary directory.');
+    }
+    const entry = observe(path);
+    if (entry.info?.isDirectory()) {
+      if (entry.children) return;
+      entry.children = names(entry.full);
+      for (const name of entry.children) visit(`${path}/${name}`);
+    } else leaves.set(path, entry);
+  };
+  for (const path of selected) visit(path); // Inventory and all byte/count checks precede file content reads.
+  const result: Record<string, string> = {}, buffer = Buffer.allocUnsafe(64 * 1024);
+  for (const entry of leaves.values()) {
+    budget.check();
+    if (!entry.info) { result[entry.path] = 'missing'; continue; }
+    const fd = openSync(entry.full, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    try {
+      if (!sameStat(entry.info, fstatSync(fd))) changed();
+      const digest = createHash('sha256'); let bytes = 0;
+      for (let count; (count = readSync(fd, buffer, 0, buffer.length, null));) {
+        budget.check(); bytes += count; if (bytes > entry.info.size) changed(); digest.update(buffer.subarray(0, count));
+      }
+      if (bytes !== entry.info.size || !sameStat(entry.info, fstatSync(fd))) changed();
+      result[entry.path] = digest.digest('hex');
+    } finally { closeSync(fd); }
+  }
+  for (const entry of entries.values()) if (!sameStat(entry.info, stat(entry.full))) changed();
+  budget.check(); return result;
+}
+/** Yielding plan preflight: metadata/quotas first, chunked hashing, then identity reconciliation. */
+export async function controlledFingerprintsAsync(root: string, paths: string[], options: FingerprintOptions = {}): Promise<Record<string, string>> {
+  const selected = fingerprintPaths(paths), budget = fingerprintBudget(options, false), base = await realpath(root);
+  budget.check(); assertNoStorageMigration(base);
+  const entries = new Map<string, InventoryEntry>(), leaves = new Map<string, InventoryEntry>();
+  const stat = async (full: string) => { budget.check(); try { const info = await lstat(full); budget.check(); return info; }
+    catch (error) { if (absent(error)) return null; throw error; } };
+  const observe = async (path: string) => {
+    let entry = entries.get(path);
+    if (!entry) { budget.check(path); const full = resolve(base, path), info = await stat(full); budget.add(info, path); entry = { path, full, info }; entries.set(path, entry); }
+    return entry;
+  };
+  const names = async (full: string) => {
+    budget.check(); const result: string[] = [];
+    for await (const item of await opendir(full)) { budget.listed(); result.push(item.name); }
+    return result.sort();
+  };
+  const visit = async (path: string): Promise<void> => {
+    const parts = path.split('/');
+    for (let index = 1; index < parts.length; index++) {
+      const ancestor = await observe(parts.slice(0, index).join('/'));
+      if (ancestor.info && !ancestor.info.isDirectory()) throw new Error('Controlled evidence ancestor is not an ordinary directory.');
+    }
+    const entry = await observe(path);
+    if (entry.info?.isDirectory()) {
+      if (entry.children) return;
+      entry.children = await names(entry.full);
+      for (const name of entry.children) await visit(`${path}/${name}`);
+    } else leaves.set(path, entry);
+  };
+  for (const path of selected) await visit(path);
+  const result: Record<string, string> = {}, buffer = Buffer.allocUnsafe(64 * 1024);
+  for (const entry of leaves.values()) {
+    budget.check();
+    if (!entry.info) { result[entry.path] = 'missing'; continue; }
+    const fd = await open(entry.full, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    try {
+      if (!sameStat(entry.info, await fd.stat())) changed();
+      const digest = createHash('sha256'); let bytes = 0;
+      for (;;) {
+        budget.check(); const { bytesRead } = await fd.read(buffer, 0, buffer.length, null);
+        if (!bytesRead) break;
+        bytes += bytesRead; if (bytes > entry.info.size) changed(); digest.update(buffer.subarray(0, bytesRead));
+      }
+      if (bytes !== entry.info.size || !sameStat(entry.info, await fd.stat())) changed();
+      result[entry.path] = digest.digest('hex');
+    } finally { await fd.close(); }
+  }
+  for (const entry of entries.values()) if (!sameStat(entry.info, await stat(entry.full))) changed();
+  budget.check(); return result;
 }
 
-export function controlledContractForTask(root: string, task: ProjectRecord): { run: ControlledSnapshot; contract: ControlledContract } {
+export function controlledContractForTask(root: string, task: ProjectRecord, checkBudget: () => void = () => {}): { run: ControlledSnapshot; contract: ControlledContract } {
+  checkBudget();
   const id = String(task.meta.data.workflow_id), epoch = String(task.meta.data.epoch_id);
   if (!/^[a-f0-9-]{36}$/.test(epoch)) throw new Error('Controlled execution epoch is invalid.');
   const run = JSON.parse(readFileSync(safePath(root, `${roots}/${hash(id)}.json`), 'utf8')) as ControlledSnapshot;
@@ -54,15 +189,19 @@ export function controlledContractForTask(root: string, task: ProjectRecord): { 
     if (!same(task.meta.data[key], contract.plan[key])) throw new Error(`Controlled task ${key} changed after planning.`);
   if (!same(task.meta.links.filter(link => link.type === 'satisfies').map(link => link.target).sort(), [...contract.requirement_ids].sort()))
     throw new Error('Controlled execution must retain all requirement links.');
-  for (const [id, fingerprint] of Object.entries(contract.requirement_fingerprints))
+  for (const [id, fingerprint] of Object.entries(contract.requirement_fingerprints)) {
+    checkBudget();
     if (evidenceRecordFingerprint(getRecord(root, id)) !== fingerprint) throw new Error('Controlled requirement baseline changed.');
+  }
   if (contract.continuation) {
+    checkBudget();
     const prior = contract.continuation, oldTask = getRecord(root, prior.original_task_id);
     if (prior.original_task_id === task.meta.id || hash(JSON.stringify(oldTask)) !== prior.original_task_fingerprint ||
         hash(readFileSync(safePath(root, prior.original_contract_path))) !== prior.original_contract_sha256 ||
         !task.meta.links.some(link => link.type === 'derives-from' && link.target === prior.original_task_id))
       throw new Error('Continuation must retain its separate, unchanged legacy task and contract.');
   }
+  checkBudget();
   return { run, contract };
 }
 
@@ -99,7 +238,20 @@ export function materializeControlledEvidence(root: string, run: ControlledSnaps
     data: { ...data, receipt_path: path }, body: '# Actual execution\nBackend-owned command execution; source/check/input hashes and signed Verifier identity are retained.\n' }).meta.id;
 }
 
-function evidenceProblems(root: string, run: ControlledSnapshot, contract: ControlledContract, receipt: ControlledCheckReceipt): void {
+/** One absolute budget spans every artifact group; trusted callers may only tighten it. */
+export function controlledAcceptanceBudget(root: string, maxMs = 8000) {
+  if (!Number.isSafeInteger(maxMs) || maxMs < 1 || maxMs > 8000) throw new Error('Controlled acceptance budget may only be tightened.');
+  const deadline = performance.now() + maxMs;
+  const check = () => { if (performance.now() >= deadline) throw new Error(`Controlled acceptance exceeded its shared ${maxMs} ms verification budget; evidence remains unaccepted.`); };
+  return { check, fingerprints: (paths: string[]) => {
+    check();
+    const result = controlledFingerprints(root, paths, { limits: { max_ms: Math.max(1, Math.min(2000, Math.floor(deadline - performance.now()))) } });
+    check(); return result;
+  } };
+}
+function evidenceProblems(root: string, run: ControlledSnapshot, contract: ControlledContract, receipt: ControlledCheckReceipt,
+  budget: ReturnType<typeof controlledAcceptanceBudget>): void {
+  budget.check();
   const input = receipt.evidence_input;
   if (!input || !receipt.evidence_id) throw new Error('Actual check needs a materialized evidence record.');
   const record = getRecord(root, receipt.evidence_id), data = record.meta.data;
@@ -110,19 +262,24 @@ function evidenceProblems(root: string, run: ControlledSnapshot, contract: Contr
       data.check_fingerprint !== evidenceRecordFingerprint(getRecord(root, input.check_id))) throw new Error('Typed check evidence no longer matches its actual receipt.');
   if (!receipt.passed || receipt.cancelled || receipt.exit_code !== receipt.expected_exit_code ||
       hash(readFileSync(safePath(root, receipt.log_path))) !== receipt.log_sha256 ||
-      !same(receipt.baseline, controlledFingerprints(root, Object.keys(receipt.baseline)))) throw new Error('Check evidence is failed, stale or incomplete.');
+      !same(receipt.baseline, budget.fingerprints(Object.keys(receipt.baseline)))) throw new Error('Check evidence is failed, stale or incomplete.');
   const log = JSON.parse(readFileSync(safePath(root, receipt.log_path), 'utf8'));
   if (!same(log.command, receipt.command) || !same(log.baseline, receipt.baseline) || log.result?.exit_code !== receipt.exit_code ||
       log.result?.cancelled || log.result?.timed_out || log.result?.output_limited || log.result?.error || log.pilot_error)
     throw new Error('Check outcome does not match the backend command result.');
+  budget.check();
   validateEvidenceInputs(root, input.input_snapshot, { files: receipt.baseline, record_fingerprints: input.record_baseline,
     check_id: input.check_id, check_fingerprint: input.check_fingerprint });
-  for (const [id, digest] of Object.entries(input.record_baseline))
+  budget.check();
+  for (const [id, digest] of Object.entries(input.record_baseline)) {
+    budget.check();
     if (evidenceRecordFingerprint(getRecord(root, id)) !== digest) throw new Error('Check evidence record baseline changed.');
+  }
   const saved = JSON.parse(readFileSync(safePath(root, String(data.receipt_path)), 'utf8'));
   if (!same(saved.file_baseline, data.file_baseline) || saved.result !== data.result || saved.log_hash !== data.log_hash ||
       saved.execution_invocation_id !== data.execution_invocation_id || saved.controlled_check_id !== receipt.id)
     throw new Error('Materialized execution receipt changed.');
+  budget.check();
 }
 
 /** One evaluator is used by controller closure and public task verification. No accepted flag is proof. */
@@ -130,8 +287,9 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
   if (task.meta.data.process_contract !== 'software-tools/v2') return null;
   const findings: Verification['findings'] = [];
   const add = (code: string, message: string) => findings.push({ code, record: task.meta.id, message });
+  const budget = controlledAcceptanceBudget(root);
   try {
-    const { run, contract } = controlledContractForTask(root, task);
+    const { run, contract } = controlledContractForTask(root, task, budget.check);
     if (['cancelled', 'uncertain', 'interrupted'].includes(run.status)) throw new Error('Controlled effects require reconciliation before acceptance.');
     if (['ready', 'design-ready'].includes(gate)) return { ok: true, gate, findings, checked_at: now() };
     if (run.attempts.some(attempt => ['starting', 'running'].includes(attempt.state)) || run.check_intents?.some(intent => intent.state !== 'completed'))
@@ -141,6 +299,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
     const required = [producer, verifier, ...(gate === 'accepted' && contract.reviewer_required ? [reviewer] : []),
       ...(gate === 'accepted' && contract.knowledge_directory ? [synthesis] : [])];
     for (const attempt of required) {
+      budget.check();
       if (!attempt?.invocation_id || !attempt.report_id || attempt.report?.outcome !== 'completed') throw new Error('Required independently completed result is missing.');
       const receipt = readInvocation(root, attempt.invocation_id), report = getRecord(root, attempt.report_id);
       if (routingProblems(root, attempt.role, receipt.id, { workflow_id: run.workflow_id, task_id: contract.task_id, require_completed: true }).length ||
@@ -150,7 +309,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
           report.meta.data.workflow_id !== run.workflow_id || report.meta.owner !== attempt.role || !same(report.meta.data.artifact_hashes, attempt.bound_hashes))
         throw new Error('Required result does not match its signed task, epoch, stage and request.');
       if (attempt.report_fingerprint !== evidenceRecordFingerprint(report)) throw new Error('The independently saved work result changed.');
-      if (!same(attempt.bound_hashes, controlledFingerprints(root, Object.keys(attempt.bound_hashes ?? {})))) throw new Error('Reported artifacts changed after the result.');
+      if (!same(attempt.bound_hashes, budget.fingerprints(Object.keys(attempt.bound_hashes ?? {})))) throw new Error('Reported artifacts changed after the result.');
     }
     if (producer!.invocation_id === verifier!.invocation_id || reviewer?.invocation_id === producer!.invocation_id || reviewer?.invocation_id === verifier!.invocation_id)
       throw new Error('Verification and review must use independent sessions.');
@@ -158,14 +317,15 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
     if (verifier!.report?.verdict !== 'pass' || gate === 'accepted' && contract.reviewer_required && reviewer?.report?.verdict !== 'pass') throw new Error('Independent verification or required review did not pass.');
     const checks = run.checks.filter(item => item.attempt_id === verifier!.id);
     for (const planned of contract.plan.checks) for (const selected of [{ ...planned, negative: false }, ...(planned.negative_controls ?? []).map(value => ({ ...value, negative: true }))]) {
+      budget.check();
       const result = checks.find(item => item.title === selected.title && item.negative === selected.negative &&
         same(item.planned_command ?? item.command, selected.command) && item.expected_exit_code === (selected.expected_exit_code ?? 0));
       if (!result || result.invocation_id !== verifier!.invocation_id) throw new Error('Actual prescribed positive/negative execution evidence is missing.');
-      evidenceProblems(root, run, contract, result);
+      evidenceProblems(root, run, contract, result, budget);
     }
     if (contract.precheck_review) {
       const precheck = [...run.attempts].reverse().find(item => item.purpose === 'check-review' && item.state === 'completed' && item.report?.verdict === 'pass');
-      const hashes = controlledFingerprints(root, contract.plan.verification_paths);
+      const hashes = budget.fingerprints(contract.plan.verification_paths);
       if (!precheck?.invocation_id || !Object.entries(hashes).every(([path, digest]) => precheck.bound_hashes?.[path] === digest))
         throw new Error('Exact current checker bytes require independent pre-execution review.');
       const receipt = readInvocation(root, precheck.invocation_id);
@@ -176,8 +336,8 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
         throw new Error('Pre-execution approval does not match this execution.');
       if (checks.some(check => Date.parse(check.at) < Date.parse(receipt.updated_at))) throw new Error('A check ran before its current independent approval.');
     }
-    if (Object.values(controlledFingerprints(root, contract.plan.outputs)).some(value => value === 'missing')) throw new Error('Delivered output is missing.');
-    if (!same(contract.preserved_hashes, controlledFingerprints(root, Object.keys(contract.preserved_hashes)))) throw new Error('Protected pre-existing files changed.');
+    if (Object.values(budget.fingerprints(contract.plan.outputs)).some(value => value === 'missing')) throw new Error('Delivered output is missing.');
+    if (!same(contract.preserved_hashes, budget.fingerprints(Object.keys(contract.preserved_hashes)))) throw new Error('Protected pre-existing files changed.');
     if (contract.continuation?.obligations.intended_use) {
       if (contract.continuation.obligations.pilot_kind !== 'leetcode-c11-cpp17')
         throw new Error('This continuation needs a reviewed intended-use adapter for its original task family; a LeetCode C11/C++17 pilot cannot replace generic acceptance.');
@@ -188,12 +348,13 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
       if (proof.kind !== 'intended-use' || proof.check_id !== pilot.id || proof.workflow_id !== run.workflow_id || proof.epoch_id !== run.epoch_id ||
           !proof.validation.passed || proof.solutions.length !== 2 || proof.solutions.some(solution => !solution.compile.passed || !solution.run.passed))
         throw new Error('Intended-use pilot lacks actual independent Cornell/C11/C++17 execution.');
-      for (const artifact of proof.artifacts) if (hash(readFileSync(safePath(root, artifact.path))) !== artifact.sha256) throw new Error('Retained intended-use artifacts changed.');
+      for (const artifact of proof.artifacts) { budget.check(); if (hash(readFileSync(safePath(root, artifact.path))) !== artifact.sha256) throw new Error('Retained intended-use artifacts changed.'); }
     }
     if (gate === 'accepted') {
       if (!['submitted', 'accepted'].includes(task.meta.status)) throw new Error('Controlled execution has not submitted its actual producer result.');
       if (contract.continuation?.obligations.registration && !contract.plan.procedure_candidate) throw new Error('Original acceptance requires registration of actual scripts.');
       if (contract.plan.procedure_candidate) {
+        budget.check();
         if (!run.procedure_candidate_id) throw new Error('Actual reusable candidate was not registered.');
         const procedure = resolveProcedure(root, run.procedure_candidate_id, run.procedure_candidate_version ?? '1.0.0');
         if (procedure.script !== contract.plan.procedure_candidate.script || procedure.verification_script !== contract.plan.procedure_candidate.verification_script ||
@@ -204,6 +365,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
         const positive = checks.filter(check => !check.negative).map(check => check.evidence_id!);
         if (!run.cornell_note_ids?.length) throw new Error('Requested evidence-derived Cornell note is missing.');
         for (const id of run.cornell_note_ids) {
+          budget.check();
           const note = getRecord(root, id), evidence = (note.meta.data.demonstration as { evidence_ids?: string[] })?.evidence_ids ?? [];
           if (!validateCornellNote(root, id).ok || note.meta.data.workflow_id !== run.workflow_id || !positive.every(id => evidence.includes(id)))
             throw new Error('Final Cornell output must reference every current passing positive execution.');
@@ -212,6 +374,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
       if (contract.reviewer_required && run.attempts.indexOf(reviewer!) < Math.max(run.attempts.indexOf(verifier!), synthesis ? run.attempts.indexOf(synthesis) : -1))
         throw new Error('Independent final review must follow verification and requested synthesis.');
     }
+    budget.check();
   } catch (error) { add('controlled-acceptance', error instanceof Error ? error.message : 'Controlled acceptance could not be reconciled.'); }
   return { ok: !findings.length, gate, findings, checked_at: now() };
 }

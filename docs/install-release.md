@@ -56,6 +56,18 @@ Run **Developer: Reload Window**, then **NeoMind: Open Agent Map**. Choose **Ent
 
 The extension's model bridge remains an explicit opt-in. Installing the extension does not enable automated inference. The Universe shows fresh identified native hook observations and reported activity, with optional static history. Reload the client and start a new session after regenerating profiles; hooks require the client's normal trust controls.
 
+### NeoMind-owned workflows with Local Copilot or Codex
+
+Run **NeoMind: Enable Model Bridge** in the exact project window. Enable the trusted installed runtime and approve model access when VS Code requests it. A reload stops the Bridge; enable it again afterwards.
+
+- **Local Copilot:** run **NeoMind: Open Local Coordinator**, check that the chat says **Local**, and choose your custom-endpoint alias, such as `top-models`. This command preserves your model and permission choices.
+- **Codex:** use the generated NeoMind instructions to discover the MCP management tools. Submit through `manager_run`; inspect through `manager_status` and pause, resume or cancel through `manager_control`.
+- **Panel:** run **NeoMind: Open Workflows** to submit work and inspect the same saved workflows and runtime journal.
+
+For projects using `neomind-controlled`, these are three entrances to the same VS Code-owned runtime. Closing a chat or panel does not stop accepted work. Closing VS Code stops its owned sessions and checks; reopening requires Bridge activation and checkpoint reconciliation. The chat's selected model handles intake; workers use the configured role models through the Bridge. An observed `customendpoint / top-models` identifies the selected alias, not proof of the router's upstream model.
+
+Public management calls need the request or workflow ID, not assignment credentials. Workers receive private backend bindings and semantic tools; do not copy legacy claim tokens or `reported_assignment` into management calls. Use the receipt's actual workflow ID to continue existing work.
+
 ## 5. Enable the new agent and notes features
 
 Add Codex alongside Copilot when needed:
@@ -65,7 +77,7 @@ neomind init --local --platforms copilot,codex --project D:/path/to/project
 neomind validate --project D:/path/to/project --json
 ```
 
-Existing workflows keep their saved execution mode. A new Codex-native workflow uses the nine generated expert profiles and inherits the parent model/provider by default. Optional Codex 9router routing requires a Responses-compatible gateway; see the [agent platform guide](agent-platform.md).
+Existing workflows keep their saved execution mode. Workflows explicitly using `codex-native` use the generated expert profiles and inherit the parent model/provider by default. Optional direct Codex 9router routing requires a Responses-compatible gateway; see the [agent platform guide](agent-platform.md). This is separate from NeoMind-owned workers using the VS Code Bridge described above.
 
 Cornell notes use `00_note/NeoMind` beneath the current project by default. For a separate notes repository, configure its existing root explicitly, then preview the reviewed note before copying it:
 

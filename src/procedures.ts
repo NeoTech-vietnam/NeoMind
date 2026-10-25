@@ -71,7 +71,8 @@ export function procedureInputContractHint(): string {
     parameters: { example_parameter: '<validated parameter value>' }, outputs: ['<resolved project-relative output path>'] });
   return `Procedure subprocess stdin contract: ${JSON.stringify(example)}\n` +
     'The runtime sends one UTF-8 JSON object followed by a newline, closes stdin, and supplies the identical packet to the generator and independent verification script. Read all stdin and JSON.parse it; task values live in packet.parameters and resolved output paths in packet.outputs. The outer object is not the flat task-parameter object.\n' +
-    'schema_version is 1. request_id, procedure_id and version are backend-owned metadata, not model inputs: consume their supplied values without hardcoding the illustrative placeholders, generating IDs or asking for credentials. Workers invoke the bound procedure_run tool with its saved parameters (or omit parameters); the runtime creates this envelope. An adapter that also supports direct CLI JSON must distinguish that direct input from this procedure envelope instead of requiring callers to fabricate envelope metadata.\n';
+    'schema_version is 1. request_id, procedure_id and version are backend-owned metadata, not model inputs: consume their supplied values without hardcoding the illustrative placeholders, generating IDs or asking for credentials. Workers invoke the bound procedure_run tool with its saved parameters (or omit parameters); the runtime creates this envelope. An adapter that also supports direct CLI JSON must distinguish that direct input from this procedure envelope instead of requiring callers to fabricate envelope metadata.\n' +
+    'Manifest semantics: plan.outputs are the tooling files delivered by this workflow. procedure_candidate.script, verification_script and dependencies are reusable tool INPUTS. procedure_candidate.outputs are FUTURE GENERATED exercise/note/report files from later runs, usually parameterized by destination; never copy delivered tooling files into candidate.outputs. Every generated output must be new and lie inside the declared effects.write_roots for that run; empty write_roots cannot authorize any generated output. Do not request extra scope or overwrite scripts to repair an invalid manifest.\n';
 }
 export interface ProcedureRun {
   id: string; request_id: string; procedure_id: string; version: string; contract_hash: string;
@@ -180,8 +181,13 @@ function validateDefinition(root: string, definition: z.infer<typeof registerPro
   }
   if (definition.script === definition.verification_script) throw new Error('Generation and verification must use distinct scripts.');
 }
-export function registerProcedure(root: string, input: RegisterProcedureInput): ProcedureManifest {
+/** Side-effect-free schema/definition preflight shared by registration and controlled planning. */
+export function validateProcedureDefinition(root: string, input: RegisterProcedureInput) {
   const definition = registerProcedureSchema.parse(input); validateDefinition(root, definition);
+  return definition;
+}
+export function registerProcedure(root: string, input: RegisterProcedureInput): ProcedureManifest {
+  const definition = validateProcedureDefinition(root, input);
   const script_sha256 = scriptHash(root, definition.script), verification_sha256 = scriptHash(root, definition.verification_script);
   const dependency_sha256 = dependencyHashes(root, definition.dependencies);
   const contract_hash = sha(canonical({ ...definition, script_sha256, verification_sha256, dependency_sha256 }));

@@ -18,7 +18,8 @@ class Result { constructor(callId, content) { Object.assign(this, { callId, cont
 class Cancellation { constructor() { this.token = { isCancellationRequested: false }; } cancel() { this.token.isCancellationRequested = true; } dispose() { this.cancel(); } }
 const plan = title => ({ title, objective: 'Generate only the requested artifact.', rationale: 'Bounded fixture semantics.',
   acceptance_criteria: ['Output is correct.'], allowed_paths: ['src/value.mjs'], verification_paths: ['checks'],
-  outputs: ['src/value.mjs'], checks: [{ title: 'Independent check', command: ['node', 'checks/verify.mjs'], baseline_paths: ['src/value.mjs'] }], risk: 'low' });
+  outputs: ['src/value.mjs'], checks: [{ title: 'Independent check', command: ['node', 'checks/verify.mjs'], baseline_paths: ['src/value.mjs'],
+    negative_controls: [{ title: 'Reject invalid fixture', command: ['node', 'checks/verify.mjs', 'checks/bad.txt'], baseline_paths: ['checks/verify.mjs', 'checks/bad.txt'], expected_exit_code: 1 }] }], risk: 'low' });
 async function fixture(t, corrected, legacy = false, schemaFailure = false) {
   const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-loop-host-')));
   initialize(root, { project_id: 'LOOP-HOST' });

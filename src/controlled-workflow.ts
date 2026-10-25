@@ -19,10 +19,12 @@ import { registerProcedure, resolveProcedure, runProcedure } from './procedures.
 import { compileCornellResearch, readCornellDestination, type CornellResearchInput } from './cornell-workflow.js';
 import { createCornellNote, validateCornellNote } from './notes.js';
 import { controlledFailure } from './controlled-failure.js';
-import { continuationObligations, controlledFingerprints, executeControlledPilot, materializeControlledEvidence,
+import { continuationObligations, controlledFingerprints, controlledFingerprintsAsync, executeControlledPilot, materializeControlledEvidence,
   prepareControlledCheckEvidence, verifyControlledTask, type ContinuationObligations } from './controlled-acceptance.js';
 import { evidenceRecordFingerprint, type EvidenceInputSnapshot } from './evidence-inputs.js';
 import type { ProjectRecord } from './types.js';
+import { normalizeControlledPlanInput, controlledConsultationRole } from './controlled-plan-input.js';
+import { controlledPlanningRecovery } from './controlled-recovery-context.js';
 
 type Stage = ControlledBinding['stage'];
 export type ControlledState = 'queued' | 'running' | 'waiting' | 'paused' | 'interrupted' | 'uncertain' | 'blocked' | 'cancelled' | 'completed';
@@ -196,20 +198,8 @@ function canonical(root: string, path: string): string {
   safePath(root, path); return path;
 }
 function fingerprints(root: string, paths: string[]): Record<string, string> {
-  const result: Record<string, string> = {};
-  function visit(path: string) {
-    canonical(root, path);
-    const full = safePath(root, path);
-    if (!existsSync(full)) { result[path] = 'missing'; return; }
-    const info = lstatSync(full);
-    if (info.isSymbolicLink()) throw new Error('Controlled evidence cannot follow symlinks.');
-    if (Object.keys(result).length > 4096) throw new Error('Evidence baseline exceeds its file limit.');
-    if (info.isDirectory()) { for (const name of readdirSync(full).sort()) visit(`${path}/${name}`); }
-    else if (info.isFile() && info.nlink === 1) result[path] = hash(readFileSync(full));
-    else throw new Error('Evidence requires ordinary unlinked files.');
-  }
-  for (const path of paths) visit(path);
-  return result;
+  paths.forEach(path => canonical(root, path));
+  return controlledFingerprints(root, paths);
 }
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 export function controlledRisk(plan: ControlledPlan, originalRequirement = ''): { reviewer_required: boolean; reasons: string[] } {
@@ -373,8 +363,9 @@ class Controller {
     this.schedule(run.workflow_id);
     return readState(this.root, run.workflow_id);
   }
-  private plan(run: ControlledSnapshot, proposed: ControlledPlan): unknown {
-    const plan = validatePlan(this.root, mergeOriginalCriteria(this.root, run, proposed));
+  private async plan(run: ControlledSnapshot, proposed: ControlledPlan, signal: AbortSignal, assertActive: () => void): Promise<unknown> {
+    const plan = validatePlan(this.root, normalizeControlledPlanInput(this.root, mergeOriginalCriteria(this.root, run, proposed),
+      run.continuation ? readNativeSoftwareContract(this.root, run.workflow_id)?.plan.checks ?? [] : []));
     if (run.continuation) {
       const original = readNativeSoftwareContract(this.root, run.workflow_id)!;
       for (const key of ['allowed_paths', 'verification_paths', 'outputs', 'documentation_paths'] as const)
@@ -399,35 +390,79 @@ class Controller {
     const original = run.continuation ? readNativeSoftwareContract(this.root, run.workflow_id)! : null;
     const requirementIds = [...new Set([...(original?.requirement_ids ?? []), String(parent.meta.data.requirement_id),
       ...(Array.isArray(parent.meta.data.requirement_ids) ? parent.meta.data.requirement_ids.filter((id): id is string => typeof id === 'string') : [])])];
-    const task = loadRecords(this.root).find(record => record.meta.type === 'task' && record.meta.data.workflow_id === run.workflow_id && record.meta.data.epoch_id === run.epoch_id)
-      ?? createRecord(this.root, { type: 'task', title: plan.title, owner: 'developer', status: 'ready',
-        links: [...requirementIds.map(target => ({ type: 'satisfies' as const, target })), ...(original ? [{ type: 'derives-from' as const, target: original.task_id }] : [])],
-        data: { workflow_id: run.workflow_id, process_contract: 'software-tools/v2', epoch_id: run.epoch_id,
-          acceptance_criteria: plan.acceptance_criteria, allowed_paths: plan.allowed_paths, verification_paths: plan.verification_paths,
-          outputs: plan.outputs, documentation_paths: plan.documentation_paths, ...(original ? { previous_task_id: original.task_id } : {}) },
-        body: `# Objective\n${plan.objective}\n\n# Acceptance\n${plan.acceptance_criteria.map(x => `- ${x}`).join('\n')}\n` });
+    const parentFingerprint = evidenceRecordFingerprint(parent), requirementFingerprints = Object.fromEntries(requirementIds.map(id => [id, evidenceRecordFingerprint(getRecord(this.root, id))]));
+    const originalTaskFingerprint = original ? hash(JSON.stringify(getRecord(this.root, original.task_id))) : undefined;
+    const originalContractPath = `.neomind/native/software-workflows/${hash(run.workflow_id)}.contract.json`;
+    const originalContractSha256 = original ? hash(readFileSync(safePath(this.root, originalContractPath))) : undefined;
+    const knowledgeDirectory = original ? `${readCornellDestination(this.root).directory}/${run.workflow_id.toLowerCase()}` : undefined;
+    const attemptId = run.attempts.at(-1)?.id, epoch = run.epoch_id;
+    const preservedHashes = await controlledFingerprintsAsync(this.root, [...new Set([...(plan.preservation_paths ?? []), ...(plan.input_paths ?? []),
+      ...(original ? ['.gitignore', '.agents/skills/leetcode-notes/assets/cornell-note-template.md', '.agents/skills/leetcode-notes/scripts/validate_notes.py']
+        .filter(path => existsSync(safePath(this.root, path))) : [])])], { signal });
+    // No records or contract have been written before this yielding, cancellable preflight.
+    // Re-read authoritative state after the await; trace/heartbeat events must not be overwritten.
+    return withOperationLock(this.root, `controlled-plan-${hash(run.workflow_id).slice(0, 32)}`, () => {
+    signal.throwIfAborted(); assertActive();
+    run = readState(this.root, run.workflow_id);
+    if (run.epoch_id !== epoch || run.attempts.at(-1)?.id !== attemptId || run.status !== 'running' || run.attempts.at(-1)?.state !== 'running')
+      throw new Error('Planning owner changed while preservation inputs were captured.');
+    if (run.contract_hash) {
+      if (!same(readContract(this.root, run).plan, plan)) throw new Error('Saved contract is immutable.');
+      return { saved: true, next: 'Finish the planning report; runtime dispatches the next stage.' };
+    }
+    if (evidenceRecordFingerprint(getRecord(this.root, run.workflow_id)) !== parentFingerprint ||
+        Object.entries(requirementFingerprints).some(([id, fingerprint]) => evidenceRecordFingerprint(getRecord(this.root, id)) !== fingerprint) ||
+        (original && (hash(JSON.stringify(readNativeSoftwareContract(this.root, run.workflow_id))) !== hash(JSON.stringify(original)) ||
+          hash(JSON.stringify(getRecord(this.root, original.task_id))) !== originalTaskFingerprint ||
+          hash(readFileSync(safePath(this.root, originalContractPath))) !== originalContractSha256)))
+      throw new Error('Planning requirements or workflow ownership changed during preservation preflight; retry from current inputs.');
+    const taskData = { workflow_id: run.workflow_id, process_contract: 'software-tools/v2', epoch_id: run.epoch_id,
+      acceptance_criteria: plan.acceptance_criteria, allowed_paths: plan.allowed_paths, verification_paths: plan.verification_paths,
+      outputs: plan.outputs, documentation_paths: plan.documentation_paths, ...(original ? { previous_task_id: original.task_id } : {}) };
+    const taskLinks = [...requirementIds.map(target => ({ type: 'satisfies' as const, target })), ...(original ? [{ type: 'derives-from' as const, target: original.task_id }] : [])];
+    const taskBody = `# Objective\n${plan.objective}\n\n# Acceptance\n${plan.acceptance_criteria.map(x => `- ${x}`).join('\n')}\n`;
+    const oldTasks = loadRecords(this.root).filter(record => record.meta.type === 'task' && record.meta.data.workflow_id === run.workflow_id && record.meta.data.epoch_id === run.epoch_id);
+    const matchingTask = (record: ProjectRecord) => {
+      const lineage = record.meta.data.previous_uncommitted_task_ids;
+      if (lineage !== undefined && (!Array.isArray(lineage) || lineage.some(id => typeof id !== 'string' || id === record.meta.id || !oldTasks.some(old => old.meta.id === id)))) return false;
+      const expectedLinks = [...taskLinks, ...(Array.isArray(lineage) ? lineage.map(target => ({ type: 'derives-from' as const, target })) : [])];
+      const links = (value: { type: string; target: string }[]) => [...value].sort((a, b) => `${a.type}:${a.target}`.localeCompare(`${b.type}:${b.target}`));
+      return record.meta.title === plan.title && record.meta.owner === 'developer' && record.meta.status === 'ready' && record.body.trimEnd() === taskBody.trimEnd() &&
+        same(links(record.meta.links), links(expectedLinks)) && Object.entries(taskData).every(([key, value]) => same(record.meta.data[key], value)) &&
+        Object.keys(record.meta.data).every(key => key in taskData || ['documentation_required', 'routing_required', 'assurance', 'controlled_contract_hash', 'previous_uncommitted_task_ids'].includes(key));
+    };
+    const savedPath = contractPath(this.root, run.workflow_id, run.epoch_id);
+    const savedBytes = existsSync(savedPath) ? readFileSync(savedPath, 'utf8') : null;
+    const savedContract = savedBytes ? JSON.parse(savedBytes) as Contract : null;
+    if (savedContract && (savedContract.workflow_id !== run.workflow_id || savedContract.epoch_id !== run.epoch_id || !same(savedContract.plan, plan) ||
+        !same(savedContract.preserved_hashes, preservedHashes) || !same(savedContract.requirement_fingerprints, requirementFingerprints) ||
+        !oldTasks.some(record => record.meta.id === savedContract.task_id && matchingTask(record))))
+      throw new Error('An interrupted immutable plan differs from current inputs; preserve its history and reconcile before resuming.');
+    const existingTask = savedContract ? oldTasks.find(record => record.meta.id === savedContract.task_id)! : oldTasks.find(record => matchingTask(record) && !record.meta.data.controlled_contract_hash);
+    const orphaned = oldTasks.filter(record => record.meta.id !== existingTask?.meta.id);
+    const task = existingTask ?? createRecord(this.root, { type: 'task', title: plan.title, owner: 'developer', status: 'ready',
+      links: [...taskLinks, ...orphaned.map(record => ({ type: 'derives-from' as const, target: record.meta.id }))],
+      data: { ...taskData, ...(orphaned.length ? { previous_uncommitted_task_ids: orphaned.map(record => record.meta.id) } : {}) }, body: taskBody });
     const risk = controlledRisk(plan, run.requirement);
     const contract: Contract = { schema_version: 2, process: 'software-tools', workflow_id: run.workflow_id, epoch_id: run.epoch_id,
       plan, plan_hash: hash(JSON.stringify(plan)), task_id: task.meta.id,
-      requirement_ids: requirementIds, requirement_fingerprints: Object.fromEntries(requirementIds.map(id => [id, evidenceRecordFingerprint(getRecord(this.root, id))])),
-      preserved_hashes: controlledFingerprints(this.root, [...new Set([...(plan.preservation_paths ?? []), ...(plan.input_paths ?? []),
-        ...(original ? ['.gitignore', '.agents/skills/leetcode-notes/assets/cornell-note-template.md', '.agents/skills/leetcode-notes/scripts/validate_notes.py']
-          .filter(path => existsSync(safePath(this.root, path))) : [])])]),
+      requirement_ids: requirementIds, requirement_fingerprints: requirementFingerprints, preserved_hashes: preservedHashes,
       reviewer_required: !!run.continuation || risk.reviewer_required,
       risk_reasons: risk.reasons, previous_contract_hash: run.continuation?.original_contract_hash,
-      precheck_review: !!run.continuation, ...(original ? { knowledge_directory: `${readCornellDestination(this.root).directory}/${run.workflow_id.toLowerCase()}`,
-        continuation: { original_task_id: original.task_id, original_task_fingerprint: hash(JSON.stringify(getRecord(this.root, original.task_id))),
-          original_contract_path: `.neomind/native/software-workflows/${hash(run.workflow_id)}.contract.json`,
-          original_contract_sha256: hash(readFileSync(safePath(this.root, `.neomind/native/software-workflows/${hash(run.workflow_id)}.contract.json`))),
+      precheck_review: !!run.continuation, ...(original ? { knowledge_directory: knowledgeDirectory,
+        continuation: { original_task_id: original.task_id, original_task_fingerprint: originalTaskFingerprint!,
+          original_contract_path: originalContractPath, original_contract_sha256: originalContractSha256!,
           obligations: continuationObligations(original.plan.acceptance_criteria) } } : {}) };
-    const bytes = JSON.stringify(contract, null, 2) + '\n';
-    atomicWrite(contractPath(this.root, run.workflow_id, run.epoch_id), bytes);
+    const bytes = savedBytes ?? JSON.stringify(contract, null, 2) + '\n';
+    if (savedContract && !same(savedContract, contract)) throw new Error('Interrupted plan contract failed exact reconciliation.');
+    if (!savedBytes) atomicWrite(savedPath, bytes);
     run.contract_hash = hash(bytes);
     updateRecord(this.root, task.meta.id, { data: { controlled_contract_hash: run.contract_hash } });
     updateRecord(this.root, run.workflow_id, { data: { controlled_epoch_id: run.epoch_id, controlled_contract_hash: run.contract_hash,
       task_ids: [...new Set([...(Array.isArray(parent.meta.data.task_ids) ? parent.meta.data.task_ids : []), task.meta.id])] } });
     save(this.root, run, 'plan-saved', 'Backend created the bound task and immutable scope/check contract.');
     return { saved: true, reviewer_required: contract.reviewer_required, next: 'Save a compact completed planning report.' };
+    });
   }
   private schedule(id: string): void {
     if (this.closed || this.jobs.has(id)) return;
@@ -469,9 +504,15 @@ class Controller {
         !run.attempts.some(attempt => attempt.purpose === 'specialist' && attempt.specialist_index === index && attempt.state === 'completed' && attempt.report?.outcome === 'completed')) : -1;
       const specialist = specialistIndex >= 0 ? contract!.plan.specialists![specialistIndex] : undefined;
       const stage = specialist ? 'diagnosis' : run.phase === 'intake' ? 'planning' : run.phase;
-      const specialistRoles: Record<string, NativeRole> = { explorer: 'codebase-analyst', planner: 'requirements', architect: 'architect', researcher: 'researcher', curator: 'curator', 'component-owner': 'component-owner' };
-      const role: NativeRole = specialist ? specialistRoles[specialist.role] ?? 'architect' : stage === 'planning' || stage === 'diagnosis' || stage === 'synthesis' ? 'manager'
-        : stage === 'implementation' ? 'developer' : stage === 'verification' ? 'verifier' : 'reviewer';
+      let role: NativeRole;
+      try { role = specialist ? controlledConsultationRole(specialist.role) : stage === 'planning' || stage === 'diagnosis' || stage === 'synthesis' ? 'manager'
+        : stage === 'implementation' ? 'developer' : stage === 'verification' ? 'verifier' : 'reviewer'; }
+      catch (error) {
+        if (!(error instanceof ControlledToolError) || error.code !== 'UNSUPPORTED_SPECIALIST_ROLE') throw error;
+        run.status = 'blocked'; run.blocker = { kind: 'protocol', code: error.code, owner: 'runtime', message: error.message,
+          next_action: 'Preserve this immutable plan and its required review gates. Reconcile the unsupported consultation through a reviewed new plan; do not silently substitute a different role.' };
+        save(this.root, run, 'blocked', run.blocker.message); return;
+      }
       const attempt: Attempt = { id: randomUUID(), request_id: randomUUID(), stage, role, state: 'starting',
         ...(specialist ? { purpose: 'specialist', specialist_index: specialistIndex } : {}),
         ...(stage === 'review' && run.pending_check_review ? { purpose: 'check-review' } : {}) };
@@ -494,9 +535,9 @@ class Controller {
       };
       const callbacks: ControlledCallbacks = {
         assertActive,
-        submitPlan: plan => {
+        submitPlan: async plan => {
           assertActive(); run = readState(this.root, id);
-          try { return this.plan(run, plan); }
+          try { return await this.plan(run, plan, attemptAbort.signal, assertActive); }
           catch (error) { throw new ControlledToolError('PLAN_INVALID', error instanceof Error ? error.message : 'The semantic plan is invalid.'); }
         },
         saveReport: report => {
@@ -680,10 +721,12 @@ class Controller {
   private prompt(run: ControlledSnapshot, stage: Stage, contract?: Contract): string {
     const original = run.continuation && !contract ? readNativeSoftwareContract(this.root, run.workflow_id) : undefined;
     const obligations = original ? continuationObligations(original.plan.acceptance_criteria) : undefined;
+    const recovery = stage === 'planning' ? controlledPlanningRecovery(this.root, run) : [];
     return [
       `User requirement:\n${run.requirement}`,
       `Your stage: ${stage}. Use only the supplied semantic tools. Runtime owns identity, records, transitions and checks.`,
       stage === 'planning' ? 'Inspect the project and existing scripts. Save one bounded workflow_plan, then assignment_report. Define an independently authored checker in verification_paths, disjoint from implementation paths. Use explicit check argv. Keep ordinary work low-risk; elevate real security/storage/runtime changes.' : '',
+      recovery.length ? `Earlier backend validation in this same execution, retained across resume. These are diagnostic constraints, not an accepted plan or instructions to replay a request:\n${JSON.stringify(recovery)}` : '',
       contract ? `Immutable plan:\n${JSON.stringify(contract.plan)}` : '',
       contract?.knowledge_directory ? `Managed final knowledge destination: ${contract.knowledge_directory}. Coordinator synthesis must compile a separate evidence-derived research Cornell bundle after checks and before final review.` : '',
       contract?.continuation ? `Continuation uses a NEW execution task linked to the unchanged historical task. Required obligations: ${JSON.stringify(contract.continuation.obligations)}. Preservation inputs are backend-fingerprinted. A planned intended-use check is separate from fixture checks; the backend appends --neomind-pilot-root <owned-temp-directory> and --neomind-pilot-nonce <nonce>. That independently authored checker mode must prepare pilot-input.json in that directory: {schema_version:1,kind:"intended-use",nonce,note:"relative/note.md",python:"absolute configured Python",case_classes:[at least ten meaningful classes],solutions:[{language:"c11",source:"relative/program.c",compiler:"absolute configured gcc",local_test:true|false},{language:"cpp17",source:"relative/program.cpp",compiler:"absolute configured g++",local_test:true|false}]}. Generate an explicitly disposable intended-use exercise via the actual adapter, with problem-specific notes and independently authored per-language oracle/harness; do not copy fixture outcomes. The backend independently runs the canonical Cornell validator, fresh strict builds and each executable, retaining actual evidence. Do not remove the owned pilot directory before the backend collects it.` : '',
@@ -722,7 +765,11 @@ class Controller {
       if (prior) continue;
       const checkId = randomUUID(), logPath = `.neomind/controlled/checks/${checkId}.log`;
       const purpose = !check.negative && 'purpose' in check && check.purpose === 'intended-use' ? 'intended-use' as const : 'self-check' as const;
-      const pilotRoot = purpose === 'intended-use' ? realpathSync.native(mkdtempSync(join(realpathSync.native(tmpdir()), 'neomind-intended-use-'))) : undefined;
+      // A generic check's purpose describes its evidence, not its task family.
+      // Only the explicitly bound continuation adapter may add argv or impose
+      // the independent Cornell/C11/C++17 pilot proof on the declared command.
+      const requiresPilotProof = purpose === 'intended-use' && contract.continuation?.obligations.pilot_kind === 'leetcode-c11-cpp17';
+      const pilotRoot = requiresPilotProof ? realpathSync.native(mkdtempSync(join(realpathSync.native(tmpdir()), 'neomind-intended-use-'))) : undefined;
       const pilotNonce = pilotRoot ? randomUUID() : undefined;
       const command = pilotRoot ? [...check.command, '--neomind-pilot-root', pilotRoot, '--neomind-pilot-nonce', pilotNonce!] : check.command;
       const evidenceInput = prepareControlledCheckEvidence(this.root, run, contract, check, baseline, attempt.invocation_id);
@@ -747,7 +794,7 @@ class Controller {
         command, planned_command: check.command, purpose, baseline, log_path: logPath, log_sha256: hash(log), exit_code: result.exit_code,
         expected_exit_code: check.expected_exit_code ?? 0, negative: check.negative,
         passed: result.exit_code === (check.expected_exit_code ?? 0) && !result.cancelled && !result.timed_out && !result.output_limited && !result.error && !pilotError &&
-          (purpose !== 'intended-use' || !!pilot) && same(baseline, fingerprints(this.root, check.baseline_paths)),
+          (!requiresPilotProof || !!pilot) && same(baseline, fingerprints(this.root, check.baseline_paths)),
         cancelled: result.cancelled, at: now(), evidence_input: evidenceInput,
         ...(pilot ? { pilot_receipt_path: pilot.path, pilot_receipt_hash: pilot.sha256 } : {}) });
       const savedCheck = run.checks.at(-1)!;

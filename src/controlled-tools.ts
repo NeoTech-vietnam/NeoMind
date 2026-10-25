@@ -9,6 +9,7 @@ import { cornellResearchSchema } from './cornell-workflow.js';
 import { controlledModelInput, controlledValidation, redactControlledValue } from './controlled-observability.js';
 
 export type ControlledStage = 'planning' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
+export const controlledConsultationRoles = ['explorer', 'planner', 'architect', 'researcher', 'curator', 'component-owner'] as const;
 export interface ControlledBinding {
   workflow_id: string; task_id?: string; invocation_id?: string;
   stage: ControlledStage; role: string;
@@ -26,20 +27,22 @@ export const controlledPlanSchema = z.strictObject({
   checks: z.array(z.strictObject({ title: text.max(256),
     purpose: z.enum(['self-check', 'intended-use']).optional(),
     command: z.array(z.string().min(1).max(8000)).min(2).max(128),
-    baseline_paths: paths.min(1), expected_exit_code: z.number().int().min(0).max(255).optional(),
+    baseline_paths: paths.default([]).describe('Optional additional scoped baseline inputs. The backend adds delivered outputs and actual checker argv paths before freezing a new plan; committed check baselines remain unchanged.'), expected_exit_code: z.number().int().min(0).max(255).optional(),
     timeout_ms: z.number().int().min(1).max(600000).optional(),
     negative_controls: z.array(z.strictObject({ title: text.max(256),
       command: z.array(z.string().min(1).max(8000)).min(2).max(128),
-      baseline_paths: paths.min(1), expected_exit_code: z.number().int().min(1).max(255),
-    })).max(16).optional(),
+      baseline_paths: paths.default([]).describe('Optional additional scoped fixture inputs. The backend adds the independent checker and verifier-owned fixture argv paths.'), expected_exit_code: z.number().int().min(1).max(255),
+    })).min(1).max(16).describe('Required for every check in the current process contract, including intended-use checks. Declare actual failing fixtures or --negative-control cases for the same independent checker; expected_exit_code must be nonzero.'),
   })).min(1).max(16),
   risk: z.enum(['low', 'elevated', 'high']).optional(),
   reuse: z.strictObject({ procedure_id: text.max(80), version: text.max(80).optional(), parameters: z.record(z.string(), z.unknown()) }).optional(),
-  procedure_candidate: registerProcedureSchema.omit({ id: true, version: true, author: true }).optional(),
+  procedure_candidate: registerProcedureSchema.omit({ id: true, version: true, author: true }).optional().describe('Reusable FUTURE-RUN manifest. script/verification_script/dependencies are tool INPUTS delivered or reused here. outputs are future generated exercise/note/report files, often destination-parameterized; they are NOT the delivered plan.outputs or executable scripts. Generated outputs must be new and covered by nonempty effects.write_roots. Backend supplies registration identity; do not invent IDs.'),
   cornell_output_dir: z.string().min(1).max(1024).optional(),
-  input_paths: paths.optional(),
-  preservation_paths: paths.optional(),
-  specialists: z.array(z.strictObject({ role: text.max(100), objective: text })).max(4).optional(),
+  input_paths: paths.optional().describe('Exact hidden read-only skill assets/scripts only: .agents/skills/<skill>/(assets|scripts)/<file> or .github/skills/<skill>/(assets|scripts)/<file>. Ordinary public source paths are already readable and need no approval. Never list private client configuration, credentials or entire hidden directories.'),
+  preservation_paths: paths.optional().describe('Narrow existing files or small trees that must remain unchanged, outside producer/checker write scopes. Prefer exact exercised files and canonical template/validator assets; avoid repository roots, dependency trees and caches. These are preservation baselines, not extra read or write permissions.'),
+  specialists: z.array(z.strictObject({ role: z.enum(controlledConsultationRoles)
+    .describe('Optional bounded consultation role only. Reviewer and Verifier are backend-owned workflow stages, not consultation roles.'),
+    objective: text })).max(4).optional().describe('Optional consultations for a concrete expert question. Do not add Reviewer or Verifier here; the backend preserves and schedules all required independent verification, pre-check review and final review gates.'),
 });
 export type ControlledPlan = z.infer<typeof controlledPlanSchema>;
 export const controlledReportSchema = z.strictObject({
@@ -86,6 +89,12 @@ function privatePath(path: string): boolean {
   return path.toLowerCase().split('/').some(part =>
     ['.git', '.neomind', '.verythinker', '.taskforces', '.codex', '.claude', '.vscode', '.agents', '.cursor', 'node_modules'].includes(part) ||
     /^(?:\.env(?:\..*)?|auth\.json|credentials?(?:\.[^/]*)?|secrets?(?:\.[^/]*)?|id_(?:rsa|ed25519)(?:\.pub)?|[^/]+\.(?:pem|key|pfx|p12))$/.test(part));
+}
+/** Shared with plan intake so redundant public references never become hidden-file approvals. */
+export function controlledPublicReferencePath(path: string): boolean { return !privatePath(path); }
+export function controlledSkillInputPath(path: string): boolean {
+  return /^\.(?:agents|github)\/skills\/[^/]+\/(?:assets|scripts)\/.+\.(?:md|py|mjs|cjs|js|json)$/i.test(path) &&
+    !privatePath(path.split('/').slice(4).join('/'));
 }
 function publicTarget(root: string, path: string, approved: string[] = []): string {
   canonical(path, true);
@@ -141,7 +150,7 @@ export function controlledInstructions(binding: ControlledBinding): string {
   const ownership = { your_role: binding.role, your_stage: binding.stage, your_writable_paths: writable,
     implementation: { owner: 'developer', paths: binding.implementation_paths }, verification: { owner: 'verifier', paths: binding.verification_paths } };
   const duties: Record<ControlledStage, string> = {
-    planning: 'Inspect relevant files and existing reusable tools. Submit one bounded semantic workflow_plan with acceptance criteria, separate implementation/checker paths and actual check commands. Declare negative_controls using the same checker with verifier-owned deliberately invalid fixtures/inputs and their expected nonzero exits; runtime executes them as evidence. Elevate risk or suggest a bounded specialist only when needed.',
+    planning: 'Inspect relevant files and existing reusable tools. Submit one bounded semantic workflow_plan with acceptance criteria, separate implementation/checker paths and actual check commands. Declare negative_controls using the same checker with verifier-owned deliberately invalid fixtures/inputs and their expected nonzero exits; runtime executes them as evidence. Elevate risk or suggest a bounded specialist only when needed. Allowed consultation roles are explorer, planner, architect, researcher, curator and component-owner. Reviewer and Verifier are backend-owned stages; do not add them as consultations or remove their required gates.',
     implementation: 'Read existing files before editing. Implement only the assigned outputs with task_file_write. Backend handles file versions, operation identity and task lifecycle. Preserve independent checker and acceptance files.',
     verification: 'Inspect the delivered implementation. Author and repair only the independent checker paths, including deliberately invalid fixtures for the prescribed negative_controls. Run the prescribed checks with check_run; backend executes both positive and negative commands. Report prose alone is not negative-control evidence. Distinguish a product defect from a checker or environment failure.',
     review: 'Independently inspect the delivered artifacts and actual verification evidence. Report pass or fail and substantive findings against the unchanged acceptance criteria.',
@@ -161,7 +170,7 @@ export function controlledInstructions(binding: ControlledBinding): string {
 export function createControlledMcpServer(root: string, input: ControlledBinding, callbacks: ControlledCallbacks): McpServer {
   const binding = structuredClone(input);
   for (const path of binding.approved_inputs ?? [])
-    if (!/^\.(?:agents|github)\/skills\/[^/]+\/(?:assets|scripts)\/.+\.(?:md|py|mjs|cjs|js|json)$/i.test(path) || privatePath(path.split('/').slice(4).join('/')))
+    if (!controlledSkillInputPath(path))
       throw new Error('Approved hidden inputs must be bounded skill assets or script sources, never client/runtime configuration.');
   if (!binding.invocation_id || !binding.workflow_id || !binding.role ||
       !['planning', 'implementation', 'verification', 'review', 'diagnosis', 'synthesis'].includes(binding.stage))

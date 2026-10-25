@@ -40,6 +40,10 @@ The MCP entrypoint accepts:
 
 The default execution is Coordinator, Implementer and independent Verifier. Additional specialists and Reviewer are selected by task needs, risk and the saved contract. Workers receive role-local semantic tools; they do not enter assignment tokens or reconstruct task/report IDs. Runtime events drive the Workflows panel and Universe. A configured planet is not a running agent.
 
+New plan submissions receive backend-generated baseline metadata for delivered outputs, the checker and its declared fixtures. Ordinary source references do not need hidden-file approval. Original continuation check baselines stay exact; previously frozen contracts are not normalized or rewritten. A resumed planner receives bounded, redacted prior validation diagnostics instead of having to rediscover a failed request.
+
+A generic check labelled `intended-use` runs its declared command unchanged. Only an explicitly bound supported continuation adapter adds its own pilot protocol. The LeetCode continuation adapter still requires the separate disposable Cornell/C11/C++17 pilot and actual independent evidence; that contract is not imposed on unrelated Node.js tasks.
+
 ## Models, recovery and limits
 
 - Workers use the role/vendor/model configured for the VS Code Bridge, including a registered 9router custom provider. Codex remains a submission client; its parent provider/model is not rewritten by controlled adapter generation.
@@ -47,6 +51,7 @@ The default execution is Coordinator, Implementer and independent Verifier. Addi
 - A model picker entry or `/v1/models` result confirms discovery, not a successful model request. `MODEL_NOT_SUPPORTED` means the endpoint rejected the configured target. Keep your chosen alias and correct its upstream chain in 9router, then resume the same workflow. NeoMind stops this configuration failure without silently replacing the model or spending its repair budget on repeated calls.
 - Closing chat or the panel does not stop accepted work while VS Code stays open. Closing VS Code or disabling the Bridge stops owned sessions/checks. Reopen and resume from the last durable checkpoint after uncertain effects have been reconciled.
 - Existing legacy workflows preserve their saved mode, history and committed acceptance conditions. Controlled continuation adds execution lineage rather than rewriting old evidence or manufacturing completion.
+- Preservation capture inventories paths before reading content, yields during planning and checks cancellation/ownership before saving a task. Its bounds are 4,096 files, 8,192 directory entries, 8 MiB per file and 32 MiB total. Planning scans have a 10-second budget; each synchronous evidence scan has a 2-second budget, within an 8-second shared acceptance budget. Oversized inputs fail with a diagnostic rather than silently skipping files. Select the actual protected exercise/assets scope instead of whole curriculum, dependency or cache trees. Scope mediation does not prevent an arbitrary reviewed script from accessing the host.
 - The first controlled executor requires VS Code. Headless/daemon execution and Linux desktop support require their own actual-client conformance; Ubuntu core tests alone are not desktop inference evidence.
 - Network/publication policy still applies. The controlled runner's tool mediation and output checks are not a general OS sandbox for arbitrary scripts.
 
