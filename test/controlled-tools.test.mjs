@@ -86,6 +86,36 @@ test('controlled Cornell sources advertise only semantic citations and strip onl
   assert.equal(captured.length, 1, 'Only the three obsolete provenance fields may be discarded.');
 });
 
+test('controlled Cornell practice and demonstrations hide backend paths, evidence identities and schema version', async t => {
+  const { root, input } = researchFixture(t), captured = [], c = await connect(t, root, binding('synthesis'), {
+    compileResearch(value) { captured.push(value); return { saved: true }; },
+  });
+  const declared = (await c.client.listTools()).tools.find(tool => tool.name === 'cornell_research_compile').inputSchema;
+  for (const option of declared.properties.practice.anyOf) {
+    assert.equal('solution_path' in option.properties, false);
+    assert.ok('starter' in option.properties);
+  }
+  assert.equal('evidence_ids' in declared.properties.worked_example.properties, false);
+  assert.equal(declared.required.includes('schema_version'), false);
+  const { requirement_id, expected_requirement_revision, workflow_id, task_id, owner, output_dir, ...semantic } = input;
+  for (const solution_path of ['answers.md', '../outside.md', '.neomind/config.json', 'C:/outside.md']) {
+    const response = await c.call('cornell_research_compile', { ...semantic, schema_version: 999,
+      practice: { ...semantic.practice, solution_path, starter: '# Learner reasoning\nKeep the worked steps separate.\n' },
+      worked_example: { ...semantic.worked_example, evidence_ids: ['invented-evidence-id'] } });
+    assert.equal(response.isError, undefined);
+    const value = captured.at(-1);
+    assert.equal(value.schema_version, 1);
+    assert.equal(value.practice.solution_path, undefined);
+    assert.equal(value.worked_example.evidence_ids, undefined);
+    assert.equal(value.practice.starter, '# Learner reasoning\nKeep the worked steps separate.\n');
+    assert.deepEqual(value.practice.procedure, semantic.practice.procedure);
+  }
+  const unsupported = await c.call('cornell_research_compile', { ...semantic,
+    practice: { ...semantic.practice, invented_path: '../outside.md' } });
+  assert.equal(unsupported.isError, true);
+  assert.equal(captured.length, 4, 'Cached metadata stripping must not discard arbitrary unknown properties.');
+});
+
 test('identity spoofing is rejected before the bound report callback and no supplied secret is echoed', async t => {
   const c = await connect(t, project(t));
   for (const field of ['workflow_id', 'task_id', 'invocation_id', 'claim_token', 'reported_assignment', 'submit_task']) {

@@ -5,9 +5,8 @@ import { z } from 'zod';
 import { atomicWrite, hash, now, safePath, withOperationLock } from './storage.js';
 import { replaceWorkspaceFile, workspaceFileBytes, workspaceContentBytes, workspacePathLockKey } from './workspace.js';
 import { registerProcedureSchema, procedureInputContractHint } from './procedures.js';
-import { cornellResearchSchema } from './cornell-workflow.js';
 import { controlledModelInput, controlledValidation, redactControlledValue } from './controlled-observability.js';
-import { controlledCornellSourceSchema } from './controlled-cornell-sources.js';
+import { controlledCornellResearchSchema } from './controlled-cornell-sources.js';
 
 export type ControlledStage = 'planning' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
 export type ControlledReviewPurpose = 'checker-readiness' | 'final-product';
@@ -408,8 +407,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
   }
   if (['implementation', 'synthesis'].includes(binding.stage)) {
     register('cornell_research_compile', 'Compile research into the saved Cornell format with separate questions and answers inside the assigned note folder.',
-      cornellResearchSchema.omit({ requirement_id: true, expected_requirement_revision: true, workflow_id: true, task_id: true, owner: true, output_dir: true })
-        .extend({ sources: z.array(controlledCornellSourceSchema).min(1).max(64) }), false,
+      controlledCornellResearchSchema(), false,
       args => {
         if (!callbacks.compileResearch) throw new ControlledToolError('NO_CORNELL_OUTPUT', 'The plan does not request Cornell output.');
         return callbacks.compileResearch(args);

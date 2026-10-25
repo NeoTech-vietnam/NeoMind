@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { researchFixture } from './cornell-research-fixture.mjs';
@@ -10,7 +10,7 @@ import { runCheck, reviewRecord } from '../dist/engineering.js';
 import { compileCornellResearch } from '../dist/cornell-workflow.js';
 import { createCornellNote, validateCornellNote } from '../dist/notes.js';
 import { controlledPublicReferencePath, controlledSkillInputPath } from '../dist/controlled-tools.js';
-import { normalizeControlledCornellSources, existingControlledCornellNote, controlledCornellResult } from '../dist/controlled-cornell-sources.js';
+import { normalizeControlledCornellSources, existingControlledCornellNote, controlledCornellResult, bindControlledCornellPractice } from '../dist/controlled-cornell-sources.js';
 
 const template = '.agents/skills/leetcode-notes/assets/cornell-note-template.md';
 test('public Cornell and controlled entry modules initialize in fresh processes regardless of import order', () => {
@@ -141,4 +141,39 @@ test('a valid changed-content note retaining a copied input hash is never adopte
   assert.equal(existingControlledCornellNote(a.root, compiled, a.context), undefined);
   a.context.saved_results = [{ ...controlledCornellResult(compiled, note), record_fingerprint: '0'.repeat(64) }];
   assert.equal(existingControlledCornellNote(a.root, compiled, a.context), undefined, 'A changed record cannot match a saved runtime fingerprint.');
+});
+
+test('captured and escaped learner paths can only create a backend-scoped worksheet', t => {
+  const a = fixture(t), sources = normalizeControlledCornellSources(a.root, captured(a), a.context);
+  atomicWrite(safePath(a.root, 'answers.md'), 'Existing unrelated learner answers must remain unchanged.\n');
+  const outside = join(dirname(a.root), `outside-${randomUUID()}.md`), privatePath = '.neomind/not-authorized.md';
+  const attempts = ['answers.md', `../${outside.split(/[\\/]/).at(-1)}`, privatePath, outside];
+  const starter = '# Learner reasoning\nEnumerate the ordered pairs and explain the result.\n';
+  for (const [index, solution_path] of attempts.entries()) {
+    const directory = `docs/research/scoped-${index}`;
+    const semantic = { ...a.input.practice, command: ['node', 'documented-checker.mjs'], solution_path, starter };
+    const practice = bindControlledCornellPractice(semantic, directory);
+    assert.equal(practice.solution_path, `${directory}/practice-solution.md`);
+    assert.deepEqual(practice.command, semantic.command); assert.deepEqual(practice.procedure, semantic.procedure);
+    assert.deepEqual(practice.questions, semantic.questions); assert.equal(practice.starter, starter);
+    const compiled = compile({ ...a, input: { ...a.input, output_dir: directory, practice } }, sources);
+    const note = createCornellNote(a.root, compiled.note);
+    assert.equal(validateCornellNote(a.root, note.meta.id).ok, true);
+    assert.equal(readFileSync(safePath(a.root, practice.solution_path), 'utf8'), starter);
+    assert.equal(readFileSync(safePath(a.root, 'answers.md'), 'utf8'), 'Existing unrelated learner answers must remain unchanged.\n');
+    assert.equal(existsSync(outside), false);
+    assert.equal(existsSync(safePath(a.root, privatePath)), false);
+  }
+});
+
+test('cached path alone is ignored and an existing scoped learner solution is preserved', t => {
+  const a = fixture(t), { starter: _starter, ...semantic } = a.input.practice;
+  const omitted = bindControlledCornellPractice({ ...semantic, solution_path: 'answers.md' }, a.input.output_dir);
+  assert.equal(omitted.solution_path, undefined); assert.equal(omitted.starter, undefined);
+  const sources = normalizeControlledCornellSources(a.root, captured(a), a.context),
+    practice = bindControlledCornellPractice({ ...a.input.practice, solution_path: '../outside.md', starter: '# New suggested starter\n' }, a.input.output_dir);
+  atomicWrite(safePath(a.root, practice.solution_path), 'My existing independent solution must survive.\n');
+  const compiled = compile({ ...a, input: { ...a.input, practice } }, sources), note = createCornellNote(a.root, compiled.note);
+  assert.equal(validateCornellNote(a.root, note.meta.id).ok, true);
+  assert.equal(readFileSync(safePath(a.root, practice.solution_path), 'utf8'), 'My existing independent solution must survive.\n');
 });

@@ -17,6 +17,38 @@ export const controlledCornellSourceSchema = z.preprocess(value => {
   const { record_id: _record, sha256: _hash, retrieved_at: _time, ...semantic } = value as Record<string, unknown>;
   return semantic;
 }, semanticSource);
+const semanticPractice = z.lazy(() => {
+  const [runnable, manual] = cornellResearchSchema.shape.practice.options;
+  const starter = runnable.shape.starter.describe('Optional learner starter content requests a backend-owned practice-solution.md inside the fixed Cornell directory. Do not supply a filesystem path.');
+  return z.union([runnable.omit({ solution_path: true }).extend({ starter }), manual.omit({ solution_path: true }).extend({ starter })]);
+});
+export const controlledCornellPracticeSchema = z.preprocess(value => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const { solution_path: _untrustedPath, ...semantic } = value as Record<string, unknown>;
+  return semantic;
+}, semanticPractice);
+const semanticWorkedExample = z.lazy(() => cornellResearchSchema.shape.worked_example.omit({ evidence_ids: true }));
+const controlledWorkedExample = z.preprocess(value => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const { evidence_ids: _untrustedEvidence, ...semantic } = value as Record<string, unknown>;
+  return semantic;
+}, semanticWorkedExample);
+// The SDK must receive an actual root object to advertise its fields; resolve
+// this factory only at server creation, after the module graph has initialized.
+export function controlledCornellResearchSchema() {
+  return cornellResearchSchema.omit({ schema_version: true, requirement_id: true, expected_requirement_revision: true,
+    workflow_id: true, task_id: true, owner: true, output_dir: true })
+    .extend({ schema_version: z.preprocess(() => 1, z.literal(1).default(1))
+      .describe('Backend-owned format version; omit this field and the runtime supplies version 1.'),
+      sources: z.array(controlledCornellSourceSchema).min(1).max(64), practice: controlledCornellPracticeSchema,
+      worked_example: controlledWorkedExample });
+}
+
+/** Starter content requests the worksheet; no model-provided path ever reaches the writer. */
+export function bindControlledCornellPractice(input: unknown, directory: string) {
+  const practice = controlledCornellPracticeSchema.parse(input);
+  return { ...practice, ...(practice.starter !== undefined ? { solution_path: `${directory}/practice-solution.md` } : {}) };
+}
 
 export interface ControlledCornellSourceContext {
   workflow_id: string; epoch_id: string; task_id: string; requirement_ids: readonly string[];

@@ -277,6 +277,21 @@ test('final-product review still requires fresh execution evidence and cannot ac
   assert.ok(validation.findings.some(finding => /execution evidence is missing/.test(finding.message)));
 });
 
+test('actual final Reviewer receives only latest Verifier evidence while identical-title failure history remains saved', async t => {
+  const env = await setup(t, { evidenceview: { highRisk: true, productFailure: true, holdFinalReview: true } });
+  const initial = await submit(env.root, 'evidenceview');
+  const reviewing = await until(env.root, initial.workflow_id, () => env.held.reviewEntered,
+    'final review must observe the separately repaired current verification', env.errors);
+  assert.equal(reviewing.checks.length, 4);
+  assert.ok(reviewing.checks.some(check => !check.passed), 'The earlier genuine product failure must remain in the journal.');
+  assert.equal(env.held.reviewEvidence.length, 2, 'Current evidence must not mix earlier receipts with identical check titles.');
+  assert.ok(env.held.reviewEvidence.every(check => check.passed));
+  env.held.reviewRelease = true;
+  const done = await until(env.root, initial.workflow_id, run => run.status === 'completed',
+    'a sound current review can close without deleting old failed observations', env.errors);
+  assert.equal(done.checks.length, 4);
+});
+
 test('real signed Bridge/MCP drives normal and risk-based workflows with actual command evidence', async t => {
   const env = await setup(t, { ordinary: {}, sensitive: { highRisk: true } });
   for (const name of ['ordinary', 'sensitive']) {
