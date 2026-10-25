@@ -94,6 +94,10 @@ function canonical(path: string): string {
   return path;
 }
 function fold(path: string): string { return path.toLowerCase(); }
+/** Shared cooperative lock for legacy and controlled writers of the same target. */
+export function workspacePathLockKey(path: string): string {
+  return `workspace-path-${hash(fold(path)).slice(0, 32)}`;
+}
 function covers(reference: string, path: string): boolean {
   reference = fold(reference.replaceAll('\\', '/').replace(/\/$/, ''));
   path = fold(path);
@@ -140,6 +144,52 @@ function expected(root: string, path: string, checksum: string | null): Buffer |
   if ((bytes === null ? null : hash(bytes)) !== checksum)
     throw new Error(`File changed since it was read; preserve current edits and inspect a fresh hash: ${path}`);
   return bytes;
+}
+/** Shared filesystem checks for trusted, role-bound writers; authorization stays with their controller. */
+export function workspaceFileBytes(root: string, path: string): Buffer | null {
+  ordinaryPath(path);
+  return fileBytes(root, path);
+}
+export function workspaceContentBytes(content: string): Buffer {
+  if (typeof content !== 'string' || binaryControl.test(content))
+    throw new Error('File content must be UTF-8 text.');
+  const next = Buffer.from(content, 'utf8');
+  if (next.length > maxBytes || next.toString('utf8') !== content)
+    throw new Error('File content must be valid UTF-8 text up to 128 KiB.');
+  return next;
+}
+/**
+ * Replace one authorized text file after a fresh optimistic CAS check. Callers
+ * serialize their operation and persist its intent before entering this seam.
+ * This cannot provide kernel CAS against a noncooperating external editor.
+ */
+export function replaceWorkspaceFile(root: string, input: {
+  path: string; content: string; expected_hash: string | null; mode?: number; authorize: () => void;
+}): { sha256: string; previous_hash: string | null } {
+  ordinaryPath(input.path);
+  const next = workspaceContentBytes(input.content);
+  if (input.expected_hash !== null && (typeof input.expected_hash !== 'string' || !digest.test(input.expected_hash)))
+    throw new Error('File replacement needs a current content hash.');
+  if (input.mode !== undefined && (!Number.isInteger(input.mode) || input.mode < 0 || input.mode > 0o777))
+    throw new Error('File replacement needs an ordinary permission mode.');
+  input.authorize();
+  const previous = expected(root, input.path, input.expected_hash);
+  const target = physical(root, input.path);
+  const mode = input.mode ?? (previous === null ? 0o644 : lstatSync(target).mode & 0o777);
+  mkdirSync(dirname(target), { recursive: true });
+  const temporary = `${target}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, next, { flag: 'wx' });
+    chmodSync(temporary, mode);
+    input.authorize();
+    expected(root, input.path, input.expected_hash);
+    renameSync(temporary, target);
+  } catch (error) {
+    throw new Error(`File-write I/O or optimistic-CAS operation failed; history retained and unknown edits will not be rolled back: ${error instanceof Error ? error.message : String(error)}`);
+  } finally { if (existsSync(temporary)) rmSync(temporary); }
+  if (hash(fileBytes(root, input.path) ?? Buffer.alloc(0)) !== hash(next))
+    throw new Error('File changed after atomic replacement; unknown current edits were preserved.');
+  return { sha256: hash(next), previous_hash: input.expected_hash };
 }
 function protectedPath(root: string, path: string): void {
   for (const record of loadRecords(root)) {
@@ -350,9 +400,7 @@ export function workspaceHistoryProblems(root: string, task: ProjectRecord, pend
  */
 export function workspaceWrite(root: string, input: WorkspaceWriteInput): WorkspaceWriteResult {
   ordinaryPath(input.path);
-  if (typeof input.content !== 'string' || binaryControl.test(input.content)) throw new Error('File content must be UTF-8 text.');
-  const next = Buffer.from(input.content, 'utf8');
-  if (next.length > maxBytes || next.toString('utf8') !== input.content) throw new Error('File content must be valid UTF-8 text up to 128 KiB.');
+  const next = workspaceContentBytes(input.content);
   if (input.expected_hash !== null && (typeof input.expected_hash !== 'string' || !digest.test(input.expected_hash)))
     throw new Error('expected_hash must be the current SHA-256, or null only for a new file.');
   const operationId = input.operation_id ?? randomUUID();
@@ -360,7 +408,7 @@ export function workspaceWrite(root: string, input: WorkspaceWriteInput): Worksp
   const requestIdentity = (authorId: string) => hash(JSON.stringify({ task_id: input.task_id, workflow_id: input.workflow_id,
     invocation_id: authorId, path: input.path, expected_hash: input.expected_hash, sha256: hash(next) }));
   return withOperationLock(root, `workspace-${hash(input.task_id).slice(0, 32)}`, () =>
-    withOperationLock(root, `workspace-path-${hash(fold(input.path)).slice(0, 32)}`, () => {
+    withOperationLock(root, workspacePathLockKey(input.path), () => {
       let task = taskFor(root, input, operationId);
       let requestHash = requestIdentity(input.invocation_id);
       const problems = workspaceHistoryProblems(root, task, operationId);
@@ -457,18 +505,8 @@ export function workspaceWrite(root: string, input: WorkspaceWriteInput): Worksp
       const currentHash = current === null ? null : hash(current);
       if (currentHash !== intent.sha256) {
         if (currentHash !== intent.previous_hash) throw new Error('File-write recovery found unknown current bytes; user edits were preserved.');
-        const target = physical(root, input.path);
-        mkdirSync(dirname(target), { recursive: true });
-        const temporary = `${target}.${randomUUID()}.tmp`;
-        try {
-          writeFileSync(temporary, next, { flag: 'wx' });
-          chmodSync(temporary, intent.mode);
-          taskFor(root, input, operationId);
-          expected(root, input.path, intent.previous_hash);
-          renameSync(temporary, target);
-        } catch (error) {
-          throw new Error(`File-write I/O or optimistic-CAS operation failed; history retained and unknown edits will not be rolled back: ${error instanceof Error ? error.message : String(error)}`);
-        } finally { if (existsSync(temporary)) rmSync(temporary); }
+        replaceWorkspaceFile(root, { path: input.path, content: input.content,
+          expected_hash: intent.previous_hash, mode: intent.mode, authorize: () => { taskFor(root, input, operationId); } });
       }
       if (hash(fileBytes(root, input.path) ?? Buffer.alloc(0)) !== intent.sha256)
         throw new Error('File changed after atomic replacement; unknown current edits were preserved.');

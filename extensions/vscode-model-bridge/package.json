@@ -2,7 +2,7 @@
   "name": "neomind-model-bridge",
   "displayName": "NeoMind Agent Monitor",
   "publisher": "neomind",
-  "version": "0.9.4",
+  "version": "0.10.0",
   "description": "An agent universe with plug-in and MCP controls, Earth FocusSpace, calendar planning, ambient sound and guarded 9router model controls.",
   "engines": {
     "vscode": "^1.109.0"
@@ -10,7 +10,8 @@
   "main": "./extension.cjs",
   "activationEvents": [
     "onUri",
-    "onLanguageModelTool:neomind_advance_workflow"
+    "onLanguageModelTool:neomind_advance_workflow",
+    "onLanguageModelTool:neomind_controlled_workflow"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -45,6 +46,9 @@
     "automation-panel.cjs",
     "native-validation.cjs",
     "native-dispatch.cjs",
+    "controlled-workflows.cjs",
+    "resources/monitor/controlled.js",
+    "resources/monitor/controlled.css",
     "resources/monitor/automation.js",
     "resources/monitor/automation.css"
   ],
@@ -164,9 +168,63 @@
             }
           ]
         }
+      },
+      {
+        "name": "neomind_controlled_workflow",
+        "toolReferenceName": "neomindControlledWorkflow",
+        "displayName": "Manage NeoMind Controlled Workflow",
+        "userDescription": "Give work to NeoMind's own agents, inspect its saved state, or pause, resume and cancel it.",
+        "modelDescription": "Send the user's requirement to the exact open workspace folder. NeoMind owns agent sessions, credentials, IDs, stage transitions and verification. Submit returns a durable receipt quickly; the workflow continues without repeated progress/advance calls while VS Code stays open. Use returned workflow_id for status or controls. A status query without workflow_id lists saved controlled workflows in that exact project. Do not invoke native subagents or implement the accepted task separately. User-requested work and existing project policy define the authorized scope.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "neomind",
+          "workflow"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action",
+            "workspace_folder"
+          ],
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "submit",
+                "status",
+                "pause",
+                "resume",
+                "cancel"
+              ]
+            },
+            "workspace_folder": {
+              "type": "string",
+              "description": "Exact absolute local workspace folder for this request. Required to avoid mixing projects in multi-root windows."
+            },
+            "requirement": {
+              "type": "string",
+              "maxLength": 20000,
+              "description": "The user's requested outcome and constraints. Use only for submit."
+            },
+            "workflow_id": {
+              "type": "string",
+              "description": "An existing workflow ID returned by NeoMind. Required for pause, resume and cancel; optional for status."
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 256,
+              "description": "Optional short title for a new submit."
+            }
+          }
+        }
       }
     ],
     "commands": [
+      {
+        "command": "neomind.workflows.open",
+        "title": "NeoMind: Open Workflows"
+      },
       {
         "command": "neomind.bridge.enable",
         "title": "NeoMind: Enable Model Bridge"

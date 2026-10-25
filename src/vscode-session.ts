@@ -2,8 +2,12 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { hostRequest, readHost, bounded, bridgeProtocol, type HostDescriptor } from './vscode-wire.js';
 import { canonicalJson, routingConfigurationHashes, readInvocation, roleModelPolicy, requireRoutingPolicy, type NativeReceipt } from './routing.js';
+import { hash } from './storage.js';
 import { roleCapabilities } from './tools.js';
 import { vscodeSelection } from './vscode-policy.js';
+import { ownedContext } from './controlled-context.js';
+import { createControlledMcpServer, controlledToolNames } from './controlled-tools.js';
+import { invocationPolicy, invocationConfigurationHashes } from './routing.js';
 
 /** MCP remains in owning CLI process so manager and worker lifecycle APIs share ownership. */
 export class VSCodeSession {
@@ -24,17 +28,24 @@ export class VSCodeSession {
     this.host = readHost(this.root);
     if (requireRoutingPolicy(this.root).vscode_effort_policy !== 'allow-unavailable')
       throw new Error('VS Code API cannot verify reasoning effort. Review compatibility ceiling and explicitly set vscode_effort_policy to allow-unavailable, or keep require-verified to block.');
-    const { createMcpServer } = await import('./mcp.js');
-    this.server = createMcpServer(this.root, { invocation_id: this.receipt.id });
+    const controlled = ownedContext(this.root, this.receipt.request_id);
+    if (this.receipt.controlled_execution && !controlled) throw new Error('Controlled invocation lost its owning runtime context.');
+    if (controlled) {
+      controlled.bindInvocation(this.receipt.id);
+      this.server = createControlledMcpServer(this.root, { ...controlled.binding, invocation_id: this.receipt.id }, controlled.callbacks);
+    } else {
+      const { createMcpServer } = await import('./mcp.js');
+      this.server = createMcpServer(this.root, { invocation_id: this.receipt.id });
+    }
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await this.server.connect(serverTransport);
     await this.client.connect(clientTransport);
-    const operations = roleCapabilities(this.receipt.role).operations;
+    const operations = controlled ? controlledToolNames(controlled.binding) : roleCapabilities(this.receipt.role).operations;
     const listed = await this.client.listTools();
     const tools = listed.tools.filter((tool) => operations.includes(tool.name) && !['manager_run', 'manager_begin'].includes(tool.name));
-    const spec = roleModelPolicy(this.root, this.receipt.role);
+    const spec = roleModelPolicy(this.root, this.receipt.role, invocationPolicy(this.root, this.receipt));
     for (;;) {
-      const selected = vscodeSelection(this.root, this.receipt.role, this.receipt.requested_model);
+      const selected = vscodeSelection(this.root, this.receipt.role, this.receipt.requested_model, invocationPolicy(this.root, this.receipt));
       const ack = await hostRequest(this.host, 'open', { invocation_id: this.receipt.id, owner_pid: process.pid, tools });
       if (ack.unavailable === true) {
         const index = spec.models.indexOf(this.receipt.requested_model);
@@ -63,7 +74,7 @@ export class VSCodeSession {
   private async poll(): Promise<void> {
     try {
       while (!this.stopped) {
-        if (canonicalJson(this.receipt.configuration_hashes) !== canonicalJson(routingConfigurationHashes(this.root)))
+        if (canonicalJson(this.receipt.configuration_hashes) !== canonicalJson(invocationConfigurationHashes(this.root, this.receipt)))
           throw new Error('Native configuration changed during VS Code inference.');
         const value = await hostRequest(this.host, 'poll', this.input(), this.controller.signal);
         if (!['prepared', 'running', 'completed', 'blocked', 'interrupted'].includes(value.state) ||
@@ -102,8 +113,13 @@ export class VSCodeSession {
     bounded(event.input);
     const current = readInvocation(this.root, this.receipt.id);
     if (current.state !== 'running') throw new Error('Invocation no longer running.');
+    const owned = ownedContext(this.root, this.receipt.request_id);
+    if (owned) await owned.callbacks.trace?.({ event: 'model-tool-request', tool: event.name,
+      model_input: { keys: Object.keys(event.input ?? {}), input_sha256: hash(JSON.stringify(event.input)),
+        ...(typeof event.input?.path === 'string' ? { path: event.input.path.slice(0, 1024) } : {}) },
+      backend_binding: { workflow_id: this.receipt.workflow_id, task_id: this.receipt.task_id, invocation_id: this.receipt.id } });
     const result = await this.client.callTool({ name: event.name, arguments: event.input }, undefined,
-      { timeout: 75000, signal: this.controller.signal });
+      { timeout: this.receipt.controlled_execution ? 660000 : 75000, signal: this.controller.signal });
     bounded(result);
     if (!this.stopped) await hostRequest(this.host, 'result', { ...this.input(), call_id: event.call_id, result }, this.controller.signal);
   }

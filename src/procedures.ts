@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
+import { runCommand } from './command-runner.js';
 import { safePath, withOperationLock } from './storage.js';
 
 /** Local execution is a reviewed host process, not a filesystem or network sandbox. */
@@ -331,12 +332,19 @@ function authorize(root: string, manifest: ProcedureManifest, input: z.infer<typ
     if (path === manifest.script || path === manifest.verification_script) throw new Error('Procedure cannot overwrite its executable scripts.');
   }
 }
-async function execute(root: string, script: string, input: unknown, timeout: number, cap: number): Promise<ProcedureProcessResult> {
+async function execute(root: string, script: string, input: unknown, timeout: number, cap: number, signal?: AbortSignal): Promise<ProcedureProcessResult> {
+  const node = process.versions.electron ? (await import('./adapters.js')).adapterNodeCommand(root) : process.execPath;
+  if (signal) {
+    const result = await runCommand({ command: [node, checkedPath(root, script)], cwd: resolve(root),
+      stdin: JSON.stringify(input) + '\n', timeout_ms: timeout, max_output_bytes: cap, signal });
+    return { exit_code: result.exit_code, stdout: result.stdout, stderr: result.stderr,
+      timed_out: result.timed_out || result.cancelled, output_limited: result.output_limited };
+  }
   return await new Promise(resolveResult => {
     let stdout = Buffer.alloc(0), stderr = Buffer.alloc(0), timed_out = false, output_limited = false, settled = false;
     const env: NodeJS.ProcessEnv = {};
     for (const key of ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'LANG']) if (process.env[key]) env[key] = process.env[key];
-    const child = spawn(process.execPath, [checkedPath(root, script)], { cwd: resolve(root), shell: false, windowsHide: true, detached: process.platform !== 'win32', env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(node, [checkedPath(root, script)], { cwd: resolve(root), shell: false, windowsHide: true, detached: process.platform !== 'win32', env, stdio: ['pipe', 'pipe', 'pipe'] });
     let stopped = false;
     const stop = () => {
       if (stopped) return; stopped = true;
@@ -360,7 +368,7 @@ async function execute(root: string, script: string, input: unknown, timeout: nu
   });
 }
 /** New output paths only. A repeated request returns its durable result; uncertain attempts are never replayed. */
-export async function runProcedure(root: string, input: RunProcedureInput): Promise<ProcedureRun> {
+export async function runProcedure(root: string, input: RunProcedureInput, options: { signal?: AbortSignal } = {}): Promise<ProcedureRun> {
   const value = runSchema.parse(input);
   if (Buffer.byteLength(JSON.stringify(value.parameters)) > 1024 * 1024) throw new Error('Procedure parameter payload exceeds one MiB.');
   const prepared = withOperationLock(root, `procedure-${value.procedure_id}`, () => {
@@ -386,10 +394,10 @@ export async function runProcedure(root: string, input: RunProcedureInput): Prom
   try {
     const packet = { schema_version: 1, request_id: run.request_id, procedure_id: manifest.id, version: manifest.version, parameters: run.parameters, outputs: manifest.outputs.map(output => substitute(output.path, run.parameters)) };
     if (scriptHash(root, manifest.script) !== manifest.script_sha256 || scriptHash(root, manifest.verification_script) !== manifest.verification_sha256 || canonical(dependencyHashes(root, manifest.dependencies)) !== canonical(manifest.dependency_sha256)) throw new Error('Procedure code or dependencies changed before execution.');
-    run.generator = await execute(root, manifest.script, packet, manifest.timeout_ms, manifest.max_output_bytes);
+    run.generator = await execute(root, manifest.script, packet, manifest.timeout_ms, manifest.max_output_bytes, options.signal);
     if (run.generator.exit_code !== 0 || run.generator.timed_out || run.generator.output_limited) throw new Error('Procedure generation failed, timed out, or exceeded its output limit.');
     if (scriptHash(root, manifest.verification_script) !== manifest.verification_sha256 || canonical(dependencyHashes(root, manifest.dependencies)) !== canonical(manifest.dependency_sha256)) throw new Error('Verification script or dependencies changed during execution.');
-    run.verification = await execute(root, manifest.verification_script, packet, manifest.timeout_ms, manifest.max_output_bytes);
+    run.verification = await execute(root, manifest.verification_script, packet, manifest.timeout_ms, manifest.max_output_bytes, options.signal);
     if (run.verification.exit_code !== 0 || run.verification.timed_out || run.verification.output_limited) throw new Error('Procedure verification failed, timed out, or exceeded its output limit.');
     run.outputs = manifest.outputs.map(output => {
       const path = substitute(output.path, run.parameters), full = checkedPath(root, path), info = statSync(full);
@@ -401,7 +409,7 @@ export async function runProcedure(root: string, input: RunProcedureInput): Prom
     const current = resolveProcedure(root, manifest.id, manifest.version);
     if (current.status === 'suspended') throw new Error(`Procedure was suspended during execution: ${current.reason}`);
     run.status = 'succeeded';
-  } catch (error) { run.status = 'failed'; run.error = error instanceof Error ? error.message : String(error); }
+  } catch (error) { run.status = options.signal?.aborted ? 'uncertain' : 'failed'; run.error = error instanceof Error ? error.message : String(error); }
   run.finished_at = new Date().toISOString();
   withOperationLock(root, `procedure-${manifest.id}`, () => {
     createJson(root, `${base}/runs/${key}/result.json`, run);

@@ -7,6 +7,9 @@ import { roleCapabilities } from './tools.js';
 import { vscodeSelection } from './vscode-policy.js';
 import { resourceRoot, safePath } from './storage.js';
 import { readRoleUpstreamInstructions } from './upstreams.js';
+import { controlledInstructions, controlledToolNames } from './controlled-tools.js';
+import { ownedContext } from './controlled-context.js';
+import { invocationPolicy, invocationConfigurationHashes } from './routing.js';
 
 // VS Code is supplied by extension host, not imported into CLI or added as dependency.
 type VSCode = any;
@@ -46,7 +49,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
         receipt.native_thread_id !== turn.conversation || receipt.confirmed_model !== turn.model.id ||
         receipt.model_provider !== turn.model.vendor)
       throw new Error('Host turn differs from signed invocation.');
-    if (turn.configuration !== canonicalJson(routingConfigurationHashes(root)) ||
+    if (turn.configuration !== canonicalJson(invocationConfigurationHashes(root, receipt)) ||
         routingProblems(root, receipt.role, turn.invocation, { require_completed: false }).length)
       throw new Error('Invocation policy changed.');
   }
@@ -133,6 +136,10 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
   }
   const server = await serveHost(root, async (operation, input) => {
     if (closed || !enabled()) throw new Error('Workspace trust or workspace folder changed.');
+    if (['controlled-start', 'controlled-control', 'controlled-status'].includes(operation)) {
+      const { dispatchControlledHost } = await import('./controlled-workflow.js');
+      return dispatchControlledHost(root, operation, input);
+    }
     if (operation === 'open') {
       if (turns.size >= 256 || conversations.size >= 256) throw new Error('Host session limit reached; re-enable bridge.');
       const receipt = readInvocation(root, input.invocation_id);
@@ -140,11 +147,11 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
         throw new Error('Host requires a starting signed invocation.');
       if (requireRoutingPolicy(root).vscode_effort_policy !== 'allow-unavailable')
         throw new Error('VS Code API cannot verify reasoning effort. Explicit allow-unavailable policy required.');
-      if (canonicalJson(receipt.configuration_hashes) !== canonicalJson(routingConfigurationHashes(root)))
+      if (canonicalJson(receipt.configuration_hashes) !== canonicalJson(invocationConfigurationHashes(root, receipt)))
         throw new Error('Configuration changed before host selection.');
       if ([...turns.values()].some((turn) => turn.invocation === receipt.id))
         throw new Error('Invocation already owns a host turn.');
-      const selector = vscodeSelection(root, receipt.role, receipt.requested_model);
+      const selector = vscodeSelection(root, receipt.role, receipt.requested_model, invocationPolicy(root, receipt));
       let selectionTimer: NodeJS.Timeout | undefined;
       let models: any[];
       try {
@@ -156,7 +163,9 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
       if (!models.length) return { unavailable: true };
       if (models.length !== 1 || models[0].id !== selector.id || models[0].vendor !== selector.vendor)
         throw new Error(`VS Code model selection is ambiguous or mismatched for ${selector.vendor}/${selector.id}; require exactly one matching live model.`);
-      const allowed = roleCapabilities(receipt.role).operations;
+      const controlled = ownedContext(root, receipt.request_id);
+      if (receipt.controlled_execution && !controlled) throw new Error('Controlled invocation lost its runtime owner.');
+      const allowed = controlled ? controlledToolNames(controlled.binding) : roleCapabilities(receipt.role).operations;
       if (!Array.isArray(input.tools) || input.tools.length > 256 || !input.tools.length ||
           input.tools.some((tool: any) => !allowed.includes(tool.name) || ['manager_run', 'manager_begin'].includes(tool.name)))
         throw new Error('Host tools escape role contract.');
@@ -176,14 +185,14 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
           throw new Error('Host conversation stale or mismatched. Start fresh invocation.');
         conversation = old;
       } else {
-        const instructions = [`roles/${receipt.role}.md`, 'guides/workflow.md', ...(receipt.role === 'manager' ? ['guides/manager.md'] : [])]
+        const instructions = controlled ? controlledInstructions(controlled.binding) : [`roles/${receipt.role}.md`, 'guides/workflow.md', ...(receipt.role === 'manager' ? ['guides/manager.md'] : [])]
           .map((path) => {
             const installed = safePath(root, `.neomind/${path}`);
             const source = existsSync(installed) ? installed : join(resourceRoot, path);
             return existsSync(source) ? readFileSync(source, 'utf8') : '';
           }).join('\n').slice(0, 32000) + '\n' + readRoleUpstreamInstructions(root, receipt.role);
         conversation = { role: receipt.role, workflow: receipt.workflow_id, task: receipt.task_id, vendor: selector.vendor, model: selector.id,
-          messages: [vscode.LanguageModelChatMessage.User(`NeoMind invocation ${receipt.id}. Role ${receipt.role}; workflow ${receipt.workflow_id}; task ${receipt.task_id}. Only supplied invocation-bound MCP tools exist. No builtin shell or filesystem tools. Never recursively start manager_run, manager_begin or another manager. Use project_read for hashes, task_file_write for assigned edits, check_run for prescribed checks. Before ending call assignment_report with substantive seven-section Cornell work_record, or task_submit with full work_record. Do not fabricate evidence. Installed instructions:\n${instructions}`)] };
+          messages: [vscode.LanguageModelChatMessage.User(controlled ? instructions : `NeoMind invocation ${receipt.id}. Role ${receipt.role}; workflow ${receipt.workflow_id}; task ${receipt.task_id}. Only supplied invocation-bound MCP tools exist. No builtin shell or filesystem tools. Never recursively start manager_run, manager_begin or another manager. Use project_read for hashes, task_file_write for assigned edits, check_run for prescribed checks. Before ending call assignment_report with substantive seven-section Cornell work_record, or task_submit with full work_record. Do not fabricate evidence. Installed instructions:\n${instructions}`)] };
         conversations.set(conversationId, conversation);
       }
       conversation.messages.push(vscode.LanguageModelChatMessage.User(receipt.input_text));

@@ -38,6 +38,7 @@ import {
   requireRoutingPolicy,
   roleModelPolicy,
   routingConfigurationHashes,
+  invocationConfigurationHashes,
   type NativeReceipt,
   type NativeRole,
 } from './routing.js';
@@ -45,6 +46,8 @@ import { roleCapabilities, resolveCapabilities, toolCatalog, type ProviderId } f
 import { VSCodeSession } from './vscode-session.js';
 import { readHost, bridgeProtocol } from './vscode-wire.js';
 import { readRoleUpstreamInstructions } from './upstreams.js';
+import { ownedContext } from './controlled-context.js';
+import { controlledToolNames } from './controlled-tools.js';
 
 const runtimeVersion = '0.162.1';
 const runtimeIntegrity =
@@ -614,14 +617,14 @@ class NativeSession {
     this.vscode = new VSCodeSession(this.root, this.receipt, (patch) => this.update(patch), async (state, error) => {
       if (state !== 'completed') { this.settle(state, error); return; }
       try {
-        if (canonicalJson(routingConfigurationHashes(this.root)) !== canonicalJson(this.receipt.configuration_hashes))
+        if (canonicalJson(invocationConfigurationHashes(this.root, this.receipt)) !== canonicalJson(this.receipt.configuration_hashes))
           throw new Error('Native configuration changed during inference.');
         await this.finishInference();
       } catch (failure) { this.settle('blocked', cleanError(failure)); }
     });
     await this.vscode.open();
     this.update({ state: 'running' });
-    if (this.receipt.role === 'manager' && this.receipt.workflow_id) {
+    if (this.receipt.role === 'manager' && this.receipt.workflow_id && !this.receipt.controlled_execution) {
       const { bindManagerInvocation } = await import('./manager.js');
       bindManagerInvocation(this.root, this.receipt.workflow_id, this.receipt.id);
     }
@@ -976,6 +979,15 @@ async function startOwned(
       created.protocol_sha256 = hash(bridgeProtocol);
       created.native_tool_scope = roleCapabilities(input.role).operations;
       created.gateway_policy_sha256 = hash(canonicalJson(created.native_tool_scope));
+      const controlled = ownedContext(root, input.request_id);
+      if (controlled) {
+        if (controlled.binding.workflow_id !== input.workflow_id || controlled.binding.role !== input.role ||
+            controlled.binding.task_id !== input.task_id) throw new Error('Controlled invocation context differs from backend dispatch.');
+        created.controlled_execution = { schema_version: 1, epoch_id: controlled.epoch_id, stage: controlled.binding.stage,
+          routing_policy: structuredClone(requireRoutingPolicy(root)) };
+        created.native_tool_scope = controlledToolNames(controlled.binding);
+        created.gateway_policy_sha256 = hash(canonicalJson(created.native_tool_scope));
+      }
     }
     persist(root, created);
     return created;

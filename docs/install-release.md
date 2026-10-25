@@ -1,23 +1,23 @@
 # Install the NeoMind runtime and VS Code extension
 
-Candidate `v0.1.0-alpha.9` pairs the packages below. Publication is pending completion of the actual Local Copilot validation; source-branch packages are not a published release.
+Candidate `v0.1.0-alpha.10` pairs the packages below. Publication is pending completion of the actual Local Copilot validation; source-branch packages are not a published release.
 
 | Download | Purpose |
 | --- | --- |
-| `neomind-0.1.0-alpha.9.tgz` | NeoMind CLI, MCP server and shared runtime |
-| `neomind-agent-monitor-0.9.4.vsix` | Agent universe, Automation Library, plug-in controls and Earth FocusSpace |
+| `neomind-0.1.0-alpha.10.tgz` | NeoMind CLI, MCP server and shared runtime |
+| `neomind-agent-monitor-0.10.0.vsix` | Agent universe, Automation Library, plug-in controls and Earth FocusSpace |
 | `SHA256SUMS.txt` | SHA-256 digests for the installable assets |
 
-Download both packages from the [same GitHub release](https://github.com/NeoTech-vietnam/NeoMind/releases/tag/v0.1.0-alpha.9). These packages do not require npm registry or VS Code Marketplace publication. Node.js 24 or 26+, npm, Git and desktop VS Code 1.109+ are required. The release's `release-validation.json` identifies its Windows and Ubuntu CI results and remaining native-client verification gaps. Optional REA requires Node 24.11+ or 26+.
+Download both packages from the [same GitHub release](https://github.com/NeoTech-vietnam/NeoMind/releases/tag/v0.1.0-alpha.10). These packages do not require npm registry or VS Code Marketplace publication. Node.js 24 or 26+, npm, Git and desktop VS Code 1.109+ are required. The release's `release-validation.json` identifies its Windows and Ubuntu CI results and remaining native-client verification gaps. Optional REA requires Node 24.11+ or 26+.
 
 ## 1. Install the runtime
 
 Open a terminal in the download directory. On Windows PowerShell:
 
 ```powershell
-Get-FileHash ./neomind-0.1.0-alpha.9.tgz -Algorithm SHA256
-Get-FileHash ./neomind-agent-monitor-0.9.4.vsix -Algorithm SHA256
-npm install --global ./neomind-0.1.0-alpha.9.tgz
+Get-FileHash ./neomind-0.1.0-alpha.10.tgz -Algorithm SHA256
+Get-FileHash ./neomind-agent-monitor-0.10.0.vsix -Algorithm SHA256
+npm install --global ./neomind-0.1.0-alpha.10.tgz
 neomind --help
 npm root --global
 ```
@@ -27,7 +27,7 @@ Compare the hashes with `SHA256SUMS.txt`. The last command prints the global mod
 ## 2. Install the VS Code extension
 
 ```powershell
-code --install-extension ./neomind-agent-monitor-0.9.4.vsix --force
+code --install-extension ./neomind-agent-monitor-0.10.0.vsix --force
 ```
 
 Alternatively use **Extensions: Install from VSIX** in VS Code. Set the **User** setting `neomind.bridge.runtimePath` to the absolute runtime directory from step 1. It must contain `package.json` and `dist`; workspace overrides are ignored. For a typical Windows global npm installation, this is `%APPDATA%/npm/node_modules/neomind`. Use your actual path rather than copying someone else's username or drive.

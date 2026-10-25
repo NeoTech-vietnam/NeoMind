@@ -3,6 +3,7 @@ const { join } = require('node:path');
 const { randomBytes } = require('node:crypto');
 const { renderFocusSpace } = require('./focus-space.cjs');
 const { createFocusHost } = require('./focus-host.cjs');
+const { publicStatus } = require('./controlled-workflows.cjs');
 
 const genericModelChangeRefusal = 'NeoMind refused the model change. Check active invocations and role/model policy; the requested change was not accepted.';
 const knownModelChangeRefusals = new Map([
@@ -32,9 +33,10 @@ function renderMonitorHtml({ cspSource, script, style, universe = 'universe.js',
 <header class="app-header">
   <div class="brand"><span class="brand-orbit" aria-hidden="true"></span><div><h1>NeoMind <span>UNIVERSE</span></h1><p>Agent observatory</p></div></div>
   <div class="project-heading"><span class="eyebrow">PROJECT SYSTEM</span><strong id="project-name">Connecting…</strong></div>
-  <div class="header-actions"><button id="open-automation" class="button secondary" type="button">Automation</button><button id="manage-plugins" class="button secondary" type="button">Plug-ins</button><button id="enter-focus-space" class="button secondary" type="button">◉ Enter Earth <span>· Focus Space</span></button><span id="router-status" class="pill">Reading routing</span><button id="refresh" class="button secondary" type="button">↻ <span>Refresh</span></button></div>
+  <div class="header-actions"><button id="open-workflows" class="button secondary" type="button">Workflows</button><button id="open-automation" class="button secondary" type="button">Automation</button><button id="manage-plugins" class="button secondary" type="button">Plug-ins</button><button id="enter-focus-space" class="button secondary" type="button">◉ Enter Earth <span>· Focus Space</span></button><span id="router-status" class="pill">Reading routing</span><button id="refresh" class="button secondary" type="button">↻ <span>Refresh</span></button></div>
 </header>
 <div class="telemetry"><p id="status" role="status">Loading local project state…</p><span id="observed-summary"></span></div>
+<p id="controlled-summary" class="routing-note" aria-live="polite"></p>
 <main class="observatory">
   <section class="universe-stage" aria-label="Agent universe">
     <div class="stage-toolbar"><span class="eyebrow"><span class="tiny-orbit" aria-hidden="true">◎</span> ORBITAL VIEW</span><div class="view-actions"><button id="focus-selection" type="button" class="button subtle">Focus</button><button id="reset-view" type="button" class="button subtle">Reset view</button><button id="show-history" type="button" class="button subtle" aria-pressed="false">Show history</button><button id="motion" type="button" class="button subtle" aria-pressed="false">Pause orbits</button></div></div>
@@ -99,6 +101,8 @@ function activateMonitor(vscode, context, loadRuntime) {
         refreshBusy = true;
         try {
           const map = await runtime.readAgentMap(root);
+          let controlled = [];
+          try { if (typeof runtime.controlledStatus === 'function') controlled = publicStatus(await runtime.controlledStatus(root)).workflows; } catch {}
           let control, controlUnavailable = false;
           try { control = await runtime.modelControlStatus(root); }
           catch { controlUnavailable = true; control = { roles: [], active_invocations: [], router: null }; }
@@ -106,9 +110,11 @@ function activateMonitor(vscode, context, loadRuntime) {
           const roles = control.roles.map(role => ({ role: role.role, models: role.models,
             provider: role.provider, reasoning_effort: role.reasoning_effort, strong: role.strong }));
           await current.webview.postMessage({ type: 'snapshot', map, roles,
+            controlled_workflows: controlled,
             agent_profiles: control.agent_profiles ?? [],
             native_routing: control.native_routing ?? null,
             router_configured: Boolean(control.router), active_count: controlUnavailable ? null : control.active_invocations.length,
+            controlled_model_changes: !controlUnavailable && control.active_invocations.every(item => item.controlled === true),
             control_unavailable: controlUnavailable });
         } catch {
           if (alive()) await current.webview.postMessage({ type: 'error', message: 'Local NeoMind state is unavailable. Initialize this workspace and check its configuration and receipt trust.' });
@@ -120,6 +126,7 @@ function activateMonitor(vscode, context, loadRuntime) {
         if (!alive() || !message || typeof message !== 'object') return;
         if (message.type === 'open-plugins') { await vscode.commands.executeCommand('neomind.plugins.open'); return; }
         if (message.type === 'open-automation') { await vscode.commands.executeCommand('neomind.automation.open'); return; }
+        if (message.type === 'open-workflows') { await vscode.commands.executeCommand('neomind.workflows.open'); return; }
         if (message.type === 'focus-space') { await focusHost.handle(message); return; }
         if (message.type === 'refresh') { await refresh(); return; }
         if (message.type !== 'select-model' || selecting || typeof message.role !== 'string') return;
@@ -128,7 +135,7 @@ function activateMonitor(vscode, context, loadRuntime) {
           const control = await runtime.modelControlStatus(root);
           const role = control.roles.find(item => item.role === message.role);
           if (!role || !alive()) return;
-          if (control.active_invocations.length) {
+          if (control.active_invocations.length && control.active_invocations.some(item => item.controlled !== true)) {
             await vscode.window.showWarningMessage('Model changes are blocked while NeoMind invocations are active. Finish or stop them, then choose a model.');
             return;
           }

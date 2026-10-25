@@ -106,6 +106,7 @@ import {
   type RecipeInput,
 } from './recipes.js';
 import { managedRun, type ManagedRunInput } from './managed.js';
+import { controlledStatus, controlControlledWorkflow, hasControlledWorkflow } from './controlled-workflow.js';
 import { workspaceWrite } from './workspace.js';
 import { checkpointLightweight } from './lightweight.js';
 import { validateEvidenceInputs, type EvidenceInputSnapshot } from './evidence-inputs.js';
@@ -857,7 +858,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
           } else if (
             !readOnly &&
             readRoutingPolicy(root) &&
-            !['manager_run', 'lightweight_checkpoint', 'agent_activity'].includes(name) &&
+            !['manager_run', 'manager_control', 'lightweight_checkpoint', 'agent_activity'].includes(name) &&
             !nativeWorkflowMutation(root, name, input) &&
             !(actor && (name.startsWith('procedure_') || name.startsWith('assignment_') || name.startsWith('workflow_')))
           ) {
@@ -1121,7 +1122,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
   );
   tool(
     'manager_run',
-    'Start or resume an engineering increment: native handoff in lightweight mode, visible manager subagent in copilot-native mode, signed coordinator in strict mode. Supply requirement for one item OR requirements for a batch. Set the unused field to null or omit it. For resume, supply workflow_id; both requirement fields may be null.',
+    'Submit or resume work. neomind-controlled returns a durable receipt quickly and runs the complete workflow in the enabled VS Code owner, independently of this chat. Other saved execution modes retain their original semantics. Supply requirement OR requirements; for resume provide the exact workflow_id. Do not reconstruct worker requests or credentials.',
     {
       requirement: z
         .string()
@@ -1134,7 +1135,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
         .optional()
         .describe('A requirement batch. Use null or omit when supplying requirement.'),
       workflow_id: z.string().nullable().optional(),
-      execution_mode: z.enum(['strict', 'lightweight', 'copilot-native', 'codex-native']).nullable().optional(),
+      execution_mode: z.enum(['strict', 'lightweight', 'copilot-native', 'codex-native', 'neomind-controlled']).nullable().optional(),
       native_client: z.enum(['copilot', 'codex']).nullable().optional(),
       message: z.string().nullable().optional(),
       title: z.string().nullable().optional(),
@@ -1156,7 +1157,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     {
       requirement: z.string().nullable().optional(),
       requirements: z.array(z.string()).nullable().optional(),
-      execution_mode: z.enum(['strict', 'copilot-native', 'codex-native']).nullable().optional(),
+      execution_mode: z.enum(['strict', 'copilot-native', 'codex-native', 'neomind-controlled']).nullable().optional(),
       title: z.string().nullable().optional(),
       invocation_id: z.string().nullable().optional(),
       request_id: z.string().nullable().optional(),
@@ -1202,8 +1203,12 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     'manager_status',
     'Find saved workflows, current gates, changed decisions, and the next executable action.',
     { workflow_id: z.string().optional() },
-    (i) => workflowStatus(root, i.workflow_id),
+    (i) => i.workflow_id && hasControlledWorkflow(root, i.workflow_id) ? controlledStatus(root, i.workflow_id)
+      : Object.assign({}, workflowStatus(root, i.workflow_id), { controlled_workflows: controlledStatus(root) }),
   );
+  tool('manager_control', 'Pause, resume or cancel one exact controlled workflow through its enabled VS Code owner. Work is independent of this chat connection.', {
+    workflow_id: z.string().min(1), action: z.enum(['pause', 'resume', 'cancel']),
+  }, i => controlControlledWorkflow(root, i), false);
   tool(
     'lightweight_checkpoint',
     'Save a native-client lightweight report. No signed acceptance, strict task mutation, execution, publication or permission expansion.',

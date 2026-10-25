@@ -29,6 +29,7 @@ import { loadRecords, updateRecord, withOperationLock, safePath as storagePath, 
 import { strings, nativeWorkflowRecord } from './engineering.js';
 import {
   adapterOutputs,
+  controlledAdapterEnabled,
   codeGraphProvider,
   resourcesDirectory,
   platforms,
@@ -538,13 +539,18 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
     warnings: [],
   };
   const localCopilot = config.platforms.includes('copilot') && config.copilot_integration === 'local';
+  const controlled = controlledAdapterEnabled(root);
   if (localCopilot) {
     const exclusions = ensureLocalGitExclusions(root);
     if (exclusions.changed && exclusions.path) report.updated.push(exclusions.path);
     if (exclusions.warning) report.warnings.push(exclusions.warning);
-    report.warnings.push('Local Copilot mode does not register an MCP server. Review .neomind/mcp-server.json and register its server in VS Code user-profile MCP configuration.');
+    report.warnings.push(controlled
+      ? 'Controlled mode registers the exact-project NeoMind server in .vscode/mcp.json, preserving authored siblings and conflict candidates. Reload/start the server and verify actual tool discovery in VS Code; generated registration is not an active connection. Existing tracked MCP files remain tracked.'
+      : 'Local Copilot mode does not register an MCP server. Review .neomind/mcp-server.json and register its server in VS Code user-profile MCP configuration.');
     if (['.github/copilot-instructions.md', '.vscode/mcp.json', '.mcp.json'].some(path => existsSync(safePath(root, path))))
-      report.warnings.push('Local Copilot integration preserves existing shared instructions and workspace MCP configuration. Review any previously configured NeoMind, TaskForces or VeryThinker integration before enabling the user-profile server.');
+      report.warnings.push(controlled
+        ? 'Controlled registration preserves authored shared instructions and unrelated MCP entries. Review conflicts and any previously configured user-profile NeoMind server before enabling duplicate connections.'
+        : 'Local Copilot integration preserves existing shared instructions and workspace MCP configuration. Review any previously configured NeoMind, TaskForces or VeryThinker integration before enabling the user-profile server.');
   }
   if (!policyExists) report.installed.push('.neomind/automation.json');
   ensureRoutingPolicy(root);
@@ -628,6 +634,9 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
         /^\.codex\/agents\/neomind-[^/]+\.toml$/.test(entry.path));
       const retiredCodexProvider = entry.kind === 'block' && entry.path === '.codex/config.toml' &&
         ['codex-routing-root', 'codex-routing-provider'].includes(entry.key ?? '');
+      // Controlled workers use the VS Code Bridge. Preserve an existing parent
+      // Codex provider selection even when this version no longer generates it.
+      if (controlled && retiredCodexProvider) continue;
       const retiredCodexHook = entry.kind === 'json' && entry.path === '.codex/hooks.json' &&
         entry.key === 'hooks.SessionStart';
       const optionalPlugins = ['rea', 'codegraph', 'context7', 'playwright'];
@@ -751,8 +760,10 @@ export function doctor(root: string): DoctorReport {
   root = realpathSync(resolve(root));
   const config = configFor(root);
   const warnings: string[] = [];
-  if (config.platforms.includes('copilot') && config.copilot_integration === 'local')
+  const controlled = controlledAdapterEnabled(root);
+  if (config.platforms.includes('copilot') && config.copilot_integration === 'local' && !controlled)
     warnings.push('Local Copilot mode requires VS Code user-profile MCP registration. .neomind/mcp-server.json is example metadata only; no registered connection or successful tool call is inferred.');
+  if (controlled) warnings.push('Controlled execution requires the trusted exact workspace open in VS Code and its Model Bridge enabled. Config files do not prove this client loaded the server or discovered/invoked its tools. Codex is an entrypoint; worker sessions use the VS Code LM Bridge and do not rewrite the parent Codex provider.');
   let codegraph: typeof codeGraphProvider | CodeGraphConfiguration = codeGraphProvider;
   try {
     codegraph = loadCodeGraphConfiguration(root) ?? codeGraphProvider;
@@ -772,18 +783,21 @@ export function doctor(root: string): DoctorReport {
   const nodeMajor = Number(process.versions.node.split('.')[0]);
   const routingPolicy = readRoutingPolicy(root);
   const observations: DoctorReport['routing']['observations'] = [];
+  let vscodeObservations = 0;
   const receiptDirectory = safePath(root, '.neomind/native/receipts');
   for (const file of existsSync(receiptDirectory) ? readdirSync(receiptDirectory) : []) {
     if (!file.endsWith('.json')) continue;
     try {
       const receipt = readInvocation(root, file.slice(0, -5));
-      if (!routingProblems(root, receipt.role, receipt.id, { require_completed: true }).length)
+      if (!routingProblems(root, receipt.role, receipt.id, { require_completed: true }).length) {
         observations.push({
           id: receipt.id,
           role: receipt.role,
           model: receipt.confirmed_model,
           state: receipt.state,
         });
+        if (receipt.issuer.endsWith('-vscode-lm')) vscodeObservations++;
+      }
     } catch {
       /* Invalid receipts remain unusable engineering evidence. */
     }
@@ -831,9 +845,7 @@ export function doctor(root: string): DoctorReport {
       } catch {
         validOptional = false;
       }
-      const configured =
-        validOptional &&
-        expected.every((output) => {
+      const matchesOutput = (output: ManagedOutput) => {
           const source = text(safePath(root, output.path));
           if (source === undefined) return false;
           try {
@@ -847,15 +859,31 @@ export function doctor(root: string): DoctorReport {
           } catch {
             return false;
           }
-        });
+        };
+      const configured = validOptional && expected.every(matchesOutput);
+      const registrations = expected.filter(output => platform === 'codex'
+        ? output.path === '.codex/config.toml' && output.key === 'mcp'
+        : platform === 'copilot' ? output.path === '.vscode/mcp.json' && output.key === 'servers.neomind'
+        : output.path === '.mcp.json' && output.key === 'mcpServers.neomind');
+      const registered = validOptional && registrations.length > 0 && registrations.every(matchesOutput);
       return {
         platform,
         client,
         requested_models: config.models,
         capabilities: [
-          ...(platform === 'copilot' && config.copilot_integration === 'local' ? [{
+          ...(platform === 'copilot' && config.copilot_integration === 'local' && !controlled ? [{
             capability: 'user-profile-mcp', status: 'unverified' as const,
             detail: 'Register the reviewed server in VS Code user-profile MCP configuration and verify a real tool call. Local metadata is not an active connection.',
+          }] : []),
+          {
+            capability: 'mcp-registration', status: registered ? 'configured' : 'unverified',
+            detail: registered
+              ? 'The exact-project server entry matches the generated command and arguments. Reload/start it and verify actual tool discovery and invocation in this client.'
+              : 'No matching project server registration was established. Inspect configured files and update candidates; user-profile connections require separate client verification.',
+          },
+          ...(controlled ? [{
+            capability: 'controlled-entrypoint', status: registered ? 'configured' as const : 'restricted' as const,
+            detail: 'manager_run, manager_status and manager_control address the same VS Code-owned runtime. Execution and client discovery remain unverified until observed; native agent profile files are not proof of loaded sessions.',
           }] : []),
           {
             capability: 'adapter-files',
@@ -879,13 +907,13 @@ export function doctor(root: string): DoctorReport {
           {
             capability: 'model-routing',
             status:
-              platform === 'copilot'
+              controlled ? vscodeObservations ? 'supported' : 'unverified' : platform === 'copilot'
                 ? observations.length
                   ? 'supported'
                   : 'unverified'
                 : 'restricted',
             detail:
-              platform === 'copilot'
+              controlled ? 'Controlled worker model observations belong to the VS Code LM Bridge; parent chat provider/model selection is independent. Only currently valid completed invocation receipts establish the recorded worker selections.' : platform === 'copilot'
                 ? observations.length
                   ? `${observations.length} completed invocations have currently valid signed model-selection receipts; support is limited to those observed roles/models.`
                   : 'Strict Copilot routing is configured; authenticated access and execution require successful native receipt evidence.'

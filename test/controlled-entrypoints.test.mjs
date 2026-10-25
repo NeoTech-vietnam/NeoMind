@@ -1,0 +1,41 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, readFileSync, realpathSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
+import { parse as toml } from 'smol-toml';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { initialize, atomicWrite, safePath, loadRecords } from '../dist/storage.js';
+import { installProject, doctor } from '../dist/installer.js';
+import { createMcpServer } from '../dist/mcp.js';
+
+test('explicit controlled adapters register both clients and preserve parent provider and unrelated MCP servers', async t => {
+  const parent = realpathSync(tmpdir()), root = mkdtempSync(join(parent, 'neomind-entrypoint-'));
+  t.after(() => { assert.equal(dirname(root), parent); rmSync(root, { recursive: true, force: true }); });
+  initialize(root, { name: 'Controlled adapters', platforms: ['codex', 'copilot'], copilot_integration: 'local' });
+  atomicWrite(safePath(root, '.neomind/automation.json'), JSON.stringify({ schema_version: 1, manager_enabled: true,
+    documentation_required: true, automatic_pr: false, upstream: null, max_discussion_rounds: 3, execution_mode: 'neomind-controlled' }));
+  atomicWrite(safePath(root, '.codex/config.toml'), 'model = "parent-model"\nmodel_provider = "parent-provider"\n');
+  atomicWrite(safePath(root, '.vscode/mcp.json'), JSON.stringify({ servers: { existing: { command: 'existing-provider' } } }));
+  const report = installProject(root, { copilot_integration: 'local' });
+  assert.equal(report.conflicts?.length ?? 0, 0);
+  const codex = toml(readFileSync(safePath(root, '.codex/config.toml'), 'utf8'));
+  assert.equal(codex.model, 'parent-model'); assert.equal(codex.model_provider, 'parent-provider');
+  assert.deepEqual(codex.mcp_servers.neomind.enabled_tools, ['manager_run', 'manager_status', 'manager_control']);
+  const copilot = JSON.parse(readFileSync(safePath(root, '.vscode/mcp.json'), 'utf8'));
+  assert.equal(copilot.servers.existing.command, 'existing-provider');
+  assert.ok(copilot.servers.neomind.args.includes(root));
+  const instructions = readFileSync(safePath(root, '.github/agents/neomind-coordinator.agent.md'), 'utf8');
+  assert.match(instructions, /manager_run/); assert.match(instructions, /neomind-controlled/);
+  assert.doesNotMatch(instructions, /assignment_claim|assignment_open|assignment_progress/);
+  assert.ok(doctor(root).platforms.every(platform => platform.capabilities.some(capability => capability.capability === 'mcp' && capability.status === 'unverified')));
+  const server = createMcpServer(root), client = new Client({ name: 'controlled-entrypoint-fixture', version: '1' });
+  const [a, b] = InMemoryTransport.createLinkedPair(); await server.connect(b); await client.connect(a);
+  t.after(async () => { await client.close(); await server.close(); });
+  assert.ok((await client.listTools()).tools.some(tool => tool.name === 'manager_control'));
+  const before = loadRecords(root).length;
+  const result = await client.callTool({ name: 'manager_run', arguments: { requirement: 'Inspect this bounded source change.', execution_mode: 'neomind-controlled' } });
+  assert.equal(result.isError, true); assert.match(JSON.stringify(result), /bridge.*disabled|Enable Model Bridge/i);
+  assert.equal(loadRecords(root).length, before, 'a missing actual editor host must not create fake running work');
+});

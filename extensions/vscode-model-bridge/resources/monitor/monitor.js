@@ -13,6 +13,7 @@
   let focusOpen = false, focusSpace = null;
   let map = null, configuredRoles = [], nodesById = new Map(), rolesById = new Map();
   let unavailable = true, controlUnavailable = true, activeCount = null, routerConfigured = false, errorReason = '';
+  let controlledModelChanges = false;
   let selectionNote = '', search = '';
   const roleRows = new Map(), nodeRows = new Map(), evidenceRows = new Map(), activityRows = new Map(), selectedActivityRows = new Map(), liveRows = new Map();
   let profiles = [], groups = {};
@@ -32,7 +33,8 @@
   const button = (text, className, action) => {
     const node = element('button', text, className); node.type = 'button'; node.addEventListener('click', action); return node;
   };
-  const sourceLabel = item => item.source === 'signed-receipt' ? 'Signed local receipt'
+  const sourceLabel = item => item.source === 'controlled-runtime' ? 'NeoMind owned runtime session'
+    : item.source === 'signed-receipt' ? 'Signed local receipt'
     : item.source === 'native-hook' ? 'Native lifecycle hook (unsigned)'
     : item.source === 'native-activity' ? 'Reported native activity (unsigned)'
     : item.source === 'project-record' ? item.kind === 'agent' ? 'Reported native contribution' : 'Saved project record' : 'Source unavailable';
@@ -51,7 +53,7 @@
     if (unavailable) return 'Refresh saved state before changing models.';
     if (controlUnavailable) return 'Model policy or receipt trust is unavailable. Inspect project configuration.';
     if (activeCount === null) return 'Active invocation status is unavailable.';
-    if (activeCount > 0) return 'Finish or stop active signed invocations before changing models.';
+    if (activeCount > 0 && !controlledModelChanges) return 'Finish or stop active signed invocations before changing models.';
     return '';
   }
   function requestModel(role) {
@@ -343,7 +345,13 @@
       edges: message.map.edges.filter(edge => edge && typeof edge.id === 'string' && typeof edge.from === 'string' && typeof edge.to === 'string') };
     unavailable = false; errorReason = ''; controlUnavailable = Boolean(message.control_unavailable);
     activeCount = Number.isSafeInteger(message.active_count) && message.active_count >= 0 ? message.active_count : null;
+    controlledModelChanges = message.controlled_model_changes === true;
     routerConfigured = message.router_configured === true;
+    const controlled = Array.isArray(message.controlled_workflows) ? message.controlled_workflows : [];
+    const currentWork = controlled.filter(item => !['completed', 'cancelled', 'canceled'].includes(item.status));
+    setText(byId('controlled-summary'), currentWork.length
+      ? `NeoMind controlled workflows: ${currentWork.map(item => `${item.title ?? item.workflow_id}: ${item.status ?? 'unknown'}`).join(' · ')}`
+      : controlled.length ? 'No active controlled workflows. Open Workflows to inspect saved runtime journals.' : 'Open Workflows to give NeoMind a task managed by its own runtime.');
     if (!controlUnavailable) {
       nativeRouting = message.native_routing ?? null;
       profiles = Array.isArray(message.agent_profiles) ? message.agent_profiles.filter(profile => profile &&
@@ -369,6 +377,7 @@
   });
   byId('manage-plugins')?.addEventListener('click', () => vscode.postMessage({ type: 'open-plugins' }));
   byId('open-automation')?.addEventListener('click', () => vscode.postMessage({ type: 'open-automation' }));
+  byId('open-workflows')?.addEventListener('click', () => vscode.postMessage({ type: 'open-workflows' }));
   byId('refresh')?.addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
   byId('motion')?.addEventListener('click', () => { motionEnabled = !motionEnabled; persist(); updateMotion(); });
   byId('show-history')?.addEventListener('click', () => { showHistory = !showHistory; persist(); publishScene(); });

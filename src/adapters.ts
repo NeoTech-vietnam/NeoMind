@@ -334,7 +334,31 @@ ${nativeCommonWorkflow}
 Generic intake calls manager_run once with the complete request, then uses Codex spawn_agent with returned handoff.agent as agent_type and unchanged handoff.prompt. An assigned neomind-coordinator continues directly. Specialists execute their bounded packet without intake or recursive delegation. Parent Codex permissions, provider and MCP configuration remain authoritative.
 Expert delegation: ${codexDelegation}`;
 
-function codexProfileInstructions(root: string, profile: AgentProfile): string {
+/** Only an explicit project policy changes the generated client entrypoint. */
+export function controlledAdapterEnabled(root: string): boolean {
+  const path = safePath(root, '.neomind/automation.json');
+  return existsSync(path) && JSON.parse(readFileSync(path, 'utf8')).execution_mode === 'neomind-controlled';
+}
+
+function controlledWorkflow(platform: Platform): string {
+  const tool = (name: string) => platform === 'copilot' ? `neomind/${name}` : name;
+  return `## NeoMind controlled workflow
+
+This project explicitly selects execution_mode: neomind-controlled. This chat is an entrypoint into the exact project's NeoMind runtime. NeoMind opens and owns the Coordinator and worker sessions, their identity, tools, records, stage transitions and checks.
+For a new user request call ${tool('manager_run')} once with the complete requirement and execution_mode: neomind-controlled. Keep the returned durable workflow receipt. Accepted work continues while VS Code remains open, independently of this chat. Use ${tool('manager_status')} when the user asks for progress; use ${tool('manager_control')} with that exact workflow ID and action pause, resume or cancel when requested. Select an existing saved workflow explicitly when multiple workflows exist.
+The runtime performs planning, implementation and independent verification, with additional specialists and review according to risk and the saved contract. Return the receipt and actual saved outcome to the user. Tool credentials, assignment claims, progress bookkeeping and lifecycle changes are handled by the runtime. Native subagent delegation and separate parent-chat implementation are outside this controlled execution path.
+Enable the Model Bridge for this exact trusted workspace and grant model access through VS Code before running work. Model workers use the VS Code LM Bridge and configured 9router/vendor model policy even when this chat is Codex. The parent chat's provider/model remains independent. Closing VS Code interrupts owned sessions and checks; reopening reconciles the last durable checkpoint. A missing Bridge or permission is an actionable setup condition; preserve the receipt instead of starting another implementation.
+Saved legacy workflows retain their original mode, history and committed acceptance conditions. Backend continuation records link controlled execution to existing work without rewriting earlier evidence. Use only the saved IDs returned by NeoMind.
+Read .neomind/guides/controlled-workflows.md for setup, recovery, evidence and platform limits. Generated config establishes registration intent; verify actual MCP tool discovery and invocation in this client. Model aliases and a completed model turn do not establish upstream model identity or accepted work.
+`;
+}
+
+function controlledProfile(profile: AgentProfile, platform: Platform): string {
+  return `${controlledWorkflow(platform)}\n## ${profile.name}\n${profile.duty}\nRuntime role declaration: ${profile.roles.join(', ')}. Worker model policy role: ${profile.modelRole}. The runtime creates the actual role session with its bound semantic tools. The Coordinator profile submits requests and controls saved workflows; other native profile files are reference declarations, not independent worker launches.\n`;
+}
+
+function codexProfileInstructions(root: string, profile: AgentProfile, controlled = false): string {
+  if (controlled) return controlledProfile(profile, 'codex');
   const reaTools = nativePluginTools(root, profile.roles, 'codex').filter(tool => tool.startsWith('rea/')).map(tool => tool.slice(4));
   return `${codexWorkflow}\n\n## ${profile.name}\n${profile.duty}\nCore record roles: ${profile.roles.join(', ')}. Model policy role: ${profile.modelRole}. Preserve these core IDs in records.\nNative tool duties: ${profile.nativeTools.join(', ')}. Only the Coordinator delegates; other profiles return to their Coordinator. Read/search duties may use an existing native source-inspection tool; source inspection does not authorize terminal execution, edits or remote requests.\n${profile.procedure.replaceAll('copilot-native', 'codex-native')}\nRead .neomind/roles/<core-role>.md only when that operation or gate is required.\n${profile.roles.map(role => readRoleUpstreamInstructions(root, role)).filter(Boolean).join('\n')}\n${reaTools.length ? `For an explicitly authorized REA analysis assignment, load the original reverse-engineer-anything skill. Reviewed native REA tools: ${reaTools.join(', ')}. These direct client tools remain unsigned and inherit parent permissions; verify required engines before claiming target results.\n` : ''}`;
 }
@@ -407,6 +431,7 @@ export function adapterOutputs(root: string, config: AdapterConfig): ManagedOutp
     args: [cliPath, 'mcp', '--project', root],
   };
   const localCopilot = config.platforms.includes('copilot') && config.copilot_integration === 'local';
+  const controlled = controlledAdapterEnabled(root);
   const roles = roleFiles().map((role) => ({ ...role,
     body: role.body + '\n' + readRoleUpstreamInstructions(root, role.id),
   }));
@@ -418,9 +443,9 @@ export function adapterOutputs(root: string, config: AdapterConfig): ManagedOutp
     return registration.status === 'ready' ? [{ id: item.id, registration, server: { type: 'stdio', ...registration.server! } }] : [];
   });
   if (config.platforms.includes('codex')) {
-    const codexRouting = readCodexRouting(root, config.codex_routing ?? 'inherit');
-    outputs.push({ path: 'AGENTS.md', kind: 'block', key: 'instructions', content: codexWorkflow });
-    if (codexRouting.mode === '9router') outputs.push(
+    const codexRouting = controlled ? { mode: 'inherit' as const } : readCodexRouting(root, config.codex_routing ?? 'inherit');
+    outputs.push({ path: 'AGENTS.md', kind: 'block', key: 'instructions', content: controlled ? controlledWorkflow('codex') : codexWorkflow });
+    if (!controlled && codexRouting.mode === '9router') outputs.push(
       { path: '.codex/config.toml', kind: 'block', key: 'codex-routing-root', placement: 'preamble',
         rootKeys: ['model_provider'], content: `model_provider = ${JSON.stringify(codexRouting.provider)}\n` },
       { path: '.codex/config.toml', kind: 'block', key: 'codex-routing-provider',
@@ -430,7 +455,7 @@ export function adapterOutputs(root: string, config: AdapterConfig): ManagedOutp
       path: '.codex/config.toml',
       kind: 'block',
       key: 'mcp',
-      content: `[mcp_servers.neomind]\ncommand = ${JSON.stringify(node)}\nargs = ${JSON.stringify(server.args)}\n`,
+      content: `[mcp_servers.neomind]\ncommand = ${JSON.stringify(node)}\nargs = ${JSON.stringify(server.args)}\n${controlled ? 'enabled_tools = ["manager_run", "manager_status", "manager_control"]\n' : ''}`,
     });
     for (const item of optionalServers.filter(item => pluginClientConnectionEnabled(root, item.id, 'codex')))
       outputs.push({
@@ -444,12 +469,12 @@ export function adapterOutputs(root: string, config: AdapterConfig): ManagedOutp
       // Only an explicit platform-specific choice applies to inherited providers.
       // Legacy generic tiers and the Copilot routing policy may name incompatible models.
       const mapping = config.models?.[role.tier];
-      const policy = codexRouting.mode === '9router' ? roleModelPolicy(root, profile.modelRole) : undefined;
-      const model = policy?.models[0] ?? (mapping && typeof mapping === 'object' ? modelFor(config, role.tier, 'codex') : undefined);
+      const policy = !controlled && codexRouting.mode === '9router' ? roleModelPolicy(root, profile.modelRole) : undefined;
+      const model = controlled ? undefined : policy?.models[0] ?? (mapping && typeof mapping === 'object' ? modelFor(config, role.tier, 'codex') : undefined);
       outputs.push({
         path: `.codex/agents/neomind-${profile.id}.toml`,
         kind: 'file',
-        content: `name = ${JSON.stringify(`neomind-${profile.id}`)}\ndescription = ${JSON.stringify(`${profile.name}: ${profile.duty}`)}\n${model ? `model = ${JSON.stringify(model)}\n` : ''}${policy ? `model_reasoning_effort = ${JSON.stringify(policy.reasoning_effort)}\n` : ''}developer_instructions = ${JSON.stringify(codexProfileInstructions(root, profile))}\n`,
+        content: `name = ${JSON.stringify(`neomind-${profile.id}`)}\ndescription = ${JSON.stringify(`${profile.name}: ${profile.duty}`)}\n${model ? `model = ${JSON.stringify(model)}\n` : ''}${policy ? `model_reasoning_effort = ${JSON.stringify(policy.reasoning_effort)}\n` : ''}developer_instructions = ${JSON.stringify(codexProfileInstructions(root, profile, controlled))}\n`,
       });
     }
   }
@@ -502,28 +527,34 @@ export function adapterOutputs(root: string, config: AdapterConfig): ManagedOutp
       path: localCopilot ? '.github/instructions/neomind.instructions.md' : '.github/copilot-instructions.md',
       kind: localCopilot ? 'file' : 'block',
       ...(!localCopilot ? { key: 'instructions' } : {}),
-      content: `${localCopilot ? '---\ndescription: "Local NeoMind engineering and orchestration guidance for this workspace."\napplyTo: "**"\n---\n\n' : ''}${copilotExecution('intake')}\n${copilotWorkflow}`,
+      content: `${localCopilot ? '---\ndescription: "Local NeoMind engineering and orchestration guidance for this workspace."\napplyTo: "**"\n---\n\n' : ''}${controlled ? controlledWorkflow('copilot') : `${copilotExecution('intake')}\n${copilotWorkflow}`}`,
     });
     if (localCopilot) outputs.push({
       path: '.neomind/mcp-server.json', kind: 'file',
       content: JSON.stringify({
         schema_version: 1,
-        registration: 'example-only; not discovered as MCP configuration',
-        destination: 'VS Code user-profile mcp.json',
+        registration: controlled ? 'workspace-configured; actual client discovery remains unverified' : 'example-only; not discovered as MCP configuration',
+        destination: controlled ? '.vscode/mcp.json' : 'VS Code user-profile mcp.json',
         servers: { neomind: server, ...Object.fromEntries(optionalServers
           .filter(item => pluginClientConnectionEnabled(root, item.id, 'copilot-vscode')).map(item => [item.id, item.server])) },
       }, null, 2) + '\n',
     });
-    else outputs.push(jsonEntry('.vscode/mcp.json', ['servers', 'neomind'], server));
+    if (!localCopilot || controlled) outputs.push(jsonEntry('.vscode/mcp.json', ['servers', 'neomind'], server));
     if (!localCopilot) for (const item of optionalServers.filter(item => pluginClientConnectionEnabled(root, item.id, 'copilot-vscode')))
       outputs.push(jsonEntry('.vscode/mcp.json', ['servers', item.id], item.server));
     // Native profiles specialize tools and procedure; persisted role IDs stay compatible.
     for (const member of copilotSquad) {
       const role = roles.find((role) => role.id === member.modelRole)!;
-      const configured = copilotModels(root, member.modelRole);
-      const legacy = modelFor(config, role.tier, 'copilot');
+      const configured = controlled ? null : copilotModels(root, member.modelRole);
+      const legacy = controlled ? undefined : modelFor(config, role.tier, 'copilot');
       const model = configured ? (configured.length === 1 ? configured[0] : configured) : legacy;
-      const tools = copilotTools(root, member);
+      const tools = controlled ? member.id === 'coordinator'
+        ? ['neomind/manager_run', 'neomind/manager_status', 'neomind/manager_control'] : ['neomind/manager_status'] : copilotTools(root, member);
+      if (controlled) {
+        outputs.push({ path: `.github/agents/neomind-${member.id}.agent.md`, kind: 'file',
+          content: `---\nname: ${JSON.stringify(member.name)}\ndescription: ${JSON.stringify(member.duty)}\ntools: ${JSON.stringify(tools)}\nagents: []\nuser-invocable: ${member.id === 'coordinator'}\n---\n\n${controlledProfile(member, 'copilot')}` });
+        continue;
+      }
       outputs.push({
         path: `.github/agents/neomind-${member.id}.agent.md`, kind: 'file',
         content: `---\nname: ${JSON.stringify(member.name)}\ndescription: ${JSON.stringify(member.duty)}\n${model ? `model: ${JSON.stringify(model)}\n` : ''}tools: ${JSON.stringify(tools)}\nagents: ${JSON.stringify(member.id === 'coordinator' ? copilotSquad.filter(candidate => candidate.id !== 'coordinator').map(candidate => candidate.name) : [])}\nuser-invocable: ${member.id === 'coordinator'}\n---\n\n${copilotExecution(member.id === 'coordinator' ? 'manager' : 'specialist')}\n${copilotWorkflow}\n${member.id === 'coordinator' ? `${copilotNativeAdvanceInstructions}\n` : ''}\n## Assignment\n${member.duty}\nCore record roles: ${member.roles.join(', ')}. Choose the matching core role for each operation; display names never replace persisted role identifiers. Model policy: ${member.modelRole}.\n${member.procedure}\nRead the applicable .neomind/roles/<core-role>.md contract when its gate or operation is needed; use native tools only from this profile's declared tool list. Report operations persist evidence metadata; source read-only profiles do not gain product-edit permission.\n${member.roles.map(id => readRoleUpstreamInstructions(root, id)).filter(Boolean).join('\n')}\n`,
@@ -550,7 +581,9 @@ export function adapterOutputs(root: string, config: AdapterConfig): ManagedOutp
           platform === 'codex' ? '.agents' : platform === 'claude' ? '.claude' : '.github';
         const copilot = platform === 'copilot';
         const skillName = name;
-        const skillContent = platform === 'codex' && name === 'neomind-manager'
+        const skillContent = controlled && platform !== 'claude'
+          ? content.replace(/(---\r?\n[\s\S]*?\r?\n---\r?\n)[\s\S]*/, `$1\n${controlledWorkflow(platform)}\nRequested capability: ${name}. Send the user's intended outcome to the runtime; its role-local contract handles this capability.\n`)
+          : platform === 'codex' && name === 'neomind-manager'
           ? content.replace(/(---\r?\n[\s\S]*?\r?\n---\r?\n)[\s\S]*/, `$1\n${codexWorkflow}\n`)
           : copilot
           ? copilotRoleBody(content)

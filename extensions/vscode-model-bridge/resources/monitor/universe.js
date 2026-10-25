@@ -11,7 +11,7 @@
   const roleOrder = ['manager', 'requirements', 'architect', 'component-owner', 'reviewer', 'verifier',
     'researcher', 'codebase-analyst', 'curator', 'developer', 'check-executor', 'release'];
   const colors = { configured: '#849bb7', recorded: '#849bb7', running: '#78daaa', waiting: '#e6c274',
-    blocked: '#f28b7f', failed: '#f28b7f', completed: '#71bfff', idle: '#849bb7', unknown: '#849bb7' };
+    blocked: '#f28b7f', failed: '#f28b7f', completed: '#71bfff', idle: '#849bb7', unknown: '#849bb7', queued: '#d5bf88', interrupted: '#ba9de0', uncertain: '#e6a866' };
   const clamp = (n, low, high) => Math.min(high, Math.max(low, n));
   const finite = (n, fallback) => Number.isFinite(n) ? n : fallback;
   const text = (value, fallback = '') => typeof value === 'string' && value.trim() ? value : fallback;
@@ -28,8 +28,8 @@
   }
   const pretty = role => role.split('-').map(part => part[0]?.toUpperCase() + part.slice(1)).join(' ');
   const isCurrent = node => node && node.expired !== true &&
-    ['signed-receipt', 'native-activity', 'native-hook'].includes(node.source) &&
-    ['running', 'waiting', 'blocked'].includes(node.state);
+    ['signed-receipt', 'native-activity', 'native-hook', 'controlled-runtime'].includes(node.source) &&
+    ['running', 'waiting', 'blocked', 'queued', 'interrupted', 'uncertain'].includes(node.state);
 
   /** Configuration creates planets, never invocation identities or communication evidence. */
   function buildScene(input = {}) {
@@ -62,9 +62,9 @@
     const names = [...roleNames].sort((a, b) => a.localeCompare(b));
     const planets = names.map(role => {
       const config = configured.get(role), related = nodes.filter(node => node.role === role), agents = related.filter(node => node.kind === 'agent');
-      const observed = agents.filter(node => ['signed-receipt', 'native-activity', 'native-hook'].includes(node.source));
+      const observed = agents.filter(node => ['signed-receipt', 'native-activity', 'native-hook', 'controlled-runtime'].includes(node.source));
       const activity = agents.filter(node => node.source === 'native-activity');
-      const states = ['running', 'waiting', 'blocked', 'failed', 'completed', 'idle', 'unknown'];
+      const states = ['running', 'waiting', 'uncertain', 'blocked', 'queued', 'interrupted', 'failed', 'completed', 'idle', 'unknown'];
       const state = observed.length ? states.find(state => observed.some(node => node.state === state)) || 'recorded'
         : related.length ? 'recorded' : 'configured';
       const index = roleOrder.indexOf(role), value = seed(role), outer = index >= 0 ? index % 2 === 1 : true;
@@ -96,13 +96,13 @@
       if (!edge || !represented.has(edge.from) || !represented.has(edge.to) || edge.from === edge.to || edgeIds.has(edge.id)) continue;
       edges.push({ id: edge.id, from: edge.from, to: edge.to, kind: edge.kind, source: edge.source,
         evidence_id: edge.evidence_id, at: edge.at, animated: edge.animated === true &&
-          ['signed-receipt', 'native-activity', 'native-hook'].includes(edge.source) &&
+          ['signed-receipt', 'native-activity', 'native-hook', 'controlled-runtime'].includes(edge.source) &&
           (currentIds.has(edge.from) || currentIds.has(edge.to)) && map.stale !== true });
       edgeIds.add(edge.id);
     }
     return { planets, bodies, edges, stale: map.stale === true,
       counts: { configured_roles: configured.size, recorded_agents: nodes.filter(node => node.kind === 'agent').length,
-        running_agents: nodes.filter(node => node.kind === 'agent' && node.source === 'signed-receipt' && node.state === 'running').length,
+        running_agents: nodes.filter(node => node.kind === 'agent' && ['signed-receipt', 'controlled-runtime'].includes(node.source) && node.state === 'running').length,
         tasks: nodes.filter(node => node.kind === 'task').length, workflows: nodes.filter(node => node.kind === 'workflow').length },
       omitted: { nodes: Math.max(0, supplied.length - nodes.length), edges: Math.max(0, (map.edges?.length || 0) - edges.length) } };
   }

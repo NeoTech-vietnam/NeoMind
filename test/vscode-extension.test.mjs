@@ -18,13 +18,14 @@ function deferred() {
   return { promise, resolve };
 }
 
-function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'neomind' } = {}) {
+function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'neomind', controlled = false, controlledFailure = false } = {}) {
   const entered = deferred(), release = deferred();
   const calls = { folder: 0, consent: 0, import: 0, startup: 0, close: 0 };
   const info = [], errors = [], commands = new Map(), subscriptions = [];
+  const lifecycle = [];
   const runtime = resolve('trusted-runtime'), root = resolve('workspace');
   const folder = { uri: { scheme: 'file', fsPath: root } };
-  const host = { async close() { calls.close++; } };
+  const host = { async close() { calls.close++; lifecycle.push('bridge-close'); } };
   function step(name, value) {
     calls[name]++;
     if (name !== blocked || calls[name] > 1) return Promise.resolve(value);
@@ -49,7 +50,7 @@ function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'n
       onDidChangeWorkspaceFolders(callback) { foldersChanged = callback; return { dispose() {} }; },
     },
     window: {
-      showWorkspaceFolderPick: () => step('folder', folder),
+      showWorkspaceFolderPick: async () => { const selected = await step('folder', folder); vscode.workspace.workspaceFolders = [folder]; return selected; },
       showWarningMessage: () => step('consent', 'Enable'),
       showInformationMessage: message => info.push(message),
       showErrorMessage: message => errors.push(message),
@@ -64,6 +65,7 @@ function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'n
       if (name === './automation-panel.cjs') return require('../extensions/vscode-model-bridge/automation-panel.cjs');
       if (name === './native-validation.cjs') return require('../extensions/vscode-model-bridge/native-validation.cjs');
       if (name === './native-dispatch.cjs') return require('../extensions/vscode-model-bridge/native-dispatch.cjs');
+      if (name === './controlled-workflows.cjs') return require('../extensions/vscode-model-bridge/controlled-workflows.cjs');
       if (name === 'vscode') return vscode;
       if (name === 'node:fs') return {
         realpathSync: { native: path => path },
@@ -75,6 +77,13 @@ function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'n
       return require(name);
     },
     importRuntime(url) {
+      if (url === pathToFileURL(resolve(runtime, 'dist/index.js')).href) return Promise.resolve(controlled || controlledFailure ? {
+        async startControlledHost(selectedRoot) {
+          assert.equal(selectedRoot, root); lifecycle.push('controlled-start');
+          if (controlledFailure) throw new Error('Controller startup failed.');
+          return { async close() { lifecycle.push('controlled-close'); } };
+        },
+      } : {});
       assert.equal(url, pathToFileURL(resolve(runtime, 'dist/vscode-host.js')).href);
       return step('import', { enableVSCodeHost(api, selectedRoot) {
         assert.equal(api, vscode);
@@ -85,7 +94,7 @@ function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'n
   }, { filename: 'extension.cjs' });
   module.exports.activate({ subscriptions });
   return {
-    calls, info, errors, entered: entered.promise, release: release.resolve,
+    calls, info, errors, lifecycle, root, entered: entered.promise, release: release.resolve,
     enable: commands.get('neomind.bridge.enable'),
     disable: commands.get('neomind.bridge.disable'),
     deactivate: module.exports.deactivate,
@@ -93,6 +102,39 @@ function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'n
     dispose: () => subscriptions.at(-1).dispose(),
   };
 }
+
+test('controlled runtime starts only after consented Bridge and shuts down before model host', async () => {
+  const app = setup(undefined, { controlled: true });
+  assert.deepEqual(app.lifecycle, []);
+  await app.enable();
+  assert.deepEqual(app.lifecycle, ['controlled-start']);
+  assert.match(app.info[0], /Controlled workflows are ready/);
+  await app.disable();
+  assert.deepEqual(app.lifecycle, ['controlled-start', 'controlled-close', 'bridge-close']);
+});
+
+test('controller startup failure closes the already-created model Bridge', async () => {
+  const app = setup(undefined, { controlledFailure: true });
+  await app.enable();
+  assert.deepEqual(app.lifecycle, ['controlled-start', 'bridge-close']);
+  assert.equal(app.info.length, 0); assert.equal(app.errors.length, 1);
+  await app.disable(); assert.equal(app.calls.close, 1);
+});
+
+test('panel can enable its exact bound project without choosing another workspace', async () => {
+  const app = setup(undefined, { controlled: true });
+  await app.enable(app.root);
+  assert.equal(app.calls.folder, 0); assert.equal(app.calls.consent, 1);
+  assert.deepEqual(app.lifecycle, ['controlled-start']);
+  await app.disable();
+});
+
+test('an explicit foreign project is rejected before consent or host creation', async () => {
+  const app = setup(undefined, { controlled: true });
+  await app.enable(resolve('not-open-project'));
+  assert.equal(app.calls.folder, 0); assert.equal(app.calls.consent, 0); assert.equal(app.calls.startup, 0);
+  assert.equal(app.errors.length, 1); assert.match(app.errors[0], /exact open workspace folder/);
+});
 
 for (const stage of ['folder', 'consent', 'import', 'startup']) {
   test(`disable revokes enable awaiting ${stage}; explicit retry works`, async () => {

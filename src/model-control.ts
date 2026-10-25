@@ -28,17 +28,18 @@ const routerSchema = z.object({
 }).strict();
 export type RouterConfiguration = z.infer<typeof routerSchema>;
 
-function activeInvocations(root: string): { id: string; role: NativeRole; state: string }[] {
+function activeInvocations(root: string): { id: string; role: NativeRole; state: string; controlled?: true }[] {
   const directory = safePath(root, '.neomind/native/receipts');
   if (!existsSync(directory)) return [];
   return readdirSync(directory).filter(name => name.endsWith('.json')).flatMap(name => {
     const receipt = readInvocation(root, name.slice(0, -5));
-    return invocationIsActive(receipt) ? [{ id: receipt.id, role: receipt.role, state: receipt.state }] : [];
+    return invocationIsActive(receipt) ? [{ id: receipt.id, role: receipt.role, state: receipt.state, ...(receipt.controlled_execution ? { controlled: true as const } : {}) }] : [];
   });
 }
 
-function assertIdle(root: string): void {
-  if (activeInvocations(root).length)
+function assertIdle(root: string, permitControlled = false): void {
+  const active = activeInvocations(root);
+  if (active.length && !(permitControlled && active.every(item => !!readInvocation(root, item.id).controlled_execution)))
     throw new Error('Model configuration cannot change while an invocation is active. Interrupt or reconcile it, then start a new invocation.');
 }
 
@@ -71,7 +72,7 @@ export function setRoleModel(root: string, input: {
 } {
   const selection = selectionSchema.parse(input);
   return withOperationLock(root, 'native-dispatch', () => withOperationLock(root, 'routing-policy', () => {
-    assertIdle(root);
+    assertIdle(root, true);
     const policy = requireRoutingPolicy(root);
     const previous = roleModelPolicy(root, selection.role);
     const provider = selection.provider ?? previous.provider;

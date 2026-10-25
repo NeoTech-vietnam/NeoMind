@@ -1,5 +1,7 @@
 export * from './types.js';
 export * from './execution-mode.js';
+export * from './controlled-workflow.js';
+export * from './command-runner.js';
 export * from './storage.js';
 export * from './indexing.js';
 export * from './engineering.js';

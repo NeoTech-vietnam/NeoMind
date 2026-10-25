@@ -25,6 +25,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolveCapabilities, type ProviderId } from './tools.js';
 import { lightweightRun } from './lightweight.js';
 import { prepareWork } from './procedure-reuse.js';
+import { startControlledWorkflow, hasControlledWorkflow } from './controlled-workflow.js';
 
 export interface ManagedRunInput extends WorkflowInput {
   workflow_id?: string;
@@ -55,6 +56,14 @@ export async function managedRun(
       ['manager-workflow', 'lightweight-workflow'].includes(String(record.meta.data.kind)) &&
       record.meta.data.request_id === input.request_id!.trim()) : undefined;
   const savedMode = saved ? savedWorkflowExecutionMode(saved.meta.data) : undefined;
+  if (input.execution_mode === 'neomind-controlled' || savedMode === 'neomind-controlled' ||
+      (saved && hasControlledWorkflow(root, saved.meta.id)) || (!saved && !input.execution_mode && policy.execution_mode === 'neomind-controlled'))
+    return { workflow: await startControlledWorkflow(root, {
+      ...(input.requirement ? { requirement: input.requirement } : {}),
+      ...(input.requirements ? { requirements: input.requirements } : {}),
+      ...(saved ? { workflow_id: saved.meta.id } : {}),
+      ...(input.request_id ? { request_id: input.request_id } : {}), ...(input.title ? { title: input.title } : {}),
+    }) };
   if (saved && input.execution_mode && input.execution_mode !== savedMode)
     throw new Error('Saved workflow mode cannot be changed; create a new increment.');
   const mode = savedMode ?? input.execution_mode ?? policy.execution_mode ?? 'strict';

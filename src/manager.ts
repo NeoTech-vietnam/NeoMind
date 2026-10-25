@@ -242,7 +242,9 @@ function beginWorkflowClaimed(root: string, input: WorkflowInput): ProjectRecord
         routing_required: native ? false : readRoutingPolicy(root) !== null,
         knowledge_research_required: policy.knowledge_research_required === true,
         cornell_publication: policy.cornell_publication ?? 'draft-pr',
-        ...(native
+        ...(requestedMode === 'neomind-controlled'
+          ? { execution_mode: requestedMode, assurance: 'invocation-bound-local', process_contract: 'software-tools/v2', transport: 'vscode-lm' }
+          : native
           ? { execution_mode: requestedMode, assurance: 'unsigned-native-report' }
           : {}),
         invocation_id: input.invocation_id ?? randomUUID(),

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { isNativeExecutionMode } from './execution-mode.js';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { runCommand, type CommandInput } from './command-runner.js';
 import { join, relative } from 'node:path';
 import {
   appendEvent,
@@ -1726,6 +1727,19 @@ export function runCheck(
 ): ProjectRecord {
   return collectVerification(root, id, taskId, invocationId);
 }
+export async function runCheckAsync(
+  root: string,
+  id: string,
+  taskId: string,
+  invocationId?: string,
+  options: Pick<CommandInput, 'signal' | 'env' | 'max_output_bytes' | 'onStart'> = {},
+): Promise<ProjectRecord> {
+  const prepared = prepareVerification(root, id, taskId, invocationId);
+  const execution = await runCommand({ ...options, command: prepared.command, cwd: root, timeout_ms: prepared.timeout });
+  return prepared.finish({ status: execution.exit_code, signal: execution.signal, stdout: execution.stdout,
+    stderr: execution.stderr, ...(execution.error ? { error: new Error(execution.error) } : {}),
+    termination: { cancelled: execution.cancelled, timed_out: execution.timed_out, output_limited: execution.output_limited } });
+}
 export function inspectCheck(
   root: string,
   id: string,
@@ -1744,6 +1758,28 @@ function collectVerification(
   invocationId?: string,
   inspection?: InspectionInput,
 ): ProjectRecord {
+  const prepared = prepareVerification(root, id, taskId, invocationId, inspection);
+  const executed = inspection ? null : spawnSync(prepared.command[0]!, prepared.command.slice(1), {
+    cwd: root, shell: false, encoding: 'utf8', timeout: prepared.timeout,
+    maxBuffer: 10 * 1024 * 1024, windowsHide: true,
+  });
+  return prepared.finish(executed);
+}
+interface VerificationExecution {
+  status: number | null;
+  signal?: NodeJS.Signals | null;
+  stdout?: string | Buffer | null;
+  stderr?: string | Buffer | null;
+  error?: Error;
+  termination?: { cancelled: boolean; timed_out: boolean; output_limited: boolean };
+}
+function prepareVerification(
+  root: string,
+  id: string,
+  taskId: string,
+  invocationId?: string,
+  inspection?: InspectionInput,
+): { command: string[]; timeout: number; finish(executed: VerificationExecution | null): ProjectRecord } {
   const check = getRecord(root, id);
   const task = getRecord(root, taskId);
   if (check.meta.type !== 'check' || task.meta.type !== 'task')
@@ -1848,16 +1884,7 @@ function collectVerification(
     confirmed_model: task.meta.data.confirmed_model ?? null,
   });
   const started = Date.now();
-  const executed = inspected
-    ? null
-    : spawnSync(command[0]!, command.slice(1), {
-        cwd: root,
-        shell: false,
-        encoding: 'utf8',
-        timeout,
-        maxBuffer: 10 * 1024 * 1024,
-        windowsHide: true,
-      });
+  return { command, timeout, finish(executed) {
   const expected = Number(check.meta.data.expected_exit_code ?? 0);
   const result = inspected
     ? inspection!.observations.every((item) => item.outcome === 'pass')
@@ -1905,6 +1932,7 @@ function collectVerification(
     method: check.meta.data.method ?? 'test',
     environment: check.meta.data.environment ?? { os: process.platform, node: process.version },
     command,
+    ...(executed?.termination ? { command_execution: executed.termination } : {}),
     ...(inspected
       ? {
           inspection: {
@@ -1939,6 +1967,7 @@ function collectVerification(
     data: { ...receipt, receipt_path, ...(nativeWorkflowRecord(root, task) ? { workflow_id: task.meta.data.workflow_id } : {}) },
     body: `# Results\n${result}; ${inspected ? 'recorded inspection observations' : `exit code ${executed!.status}`}.\n\n# Evidence\n[Execution log](../../${log_path})\n\n# Limitations\nEvidence applies to the recorded inputs, method, and environment.${inspected ? '\nInspection observations are agent judgements; independent semantic review remains required.\n' + inspected.limitations.join('\n') : ''}\n`,
   });
+  } };
 }
 export function archiveEvidence(root: string, id: string): ProjectRecord {
   const evidence = getRecord(root, id);

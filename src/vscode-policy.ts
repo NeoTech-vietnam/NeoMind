@@ -1,12 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
-import { requireRoutingPolicy, roleModelPolicy } from './routing.js';
+import { requireRoutingPolicy, roleModelPolicy, type RoutingPolicy } from './routing.js';
 import { resolveCatalogModel } from './model-catalog.js';
 
 /** Resolve catalog labels to stable VS Code vendor/ID selectors, never endpoint credentials. */
-export function vscodeSelection(root: string, role: string, id: string): { vendor: string; id: string } {
-  const policy = requireRoutingPolicy(root);
-  const spec = roleModelPolicy(root, role);
+export function vscodeSelection(root: string, role: string, id: string, savedPolicy?: RoutingPolicy): { vendor: string; id: string } {
+  const policy = savedPolicy ?? requireRoutingPolicy(root);
+  const spec = roleModelPolicy(root, role, policy);
   if (!spec.models.includes(id)) throw new Error('Requested model is outside the role policy.');
   const provider = spec.provider;
   if (provider === 'copilot') return { vendor: 'copilot', id };

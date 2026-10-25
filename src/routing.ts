@@ -4,6 +4,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 import { vscodeSelection } from './vscode-policy.js';
 import { roleCapabilities } from './tools.js';
+import { controlledToolNames, type ControlledStage } from './controlled-tools.js';
 import { listUpstreams } from './upstreams.js';
 import {
   atomicWrite,
@@ -75,6 +76,7 @@ const routingPolicySchema = z
   .strict();
 export type RoutingPolicy = z.infer<typeof routingPolicySchema>;
 export interface NativeReceipt {
+  controlled_execution?: { schema_version: 1; epoch_id: string; stage: ControlledStage; routing_policy: RoutingPolicy };
   schema_version: 1;
   issuer: 'neomind-codex-app-server' | 'neomind-vscode-lm' |
     'taskforces-codex-app-server' | 'taskforces-vscode-lm' |
@@ -186,6 +188,7 @@ export function requireRoutingPolicy(root: string): RoutingPolicy {
 export function roleModelPolicy(
   root: string,
   role: string,
+  savedPolicy?: RoutingPolicy,
 ): {
   role: NativeRole;
   models: string[];
@@ -193,7 +196,7 @@ export function roleModelPolicy(
   strong: boolean;
   provider?: string;
 } {
-  const policy = requireRoutingPolicy(root);
+  const policy = savedPolicy ?? requireRoutingPolicy(root);
   if (
     !(strongRoles as readonly string[]).includes(role) &&
     !(workerRoles as readonly string[]).includes(role)
@@ -241,6 +244,19 @@ export function routingConfigurationHashes(root: string): Record<string, string>
     const path = isAbsolute(catalog) ? catalog : resolve(root, catalog);
     // Hash only; never archive credentials or endpoint configuration.
     hashes['vscode-language-model-catalog'] = existsSync(path) ? hash(readFileSync(path)) : 'absent';
+  }
+  return hashes;
+}
+/** Controlled sessions retain their signed model selection while future role selections may change. */
+export function invocationPolicy(root: string, receipt: NativeReceipt): RoutingPolicy {
+  return receipt.controlled_execution ? routingPolicySchema.parse(receipt.controlled_execution.routing_policy) : requireRoutingPolicy(root);
+}
+export function invocationConfigurationHashes(root: string, receipt: NativeReceipt): Record<string, string> {
+  const hashes = routingConfigurationHashes(root);
+  if (receipt.controlled_execution) {
+    const old = invocationPolicy(root, receipt), current = requireRoutingPolicy(root);
+    const { role_models: _old, ...oldBase } = old, { role_models: _current, ...currentBase } = current;
+    if (canonicalJson(oldBase) === canonicalJson(currentBase)) hashes['.neomind/routing.json'] = receipt.configuration_hashes['.neomind/routing.json']!;
   }
   return hashes;
 }
@@ -336,7 +352,8 @@ export function routingProblems(
   } catch (error) {
     return [`Native routing receipt cannot be verified: ${String(error)}.`];
   }
-  const policy = roleModelPolicy(root, role);
+  const frozenPolicy = invocationPolicy(root, receipt);
+  const policy = roleModelPolicy(root, role, frozenPolicy);
   const historicalNamespace = receipt.issuer.startsWith('verythinker-') ? 'verythinker'
     : receipt.issuer.startsWith('taskforces-') ? 'taskforces' : 'neomind';
   const vscode = receipt.issuer.endsWith('-vscode-lm');
@@ -351,16 +368,18 @@ export function routingProblems(
         !receipt.native_turn_id?.startsWith('vscode-host:turn:') || !receipt.client_version)
       errors.push('VS Code local host attestation or host-issued identity is invalid.');
     try {
-      const selection = vscodeSelection(root, role, receipt.requested_model);
+      const selection = vscodeSelection(root, role, receipt.requested_model, frozenPolicy);
       expectedModel = selection.id;
       if (receipt.model_provider !== selection.vendor)
         errors.push('VS Code host selected a different provider.');
     } catch { errors.push('VS Code provider selection cannot be verified against routing policy.'); }
-    if (requireRoutingPolicy(root).vscode_effort_policy !== 'allow-unavailable' ||
+    if (frozenPolicy.vscode_effort_policy !== 'allow-unavailable' ||
         receipt.effort_support !== 'unavailable' || receipt.confirmed_reasoning_effort !== null)
       errors.push('VS Code reasoning effort is unavailable; explicit allow-unavailable compatibility policy required.');
-    if (canonicalJson(receipt.native_tool_scope) !== canonicalJson(roleCapabilities(role).operations) ||
-        receipt.gateway_policy_sha256 !== hash(canonicalJson(roleCapabilities(role).operations)))
+    const operations = receipt.controlled_execution ? controlledToolNames({ role: receipt.role,
+      stage: receipt.controlled_execution.stage, workflow_id: receipt.workflow_id!, implementation_paths: [], verification_paths: [] }) : roleCapabilities(role).operations;
+    if (canonicalJson(receipt.native_tool_scope) !== canonicalJson(operations) ||
+        receipt.gateway_policy_sha256 !== hash(canonicalJson(operations)))
       errors.push('VS Code invocation-bound gateway scope is invalid.');
   } else {
   if (receipt.execution_mode !== 'native')
@@ -424,9 +443,9 @@ export function routingProblems(
     errors.push(
       'The native client rerouted this invocation; reassessment with a fresh invocation is required.',
     );
-  if (receipt.routing_sha256 !== hash(canonicalJson(readRoutingPolicy(root))))
+  if (receipt.routing_sha256 !== hash(canonicalJson(frozenPolicy)))
     errors.push('Routing policy changed after this invocation started.');
-  const currentHashes = routingConfigurationHashes(root);
+  const currentHashes = invocationConfigurationHashes(root, receipt);
   const expectedHashes = historicalNamespace !== 'neomind'
     ? Object.fromEntries(Object.entries(currentHashes).map(([path, value]) =>
       [path.replace(/^\.neomind\//, `.${historicalNamespace}/`), value])) : currentHashes;

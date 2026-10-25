@@ -7,11 +7,15 @@ const { activatePluginPanel } = require('./plugin-panel.cjs');
 const { activateAutomationPanel } = require('./automation-panel.cjs');
 const { activateNativeValidation } = require('./native-validation.cjs');
 const { activateNativeDispatch } = require('./native-dispatch.cjs');
+const { activateControlledWorkflows } = require('./controlled-workflows.cjs');
 let bridge;
+let bridgeRoot;
+let controlledEnabled = false;
 let generation = 0;
 async function disable() {
   generation++;
   const current = bridge; bridge = undefined;
+  bridgeRoot = undefined; controlledEnabled = false;
   await current?.close();
 }
 function activate(context) {
@@ -34,8 +38,9 @@ function activate(context) {
   activateAutomationPanel(vscode, context, loadRuntime);
   activateNativeValidation(vscode, context, loadRuntime);
   activateNativeDispatch(vscode, context, loadRuntime);
+  activateControlledWorkflows(vscode, context, loadRuntime, { enabled: root => controlledEnabled && bridgeRoot === root });
   context.subscriptions.push(
-    vscode.commands.registerCommand('neomind.bridge.enable', async () => {
+    vscode.commands.registerCommand('neomind.bridge.enable', async preferredRoot => {
       if (enabling) return;
       const token = generation;
       enabling = true;
@@ -43,7 +48,10 @@ function activate(context) {
         if (!vscode.workspace.isTrusted) throw new Error('Workspace Trust required.');
         if (bridge) throw new Error('Bridge already enabled. Disable before changing workspace or runtime.');
         const folders = vscode.workspace.workspaceFolders?.filter(folder => folder.uri.scheme === 'file') ?? [];
-        const folder = folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick();
+        const folder = typeof preferredRoot === 'string'
+          ? folders.find(item => realpathSync.native(item.uri.fsPath) === realpathSync.native(preferredRoot))
+          : folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick();
+        if (typeof preferredRoot === 'string' && !folder) throw new Error('Selected NeoMind project must be an exact open workspace folder.');
         if (token !== generation || !folder || folder.uri.scheme !== 'file') return;
         const setting = vscode.workspace.getConfiguration('neomind.bridge').inspect('runtimePath');
         const runtime = setting?.globalValue;
@@ -61,8 +69,15 @@ function activate(context) {
         if (token !== generation) return;
         const host = await enableVSCodeHost(vscode, root);
         if (token !== generation) { await host.close(); return; }
-        bridge = host;
-        vscode.window.showInformationMessage('NeoMind Model Bridge enabled for selected workspace until disabled or window reload.');
+        let controlled;
+        try {
+          const runtimeApi = await loadRuntime(root);
+          if (typeof runtimeApi.startControlledHost === 'function') controlled = await runtimeApi.startControlledHost(root);
+        } catch (error) { await host.close(); throw error; }
+        const combined = { close: async () => { try { await controlled?.close(); } finally { await host.close(); } } };
+        if (token !== generation) { await combined.close(); return; }
+        bridge = combined; bridgeRoot = root; controlledEnabled = Boolean(controlled);
+        vscode.window.showInformationMessage(`NeoMind Model Bridge enabled for selected workspace until disabled or window reload.${controlled ? ' Controlled workflows are ready.' : ' Update the runtime to enable controlled workflows.'}`);
       } catch (error) {
         vscode.window.showErrorMessage(error instanceof Error ? error.message : 'NeoMind bridge could not start.');
       } finally { enabling = false; }

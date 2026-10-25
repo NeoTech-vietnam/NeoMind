@@ -5,9 +5,10 @@ import { readAgentActivity, type AgentActivityState } from './agent-activity.js'
 import { agentProfiles } from './agent-profiles.js';
 import { readNativeHooks, hookTtlMs } from './agent-hooks.js';
 import type { ProjectRecord } from './types.js';
+import { controlledStatus, type ControlledSnapshot } from './controlled-workflow.js';
 
-export type AgentMapState = 'running' | 'waiting' | 'blocked' | 'idle' | 'completed' | 'failed' | 'unknown';
-export type AgentMapSource = 'signed-receipt' | 'project-record' | 'native-activity' | 'native-hook';
+export type AgentMapState = 'running' | 'waiting' | 'blocked' | 'idle' | 'completed' | 'failed' | 'unknown' | 'queued' | 'interrupted' | 'uncertain';
+export type AgentMapSource = 'signed-receipt' | 'project-record' | 'native-activity' | 'native-hook' | 'controlled-runtime';
 export interface AgentMapNode {
   id: string;
   kind: 'agent' | 'workflow' | 'task';
@@ -256,6 +257,33 @@ export function readAgentMap(root: string): AgentMapSnapshot {
         const target = nodes.get(link.target);
         if (target && (target.workflow_id === workflowId || target.id === workflowId))
           edge(agent, link.target, 'report', 'project-record', record.meta.id, record.meta.created_at);
+      }
+    }
+  }
+  // Owned runtime events are distinct from replayed unsigned progress and configured role planets.
+  let controlled: ControlledSnapshot[] = [];
+  try { controlled = controlledStatus(root) as ControlledSnapshot[]; } catch { /* Corrupt state cannot establish running activity. */ }
+  for (const run of controlled.slice(0, agentMapLimits.records)) {
+    const workflow = nodes.get(run.workflow_id);
+    if (workflow) {
+      workflow.state = run.status === 'paused' ? 'waiting' : run.status === 'cancelled' ? 'interrupted' : run.status;
+      workflow.execution_mode = 'neomind-controlled'; workflow.source = 'controlled-runtime';
+    }
+    let manager: string | undefined;
+    for (const attempt of run.attempts) {
+      if (!attempt.invocation_id) continue;
+      const id = `agent:${attempt.invocation_id}`, node = nodes.get(id);
+      if (!node) continue;
+      node.execution_mode = 'neomind-controlled'; node.source = 'controlled-runtime';
+      const live = run.active_invocations.find(item => item.id === attempt.invocation_id);
+      node.state = attempt.state === 'interrupted' ? 'interrupted' : live?.state === 'uncertain' ? 'uncertain' : node.state;
+      if (attempt.role === 'manager' && !manager) manager = id;
+      const hub = manager && manager !== id ? manager : run.workflow_id;
+      const dispatched = run.events.find(event => event.kind === 'dispatch' && event.invocation_id === attempt.invocation_id);
+      if (dispatched) edge(hub, id, 'handoff', 'controlled-runtime', dispatched.id, dispatched.at, !!live && node.state === 'running');
+      if (attempt.report_id) {
+        const report = run.events.find(event => event.kind === 'report-saved' && event.invocation_id === attempt.invocation_id);
+        if (report) edge(id, hub, 'report', 'controlled-runtime', report.id, report.at, false);
       }
     }
   }
