@@ -8,6 +8,8 @@ An explicit runtime role/stage packet and bound semantic tools identify this bra
 
 Workspace Trust, model-access consent and client MCP discovery belong to client setup. The host enforces them during worker dispatch. Report a specific observed host/tool failure; reading a private `.neomind` guide or configuration is not a prerequisite for an active assignment. When project `AGENTS.md`, generated profiles or other source files describe the client entrypoint, apply those instructions to client intake and continue the worker assignment from its backend-provided state. Private path guards remain in force.
 
+Call `runtime_context` with `{}` first for current-session observations and toolchain discovery from the enabled host's PATH. Supply an optional absolute executable path only after reading it from actual project configuration or documentation; do not guess installation locations. An invalid optional path produces a diagnostic for that tool while authoritative session context, guidance and other observations remain available. Require a tool only when the assigned operation actually needs it.
+
 ## Client entrypoint
 
 1. Submit the complete user requirement once through `manager_run` with `execution_mode: neomind-controlled`. Keep the returned workflow receipt. For existing work, select its actual saved workflow ID and use the backend's resume operation.

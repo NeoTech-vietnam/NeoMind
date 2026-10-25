@@ -51,7 +51,11 @@ const report = (stage, extra = {}) => call('assignment_report', { outcome: 'comp
 function actions(stage, attempt, mode) {
   if (stage === 'planning') return [call('runtime_context', {}, 'context'), call('workflow_plan', plan()), report(stage)];
   if (stage === 'implementation') {
-    if (mode === 'optional-toolchains' && attempt === 1) return [call('runtime_context', {}, 'optional-context'),
+    if (mode === 'optional-toolchains' && attempt === 1) return [call('runtime_context', { executables: {
+      python: join(tmpdir(), 'neomind-nonexistent-context', 'python.exe'),
+      c11: join(tmpdir(), 'neomind-nonexistent-context', 'gcc.exe'),
+      cpp17: join(tmpdir(), 'neomind-nonexistent-context', 'g++.exe'),
+    } }, 'optional-context'),
       report(stage, { outcome: 'blocked', failure_kind: 'environment',
         summary: 'Optional Python and C/C++ toolchains are missing, allegedly preventing this Node-only assignment.' })];
     const failed = mode === 'repair' && attempt === 1;
@@ -194,8 +198,14 @@ test('missing optional toolchains cannot charge environment repair or block a No
   assert.deepEqual(env.errors, []);
   assert.deepEqual(env.observed, ['planning', 'implementation', 'diagnosis', 'implementation', 'verification']);
   const observations = env.captures['optional-context'].toolchain.observations;
+  assert.equal(env.captures['optional-context'].context, 'backend-owned-worker');
+  assert.equal(env.captures['optional-context'].guide.source, 'trusted-installed-runtime');
   assert.equal(observations.find(item => item.program === 'node').available, true);
-  for (const program of ['python', 'c11', 'cpp17']) assert.equal(observations.find(item => item.program === program).available, false, program);
+  for (const program of ['python', 'c11', 'cpp17']) {
+    const observation = observations.find(item => item.program === program);
+    assert.equal(observation.available, false, program);
+    assert.ok(observation.rejected_candidate, `${program} retains the invalid optional-path diagnostic`);
+  }
   assert.equal(done.repair_budget.environment, 0); assert.equal(done.repair_budget.product, 1);
   assert.equal(done.local_executions.length, 1); assert.equal(done.local_executions[0].passed, true);
   assert.equal(done.attempts.find(item => item.stage === 'implementation').report.failure_kind, 'environment');
