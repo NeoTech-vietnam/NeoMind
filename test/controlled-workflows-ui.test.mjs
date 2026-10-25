@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, realpathSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 const require = createRequire(import.meta.url);
@@ -9,8 +9,8 @@ const { TOOL_NAME, activateControlledWorkflows, createControlledPanelHost, publi
 const workflowId = 'NM-TEST-KNW-0001';
 
 function app(t) {
-  const root = mkdtempSync(join(tmpdir(), 'neomind-controlled-ui-'));
-  t.after(() => { assert.equal(dirname(resolve(root)), resolve(tmpdir())); rmSync(root, { force: true, recursive: true }); });
+  const parent = realpathSync(tmpdir()), root = realpathSync(mkdtempSync(join(parent, 'neomind-controlled-ui-')));
+  t.after(() => { assert.equal(dirname(resolve(root)), parent); rmSync(root, { force: true, recursive: true }); });
   const calls = [], sent = [], commands = new Map(), tools = new Map(), subscriptions = [];
   let active = true, enabled = true;
   const workflow = { workflow_id: workflowId, title: '<img onerror=evil()>', status: 'queued', phase: 'intake', transport: 'vscode-lm',
