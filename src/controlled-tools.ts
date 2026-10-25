@@ -13,6 +13,7 @@ export interface ControlledBinding {
   stage: ControlledStage; role: string;
   implementation_paths: string[]; verification_paths: string[];
   read_paths?: string[]; protected_paths?: string[]; check_titles?: string[];
+  approved_inputs?: string[];
 }
 const text = z.string().trim().min(1).max(8000);
 const paths = z.array(z.string().min(1).max(1024)).max(128);
@@ -34,6 +35,7 @@ export const controlledPlanSchema = z.strictObject({
   reuse: z.strictObject({ procedure_id: text.max(80), version: text.max(80).optional(), parameters: z.record(z.string(), z.unknown()) }).optional(),
   procedure_candidate: registerProcedureSchema.omit({ id: true, version: true, author: true }).optional(),
   cornell_output_dir: z.string().min(1).max(1024).optional(),
+  input_paths: paths.optional(),
   specialists: z.array(z.strictObject({ role: text.max(100), objective: text })).max(4).optional(),
 });
 export type ControlledPlan = z.infer<typeof controlledPlanSchema>;
@@ -79,9 +81,9 @@ function privatePath(path: string): boolean {
     ['.git', '.neomind', '.verythinker', '.taskforces', '.codex', '.claude', '.vscode', '.agents', '.cursor', 'node_modules'].includes(part) ||
     /^(?:\.env(?:\..*)?|auth\.json|credentials?(?:\.[^/]*)?|secrets?(?:\.[^/]*)?|id_(?:rsa|ed25519)(?:\.pub)?|[^/]+\.(?:pem|key|pfx|p12))$/.test(part));
 }
-function publicTarget(root: string, path: string): string {
+function publicTarget(root: string, path: string, approved: string[] = []): string {
   canonical(path, true);
-  if (privatePath(path)) throw new ControlledToolError('PRIVATE_PATH', 'Private runtime, credentials and client configuration are unavailable to workers.');
+  if (privatePath(path) && !approved.includes(path)) throw new ControlledToolError('PRIVATE_PATH', 'Private runtime, credentials and client configuration are unavailable to workers.');
   const target = safePath(root, path);
   let current = resolve(root);
   for (const component of path === '.' ? [] : path.split('/')) {
@@ -132,6 +134,9 @@ export function controlledInstructions(binding: ControlledBinding): string {
 /** Each server belongs to one actual invocation; no model-provided identity can rebind it. */
 export function createControlledMcpServer(root: string, input: ControlledBinding, callbacks: ControlledCallbacks): McpServer {
   const binding = structuredClone(input);
+  for (const path of binding.approved_inputs ?? [])
+    if (!/^\.(?:agents|github)\/skills\/[^/]+\/(?:assets|scripts)\/.+\.(?:md|py|mjs|cjs|js|json)$/i.test(path) || privatePath(path.split('/').slice(4).join('/')))
+      throw new Error('Approved hidden inputs must be bounded skill assets or script sources, never client/runtime configuration.');
   if (!binding.invocation_id || !binding.workflow_id || !binding.role ||
       !['planning', 'implementation', 'verification', 'review', 'diagnosis'].includes(binding.stage))
     throw new Error('Controlled MCP requires a backend-bound actual invocation.');
@@ -212,7 +217,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
   register('project_read', 'Read an assigned UTF-8 file. The backend retains its version for subsequent scoped edits.',
     z.strictObject({ path: z.string().min(1).max(1024), max_chars: z.number().int().min(128).max(64000).optional(),
       start_line: z.number().int().min(1).optional() }), true, args => {
-      const target = publicTarget(root, args.path); assertReadable(binding, args.path);
+      const target = publicTarget(root, args.path, binding.approved_inputs); assertReadable(binding, args.path);
       if (!existsSync(target)) {
         locked(state => { state.reads[key(args.path)] = null; saveState(state); });
         return { path: args.path, exists: false, text: null };
@@ -350,7 +355,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
   }
   register('assignment_report', 'Persist one substantive compact result. Incomplete findings are retained without submitting the task.',
     controlledReportSchema, false, report => {
-      for (const path of report.artifacts ?? []) { publicTarget(root, path); assertReadable(binding, path); }
+      for (const path of report.artifacts ?? []) { publicTarget(root, path, binding.approved_inputs); assertReadable(binding, path); }
       return callbacks.saveReport(report);
     });
   return server;

@@ -133,7 +133,7 @@ async function setup(t, scenarios) {
   } };
 }
 async function until(root, workflow, predicate, message, errors = []) {
-  const deadline = Date.now() + 60000;
+  const deadline = Date.now() + (process.platform === 'win32' ? 180000 : 60000);
   let snapshot;
   do {
     snapshot = controlledStatus(root, workflow);

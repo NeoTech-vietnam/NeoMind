@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { atomicWrite, createRecord, getRecord, hash, loadRecords, now, readConfig, safePath,
   saveStatus, saveWorkflowClosure, updateRecord, withOperationLock } from './storage.js';
 import { beginWorkflow, readAutomationPolicy } from './manager.js';
-import { startNative, waitNative, interruptNative } from './native.js';
+import { startNative, waitNative, interruptNative, nativeStatus } from './native.js';
 import { invocationIsActive, readInvocation, requireRoutingPolicy, routingProblems, type NativeRole } from './routing.js';
 import { exactRoot, hostRequest, readHost } from './vscode-wire.js';
 import { registerControlledContext } from './controlled-context.js';
@@ -109,6 +109,11 @@ export function controlledRisk(plan: ControlledPlan): { reviewer_required: boole
 }
 function validatePlan(root: string, value: ControlledPlan): ControlledPlan {
   const plan = structuredClone(value);
+  for (const path of plan.input_paths ?? []) {
+    canonical(root, path);
+    if (!/^\.(?:agents|github)\/skills\/[^/]+\/(?:assets|scripts)\/.+\.(?:md|py|mjs|cjs|js|json)$/i.test(path))
+      throw new Error('input_paths names exact hidden skill asset/script inputs; ordinary source files are already readable.');
+  }
   if (!plan.acceptance_criteria.length || !plan.outputs.length || !plan.checks.length || !plan.allowed_paths.length || !plan.verification_paths.length)
     throw new Error('Plan needs explicit acceptance, implementation scope, outputs and independent checks.');
   for (const key of ['allowed_paths', 'verification_paths', 'outputs', 'documentation_paths'] as const)
@@ -117,6 +122,7 @@ function validatePlan(root: string, value: ControlledPlan): ControlledPlan {
     throw new Error('Implementation and independent checker scopes must be disjoint.');
   if ([...plan.outputs, ...plan.documentation_paths].some(path => !covers(path, plan.allowed_paths))) throw new Error('Outputs must be within implementation scope.');
   for (const check of plan.checks) {
+    if ((check.expected_exit_code ?? 0) !== 0) throw new Error('The positive independent check must exit zero; declare expected failures as negative controls.');
     if (check.command.length < 2 || check.command.some(arg => /[\x00-\x1f]/.test(arg))) throw new Error('Use explicit check argv.');
     check.baseline_paths.forEach(path => canonical(root, path));
     if (!check.command.slice(1).some(arg => covers(arg, plan.verification_paths) && check.baseline_paths.includes(arg)))
@@ -133,6 +139,8 @@ function validatePlan(root: string, value: ControlledPlan): ControlledPlan {
         throw new Error('Negative controls must invoke the same checker with declared verifier-owned invalid fixtures.');
     }
   }
+  const titles = plan.checks.flatMap(check => [check.title, ...(check.negative_controls ?? []).map(item => item.title)]);
+  if (new Set(titles).size !== titles.length) throw new Error('Positive and negative check titles must be distinct.');
   if (plan.outputs.some(path => !plan.checks.some(check => covers(path, check.baseline_paths)))) throw new Error('Checks must capture every delivered output.');
   if (plan.cornell_output_dir) {
     canonical(root, plan.cornell_output_dir);
@@ -168,8 +176,22 @@ function mergeOriginalCriteria(root: string, run: ControlledSnapshot, plan: Cont
 
 class Controller {
   private closed = false;
+  private launchTail: Promise<void> = Promise.resolve();
   private jobs = new Map<string, { promise: Promise<void>; abort: AbortController }>();
   constructor(readonly root: string) {}
+  private async launch(input: Parameters<typeof startNative>[1], signal: AbortSignal) {
+    const prior = this.launchTail;
+    let release!: () => void;
+    this.launchTail = new Promise<void>(done => { release = done; });
+    await prior;
+    try {
+      while (!signal.aborted && input.role !== 'manager' &&
+          (nativeStatus(this.root) as ReturnType<typeof readInvocation>[]).filter(item => item.role !== 'manager' && invocationIsActive(item)).length >= readConfig(this.root).max_workers)
+        await new Promise<void>(done => setTimeout(done, 250));
+      if (this.closed || signal.aborted) throw new Error('Controlled launch cancelled.');
+      return await startNative(this.root, input);
+    } finally { release(); }
+  }
   submit(input: ControlledStartInput): ControlledSnapshot {
     const parsed = z.strictObject({ requirement: z.string().trim().min(1).max(20000).optional(),
       requirements: z.array(z.string().trim().min(1).max(20000)).min(1).max(32).optional(),
@@ -282,6 +304,9 @@ class Controller {
       save(this.root, run, 'dispatch', `NeoMind dispatches ${role} for ${stage}.`);
       const binding: ControlledBinding = { workflow_id: id, task_id: stage === 'planning' ? undefined : contract?.task_id,
         stage, role, implementation_paths: contract?.plan.allowed_paths ?? [], verification_paths: contract?.plan.verification_paths ?? [],
+        approved_inputs: [...(contract?.plan.input_paths ?? []), ...(run.continuation ? [
+          '.agents/skills/leetcode-notes/assets/cornell-note-template.md', '.agents/skills/leetcode-notes/scripts/validate_notes.py',
+        ] : [])],
         read_paths: ['.'], protected_paths: contract ? this.protectedPaths(contract) : [], check_titles: contract?.plan.checks.map(check => check.title) ?? [] };
       const attemptAbort = new AbortController();
       const abortAttempt = () => attemptAbort.abort(); signal.addEventListener('abort', abortAttempt, { once: true });
@@ -375,7 +400,7 @@ class Controller {
         } });
       try {
         const prompt = this.prompt(run, stage, contract) + (specialist ? `\n\nBounded specialist consultation: ${specialist.objective}. Inspect and report your findings; this is a consultation, not a repair diagnosis.` : '');
-        let receipt = await startNative(this.root, { role, prompt, workflow_id: id, task_id: binding.task_id, request_id: attempt.request_id });
+        let receipt = await this.launch({ role, prompt, workflow_id: id, task_id: binding.task_id, request_id: attempt.request_id }, signal);
         while (invocationIsActive(receipt) && !signal.aborted) receipt = await waitNative(this.root, receipt.id, 1000);
         if (signal.aborted) { await interruptNative(this.root, receipt.id); return; }
         run = readState(this.root, id);

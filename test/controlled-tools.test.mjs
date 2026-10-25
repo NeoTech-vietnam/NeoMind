@@ -67,6 +67,17 @@ test('identity spoofing is rejected before the bound report callback and no supp
   assert.equal(c.reports.length, 0);
 });
 
+test('explicit canonical skill assets are readable as data without exposing private client configuration or write access', async t => {
+  const root = project(t), input = '.agents/skills/cornell/assets/template.md';
+  mkdirSync(join(root, '.agents/skills/cornell/assets'), { recursive: true });
+  writeFileSync(join(root, input), '# Existing research template\n');
+  const c = await connect(t, root, binding('planning', { approved_inputs: [input] }));
+  assert.match(decode(await c.call('project_read', { path: input })).text, /Existing research template/);
+  assert.equal((await c.call('project_read', { path: '.codex/config.toml' })).isError, true);
+  assert.throws(() => createControlledMcpServer(root, binding('planning', { approved_inputs: ['.agents/skills/cornell/assets/credentials.json'] }),
+    { assertActive() {}, saveReport() {} }), /bounded skill assets/);
+});
+
 test('producer writes use actual-read CAS and preserve external edits, with replay safe after server restart', async t => {
   const root = project(t), actor = binding(), c = await connect(t, root, actor);
   assert.equal((await c.call('task_file_write', { path: 'src/value.mjs', content: 'unread overwrite' })).isError, true);

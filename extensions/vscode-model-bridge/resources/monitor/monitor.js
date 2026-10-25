@@ -146,8 +146,8 @@
   }
   function updateInteractions() {
     const candidates = (map?.nodes ?? []).filter(node => node.kind === 'agent' &&
-      ['native-activity', 'signed-receipt', 'native-hook'].includes(node.source) &&
-      (['running', 'waiting', 'blocked'].includes(node.state) || node.expired));
+      ['native-activity', 'signed-receipt', 'native-hook', 'controlled-runtime'].includes(node.source) &&
+      (['running', 'waiting', 'blocked', 'queued', 'interrupted', 'uncertain'].includes(node.state) || node.expired));
     const active = candidates.filter(node => !node.expired && node.reported_state !== 'dispatched' && ['running', 'waiting'].includes(node.state));
     setText(byId('live-summary'), unavailable ? 'Activity unavailable; displayed assignments are last known reports.' : candidates.length
       ? `${active.filter(node => node.source === 'native-hook').length} running hook observations · ${active.filter(node => node.source === 'native-activity').length} reported active assignments · ${active.filter(node => node.source === 'signed-receipt').length} signed sessions. Sources may describe the same agent; unsigned updates expire after five minutes.`
@@ -232,7 +232,7 @@
       ];
       if (node.kind === 'agent') fields.push(
         ['Requested model', value(node.requested_model)],
-        ['Confirmed model', node.source === 'signed-receipt' ? value(node.confirmed_model) : 'Not attested by this project record'],
+        ['Confirmed model', ['signed-receipt', 'controlled-runtime'].includes(node.source) ? value(node.confirmed_model) : 'Not attested by this project record'],
         ['Recorded provider', value(node.provider)], ['Execution mode', value(node.execution_mode)],
       );
       if (node.source === 'native-activity') fields.push(
@@ -290,7 +290,7 @@
   function updateStatus() {
     document.body.classList.toggle('is-stale', unavailable);
     const agents = (map?.nodes ?? []).filter(node => node.kind === 'agent');
-    const signed = agents.filter(node => node.source === 'signed-receipt').length;
+    const signed = agents.filter(node => ['signed-receipt', 'controlled-runtime'].includes(node.source)).length;
     const reported = agents.filter(node => node.source === 'project-record').length;
     const running = agents.filter(node => node.source === 'native-activity' && !node.expired && node.state === 'running').length;
     const hooks = agents.filter(node => node.source === 'native-hook' && !node.expired && node.state === 'running').length;
