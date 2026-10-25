@@ -10,6 +10,42 @@ import { createControlledMcpServer, controlledInstructions, controlledToolNames 
 import { researchFixture } from './cornell-research-fixture.mjs';
 
 const decode = result => JSON.parse(result.content[0].text);
+
+test('worker guide is served from trusted runtime documentation without reading a poisoned private project file', async t => {
+  const root = project(t);
+  mkdirSync(join(root, '.neomind/guides'), { recursive: true });
+  writeFileSync(join(root, '.neomind/guides/controlled-workflows.md'), 'PRIVATE_PROJECT_GUIDE_CANARY');
+  const c = await connect(t, root);
+  const guide = decode(await c.call('project_read', { path: '.neomind/guides/controlled-workflows.md' }));
+  assert.equal(guide.source, 'trusted-installed-runtime'); assert.equal(guide.project_private_file_read, false);
+  assert.match(guide.text, /Backend-owned session/); assert.doesNotMatch(guide.text, /PRIVATE_PROJECT_GUIDE_CANARY/);
+  const privateFile = await c.call('project_read', { path: '.neomind/config.json' });
+  assert.equal(privateFile.isError, true); assert.equal(decode(privateFile).code, 'PRIVATE_PATH');
+});
+
+test('planning can inspect exact skill assets before declaring readonly downstream inputs, while private client files remain denied', async t => {
+  const root = project(t); mkdirSync(join(root, '.agents/skills/example/assets'), { recursive: true });
+  writeFileSync(join(root, '.agents/skills/example/assets/template.md'), '# Canonical readonly template');
+  const c = await connect(t, root, binding('planning'));
+  assert.match(decode(await c.call('project_read', { path: '.agents/skills/example/assets/template.md' })).text, /Canonical/);
+  assert.equal((await c.call('project_read', { path: '.codex/config.toml' })).isError, true);
+});
+
+test('declared producer execution exposes only a step title and professional JSON input, never model-selected argv or identity', async t => {
+  const root = project(t), executed = [];
+  const step = { title: 'Generate output', command: ['node', 'src/value.mjs'], input_paths: [], output_paths: ['docs/generated.md'] };
+  const c = await connect(t, root, binding('implementation', { execution_steps: [step], procedure_bound: false }), {
+    runTask(input) { executed.push(input); return { passed: true }; },
+  });
+  const tools = (await c.client.listTools()).tools, operation = tools.find(tool => tool.name === 'task_run');
+  assert.deepEqual(Object.keys(operation.inputSchema.properties).sort(), ['input', 'title']);
+  assert.ok(!tools.some(tool => tool.name === 'procedure_run'));
+  await c.call('project_read', { path: 'src/value.mjs' });
+  assert.equal((await c.call('task_run', { title: step.title, input: { message: 'prepared content' } })).isError, undefined);
+  assert.deepEqual(executed, [{ ...step, input: { message: 'prepared content' } }]);
+  assert.equal((await c.call('task_run', { title: step.title, command: ['node','elsewhere.mjs'] })).isError, true);
+  assert.equal(executed.length, 1);
+});
 function project(t) {
   const root = mkdtempSync(join(tmpdir(), 'neomind-controlled-tools-'));
   initialize(root, { project_id: 'CONTROLLED', name: 'Controlled tools' });

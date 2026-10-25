@@ -9,6 +9,38 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { initialize, atomicWrite, safePath, loadRecords } from '../dist/storage.js';
 import { installProject, doctor } from '../dist/installer.js';
 import { createMcpServer } from '../dist/mcp.js';
+import { adapterOutputs } from '../dist/adapters.js';
+
+test('controlled instruction surfaces distinguish backend-owned workers from client setup', t => {
+  const parent = realpathSync(tmpdir()), root = mkdtempSync(join(parent, 'neomind-worker-instructions-'));
+  t.after(() => { assert.equal(dirname(root), parent); rmSync(root, { recursive: true, force: true }); });
+  const config = { name: 'Worker instruction boundaries', platforms: ['codex', 'copilot'], copilot_integration: 'local' };
+  initialize(root, config);
+  atomicWrite(safePath(root, '.neomind/automation.json'), JSON.stringify({ schema_version: 1, manager_enabled: true,
+    documentation_required: true, automatic_pr: false, upstream: null, max_discussion_rounds: 3, execution_mode: 'neomind-controlled' }));
+  const surfaces = adapterOutputs(root, config).filter(output => output.path === 'AGENTS.md' ||
+    output.path === '.github/instructions/neomind.instructions.md' ||
+    /^\.(?:github|codex)\/agents\/neomind-/.test(output.path) || /\/skills\/neomind-[^/]+\/SKILL\.md$/.test(output.path));
+  assert.ok(surfaces.some(output => output.path === 'AGENTS.md'));
+  assert.equal(surfaces.filter(output => output.path.startsWith('.github/agents/')).length, 9);
+  assert.equal(surfaces.filter(output => output.path.startsWith('.codex/agents/')).length, 9);
+  for (const surface of surfaces) {
+    const instructions = surface.path.endsWith('.toml') ? toml(surface.content).developer_instructions : surface.content;
+    const workerIndex = instructions.indexOf('### Backend-owned session');
+    const clientIndex = instructions.indexOf('### Client intake');
+    assert.ok(workerIndex >= 0 && clientIndex > workerIndex, surface.path);
+    const worker = instructions.slice(workerIndex, clientIndex), client = instructions.slice(clientIndex);
+    assert.match(worker, /explicit runtime role and stage/, surface.path);
+    assert.match(worker, /backend-provided.*policy.*scope/, surface.path);
+    assert.match(worker, /supplied semantic tools/, surface.path);
+    assert.match(worker, /private \.neomind/, surface.path);
+    assert.match(worker, /actual.*(?:host|tool).*failure/i, surface.path);
+    assert.doesNotMatch(worker, /Read \.neomind\/guides|Enable the Model Bridge/, surface.path);
+    assert.match(client, /Enable the Model Bridge/, surface.path);
+    assert.match(client, /Read \.neomind\/guides\/controlled-workflows\.md/, surface.path);
+    assert.match(client, /manager_run/, surface.path);
+  }
+});
 
 test('explicit controlled adapters register both clients and preserve parent provider and unrelated MCP servers', async t => {
   const parent = realpathSync(tmpdir()), root = mkdtempSync(join(parent, 'neomind-entrypoint-'));

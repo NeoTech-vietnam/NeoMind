@@ -1065,7 +1065,9 @@ async function startOwned(
         if (controlled.binding.workflow_id !== input.workflow_id || controlled.binding.role !== input.role ||
             controlled.binding.task_id !== input.task_id) throw new Error('Controlled invocation context differs from backend dispatch.');
         created.controlled_execution = { schema_version: 1, epoch_id: controlled.epoch_id, stage: controlled.binding.stage,
-          routing_policy: structuredClone(requireRoutingPolicy(root)) };
+          routing_policy: structuredClone(requireRoutingPolicy(root)), tool_contract: { version: 2,
+            local_execution: controlledToolNames(controlled.binding).includes('task_run'),
+            qualified_procedure: controlledToolNames(controlled.binding).includes('procedure_run') } };
         created.native_tool_scope = controlledToolNames(controlled.binding);
         created.gateway_policy_sha256 = hash(canonicalJson(created.native_tool_scope));
       }

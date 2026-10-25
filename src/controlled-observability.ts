@@ -50,12 +50,16 @@ export function redactControlledValue(input: unknown): unknown {
 }
 export function controlledModelInput(tool: string, input: any): Record<string, unknown> {
   const digest = hash(JSON.stringify(input ?? null));
+  if (tool === 'task_run') return { input_sha256: digest, title: redactControlledValue(input?.title),
+    command: redactControlledValue(input?.command), input_paths: redactControlledValue(input?.input_paths),
+    output_paths: redactControlledValue(input?.output_paths),
+    structured_input_sha256: input?.input === undefined ? null : hash(JSON.stringify(input.input)) };
   if (tool === 'task_file_write') return { input_sha256: digest,
     path: redactControlledValue(input?.path), bytes: typeof input?.content === 'string' ? Buffer.byteLength(input.content) : null,
     content_sha256: typeof input?.content === 'string' ? hash(input.content) : null };
   return { input_sha256: digest, semantic: redactControlledValue(input) };
 }
-const contentCodes = new Set(['PLAN_INVALID', 'INVALID_PATH', 'PRIVATE_PATH', 'SCOPE_DENIED', 'READ_REQUIRED', 'INVALID_FILE',
+const contentCodes = new Set(['PLAN_INVALID', 'INVALID_PATH', 'PRIVATE_PATH', 'SCOPE_DENIED', 'READ_REQUIRED', 'INVALID_FILE', 'INVALID_EXECUTION', 'OUTPUT_EXISTS',
   'INVALID_CHECK', 'CORNELL_INVALID', 'VERDICT_REQUIRED', 'SCHEMA_INVALID']);
 const runtimeCodes = new Set(['ACTOR_INACTIVE', 'INPUT_CHANGED', 'STATE_UNCERTAIN', 'PROTOCOL_ERROR', 'UNSUPPORTED_STAGE',
   'NO_BOUND_PROCEDURE', 'NO_CORNELL_OUTPUT', 'NO_CHECK_EVIDENCE', 'REUSE_NOT_APPLICABLE', 'CONTROLLED_OPERATION_FAILED',

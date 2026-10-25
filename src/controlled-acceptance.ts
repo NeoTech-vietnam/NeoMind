@@ -318,8 +318,32 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
     if (['cancelled', 'uncertain', 'interrupted'].includes(run.status)) throw new Error('Controlled effects require reconciliation before acceptance.');
     if (['ready', 'design-ready'].includes(gate)) return { ok: true, gate, findings, checked_at: now() };
     const reconciliations = readCheckReconciliations(root, run, contract);
-    if (run.attempts.some(attempt => ['starting', 'running'].includes(attempt.state)) || unresolvedControlledChecks(run, reconciliations).length)
+    if (run.attempts.some(attempt => ['starting', 'running'].includes(attempt.state)) || unresolvedControlledChecks(run, reconciliations).length ||
+        run.local_executions?.some(operation => operation.state !== 'completed'))
       throw new Error('An active replacement session or unresolved check effect still needs reconciliation.');
+    for (const operation of run.local_executions ?? []) {
+      budget.check();
+      const intentBytes = readFileSync(safePath(root, operation.intent_path));
+      if (!operation.result_path || !operation.result_sha256 || hash(intentBytes) !== operation.intent_sha256)
+        throw new Error('A local execution has no intact backend authorization and result.');
+      const resultBytes = readFileSync(safePath(root, operation.result_path));
+      if (hash(resultBytes) !== operation.result_sha256) throw new Error('The local execution result changed.');
+      const intent = JSON.parse(intentBytes.toString('utf8')), result = JSON.parse(resultBytes.toString('utf8'));
+      const attempt = run.attempts.find(item => item.id === operation.attempt_id);
+      const receipt = attempt?.invocation_id ? readInvocation(root, attempt.invocation_id) : undefined;
+      for (const proof of [intent, result]) if (proof.id !== operation.id || proof.request_hash !== operation.request_hash ||
+          proof.workflow_id !== run.workflow_id || proof.epoch_id !== run.epoch_id || proof.contract_hash !== run.contract_hash ||
+          proof.task_id !== contract.task_id || proof.attempt_id !== operation.attempt_id || proof.invocation_id !== attempt?.invocation_id)
+        throw new Error('A local operation belongs to another actor, task or immutable execution.');
+      if (attempt?.role !== 'developer' || attempt.stage !== 'implementation' || receipt?.issuer !== 'neomind-vscode-lm' ||
+          receipt.role !== 'developer' || receipt.task_id !== contract.task_id || receipt.workflow_id !== run.workflow_id ||
+          receipt.controlled_execution?.epoch_id !== run.epoch_id || receipt.controlled_execution.stage !== 'implementation' ||
+          (result.execution?.passed ?? false) !== operation.passed)
+        throw new Error('Local operation provenance differs from its signed producer.');
+    }
+    if (contract.plan.execution_steps?.some(step => !run.local_executions?.some(operation =>
+        operation.title === step.title && operation.state === 'completed' && operation.passed)))
+      throw new Error('A declared producer operation lacks its actual successful execution result.');
     const latest = (stage: string) => [...run.attempts].reverse().find(item => item.stage === stage && item.purpose !== 'check-review' && item.purpose !== 'specialist');
     const producer = latest('implementation'), verifier = latest('verification'), reviewer = latest('review'), synthesis = latest('synthesis');
     const required = [producer, verifier, ...(gate === 'accepted' && contract.reviewer_required ? [reviewer] : []),

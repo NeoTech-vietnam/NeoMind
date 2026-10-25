@@ -344,7 +344,15 @@ function controlledWorkflow(platform: Platform): string {
   const tool = (name: string) => platform === 'copilot' ? `neomind/${name}` : name;
   return `## NeoMind controlled workflow
 
-This project explicitly selects execution_mode: neomind-controlled. This chat is an entrypoint into the exact project's NeoMind runtime. NeoMind opens and owns the Coordinator and worker sessions, their identity, tools, records, stage transitions and checks.
+This project explicitly selects execution_mode: neomind-controlled. NeoMind opens and owns the Coordinator and worker sessions, their identity, tools, records, stage transitions and checks.
+
+### Backend-owned session
+
+When the runtime supplies an explicit runtime role and stage with bound tools, execute that bounded assignment with the supplied semantic tools. Use backend-provided execution state, policy and scope; project instructions describing client setup apply to the client intake below. The host enforces Workspace Trust and model access. Report an actual host or tool failure with its returned diagnostic; a private .neomind path is not a worker input or a reason to reopen client setup. Obtain required saved context through the advertised semantic tools and keep runtime identities, credentials and authorization bound by the backend.
+
+### Client intake
+
+These steps apply to a direct user request outside a backend-owned session. This chat is an entrypoint into the exact project's NeoMind runtime.
 ${platform === 'codex' ? 'Before submission, discover the connected NeoMind tools through the client tool search. Tools may be deferred; in functions.exec environments search ALL_TOOLS for the exact manager tool and invoke its tools function. An absent name in the initial visible list is not proof of a missing connection.\n' : ''}For a new user request call ${tool('manager_run')} once with the complete requirement and execution_mode: neomind-controlled. Keep the returned durable workflow receipt. Accepted work continues while VS Code remains open, independently of this chat. Use ${tool('manager_status')} when the user asks for progress; use ${tool('manager_control')} with that exact workflow ID and action pause, resume or cancel when requested. Select an existing saved workflow explicitly when multiple workflows exist.
 The runtime performs planning, implementation and independent verification, with additional specialists and review according to risk and the saved contract. Return the receipt and actual saved outcome to the user. Tool credentials, assignment claims, progress bookkeeping and lifecycle changes are handled by the runtime. Native subagent delegation and separate parent-chat implementation are outside this controlled execution path.
 Enable the Model Bridge for this exact trusted workspace and grant model access through VS Code before running work. Model workers use the VS Code LM Bridge and configured 9router/vendor model policy even when this chat is Codex. The parent chat's provider/model remains independent. Closing VS Code interrupts owned sessions and checks; reopening reconciles the last durable checkpoint. A missing Bridge or permission is an actionable setup condition; preserve the receipt instead of starting another implementation.
@@ -354,7 +362,7 @@ Read .neomind/guides/controlled-workflows.md for setup, recovery, evidence and p
 }
 
 function controlledProfile(profile: AgentProfile, platform: Platform): string {
-  return `${controlledWorkflow(platform)}\n## ${profile.name}\n${profile.duty}\nRuntime role declaration: ${profile.roles.join(', ')}. Worker model policy role: ${profile.modelRole}. The runtime creates the actual role session with its bound semantic tools. The Coordinator profile submits requests and controls saved workflows; other native profile files are reference declarations, not independent worker launches.\n`;
+  return `${controlledWorkflow(platform)}\n## ${profile.name}\n${profile.duty}\nRuntime role declaration: ${profile.roles.join(', ')}. Worker model policy role: ${profile.modelRole}. The runtime creates the actual role session with its bound semantic tools. For client intake, the Coordinator profile submits requests and controls saved workflows; other native profile files are reference declarations, not independent worker launches. A backend-owned session follows its supplied runtime role and stage.\n`;
 }
 
 function codexProfileInstructions(root: string, profile: AgentProfile, controlled = false): string {

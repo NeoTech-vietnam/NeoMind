@@ -7,6 +7,8 @@ import { replaceWorkspaceFile, workspaceFileBytes, workspaceContentBytes, worksp
 import { registerProcedureSchema, procedureInputContractHint } from './procedures.js';
 import { controlledModelInput, controlledValidation, redactControlledValue } from './controlled-observability.js';
 import { controlledCornellResearchSchema } from './controlled-cornell-sources.js';
+import { controlledRuntimeGuide, controlledGuidePath, controlledRuntimeQuerySchema, type ControlledRuntimeQuery } from './controlled-runtime-context.js';
+import { controlledExecutionSchema, controlledExecutionDeclarationSchema, type ControlledExecutionInput, type ControlledExecutionDeclaration } from './controlled-execution.js';
 
 export type ControlledStage = 'planning' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
 export type ControlledReviewPurpose = 'checker-readiness' | 'final-product';
@@ -19,6 +21,8 @@ export interface ControlledBinding {
   implementation_paths: string[]; verification_paths: string[];
   read_paths?: string[]; protected_paths?: string[]; check_titles?: string[];
   approved_inputs?: string[];
+  execution_steps?: ControlledExecutionDeclaration[];
+  procedure_bound?: boolean;
 }
 const text = z.string().trim().min(1).max(8000);
 const paths = z.array(z.string().min(1).max(1024)).max(128);
@@ -27,6 +31,7 @@ export const controlledPlanSchema = z.strictObject({
   acceptance_criteria: z.array(text).min(1).max(32),
   allowed_paths: paths.min(1), verification_paths: paths.min(1), outputs: paths.min(1),
   documentation_paths: paths.default([]),
+  execution_steps: z.array(z.lazy(() => controlledExecutionDeclarationSchema)).max(16).optional().describe('Declare each producer script/version operation needed for this plan. Use exact local argv, readable inputs and producer-owned new outputs. Backend validates executable/tool/scope compatibility before freezing; implementation supplies prepared JSON input to task_run. Independent acceptance remains check_run under Verifier.'),
   checks: z.array(z.strictObject({ title: text.max(256),
     purpose: z.enum(['self-check', 'intended-use']).optional(),
     command: z.array(z.string().min(1).max(8000)).min(2).max(128),
@@ -64,6 +69,8 @@ export interface ControlledCallbacks {
   runCheck?(title?: string): unknown | Promise<unknown>;
   prepareWork?(query: { request: string; parameters?: Record<string, unknown> }): unknown | Promise<unknown>;
   runProcedure?(parameters?: Record<string, unknown>): unknown | Promise<unknown>;
+  runtimeContext?(query: ControlledRuntimeQuery): unknown | Promise<unknown>;
+  runTask?(input: ControlledExecutionInput): unknown | Promise<unknown>;
   compileResearch?(input: Record<string, unknown>): unknown | Promise<unknown>;
   readEvidence?(title?: string, kind?: 'execution' | 'registration'): unknown | Promise<unknown>;
   trace?(event: Record<string, unknown>): void | Promise<void>;
@@ -138,11 +145,12 @@ function assertWritable(binding: ControlledBinding, path: string): void {
   }
 }
 export function controlledToolNames(binding: ControlledBinding): string[] {
-  return ['project_read', 'project_list', 'project_search', 'assignment_report',
+  return ['runtime_context', 'project_read', 'project_list', 'project_search', 'assignment_report',
     ...(binding.stage === 'planning' ? ['workflow_plan', 'work_prepare'] : []),
     ...((binding.stage === 'implementation' && binding.role === 'developer') ||
       (binding.stage === 'verification' && ['verifier', 'check-executor'].includes(binding.role)) ? ['task_file_write'] : []),
-    ...(binding.stage === 'implementation' ? ['procedure_run'] : []),
+    ...(binding.stage === 'implementation' && binding.procedure_bound !== false ? ['procedure_run'] : []),
+    ...(binding.stage === 'implementation' && (binding.execution_steps === undefined || binding.execution_steps.length) ? ['task_run'] : []),
     ...(['implementation', 'synthesis'].includes(binding.stage) ? ['cornell_research_compile'] : []),
     ...(['verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage) ? ['check_evidence'] : []),
     ...(binding.stage === 'verification' ? ['check_run'] : [])];
@@ -171,6 +179,7 @@ export function controlledInstructions(binding: ControlledBinding): string {
     (binding.stage === 'implementation' ? 'Complete only your implementation outputs. The independent Verifier owns all checker files and negative-control fixtures; missing verifier artifacts are EXPECTED at this handoff. Do not create them or mark your work blocked because a later role has not run. When your own outputs are ready, save outcome completed; the backend advances to Verifier. Report blocked only for a real blocker to your assigned implementation.\n' : '') +
     `You are a NeoMind-owned ${binding.role} session in the ${binding.stage} stage. ${duties[binding.stage]}\n` +
     'Only the supplied tools are available. Their actor, workflow, task, scope and authorization are already bound by the runtime. Supply semantic content and project-relative file paths.\n' +
+    'Use runtime_context for authoritative current-session Bridge/model observations, trusted controlled-workflow guidance and actual toolchain versions. Existing AGENTS/profile setup instructions address the parent intake client. Your bound worker is already executing through the enabled Bridge; backend credentials and workflow IDs are supplied privately. Include execution_steps in new plans for required producer script operations; use task_run with prepared JSON input for scoped direct local execution. Direct execution is separate from qualified automatic procedure reuse and never qualifies a registry candidate.\n' +
     'Reuse: planning may bind reuse {procedure_id,version,parameters} after work_prepare reports exact eligibility; implementation calls procedure_run instead of recreating the generator. For newly delivered reusable scripts declare procedure_candidate (manifest without id/version/author); runtime registers it after checked completion without claiming qualification. For requested Cornell notes declare cornell_output_dir and all three note.md/exercises.md/answers.md outputs, then implementation calls cornell_research_compile with substantive research content.\n' +
     procedureInputContractHint() +
     'Before ending, save one compact assignment_report with outcome, summary, artifacts and findings. A blocked or failed report preserves useful work and does not submit a task. Reported prose is distinct from observed execution evidence. Runtime events supply progress and advance the workflow; focus on the assigned work.';
@@ -264,7 +273,10 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
   register('project_read', 'Read an assigned UTF-8 file. The backend retains its version for subsequent scoped edits.',
     z.strictObject({ path: z.string().min(1).max(1024), max_chars: z.number().int().min(128).max(64000).optional(),
       start_line: z.number().int().min(1).optional() }), true, args => {
-      const target = publicTarget(root, args.path, binding.approved_inputs); assertReadable(binding, args.path);
+      if (args.path === controlledGuidePath) return controlledRuntimeGuide(args.start_line ?? 1, args.max_chars ?? 64000);
+      const approved = binding.stage === 'planning' && controlledSkillInputPath(args.path)
+        ? [...(binding.approved_inputs ?? []), args.path] : binding.approved_inputs;
+      const target = publicTarget(root, args.path, approved); assertReadable(binding, args.path);
       if (!existsSync(target)) {
         locked(state => { state.reads[key(args.path)] = null; saveState(state); });
         return { path: args.path, exists: false, text: null };
@@ -281,6 +293,11 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       const start = args.start_line ?? 1, excerpt = content.split(/\r?\n/).slice(start - 1).join('\n'), maximum = args.max_chars ?? 64000;
       return { path: args.path, exists: true, size_bytes: bytes.length, start_line: start,
         text: excerpt.slice(0, maximum), truncated: excerpt.length > maximum };
+    });
+  register('runtime_context', 'Read backend-attested current execution context, trusted guidance and actual fixed toolchain version observations. Optional absolute Python/C/C++ executable paths are probed with --version only.',
+    controlledRuntimeQuerySchema, true, query => {
+      if (!callbacks.runtimeContext) throw new ControlledToolError('UNSUPPORTED_STAGE', 'Runtime observations require an active backend-owned session.');
+      return callbacks.runtimeContext(query);
     });
   function walk(directory: string, limit = 200): { files: string[]; truncated: boolean } {
     publicTarget(root, directory); assertReadable(binding, directory, true);
@@ -399,11 +416,32 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         return callbacks.readEvidence(args.title, args.kind);
       });
   if (binding.stage === 'implementation') {
+    if (binding.execution_steps === undefined || binding.execution_steps.length) {
+    const schema = binding.execution_steps === undefined ? controlledExecutionSchema.extend({ input: z.record(z.string(), z.unknown()).optional() }) : z.strictObject({
+      title: text.max(256).describe('Choose a declared execution_steps title. Backend supplies its argv, inputs, outputs and limits.'),
+      input: z.record(z.string(), z.unknown()).optional().describe('Prepared JSON input for this script; runtime supplies all internal identity.') });
+    register('task_run', 'Execute a scoped direct local script or fixed version observation. Backend validates the plan/role, supplies cwd/identity/hashes, retains the actual bounded result and prevents duplicate effects. This is not procedure qualification or independent acceptance evidence.',
+      schema, false, args => {
+        if (!callbacks.runTask) throw new ControlledToolError('UNSUPPORTED_STAGE', 'Direct execution is unavailable in this invocation.');
+        const step = binding.execution_steps?.find(step => step.title === args.title);
+        if (binding.execution_steps !== undefined && !step) throw new ControlledToolError('INVALID_EXECUTION', 'Choose one of the declared execution step titles.');
+        const request = controlledExecutionSchema.parse(step ? { ...step, ...(args.input === undefined ? {} : { input: args.input }) } : args);
+        const script = request.command.length > 1 && request.command[1] !== '--version' ? request.command[1] : undefined;
+        if (script) locked(state => {
+          const path = publicTarget(root, script, binding.approved_inputs); assertReadable(binding, script);
+          const bytes = readFileSync(path);
+          if (state.reads[key(script)] !== hash(bytes)) throw new ControlledToolError('READ_REQUIRED', 'Read the exact current project script before authorizing its local execution.');
+        });
+        return callbacks.runTask(request);
+      });
+    }
+    if (binding.procedure_bound !== false) {
     register('procedure_run', 'Run only the qualified procedure bound in the plan; backend derives identity, scope and execution key.',
       z.strictObject({ parameters: z.record(z.string(), z.unknown()).optional() }), false, args => {
         if (!callbacks.runProcedure) throw new ControlledToolError('NO_BOUND_PROCEDURE', 'The plan has no currently eligible exact procedure.');
         return callbacks.runProcedure(args.parameters);
       });
+    }
   }
   if (['implementation', 'synthesis'].includes(binding.stage)) {
     register('cornell_research_compile', 'Compile research into the saved Cornell format with separate questions and answers inside the assigned note folder.',

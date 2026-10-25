@@ -1,6 +1,7 @@
 import { controlledPublicReferencePath, controlledSkillInputPath, ControlledToolError, type ControlledPlan } from './controlled-tools.js';
 import { validateProcedurePath, validateProcedureDefinition } from './procedures.js';
 import { existsSync } from 'node:fs';
+import { validateControlledExecutionDeclaration } from './controlled-execution.js';
 
 const key = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
 const covers = (path: string, scopes: string[]) => scopes.some(scope => key(path) === key(scope) || key(path).startsWith(`${key(scope)}/`));
@@ -21,6 +22,20 @@ export function controlledConsultationRole(role: unknown) {
 export function normalizeControlledPlanInput(root: string, input: ControlledPlan,
   committedChecks: readonly { command: string[]; baseline_paths: string[] }[] = []): ControlledPlan {
   const plan = structuredClone(input);
+  const titles = new Set<string>();
+  const operationOutputs: string[] = [];
+  for (const step of plan.execution_steps ?? []) {
+    if (titles.has(step.title)) throw new Error('Each execution_steps title must be unique.');
+    titles.add(step.title);
+    if (step.output_paths.some(path => operationOutputs.some(other => covers(path, [other]) || covers(other, [path]))))
+      throw new Error('execution_steps cannot create overlapping output files across operations.');
+    operationOutputs.push(...step.output_paths);
+    validateControlledExecutionDeclaration(root, { stage: 'implementation', role: 'developer',
+      implementation_paths: plan.allowed_paths, verification_paths: plan.verification_paths,
+      read_paths: ['.'], approved_inputs: plan.input_paths ?? [], protected_paths: plan.preservation_paths ?? [] }, step);
+    if (step.output_paths.some(path => !plan.outputs.includes(path)))
+      throw new Error('execution_steps output_paths must name declared producer outputs.');
+  }
   for (const specialist of plan.specialists ?? []) controlledConsultationRole(specialist.role);
   const validated = new Set<string>();
   const checked = (path: string) => { if (!validated.has(path)) { validateProcedurePath(root, path); validated.add(path); } return path; };

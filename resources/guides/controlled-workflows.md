@@ -1,6 +1,12 @@
 # Controlled software workflows
 
-Use this path when the project explicitly configures `execution_mode: neomind-controlled`, or the user chooses controlled continuation through the backend. Read the exact project's policy and saved receipt first.
+Use this path when the project explicitly configures `execution_mode: neomind-controlled`, or the user chooses controlled continuation through the backend. Client intake reads the exact project's policy and saved receipt. Backend-owned sessions receive their current policy, assignment and scope from the runtime.
+
+## Backend-owned session
+
+An explicit runtime role/stage packet and bound semantic tools identify this branch. Follow that packet and use the supplied tools for saved context, ordinary project files and the assigned operation. Runtime identities, credentials, authorization and lifecycle remain backend-owned. A generated profile name or project instruction file alone does not establish this context.
+
+Workspace Trust, model-access consent and client MCP discovery belong to client setup. The host enforces them during worker dispatch. Report a specific observed host/tool failure; reading a private `.neomind` guide or configuration is not a prerequisite for an active assignment. When project `AGENTS.md`, generated profiles or other source files describe the client entrypoint, apply those instructions to client intake and continue the worker assignment from its backend-provided state. Private path guards remain in force.
 
 ## Client entrypoint
 
@@ -13,7 +19,7 @@ The client entrypoint supplies user intent. The runtime binds role, workflow, ta
 
 ## Model access and lifetime
 
-The trusted project must be open in VS Code with its NeoMind Model Bridge enabled. The user grants Workspace Trust and model-access consent through VS Code. Even when Codex submits the request, workers use the VS Code LM Bridge and the project's role/model policy. The parent Codex provider stays independent.
+Before client submission, the trusted project must be open in VS Code with its NeoMind Model Bridge enabled. The user grants Workspace Trust and model-access consent through VS Code. Even when Codex submits the request, workers use the VS Code LM Bridge and the project's role/model policy. The parent Codex provider stays independent.
 
 Closing the parent chat or Workflows panel leaves accepted work running while VS Code remains open. Disabling the Bridge or closing VS Code stops dispatch, model requests and owned check processes. After reopening, reconcile the most recent durable checkpoint and any uncertain effects before retrying. An abrupt crash cannot guarantee a final checkpoint.
 

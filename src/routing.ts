@@ -76,7 +76,8 @@ const routingPolicySchema = z
   .strict();
 export type RoutingPolicy = z.infer<typeof routingPolicySchema>;
 export interface NativeReceipt {
-  controlled_execution?: { schema_version: 1; epoch_id: string; stage: ControlledStage; routing_policy: RoutingPolicy };
+  controlled_execution?: { schema_version: 1; epoch_id: string; stage: ControlledStage; routing_policy: RoutingPolicy;
+    tool_contract?: { version: 2; local_execution: boolean; qualified_procedure: boolean } };
   schema_version: 1;
   issuer: 'neomind-codex-app-server' | 'neomind-vscode-lm' |
     'taskforces-codex-app-server' | 'taskforces-vscode-lm' |
@@ -376,8 +377,16 @@ export function routingProblems(
     if (frozenPolicy.vscode_effort_policy !== 'allow-unavailable' ||
         receipt.effort_support !== 'unavailable' || receipt.confirmed_reasoning_effort !== null)
       errors.push('VS Code reasoning effort is unavailable; explicit allow-unavailable compatibility policy required.');
-    const operations = receipt.controlled_execution ? controlledToolNames({ role: receipt.role,
-      stage: receipt.controlled_execution.stage, workflow_id: receipt.workflow_id!, implementation_paths: [], verification_paths: [] }) : roleCapabilities(role).operations;
+    const toolContract = receipt.controlled_execution?.tool_contract;
+    if (toolContract && (toolContract.version !== 2 || typeof toolContract.local_execution !== 'boolean' || typeof toolContract.qualified_procedure !== 'boolean'))
+      errors.push('Controlled tool contract version is invalid.');
+    const controlledOperations = receipt.controlled_execution ? controlledToolNames({ role: receipt.role,
+      stage: receipt.controlled_execution.stage, workflow_id: receipt.workflow_id!, implementation_paths: [], verification_paths: [],
+      ...(toolContract ? { execution_steps: toolContract.local_execution ? undefined : [], procedure_bound: toolContract.qualified_procedure } : {}) }) : [];
+    // Historical signed v1 scopes retain their exact original tool set. A runtime
+    // upgrade never widens or invalidates their recorded gateway authority.
+    const operations = receipt.controlled_execution ? toolContract ? controlledOperations
+      : controlledOperations.filter(name => !['runtime_context', 'task_run'].includes(name)) : roleCapabilities(role).operations;
     if (canonicalJson(receipt.native_tool_scope) !== canonicalJson(operations) ||
         receipt.gateway_policy_sha256 !== hash(canonicalJson(operations)))
       errors.push('VS Code invocation-bound gateway scope is invalid.');

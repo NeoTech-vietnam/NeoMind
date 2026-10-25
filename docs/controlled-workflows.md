@@ -2,6 +2,8 @@
 
 NeoMind-controlled workflows run agents through the VS Code Model Bridge. Copilot chat, Codex chat and **NeoMind: Open Workflows** are entrypoints to the same runtime. NeoMind owns worker sessions, tool identity, stage transitions, evidence and recovery.
 
+The setup steps below apply to the client submitting a user request. A backend-owned worker follows its explicit runtime role/stage packet and advertised semantic tools, using the policy, scope and saved state provided by the backend. The host enforces trust and model access; workers report actual host/tool failures and retain private path guards. Project instructions pointing to private `.neomind` setup guides describe client intake and do not add a worker prerequisite. A profile name alone is not proof of a backend-owned session.
+
 ## Enable the controlled entrypoint
 
 1. Install the matching NeoMind runtime and VSIX following [the release installation guide](install-release.md). Set the **User** setting `neomind.bridge.runtimePath` to the trusted installed runtime directory; workspace overrides are ignored.

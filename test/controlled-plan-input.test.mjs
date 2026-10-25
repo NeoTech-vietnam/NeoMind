@@ -25,6 +25,20 @@ function plan() {
       negative_controls: [{ title: 'Reject invalid fixture', command: ['node', 'checks/check.mjs', 'checks/bad.json'], expected_exit_code: 1 }] }], risk: 'low' };
 }
 
+test('producer execution capability and cross-step output collisions are rejected before freezing any task', t => {
+  const root = fixture(t), proposed = { ...plan(), allowed_paths: ['src','docs'], outputs: ['docs/generated.md'] };
+  const step = { title: 'One', command: ['node','src/value.mjs'], input_paths: [], output_paths: ['docs/generated.md'] };
+  const valid = normalizeControlledPlanInput(root, { ...proposed, execution_steps: [step] });
+  assert.equal(valid.execution_steps[0].title, 'One');
+  assert.throws(() => normalizeControlledPlanInput(root, { ...proposed,
+    execution_steps: [step, { ...step, title: 'Two' }] }), /overlapping/);
+  assert.throws(() => normalizeControlledPlanInput(root, { ...proposed,
+    execution_steps: [{ ...step, command: ['node','--eval','console.log(1)'] }] }), /Inline code|exact existing/);
+  assert.throws(() => normalizeControlledPlanInput(root, { ...proposed,
+    execution_steps: [{ ...step, output_paths: ['checks/generated.md'] }] }), /producer|checker|scope/);
+  assert.equal(existsSync(join(root, '.neomind/controlled/workflows')), false);
+});
+
 test('actual controlled MCP accepts semantic plans without baseline bookkeeping and backend fills only approved metadata', async t => {
   const root = fixture(t), captured = [], server = createControlledMcpServer(root, { workflow_id: 'BACKEND-WORKFLOW', invocation_id: 'BACKEND-INVOCATION',
     stage: 'planning', role: 'manager', implementation_paths: [], verification_paths: [] }, {

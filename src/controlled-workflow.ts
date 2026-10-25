@@ -14,7 +14,10 @@ import { prepareWork, type WorkPreparation } from './procedure-reuse.js';
 import { runCommand } from './command-runner.js';
 import { readNativeSoftwareContract } from './native-software.js';
 import type { ControlledBinding, ControlledCallbacks, ControlledPlan, ControlledReport } from './controlled-tools.js';
-import { ControlledToolError, controlledReviewInstructions, controlledPublicReferencePath, controlledSkillInputPath } from './controlled-tools.js';
+import { ControlledToolError, controlledReviewInstructions, controlledPublicReferencePath, controlledSkillInputPath, controlledToolNames } from './controlled-tools.js';
+import { controlledRuntimeGuide, controlledToolchain } from './controlled-runtime-context.js';
+import { controlledExecutionSchema, controlledExecutionDeclarationSchema, ControlledExecutionError,
+  prepareControlledExecution, runControlledExecution, rollbackControlledExecutionOutputs, type ControlledExecutionInput } from './controlled-execution.js';
 import { normalizeControlledCornellSources, existingControlledCornellNote, controlledCornellResult, bindControlledCornellPractice, type ControlledCornellSourceContext, type ControlledCornellResult } from './controlled-cornell-sources.js';
 import { registerProcedure, resolveProcedure, runProcedure } from './procedures.js';
 import { compileCornellResearch, readCornellDestination, type CornellResearchInput } from './cornell-workflow.js';
@@ -74,6 +77,8 @@ export interface ControlledSnapshot {
   procedure_runs?: { id: string; status: string }[]; procedure_candidate_id?: string; procedure_candidate_version?: string; cornell_note_ids?: string[];
   cornell_results?: ControlledCornellResult[];
   check_reconciliations?: InterruptedCheckReconciliationLink[];
+  local_executions?: { id: string; attempt_id: string; request_hash: string; title: string; state: 'running' | 'completed';
+    pid?: number; intent_path: string; intent_sha256: string; result_path?: string; result_sha256?: string; passed?: boolean }[];
   pending_check_review?: boolean;
   check_intents?: { id: string; attempt_id: string; title: string; baseline: Record<string, string>;
     state: 'starting' | 'running' | 'completed'; pid?: number; pilot_root?: string; pilot_nonce?: string }[];
@@ -308,6 +313,7 @@ class Controller {
   private launchTail: Promise<void> = Promise.resolve();
   private jobs = new Map<string, { promise: Promise<void>; abort: AbortController }>();
   private operationDrain = new ControlledOperationDrain();
+  private localExecutions = new Map<string, Promise<unknown>>();
   private closing: Promise<void> | null = null;
   constructor(readonly root: string) {}
   private async launch(input: Parameters<typeof startNative>[1], signal: AbortSignal) {
@@ -386,7 +392,8 @@ class Controller {
     return readState(this.root, run.workflow_id);
   }
   private async plan(run: ControlledSnapshot, proposed: ControlledPlan, signal: AbortSignal, assertActive: () => void): Promise<unknown> {
-    const plan = validatePlan(this.root, normalizeControlledPlanInput(this.root, mergeOriginalCriteria(this.root, run, proposed),
+    const supplied = run.contract_hash ? proposed : { ...proposed, execution_steps: proposed.execution_steps ?? [] };
+    const plan = validatePlan(this.root, normalizeControlledPlanInput(this.root, mergeOriginalCriteria(this.root, run, supplied),
       run.continuation ? readNativeSoftwareContract(this.root, run.workflow_id)?.plan.checks ?? [] : []));
     if (run.continuation) {
       const original = readNativeSoftwareContract(this.root, run.workflow_id)!;
@@ -421,6 +428,11 @@ class Controller {
     const preservedHashes = await controlledFingerprintsAsync(this.root, [...new Set([...(plan.preservation_paths ?? []), ...(plan.input_paths ?? []),
       ...(original ? ['.gitignore', '.agents/skills/leetcode-notes/assets/cornell-note-template.md', '.agents/skills/leetcode-notes/scripts/validate_notes.py']
         .filter(path => existsSync(safePath(this.root, path))) : [])])], { signal });
+    for (const step of plan.execution_steps ?? []) {
+      const inputs = new Set([...Object.keys(preservedHashes), ...step.input_paths,
+        ...(step.command[1] === '--version' ? [] : [step.command[1]!])]);
+      if (inputs.size > 512) throw new Error('A producer execution baseline exceeds 512 exact inputs. Select only the relevant preservation files before freezing this plan.');
+    }
     // No records or contract have been written before this yielding, cancellable preflight.
     // Re-read authoritative state after the await; trace/heartbeat events must not be overwritten.
     return withOperationLock(this.root, `controlled-plan-${hash(run.workflow_id).slice(0, 32)}`, () => {
@@ -508,6 +520,10 @@ class Controller {
     this.jobs.set(id, { promise, abort });
   }
   private admitCheckEffects(run: ControlledSnapshot): boolean {
+    if (run.local_executions?.some(operation => operation.state !== 'completed')) {
+      run.status = 'uncertain'; run.blocker = { kind: 'environment', message: 'An owned local script has no durable result. Preserve its operation record and reconcile actual effects before another execution; no command was replayed.' };
+      save(this.root, run, 'uncertain', run.blocker.message); return false;
+    }
     const contract = run.contract_hash ? readContract(this.root, run) : undefined;
     const reconciliations = contract ? readCheckReconciliations(this.root, run, contract) : [];
     if (unresolvedControlledChecks(run, reconciliations).length) {
@@ -556,6 +572,8 @@ class Controller {
       save(this.root, run, 'dispatch', `NeoMind dispatches ${role} for ${stage}.`);
       const binding: ControlledBinding = { workflow_id: id, task_id: stage === 'planning' ? undefined : contract?.task_id,
         stage, role, implementation_paths: contract?.plan.allowed_paths ?? [], verification_paths: contract?.plan.verification_paths ?? [],
+        ...(contract?.plan.execution_steps === undefined ? {} : { execution_steps: contract.plan.execution_steps }),
+        procedure_bound: !!contract?.plan.reuse,
         ...(stage === 'review' ? { review_purpose: attempt.purpose === 'check-review' ? 'checker-readiness' as const : 'final-product' as const } : {}),
         approved_inputs: [...(contract?.plan.input_paths ?? []), ...(run.continuation ? [
           '.agents/skills/leetcode-notes/assets/cornell-note-template.md', '.agents/skills/leetcode-notes/scripts/validate_notes.py',
@@ -571,6 +589,41 @@ class Controller {
       };
       const callbacks: ControlledCallbacks = {
         assertActive,
+        runtimeContext: async query => {
+          assertActive();
+          const current = readState(this.root, id), host = readHost(this.root), active = current.attempts.at(-1)!;
+          const native = readInvocation(this.root, active.invocation_id!);
+          if (host.pid !== current.owner_pid || host.instance !== current.owner_instance || native.issuer !== 'neomind-vscode-lm')
+            throw new ControlledToolError('ACTOR_INACTIVE', 'This worker is not owned by the current enabled project Bridge.');
+          let toolchain;
+          try { toolchain = await controlledToolchain(this.root, query, attemptAbort.signal); }
+          catch { throw new ControlledToolError('INVALID_EXECUTION', 'Supply an existing absolute executable of the requested toolchain type; version observations use fixed --version argv.'); }
+          assertActive();
+          const observation = { schema_version: 1, observed_at: now(), context: 'backend-owned-worker',
+            execution_mode: 'neomind-controlled', transport: 'vscode-lm', role, stage,
+            bridge: { enabled: true, exact_project_owner: true, workspace_trust_checked_by_extension: true },
+            model: { requested: native.requested_model, observed: native.confirmed_model, vendor: native.model_provider,
+              current_owned_tool_request_observed: true, upstream_identity_attested: false },
+            available_tools: controlledToolNames(binding), guide: controlledRuntimeGuide(), toolchain,
+            producer_capabilities: { tools: controlledToolNames({ ...binding, stage: 'implementation', role: 'developer', execution_steps: undefined, procedure_bound: false }),
+              declaration: 'New plans declare producer script operations in execution_steps. The worker supplies only title and JSON input; backend supplies argv, identity, scope and limits.',
+              direct_execution_input_limit_bytes: 1024 * 1024, direct_execution_baseline_limit_files: 512,
+              script_interpreters: ['node', 'python'], version_observations: ['node', 'python', 'gcc', 'g++'] },
+            policy: { network: false, publication: false, scoped_execution_is_os_sandbox: false,
+              repair_attempts: readConfig(this.root).repair_attempts },
+            reuse: { qualified_automatic_reuse_required: true, direct_local_script_execution: 'task_run under the immutable producer scope; does not qualify a candidate' } };
+          atomicWrite(safePath(this.root, `.neomind/controlled/context/${attempt.id}.${hash(canonicalJson(query))}.json`), JSON.stringify(observation, null, 2) + '\n');
+          return observation;
+        },
+        runTask: input => {
+          assertActive();
+          const key = hash(canonicalJson({ id, epoch: run.epoch_id, input }));
+          const existing = this.localExecutions.get(key); if (existing) return existing;
+          const operation = this.operationDrain.run(id, () => this.executeTask(id, attempt.id, input, attemptAbort.signal, assertActive));
+          this.localExecutions.set(key, operation);
+          void operation.finally(() => { if (this.localExecutions.get(key) === operation) this.localExecutions.delete(key); }).catch(() => {});
+          return operation;
+        },
         submitPlan: async plan => {
           assertActive(); run = readState(this.root, id);
           try { return await this.plan(run, plan, attemptAbort.signal, assertActive); }
@@ -578,6 +631,9 @@ class Controller {
         },
         saveReport: report => {
           assertActive(); const current = readState(this.root, id), active = current.attempts.at(-1)!;
+          if (stage === 'implementation' && report.outcome === 'completed' && contract?.plan.execution_steps?.some(step =>
+            !current.local_executions?.some(operation => operation.title === step.title && operation.state === 'completed' && operation.passed)))
+            throw new ControlledToolError('ACCEPTANCE_INCOMPLETE', 'Complete each declared producer execution step through task_run before reporting the implementation complete.');
           if (['verification', 'review'].includes(stage) && report.outcome === 'completed' && !report.verdict)
             throw new ControlledToolError('VERDICT_REQUIRED', 'Completed independent verification or review must state verdict pass or fail.');
           if (active.report) {
@@ -729,7 +785,8 @@ class Controller {
             if (!this.repair(run, 'protocol', 'A backend-observed write refusal belongs to the independent Verifier. Re-read your current implementation outputs and finish only your own scope. Save a new honest completed producer report only when those outputs are ready; the backend will dispatch Verifier afterwards. The earlier blocked report remains unsubmitted.')) return;
             continue;
           }
-          if (!this.repair(run, active.report.failure_kind ?? 'unknown', active.report.summary)) return;
+          const kind = this.reportedFailureKind(run, active);
+          if (!this.repair(run, kind, active.report.summary)) return;
           continue;
         }
         if (specialist) { run.status = 'queued'; save(this.root, run, 'consultation-complete', `${role} consultation saved.`); continue; }
@@ -802,6 +859,7 @@ class Controller {
       `Cornell destination default: ${readCornellDestination(this.root).directory}/${run.workflow_id.toLowerCase()}. Only add a Cornell bundle when requested by the user.`,
       run.blocker ? `Repair/diagnosis context:\n${JSON.stringify(run.blocker)}` : '',
       `Prior reports:\n${JSON.stringify(run.attempts.filter(item => item.report).slice(-4).map(item => ({ stage: item.stage, report: item.report })))}`,
+      'For setup or executable observations, call runtime_context. Its current signed-session observations supersede historical unsupported setup assumptions. The backend already owns this session; client intake setup instructions do not become worker preconditions. A blocked automatic-reuse candidate does not prohibit a separately scoped direct task_run operation. New plans declare required producer execution_steps before freeze.',
       stage === 'synthesis' ? `Current actual evidence: ${JSON.stringify(currentControlledChecks(run).filter(check => !check.negative && check.passed).map(check => ({ title: check.title, evidence_id: check.evidence_id, source_uri: `record:${check.evidence_id}` })))}. Use check_evidence for bounded actual stdout/stderr; private runtime log files are not readable source files. The backend binds evidence and source metadata automatically; cite supplied source_uri or readable project files, and describe only facts supported by these checks.` : '',
       contract?.plan.procedure_candidate && (stage === 'synthesis' || stage === 'review' && reviewPurpose === 'final-product')
         ? `Current backend registry observation: ${JSON.stringify(controlledRegistrationEvidence(this.root, run, contract))}\nUse check_evidence({kind:"registration"}) to refresh this exact bound manifest observation. It is actual registry provenance, not a separate native signed receipt, independent contract review or automatic-reuse qualification.` : '',
@@ -811,6 +869,137 @@ class Controller {
       stage === 'diagnosis' ? 'Diagnose existing evidence without modifying files. Report failure_kind implementation/checker/protocol/environment, concrete findings, and bounded repair direction.' : '',
     ].filter(Boolean).join('\n\n');
   }
+  private async executeTask(id: string, attemptId: string, value: ControlledExecutionInput, signal: AbortSignal,
+    assertActive: () => void): Promise<unknown> {
+    assertActive();
+    const input = controlledExecutionSchema.parse(value), requestHash = hash(canonicalJson(input));
+    let run = readState(this.root, id);
+    const contract = readContract(this.root, run), attempt = run.attempts.find(item => item.id === attemptId);
+    if (attempt?.stage !== 'implementation' || attempt.role !== 'developer' || attempt.id !== run.attempts.at(-1)?.id || !attempt.invocation_id)
+      throw new ControlledToolError('SCOPE_DENIED', 'Only the active bound Implementer may run a producer operation.');
+    if (contract.plan.execution_steps !== undefined) {
+      const step = contract.plan.execution_steps.find(item => item.title === input.title);
+      const { input: _payload, ...declaration } = input;
+      if (!step || !same(controlledExecutionDeclarationSchema.parse(step), declaration))
+        throw new ControlledToolError('INVALID_EXECUTION', 'Use an execution_steps operation exactly as frozen in the plan; provide only its prepared JSON input.');
+    }
+    const summarize = (saved: any, replayed: boolean) => ({ replayed, passed: saved.execution?.passed ?? false,
+      command: saved.execution?.command ?? input.command, exit_code: saved.execution?.result?.exit_code ?? null,
+      stdout: saved.execution?.result?.stdout?.slice(-24000) ?? '', stderr: saved.execution?.result?.stderr?.slice(-12000) ?? '',
+      cancelled: saved.execution?.result?.cancelled ?? false, timed_out: saved.execution?.result?.timed_out ?? false,
+      output_hashes: saved.execution?.output_hashes ?? {}, not_started: saved.not_started ?? false,
+      ...(saved.start_failure ? { start_failure: saved.start_failure } : {}),
+      ...(saved.execution?.passed ? {} : { error: 'The local operation did not pass. Inspect its retained actual result and correct the script or JSON input before retrying.' }),
+      ...(saved.rollback ? { rollback: { complete: saved.rollback.complete,
+        retained_failed_outputs: saved.rollback.archived?.map((item: any) => ({ path: item.path, sha256: item.sha256, bytes: item.bytes, removed: item.removed })),
+        uncertain_paths: saved.rollback.uncertain_paths, reason: saved.rollback.reason } } : {}),
+      note: 'Observed direct local execution; independent verification remains required. Registry qualification was not changed.' });
+    const prior = [...(run.local_executions ?? [])].reverse().find(item => item.request_hash === requestHash &&
+      (item.attempt_id === attemptId || item.state === 'completed'));
+    if (prior) {
+      if (prior.state !== 'completed' || !prior.result_path || !prior.result_sha256)
+        throw new ControlledToolError('STATE_UNCERTAIN', 'This local operation has no durable result. Preserve and reconcile its effects before retrying.');
+      const bytes = readFileSync(safePath(this.root, prior.result_path));
+      if (hash(bytes) !== prior.result_sha256) throw new ControlledToolError('STATE_UNCERTAIN', 'The immutable local execution result changed.');
+      const saved = JSON.parse(bytes.toString('utf8'));
+      if (saved.workflow_id !== id || saved.epoch_id !== run.epoch_id || saved.contract_hash !== run.contract_hash || saved.request_hash !== requestHash)
+        throw new ControlledToolError('STATE_UNCERTAIN', 'Saved local execution belongs to another immutable operation.');
+      const inputMatches = !saved.execution || same(saved.execution.baseline, fingerprints(this.root, Object.keys(saved.execution.baseline)));
+      const expectedOutputs = saved.rollback?.complete
+        ? Object.fromEntries(Object.keys(saved.execution?.output_hashes ?? {}).map(path => [path, 'missing'])) : saved.execution?.output_hashes;
+      const outputMatches = !expectedOutputs || same(expectedOutputs, fingerprints(this.root, Object.keys(expectedOutputs)));
+      if (!outputMatches || saved.execution?.passed && !inputMatches)
+        throw new ControlledToolError('INPUT_CHANGED', 'Local execution inputs or outputs changed after the saved result. Inspect the current artifacts before continuing.');
+      if (inputMatches) return summarize(saved, true);
+      if (!saved.rollback?.complete)
+        throw new ControlledToolError('STATE_UNCERTAIN', 'A failed local operation needs safe effect reconciliation before another execution.');
+      // A producer-authored script changed after a retained failed operation.
+      // The exact new source must have been read through the bound file tool.
+    }
+    let prepared;
+    try { prepared = prepareControlledExecution(this.root, { stage: 'implementation', role: 'developer',
+      implementation_paths: contract.plan.allowed_paths, verification_paths: contract.plan.verification_paths,
+      read_paths: ['.'], approved_inputs: contract.plan.input_paths, protected_paths: this.protectedPaths(contract),
+      preserved_hashes: contract.preserved_hashes }, input); }
+    catch (error) {
+      if (error instanceof ControlledExecutionError) throw new ControlledToolError(error.code, error.message);
+      throw error;
+    }
+    const operationId = randomUUID(), folder = `.neomind/controlled/executions/${operationId}`;
+    const { input: _directInput, ...declaredOperation } = input;
+    const guardedBefore = fingerprints(this.root, [...contract.plan.verification_paths, ...this.protectedPaths(contract)]);
+    const identity = { schema_version: 1, kind: 'controlled-direct-local-execution', id: operationId,
+      workflow_id: id, task_id: contract.task_id, epoch_id: run.epoch_id, contract_hash: run.contract_hash,
+      attempt_id: attemptId, invocation_id: attempt.invocation_id, request_hash: requestHash };
+    const intent = JSON.stringify({ ...identity, created_at: now(), authorization: 'immutable-producer-scope',
+      command: prepared.command, input_sha256: prepared.input_sha256, baseline: prepared.baseline,
+      output_baseline: prepared.output_baseline, payload_hash: prepared.payload_hash,
+      declaration: controlledExecutionDeclarationSchema.parse(declaredOperation), guarded_before: guardedBefore }, null, 2) + '\n';
+    atomicWrite(safePath(this.root, `${folder}/intent.json`), intent);
+    run.local_executions = [...(run.local_executions ?? []), { id: operationId, attempt_id: attemptId,
+      request_hash: requestHash, title: input.title, state: 'running', intent_path: `${folder}/intent.json`, intent_sha256: hash(intent) }];
+    save(this.root, run, 'local-execution-authorized', 'Backend bound the local script, input hashes and producer-only output scope. No procedure qualification was granted.');
+    let execution: Awaited<ReturnType<typeof runControlledExecution>> | undefined, started = false, notStarted = false;
+    let startFailure: { code: string; rule: string } | undefined;
+    try {
+      execution = await runControlledExecution(prepared, { signal, assertActive, onStart: pid => {
+        started = true; const current = readState(this.root, id);
+        current.local_executions!.find(item => item.id === operationId)!.pid = pid; save(this.root, current);
+      } });
+    } catch (error) {
+      if (started) throw error; // An unobserved started process remains uncertain; never invent a result.
+      notStarted = true;
+      startFailure = error instanceof ControlledExecutionError ? { code: error.code, rule: error.message }
+        : { code: signal.aborted ? 'ACTOR_INACTIVE' : 'CONTROLLED_OPERATION_FAILED',
+          rule: signal.aborted ? 'The owned operation was cancelled before process start.' : 'The backend could not start this bound local operation.' };
+    }
+    const guardedAfter = fingerprints(this.root, [...contract.plan.verification_paths, ...this.protectedPaths(contract)]);
+    const guardMatches = same(guardedBefore, guardedAfter);
+    if (execution && !guardMatches) { execution.passed = false; execution.changed_inputs.push(...Object.keys(guardedBefore).filter(path => guardedBefore[path] !== guardedAfter[path])); }
+    const raw = { ...identity, finished_at: now(), execution, not_started: notStarted, start_failure: startFailure,
+      guarded_before: guardedBefore, guarded_after: guardedAfter };
+    atomicWrite(safePath(this.root, `${folder}/execution.json`), JSON.stringify(raw, null, 2) + '\n');
+    const rollback = execution && !execution.passed && guardMatches
+      ? rollbackControlledExecutionOutputs(prepared, execution, `${folder}/failed-outputs`) : undefined;
+    const result = { ...raw, rollback };
+    const bytes = JSON.stringify(result, null, 2) + '\n', path = `${folder}/result.json`;
+    atomicWrite(safePath(this.root, path), bytes);
+    run = readState(this.root, id);
+    const entry = run.local_executions!.find(item => item.id === operationId)!;
+    entry.state = 'completed'; entry.result_path = path; entry.result_sha256 = hash(bytes); entry.passed = execution?.passed ?? false;
+    if (!guardMatches || rollback && !rollback.complete) {
+      run.status = 'uncertain'; run.blocker = { kind: 'protocol', message: 'Local execution effects differ from another role or protected baseline. Retained artifacts require reconciliation; no files were silently overwritten.' };
+    }
+    save(this.root, run, 'local-execution-result', notStarted ? 'Owned local operation ended before process start; no execution pass was recorded.' :
+      `Actual direct local execution ${execution?.passed ? 'succeeded' : 'did not pass'}; result and output hashes retained.`);
+    return summarize(result, false);
+  }
+
+  private reportedFailureKind(run: ControlledSnapshot, attempt: Attempt): FailureKind {
+    const reported = attempt.report?.failure_kind ?? 'unknown';
+    if (reported !== 'environment') return reported;
+    // A model's setup assumption is not an observed environment failure. The
+    // provider failure path above already uses the actual signed native result.
+    for (const entry of run.local_executions ?? []) if (entry.attempt_id === attempt.id && entry.result_path) {
+      const result = JSON.parse(readFileSync(safePath(this.root, entry.result_path), 'utf8')).execution?.result;
+      if (typeof result?.error === 'string' && /\b(?:ENOENT|EACCES|EPERM|ENOSPC|ECONNREFUSED)\b/.test(result.error)) return 'environment';
+    }
+    const directory = safePath(this.root, '.neomind/controlled/context');
+    const contract = run.contract_hash ? readContract(this.root, run) : undefined;
+    const commands = [...(contract?.plan.checks.flatMap(check => [check.command, ...(check.negative_controls ?? []).map(control => control.command)]) ?? []),
+      ...(contract?.plan.execution_steps?.map(step => step.command) ?? [])];
+    const required = new Set(commands.map(command => command[0]!.split(/[\\/]/).at(-1)!.replace(/\.exe$/i, '').toLowerCase()));
+    const latest = existsSync(directory) ? readdirSync(directory).filter(name => name.startsWith(`${attempt.id}.`))
+      .sort((a, b) => lstatSync(join(directory, b)).mtimeMs - lstatSync(join(directory, a)).mtimeMs)[0] : undefined;
+    if (latest) {
+      const observation = JSON.parse(readFileSync(join(directory, latest), 'utf8'));
+      const names: Record<string, string[]> = { node: ['node'], python: ['python', 'python3'], c11: ['gcc', 'clang'], cpp17: ['g++', 'clang++'] };
+      if (observation.toolchain?.observations?.some((item: any) => item.available === false &&
+        names[item.program]?.some(program => required.has(program)))) return 'environment';
+    }
+    return 'unknown';
+  }
+
   private async checks(id: string, attemptId: string, signal: AbortSignal, title?: string): Promise<unknown> {
     let run = readState(this.root, id);
     const contract = readContract(this.root, run), attempt = run.attempts.find(item => item.id === attemptId);
