@@ -73,6 +73,18 @@ function planFor(name, options = {}) {
       outputs: [{ path: '{output}', min_bytes: 1 }], environment: { platforms: [process.platform], clients: ['codex', 'copilot', 'cli'] },
       effects: { write_roots: ['generated'], network: false, publication: false } };
   }
+  if (options.readOnlyBaseline) {
+    const dependency = 'scripts/verify-leetcode-exercise.mjs';
+    const hiddenInput = '.agents/skills/helpers/assets/oracle.json';
+    plan.preservation_paths = [options.privateBaselineDirectory ? 'scripts' : dependency];
+    plan.input_paths = [hiddenInput];
+    plan.checks[0].baseline_paths.push(options.privateBaselineDirectory ? 'scripts' : dependency, hiddenInput);
+    plan.checks[0].negative_controls[0].baseline_paths.push(options.privateBaselineDirectory ? 'scripts' : dependency, hiddenInput);
+  }
+  if (options.conflictingReadInput) {
+    const publicSkillInput = '.github/skills/helpers/assets/oracle.json';
+    plan.allowed_paths.push(publicSkillInput); plan.input_paths.push(publicSkillInput);
+  }
   return plan;
 }
 function scriptFor(name, stage, attempt, options, held) {
@@ -94,7 +106,8 @@ function scriptFor(name, stage, attempt, options, held) {
   }
   if (stage === 'verification') {
     const wrongChecker = options.checkerFailure && attempt === 1;
-    const content = options.unsafeChecker ? "require('node:fs').writeFileSync(require('node:path').join(__dirname,'../../escape.txt'),'outside assigned scope');\n"
+    const content = options.readOnlyBaseline ? "const run=require('node:child_process').spawnSync(process.execPath,['scripts/verify-leetcode-exercise.mjs',process.argv[2]],{encoding:'utf8'});process.stdout.write(run.stdout??'');process.stderr.write(run.stderr??'');process.exit(run.status??2);\n"
+      : options.unsafeChecker ? "require('node:fs').writeFileSync(require('node:path').join(__dirname,'../../escape.txt'),'outside assigned scope');\n"
       : options.exitZeroChecker ? 'process.exit(0);\n'
       : `const assert=require('node:assert/strict'); const fs=require('node:fs'); assert.equal(Number(fs.readFileSync(process.argv[2],'utf8')),${wrongChecker ? 2 : 1}); console.log('scalar validated');\n`;
     const defect = wrongChecker || options.productFailure && attempt === 1;
@@ -135,6 +148,14 @@ async function setup(t, scenarios) {
   // that same identity when Windows TEMP is exposed through an 8.3 alias.
   const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-controlled-flow-')));
   initialize(root, { project_id: 'CONTROLLED', name: 'Controlled Bridge fixture', platforms: ['codex', 'copilot'], max_workers: 3, repair_attempts: 1 });
+  if (Object.values(scenarios).some(options => options.readOnlyBaseline)) {
+    atomicWrite(safePath(root, 'scripts/verify-leetcode-exercise.mjs'), "import {readFileSync} from 'node:fs';const expected=JSON.parse(readFileSync('.agents/skills/helpers/assets/oracle.json','utf8')).expected;const value=Number(readFileSync(process.argv[2],'utf8'));console.log('readonly delegate observed scalar: '+value);process.exit(value===expected?0:1);\n");
+    atomicWrite(safePath(root, '.agents/skills/helpers/assets/oracle.json'), '{"expected":1}\n');
+  }
+  if (Object.values(scenarios).some(options => options.privateBaselineDirectory))
+    atomicWrite(safePath(root, 'scripts/.env'), 'PRIVATE_BASELINE_CANARY=must-not-be-captured\n');
+  if (Object.values(scenarios).some(options => options.conflictingReadInput))
+    atomicWrite(safePath(root, '.github/skills/helpers/assets/oracle.json'), '{"expected":1}\n');
   const policy = ensureRoutingPolicy(root);
   atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([
     { name: 'fixture-strong', vendor: 'fixture-strong', models: [{ id: policy.strong_model, name: policy.strong_model }] },
@@ -441,6 +462,71 @@ test('pause and owner restart retain checkpoint artifacts and resume the same wo
   assert.equal(done.attempts.filter(attempt => attempt.stage === 'planning').length, 1);
   assert.ok(done.attempts.some(attempt => attempt.state === 'interrupted'));
   assert.equal(loadRecords(env.root).filter(record => record.meta.data.kind === 'manager-workflow').length, 1);
+});
+
+test('preserved read-only delegated checker dependency is captured by positive and negative execution after owner restart without widening writes', async t => {
+  const env = await setup(t, { readonlybaseline: { readOnlyBaseline: true, holdImplementation: true } });
+  const dependency = 'scripts/verify-leetcode-exercise.mjs', original = readFileSync(join(env.root, dependency));
+  const hiddenInput = '.agents/skills/helpers/assets/oracle.json', originalHidden = readFileSync(join(env.root, hiddenInput));
+  const initial = await submit(env.root, 'readonlybaseline');
+  const held = await until(env.root, initial.workflow_id, () => env.held.entered,
+    'explicit read-only dependency baselines must pass planning without granting write scope', env.errors);
+  const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.epoch_id === held.epoch_id);
+  assert.deepEqual(task.meta.data.allowed_paths, ['readonlybaseline/src/value.txt']);
+  assert.deepEqual(task.meta.data.verification_paths, ['readonlybaseline/verify']);
+  assert.ok(!task.meta.data.allowed_paths.includes(dependency)); assert.ok(!task.meta.data.verification_paths.includes(dependency));
+  const contractPath = safePath(env.root, `.neomind/controlled/workflows/${hash(initial.workflow_id)}.${held.epoch_id}.contract.json`);
+  const frozenBytes = readFileSync(contractPath), contract = JSON.parse(frozenBytes);
+  assert.equal(contract.preserved_hashes[dependency], hash(original));
+  await controlControlledWorkflow(env.root, { workflow_id: initial.workflow_id, action: 'pause' });
+  await env.restart();
+  await controlControlledWorkflow(env.root, { workflow_id: initial.workflow_id, action: 'resume' });
+  const done = await until(env.root, initial.workflow_id, run => run.status === 'completed',
+    'a preserved dependency must remain readable and independently evidenced after restart', env.errors);
+  assert.equal(done.workflow_id, initial.workflow_id); assert.equal(done.attempts.filter(attempt => attempt.stage === 'planning').length, 1);
+  assert.deepEqual(readFileSync(contractPath), frozenBytes, 'Restart must not rewrite a frozen contract or its hash.');
+  assert.deepEqual(readFileSync(join(env.root, dependency)), original);
+  assert.equal(done.checks.length, 2); assert.ok(done.checks.every(check => check.passed));
+  for (const check of done.checks) {
+    assert.equal(check.baseline[dependency], hash(original));
+    const snapshot = JSON.parse(readFileSync(safePath(env.root, check.evidence_input.input_snapshot.manifest_path), 'utf8'));
+    assert.equal(snapshot.files[dependency].hash, hash(original));
+    assert.equal(snapshot.files[hiddenInput].hash, hash(originalHidden));
+    const evidence = getRecord(env.root, check.evidence_id);
+    assert.equal(evidence.meta.data.file_baseline[dependency], hash(original));
+    const log = JSON.parse(readFileSync(safePath(env.root, check.log_path), 'utf8'));
+    assert.match(log.result.stdout, /readonly delegate observed scalar:/);
+    assert.equal(check.exit_code, check.negative ? 1 : 0);
+  }
+  assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true);
+  atomicWrite(join(env.root, dependency), original.toString() + '// outside edit\n');
+  assert.equal(verify(env.root, task.meta.id, 'accepted').ok, false, 'External dependency edits must invalidate current acceptance evidence.');
+  atomicWrite(join(env.root, dependency), original.toString());
+  assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true);
+});
+
+test('a preserved public directory with private descendants is refused before any check input blobs or task effects', async t => {
+  const env = await setup(t, { privatebaseline: { readOnlyBaseline: true, privateBaselineDirectory: true } });
+  const initial = await submit(env.root, 'privatebaseline');
+  const blocked = await until(env.root, initial.workflow_id, run => run.status === 'blocked',
+    'read-only directories must not recursively capture private descendants', env.errors);
+  assert.equal(blocked.checks.length, 0); assert.equal(blocked.contract_hash, undefined);
+  assert.ok(env.errors.some(error => /Read-only check baselines must name exact existing ordinary/.test(JSON.stringify(error.result))));
+  assert.equal(loadRecords(env.root).some(record => record.meta.data.epoch_id === blocked.epoch_id && record.meta.type === 'task'), false);
+  assert.equal(loadRecords(env.root).some(record => ['check', 'evidence'].includes(record.meta.type)), false);
+  assert.equal(existsSync(safePath(env.root, '.neomind/evidence/inputs/blobs')), false);
+  assert.doesNotMatch(JSON.stringify(env.errors), /PRIVATE_BASELINE_CANARY/);
+});
+
+test('an exact approved public GitHub skill input cannot overlap producer or checker write authority', async t => {
+  const env = await setup(t, { conflictinginput: { readOnlyBaseline: true, conflictingReadInput: true } });
+  const initial = await submit(env.root, 'conflictinginput');
+  const blocked = await until(env.root, initial.workflow_id, run => run.status === 'blocked',
+    'read-only approval must reject conflicting write scope before contract effects', env.errors);
+  assert.equal(blocked.contract_hash, undefined); assert.equal(blocked.checks.length, 0);
+  assert.ok(env.errors.some(error => /Approved read-only inputs must be outside all producer and checker write scopes/.test(JSON.stringify(error.result))));
+  assert.equal(loadRecords(env.root).some(record => record.meta.data.epoch_id === blocked.epoch_id && record.meta.type === 'task'), false);
+  assert.equal(readFileSync(safePath(env.root, '.github/skills/helpers/assets/oracle.json'), 'utf8'), '{"expected":1}\n');
 });
 
 test('parallel workflows retain their own tasks, artifacts, reports and receipt correlations', async t => {

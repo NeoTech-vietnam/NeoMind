@@ -27,6 +27,7 @@ import type { ProjectRecord } from './types.js';
 import { normalizeControlledPlanInput, controlledConsultationRole } from './controlled-plan-input.js';
 import { controlledPlanningRecovery } from './controlled-recovery-context.js';
 import { controlledRegistrationEvidence } from './controlled-registration-evidence.js';
+import { assertControlledReadBaseline } from './controlled-read-baselines.js';
 
 type Stage = ControlledBinding['stage'];
 export type ControlledState = 'queued' | 'running' | 'waiting' | 'paused' | 'interrupted' | 'uncertain' | 'blocked' | 'cancelled' | 'completed';
@@ -240,6 +241,9 @@ function validatePlan(root: string, value: ControlledPlan): ControlledPlan {
   if ((plan.preservation_paths ?? []).some(path => covers(path, [...plan.allowed_paths, ...plan.verification_paths]) ||
       [...plan.allowed_paths, ...plan.verification_paths].some(owned => covers(owned, [path]))))
     throw new Error('Preservation paths must be outside all producer and checker write scopes.');
+  if ((plan.input_paths ?? []).some(path => covers(path, [...plan.allowed_paths, ...plan.verification_paths]) ||
+      [...plan.allowed_paths, ...plan.verification_paths].some(owned => covers(owned, [path]))))
+    throw new Error('Approved read-only inputs must be outside all producer and checker write scopes. Keep those inputs read-only instead of granting write scope for their check baselines.');
   if ([...plan.outputs, ...plan.documentation_paths].some(path => !covers(path, plan.allowed_paths))) throw new Error('Outputs must be within implementation scope.');
   for (const check of plan.checks) {
     if ((check.expected_exit_code ?? 0) !== 0) throw new Error('The positive independent check must exit zero; declare expected failures as negative controls.');
@@ -247,14 +251,14 @@ function validatePlan(root: string, value: ControlledPlan): ControlledPlan {
     check.baseline_paths.forEach(path => canonical(root, path));
     if (!check.command.slice(1).some(arg => covers(arg, plan.verification_paths) && check.baseline_paths.includes(arg)))
       throw new Error('Every check must execute its declared independent checker script.');
-    if (check.baseline_paths.some(path => !covers(path, [...plan.allowed_paths, ...plan.verification_paths]))) throw new Error('Check baseline exceeds plan scope.');
+    check.baseline_paths.forEach(path => assertControlledReadBaseline(root, plan, path));
     if (!check.negative_controls?.length) throw new Error('Each check needs backend-executed negative controls against its independent checker.');
     for (const negative of check.negative_controls) {
       negative.baseline_paths.forEach(path => canonical(root, path));
+      negative.baseline_paths.forEach(path => assertControlledReadBaseline(root, plan, path));
       if (!same(check.command.slice(0, 2), negative.command.slice(0, 2)) ||
           !(negative.command.slice(2).some(arg => covers(arg, plan.verification_paths) && negative.baseline_paths.includes(arg)) ||
             negative.command.includes('--negative-control') && negative.command.length >= 4 && negative.baseline_paths.includes(check.command[1]!)) ||
-          negative.baseline_paths.some(path => !covers(path, [...plan.allowed_paths, ...plan.verification_paths])) ||
           negative.command.some(arg => /[\x00-\x1f]/.test(arg)))
         throw new Error('Negative controls must invoke the same checker with declared verifier-owned invalid fixtures.');
     }
