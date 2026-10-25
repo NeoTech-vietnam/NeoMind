@@ -2,7 +2,7 @@
   "name": "neomind-model-bridge",
   "displayName": "NeoMind Agent Monitor",
   "publisher": "neomind",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "description": "An agent universe with plug-in and MCP controls, Earth FocusSpace, calendar planning, ambient sound and guarded 9router model controls.",
   "engines": {
     "vscode": "^1.109.0"
@@ -55,9 +55,12 @@
         "toolReferenceName": "neomindAdvanceWorkflow",
         "displayName": "Advance NeoMind Workflow",
         "userDescription": "Advance the saved Local Copilot software workflow and run at most one backend-assigned specialist.",
-        "modelDescription": "Coordinator only: advance an existing software-tools workflow using the actual private handle from assignment_open. The host calls NeoMind workflow_next, launches at most one exact saved native specialist, and reconciles its actual return. Never reconstruct agentName, prompt, model or task IDs. Call again for the next saved stage. Supply observation only for an actual prior native callback; omit it otherwise. Final Cornell authoring and manager_finish remain Coordinator actions.",
+        "modelDescription": "Coordinator only: select the existing software workflow with workflow_id. The host obtains and privately retains its backend-issued Coordinator credential, derives and dispatches one exact specialist request, then reconciles its actual return. Repeat for the next substantive stage. For planning, records, final Cornell compilation, procedure registration or closure, supply the supported operation and its semantic parameters; the host injects authentication. Omit credentials, model labels, native prompts and task lifecycle fields. An observation describes only an actual prior native callback. Existing handle input remains compatible for older integrations.",
         "canBeReferencedInPrompt": true,
-        "tags": ["neomind", "coordinator"],
+        "tags": [
+          "neomind",
+          "coordinator"
+        ],
         "inputSchema": {
           "type": "object",
           "additionalProperties": false,
@@ -66,10 +69,19 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "id": { "type": "string", "pattern": "^local-report-[a-f0-9]{40}$" },
-                "token": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+                "id": {
+                  "type": "string",
+                  "pattern": "^local-report-[a-f0-9]{40}$"
+                },
+                "token": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
               },
-              "required": ["id", "token"]
+              "required": [
+                "id",
+                "token"
+              ]
             },
             "observation": {
               "anyOf": [
@@ -77,17 +89,80 @@
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
-                    "packet_id": { "anyOf": [{ "type": "string", "pattern": "^(?:local-report-[a-f0-9]{40}|\\s*)$" }, { "type": "null" }] },
-                    "state": { "type": "string", "enum": ["completed", "completed-without-output", "failed", "cancelled", "running", "unknown"] },
-                    "observation_id": { "type": "string", "minLength": 1, "maxLength": 160 }
+                    "packet_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^(?:local-report-[a-f0-9]{40}|\\s*)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "completed",
+                        "completed-without-output",
+                        "failed",
+                        "cancelled",
+                        "running",
+                        "unknown"
+                      ]
+                    },
+                    "observation_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    }
                   },
-                  "required": ["state", "observation_id"]
+                  "required": [
+                    "state",
+                    "observation_id"
+                  ]
                 },
-                { "type": "null" }
+                {
+                  "type": "null"
+                }
               ]
+            },
+            "workflow_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{1,119}-KNW-[0-9]{4,}$"
+            },
+            "operation": {
+              "type": "string",
+              "enum": [
+                "advance",
+                "workflow_plan",
+                "record_get",
+                "record_create",
+                "record_update",
+                "cornell_research_compile",
+                "note_create",
+                "note_validate",
+                "procedure_register",
+                "manager_finish"
+              ]
+            },
+            "parameters": {
+              "type": "object",
+              "description": "Semantic arguments of the selected supported MCP operation, omitting reported_assignment. Omit for advance."
             }
           },
-          "required": ["reported_assignment"]
+          "oneOf": [
+            {
+              "required": [
+                "workflow_id"
+              ]
+            },
+            {
+              "required": [
+                "reported_assignment"
+              ]
+            }
+          ]
         }
       }
     ],

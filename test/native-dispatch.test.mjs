@@ -51,12 +51,20 @@ function fixture(t, settings = {}) {
   const vscode = { workspace, LanguageModelTextPart: class { constructor(value) { this.value = value; } },
     LanguageModelToolResult: class { constructor(content) { this.content = content; } },
     lm: { tools: [{ name: 'mcp_neomind_runtime_info' }, { name: 'mcp_neomind_workflow_next' },
+      { name: 'mcp_neomind_assignment_bootstrap' }, { name: 'mcp_neomind_assignment_open' }, { name: 'mcp_neomind_manager_finish' },
       { name: 'runSubagent', inputSchema: { type: 'object', properties: { agentName: { type: 'string' }, description: { type: 'string' },
         prompt: { type: 'string' }, model: { type: 'string' } }, required: ['prompt', 'description'] } }],
       registerTool(name, tool) { registered.push({ name, tool }); return { dispose() {} }; },
       async invokeTool(name, options, token) {
         calls.push({ name, options, token });
         if (name === 'mcp_neomind_runtime_info') return json({ ...identity, ...settings.identity });
+        if (name === 'mcp_neomind_assignment_bootstrap') return json({ schema_version: 1, id: manager.id,
+          workflow_id: workflowId, profile_id: 'coordinator', role: 'manager',
+          open_input: { packet: { id: manager.id, claim_token: 'e'.repeat(64) } } });
+        if (name === 'mcp_neomind_assignment_open') return json({ schema_version: 1, handle: manager,
+          context: { workflow_id: workflowId, profile_id: 'coordinator', role: 'manager', current_actor: true,
+            assurance: 'unsigned-local-assignment', ...settings.managerContext } });
+        if (name === 'mcp_neomind_manager_finish') return json({ phase: 'completed', final_report_id: 'NM-DISPATCH-KNW-0002' });
         if (name === 'mcp_neomind_workflow_next') {
           const response = settings.responses?.[nextIndex++] ?? (options.input.observation ? { status: 'ready_for_closure', workflow_id: workflowId } : prepared());
           return json(typeof response === 'function' ? await response({ calls, vscode, options }) : response);
@@ -93,6 +101,53 @@ test('host dispatches the exact server handoff without model reconstruction and 
   for (const privateValue of [manager.token, packet().claim_token, packet().handoff.prompt, launch.options.input.prompt]) {
     assert.equal(visible.includes(privateValue), false); assert.equal(persisted.includes(privateValue), false);
   }
+});
+
+test('workflow selector keeps Coordinator credentials inside the host for dispatch and final closure', async t => {
+  const app = fixture(t, { responses: [prepared(), { status: 'ready_for_closure', workflow_id: workflowId }] });
+  const input = { workflow_id: workflowId };
+  const first = await app.host.invoke({ input, toolInvocationToken: app.opaque }, app.token);
+  const finished = await app.host.invoke({ input: { ...input, operation: 'manager_finish', parameters: {} }, toolInvocationToken: app.opaque }, app.token);
+  assert.equal(first.status, 'ready_for_closure');
+  const bootstrap = app.calls.filter(x => x.name === 'mcp_neomind_assignment_bootstrap');
+  assert.equal(bootstrap.length, 1);
+  assert.equal(bootstrap[0].options.input.profile_id, 'coordinator');
+  assert.equal(bootstrap[0].options.input.role, 'manager');
+  assert.equal(bootstrap[0].options.input.workflow_id, workflowId);
+  const opened = app.calls.find(x => x.name === 'mcp_neomind_assignment_open');
+  assert.deepEqual(opened.options.input, { packet: { id: manager.id, claim_token: 'e'.repeat(64) } });
+  const finish = app.calls.find(x => x.name === 'mcp_neomind_manager_finish');
+  assert.deepEqual(finish.options.input, { workflow_id: workflowId, reported_assignment: manager });
+  assert.equal(finished.result.phase, 'completed');
+  assert.equal(JSON.stringify([first, finished, [...app.state.values()]]).includes(manager.token), false);
+});
+
+test('host-owned credentials never authorize a foreign, stale or specialist context', async t => {
+  for (const managerContext of [{ workflow_id: 'NM-OTHER-KNW-0001' }, { current_actor: false }, { profile_id: 'implementer', role: 'developer' }]) {
+    const app = fixture(t, { managerContext });
+    await assert.rejects(app.host.invoke({ input: { workflow_id: workflowId }, toolInvocationToken: app.opaque }, app.token));
+    assert.equal(app.calls.some(x => ['mcp_neomind_workflow_next', 'runSubagent'].includes(x.name)), false);
+  }
+});
+
+test('workflow input rejects credential injection, unsupported operations and foreign ownership before calling MCP', async t => {
+  for (const extra of [{ reported_assignment: manager }, { operation: 'assignment_claim' },
+    { operation: 'record_get', parameters: { id: taskId, reported_assignment: manager } },
+    { operation: 'manager_finish', parameters: { workflow_id: 'NM-OTHER-KNW-0001' } },
+    { operation: 'advance', parameters: { unadvertised: true } }]) {
+    const app = fixture(t);
+    await assert.rejects(app.host.invoke({ input: { workflow_id: workflowId, ...extra }, toolInvocationToken: app.opaque }, app.token), error => error.code === 'INVALID_INPUT');
+    assert.equal(app.calls.length, 0);
+  }
+});
+
+test('completed workflow replay uses effective backend status without opening another Coordinator', async t => {
+  const app = fixture(t);
+  app.runtime.getRecord = () => ({ meta: { data: { kind: 'manager-workflow', execution_mode: 'copilot-native', final_report_id: 'NM-DISPATCH-KNW-0002' } } });
+  app.runtime.workflowStatus = () => ({ phase: 'completed', final_report_id: 'NM-DISPATCH-KNW-0002' });
+  const result = await app.host.invoke({ input: { workflow_id: workflowId }, toolInvocationToken: app.opaque }, app.token);
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(app.calls.map(x => x.name), ['mcp_neomind_runtime_info']);
 });
 
 test('the next host invocation may launch the next prepared stage but never repeats its previous packet', async t => {

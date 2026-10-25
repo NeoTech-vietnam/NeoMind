@@ -215,10 +215,13 @@ function createNativeValidationHost({ vscode, context, loadRuntime }) {
       const bootstrap = { workflow_id: request.workflow_id, profile_id: 'coordinator', role: 'manager',
         assignment_id: `native-validation-${runId}`,
         objective: 'Resume the existing authorized workflow through actual delegated work, independent checks and evidence-backed closure.' };
+      const entry = (vscode.lm.tools ?? []).some(tool => tool.name === 'neomind_advance_workflow')
+        ? `Use neomindAdvanceWorkflow with workflow_id: ${request.workflow_id}. The host owns Coordinator authentication and native dispatch. Use its operation/parameters form for planning, final notes, registration and manager_finish.\n`
+        : `You are already assigned as this workflow's Coordinator. FIRST call assignment_bootstrap with exactly this JSON input: ${JSON.stringify(bootstrap)}\n` +
+          'Then call assignment_open with the returned open_input unchanged. Omit outer reported_assignment on bootstrap/open; retain only the actual returned handle privately for later scoped calls. Bootstrap once in this invocation; do not reuse an earlier claimed Coordinator label or start manager_run.\n';
       const result = await vscode.commands.executeCommand('workbench.action.chat.open', {
         mode: PROFILE, query: `[NeoMind native validation ${runId}]\nExisting workflow: ${request.workflow_id}.\n` +
-          `You are already assigned as this workflow's Coordinator. FIRST call assignment_bootstrap with exactly this JSON input: ${JSON.stringify(bootstrap)}\n` +
-          'Then call assignment_open with the returned open_input unchanged. Omit outer reported_assignment on bootstrap/open; retain only the actual returned handle privately for later scoped calls. Bootstrap once in this invocation; do not reuse an earlier claimed Coordinator label or start manager_run.\n' + prompt,
+          entry + prompt,
         blockOnResponse: true, preserveInput: true,
       });
       snapshot.chat = summarizeChatResult(result);

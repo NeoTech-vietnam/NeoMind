@@ -1,4 +1,4 @@
-const { createHash } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { lstatSync, readFileSync, realpathSync } = require('node:fs');
 const { isAbsolute, join, relative, resolve } = require('node:path');
 
@@ -8,6 +8,7 @@ const PACKET = /^local-report-[a-f0-9]{40}$/;
 const RECORD = /^[A-Za-z0-9][A-Za-z0-9-]{1,119}-(?:KNW|TASK|REQ|CHK|EVD|REV)-\d{4,}$/;
 const SHA = /^[a-f0-9]{64}$/;
 const states = ['completed', 'completed-without-output', 'failed', 'cancelled', 'running', 'unknown'];
+const coordinatorOperations = ['workflow_plan', 'record_get', 'record_create', 'record_update', 'cornell_research_compile', 'note_create', 'note_validate', 'procedure_register', 'manager_finish'];
 const hash = value => createHash('sha256').update(value).digest('hex');
 const samePath = (a, b) => process.platform === 'win32' ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b);
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -16,20 +17,34 @@ class NativeDispatchError extends Error {
   constructor(code, message) { super(message); this.name = 'NativeDispatchError'; this.code = code; }
 }
 function fail(code, message) { throw new NativeDispatchError(code, message); }
+function observationValue(item) {
+  if (item === undefined || item === null) return undefined;
+  if (!only(item, ['packet_id', 'state', 'observation_id']) || !states.includes(item.state) ||
+      typeof item.observation_id !== 'string' || !item.observation_id.trim() || item.observation_id.length > 160)
+    fail('INVALID_INPUT', 'An optional callback must describe an actual native observation with its stable observation_id.');
+  const packet = item.packet_id === null || (typeof item.packet_id === 'string' && !item.packet_id.trim()) ? undefined : item.packet_id;
+  if (packet !== undefined && !PACKET.test(packet)) fail('INVALID_INPUT', 'Use an issued packet identifier or omit it for the current saved stage.');
+  return { ...(packet ? { packet_id: packet } : {}), state: item.state, observation_id: item.observation_id };
+}
 function inputValue(value) {
+  if (object(value) && Object.hasOwn(value, 'workflow_id')) {
+    if (!only(value, ['workflow_id', 'operation', 'parameters', 'observation']) || !RECORD.test(value.workflow_id) ||
+        (value.operation !== undefined && !['advance', ...coordinatorOperations].includes(value.operation)) ||
+        (value.parameters !== undefined && (!object(value.parameters) || Object.hasOwn(value.parameters, 'reported_assignment') ||
+          (value.parameters.workflow_id !== undefined && value.parameters.workflow_id !== value.workflow_id))) ||
+        ((value.operation ?? 'advance') === 'advance' && value.parameters !== undefined && Object.keys(value.parameters).length > 0) ||
+        ((value.operation ?? 'advance') !== 'advance' && value.observation !== undefined))
+      fail('INVALID_INPUT', 'Select the saved workflow and a supported Coordinator operation. The host supplies its own backend-issued credential.');
+    const callback = observationValue(value.observation);
+    return { workflow_id: value.workflow_id, operation: value.operation ?? 'advance', parameters: value.parameters ?? {},
+      ...(callback ? { observation: callback } : {}) };
+  }
   if (!only(value, ['reported_assignment', 'observation']) || !only(value.reported_assignment, ['id', 'token']) ||
       !PACKET.test(value.reported_assignment.id) || !SHA.test(value.reported_assignment.token))
     fail('INVALID_INPUT', 'Use only the actual Coordinator handle returned by assignment_open; never construct an identity or claim token.');
   const input = { reported_assignment: { id: value.reported_assignment.id, token: value.reported_assignment.token } };
-  if (value.observation !== undefined && value.observation !== null) {
-    const item = value.observation;
-    if (!only(item, ['packet_id', 'state', 'observation_id']) || !states.includes(item.state) ||
-        typeof item.observation_id !== 'string' || !item.observation_id.trim() || item.observation_id.length > 160)
-      fail('INVALID_INPUT', 'An optional callback must describe an actual native observation with its stable observation_id.');
-    const packet = item.packet_id === null || (typeof item.packet_id === 'string' && !item.packet_id.trim()) ? undefined : item.packet_id;
-    if (packet !== undefined && !PACKET.test(packet)) fail('INVALID_INPUT', 'Use an issued packet identifier or omit it for the current saved stage.');
-    input.observation = { ...(packet ? { packet_id: packet } : {}), state: item.state, observation_id: item.observation_id };
-  }
+  const callback = observationValue(value.observation);
+  if (callback) input.observation = callback;
   return input;
 }
 function parseJson(result) {
@@ -105,6 +120,7 @@ function safeResult(value, privateValues, dispatched = false, observation) {
     backend_status: value.status, workflow_id: value.workflow_id, dispatched };
   for (const key of ['stage', 'task_id', 'check_ids', 'final_report_id', 'phase', 'persisted_phase'])
     if (value[key] !== undefined) result[key] = sanitize(value[key]);
+  if (value.status === 'operation_completed') { result.operation = value.operation; result.result = sanitize(value.result); }
   if (observation) result.observation = observation;
   if (['ready_for_cornell', 'ready_for_closure'].includes(value.status) && object(value.cornell)) {
     const allowed = ['workflow_id', 'requirement_ids', 'task_ids', 'report_ids', 'evidence_ids', 'note_ids', 'prior_evidence_ids',
@@ -112,7 +128,8 @@ function safeResult(value, privateValues, dispatched = false, observation) {
       'date', 'output_dir', 'context', 'constraints', 'acceptance_criteria', 'applicability_disposition', 'sources', 'worked_example', 'required_authored_sections'];
     result.cornell = sanitize(Object.fromEntries(allowed.filter(key => value.cornell[key] !== undefined).map(key => [key, value.cornell[key]])));
   }
-  result.next_action = result.status === 'next_delegate_ready' ? 'Call neomind_advance_workflow again with the same actual Coordinator handle to launch the next saved stage. No second delegate was launched by this invocation.' :
+  result.next_action = result.status === 'operation_completed' ? 'Use the returned semantic result and continue through the same workflow selector. This operation result alone does not establish workflow completion.' :
+    result.status === 'next_delegate_ready' ? 'Call neomind_advance_workflow again for this same workflow to launch the next saved stage. No second delegate was launched by this invocation.' :
     value.status === 'ready_for_cornell' ? 'Author the one final readable Cornell note using the returned actual references and compiler, then advance the same workflow.' :
     value.status === 'ready_for_closure' ? 'Validate the current final Cornell note and call manager_finish with the same actual Coordinator handle. Publication authorization remains separate.' :
     value.status === 'completed' ? 'Reuse the saved final report. No new delegate was launched.' :
@@ -123,11 +140,12 @@ function safeResult(value, privateValues, dispatched = false, observation) {
 /** A Local chat LM tool adapter. All workflow/auth mutations still cross actual MCP tools. */
 function createNativeDispatchHost({ vscode, context, loadRuntime }) {
   let disposed = false, generation = 0, storageQueue = Promise.resolve();
-  const busy = new Set(), aborters = new Set(), disposables = [];
+  const busy = new Set(), aborters = new Set(), disposables = [], managers = new Map();
+  const hostId = randomUUID();
   const stored = context.globalState?.get(LEDGER, {});
   if (!object(stored) || !context.globalState?.update) fail('INVALID_STORAGE', 'Native dispatch requires its extension-owned interruption journal.');
   const journal = new Map(Object.entries(stored));
-  const invalidate = () => { generation++; for (const abort of aborters) abort(); };
+  const invalidate = () => { generation++; managers.clear(); for (const abort of aborters) abort(); };
   if (vscode.workspace.onDidChangeWorkspaceFolders) disposables.push(vscode.workspace.onDidChangeWorkspaceFolders(invalidate));
   if (vscode.workspace.onDidChangeConfiguration) disposables.push(vscode.workspace.onDidChangeConfiguration(event => {
     if (event.affectsConfiguration?.('neomind.bridge.runtimePath')) invalidate();
@@ -140,10 +158,12 @@ function createNativeDispatchHost({ vscode, context, loadRuntime }) {
     try { await storageQueue; } catch { fail('INVALID_STORAGE', 'Native dispatch could not preserve its interruption journal. No automatic retry is safe.'); }
   };
   async function invoke(options, cancellation) {
-    const input = inputValue(options?.input), privateValues = [input.reported_assignment.token];
+    let input = inputValue(options?.input);
+    const selectedWorkflow = input.workflow_id, operation = input.operation, parameters = input.parameters;
+    const privateValues = input.reported_assignment ? [input.reported_assignment.token] : [];
     if (!options?.toolInvocationToken) fail('CHAT_CONTEXT_REQUIRED', 'Invoke this tool inside the active Local Copilot Coordinator conversation. A command or standalone MCP process cannot manufacture its chat token.');
     if (!vscode.workspace.isTrusted) fail('WORKSPACE_TRUST_REQUIRED', 'Workspace Trust is required for native dispatch.');
-    const lock = input.reported_assignment.id;
+    const lock = selectedWorkflow ?? input.reported_assignment.id;
     if (busy.has(lock)) return { status: 'dispatch_in_progress', dispatched: false, next_action: 'Wait for the existing host invocation; do not launch a duplicate delegate.' };
     busy.add(lock);
     const initialGeneration = generation;
@@ -203,10 +223,13 @@ function createNativeDispatchHost({ vscode, context, loadRuntime }) {
     };
     const validateWorkflow = value => {
       if (!RECORD.test(value?.workflow_id)) fail('INVALID_BACKEND_RESULT', 'The backend did not identify a valid saved workflow.');
+      if (selectedWorkflow && value.workflow_id !== selectedWorkflow)
+        fail('WORKFLOW_MISMATCH', 'The backend response must belong to the selected saved workflow.');
       const workflow = scope.runtime.getRecord(scope.project, value.workflow_id);
       if (workflow.meta.data.kind !== 'manager-workflow' || workflow.meta.data.execution_mode !== 'copilot-native' || workflow.meta.data.routing_required === true)
         fail('WORKFLOW_MISMATCH', 'This host dispatcher is only for the existing unsigned Local Copilot software workflow. Strict and other clients retain their execution paths.');
       if (launched && value.workflow_id !== launched.workflow_id) fail('INVALID_BACKEND_RESULT', 'The backend action changed workflow during native dispatch.');
+      return workflow;
     };
     const pendingState = value => {
       if (!['needs_observation', 'wait_for_delegate'].includes(value?.status) || !PACKET.test(value.packet_id) ||
@@ -234,6 +257,42 @@ function createNativeDispatchHost({ vscode, context, loadRuntime }) {
     };
     try {
       await checkIdentity(); assertScope();
+      if (selectedWorkflow) {
+        const workflow = validateWorkflow({ workflow_id: selectedWorkflow });
+        if (typeof workflow.meta.data.final_report_id === 'string') {
+          const saved = scope.runtime.workflowStatus(scope.project, selectedWorkflow);
+          if (saved.phase === 'completed' && RECORD.test(saved.final_report_id))
+            return safeResult({ status: 'completed', workflow_id: selectedWorkflow, phase: saved.phase, final_report_id: saved.final_report_id }, privateValues);
+        }
+        const managerKey = `${scope.project}\0${scope.identity.server_instance_id}\0${selectedWorkflow}`;
+        let handle = managers.get(managerKey);
+        if (!handle) {
+          const packet = await call('mcp_neomind_assignment_bootstrap', { workflow_id: selectedWorkflow,
+            profile_id: 'coordinator', role: 'manager', assignment_id: `native-host-${hostId}-${hash(managerKey).slice(0, 20)}`,
+            objective: 'Coordinate the existing saved software workflow through bounded implementation, independent verification, final documentation and closure.' });
+          if (packet.workflow_id !== selectedWorkflow || packet.profile_id !== 'coordinator' || packet.role !== 'manager' ||
+              !PACKET.test(packet.id) || !only(packet.open_input, ['packet']) ||
+              !only(packet.open_input.packet, ['id', 'claim_token']) || packet.open_input.packet.id !== packet.id || !SHA.test(packet.open_input.packet.claim_token))
+            fail('INVALID_BACKEND_RESULT', 'The backend must issue the exact Coordinator packet for this workflow.');
+          privateValues.push(packet.open_input.packet.claim_token);
+          const opened = await call('mcp_neomind_assignment_open', packet.open_input);
+          const actor = opened.context;
+          if (!only(opened.handle, ['id', 'token']) || opened.handle.id !== packet.id || !SHA.test(opened.handle.token) ||
+              actor?.workflow_id !== selectedWorkflow || actor.profile_id !== 'coordinator' || actor.role !== 'manager' ||
+              actor.current_actor !== true || actor.assurance !== 'unsigned-local-assignment')
+            fail('AUTH_REQUIRED', 'The backend must authenticate the current Coordinator for this selected workflow.');
+          handle = opened.handle;
+          managers.set(managerKey, handle);
+        }
+        privateValues.push(handle.token);
+        input = { reported_assignment: handle, ...(input.observation ? { observation: input.observation } : {}) };
+        if (operation !== 'advance') {
+          const result = await call(`mcp_neomind_${operation}`, { ...parameters,
+            ...(operation === 'manager_finish' ? { workflow_id: selectedWorkflow } : {}), reported_assignment: handle });
+          assertScope();
+          return safeResult({ status: 'operation_completed', workflow_id: selectedWorkflow, operation, result }, privateValues);
+        }
+      }
       const response = await call('mcp_neomind_workflow_next', input), pending = pendingState(response), value = pending?.value ?? response;
       if (value.workflow_id !== undefined || !pending) validateWorkflow(value);
       assertScope();

@@ -38,7 +38,8 @@ function fixture(t, options = {}) {
           toolCallRounds: [{ toolCalls: [{}] }], toolCallResults: { private: { token: 'PRIVATE-TOOL-RESULT' } } } };
       }
     } },
-    lm: { tools: [{ name: 'mcp_neomind_runtime_info', inputSchema: { type: 'object' } }],
+    lm: { tools: [{ name: 'mcp_neomind_runtime_info', inputSchema: { type: 'object' } },
+      ...(options.hostDriver ? [{ name: 'neomind_advance_workflow' }] : [])],
       async invokeTool(name, input) { observed.push({ name, input });
         options.beforeIdentityReturn?.(vscode);
         return { content: [{ value: JSON.stringify({ ...identity, ...options.identity }) }] };
@@ -88,6 +89,14 @@ test('aliased temporary fixture paths retain exact canonical runtime and project
   assert.equal(result.runtime_root, app.runtimeRoot);
   assert.equal(app.observed.length, 1);
   assert.equal(app.calls.filter(call => call.name === 'workbench.action.chat.open').length, 1);
+});
+
+test('validation uses the installed host driver without asking the model to bootstrap or copy credentials', async t => {
+  const app = fixture(t, { hostDriver: true });
+  app.stage(); await app.host.run();
+  const query = app.calls.find(x => x.name === 'workbench.action.chat.open').args[0].query;
+  assert.match(query, /Use neomindAdvanceWorkflow with workflow_id:/);
+  assert.doesNotMatch(query, /FIRST call assignment_bootstrap|retain only the actual returned handle/);
 });
 
 test('actual-shaped trusted vscode-userdata storage uses its absolute local fsPath', async t => {
