@@ -8,9 +8,10 @@ import { vscodeSelection } from './vscode-policy.js';
 import { resourceRoot, safePath } from './storage.js';
 import { readRoleUpstreamInstructions } from './upstreams.js';
 import { controlledInstructions, controlledToolNames } from './controlled-tools.js';
-import { ownedContext } from './controlled-context.js';
+import { ownedContext, type OwnedContext } from './controlled-context.js';
 import { invocationPolicy, invocationConfigurationHashes } from './routing.js';
 import { vscodeProviderDiagnostic } from './vscode-provider-diagnostic.js';
+import { controlledModelInput, controlledResultFailure, controlledLoopState, ControlledFailureLoop } from './controlled-observability.js';
 
 // VS Code is supplied by extension host, not imported into CLI or added as dependency.
 type VSCode = any;
@@ -21,6 +22,7 @@ interface Turn {
   output: string; error: string | null; tools: any[]; events: any[];
   waiting: Map<string, { resolve(value: any): void; reject(error: Error): void }>;
   timer?: NodeJS.Timeout; lastSeen: number; configuration: string; checkpoint: number; observedTool: boolean;
+  controlled?: OwnedContext; failureLoop?: ControlledFailureLoop;
 }
 export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): Promise<{ close(): Promise<void> }> {
   if (!vscode.workspace.isTrusted) throw new Error('VS Code Workspace Trust is required.');
@@ -30,6 +32,12 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
   if (!enabled()) throw new Error('Bridge root must be an exact open workspace folder.');
   const turns = new Map<string, Turn>(), conversations = new Map<string, Conversation>();
   let instance = '', closed = false;
+  async function traceControlled(turn: Turn, event: Record<string, unknown>): Promise<void> {
+    if (!turn.controlled) return;
+    try { await turn.controlled.callbacks.trace?.({ ...event, stage: turn.controlled.binding.stage, at: new Date().toISOString(),
+      backend_binding: { workflow_id: turn.controlled.binding.workflow_id, task_id: turn.controlled.binding.task_id ?? null,
+        invocation_id: turn.invocation }, owner: 'runtime' }); } catch { /* Observability cannot replay a persisted operation. */ }
+  }
   function stop(turn: Turn, state: 'blocked' | 'interrupted', error: string): void {
     if (['completed', 'blocked', 'interrupted'].includes(turn.state)) return;
     turn.state = state; turn.error = error; turn.source.cancel();
@@ -101,11 +109,30 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
         const results = [];
         for (const call of calls) {
           check(turn);
+          if (turn.controlled) {
+            const state = controlledLoopState(root, { ...turn.controlled.binding, invocation_id: turn.invocation });
+            if (turn.failureLoop!.blocked(call.name, call.input, state)) {
+              await traceControlled(turn, { event: 'tool-loop-stopped', tool: call.name,
+                model_input: controlledModelInput(call.name, call.input), code: 'CONTROLLED_TOOL_LOOP',
+                validation: { rule_id: 'controlled.identical_failure_loop', owner: 'runtime',
+                  rule: 'Two identical requests already failed the same validation in unchanged runtime state. The third identical request was not dispatched.' } });
+              stop(turn, 'blocked', 'CONTROLLED_TOOL_LOOP: The same semantic request failed the same validation twice in unchanged runtime state. A third identical call was refused before dispatch. Correct the request or reconcile runtime state before resuming.');
+              return;
+            }
+            await traceControlled(turn, { event: 'model-tool-request', tool: call.name, model_input: controlledModelInput(call.name, call.input) });
+          }
           const result = await new Promise<any>((resolve, reject) => {
             turn.waiting.set(call.callId, { resolve, reject });
             turn.events.push({ call_id: call.callId, name: call.name, input: call.input });
           });
           check(turn);
+          if (turn.controlled) {
+            const validation = controlledResultFailure(result);
+            turn.failureLoop!.observe(call.name, call.input, result,
+              controlledLoopState(root, { ...turn.controlled.binding, invocation_id: turn.invocation }));
+            await traceControlled(turn, { event: 'model-tool-result', tool: call.name, status: validation ? 'failed' : 'succeeded',
+              ...(validation ? { code: validation.code, validation } : {}) });
+          }
           results.push(new vscode.LanguageModelToolResultPart(call.callId,
             [new vscode.LanguageModelTextPart(bounded(result))]));
         }
@@ -205,7 +232,8 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
       const id = `vscode-host:turn:${randomUUID()}`;
       const turn: Turn = { id, invocation: receipt.id, conversation: conversationId, model: models[0],
         source: new vscode.CancellationTokenSource(), state: 'prepared', output: '', error: null, tools, events: [], waiting: new Map(),
-        configuration: canonicalJson(receipt.configuration_hashes), lastSeen: Date.now(), checkpoint: conversation.messages.length, observedTool: false };
+        configuration: canonicalJson(receipt.configuration_hashes), lastSeen: Date.now(), checkpoint: conversation.messages.length, observedTool: false,
+        ...(controlled ? { controlled, failureLoop: new ControlledFailureLoop() } : {}) };
       turns.set(id, turn);
       return { protocol: bridgeProtocol, host_instance: instance, vendor: models[0].vendor, model: models[0].id,
         conversation_id: conversationId, turn_id: id, reasoning_effort: null, sandbox: null, version: vscode.version };

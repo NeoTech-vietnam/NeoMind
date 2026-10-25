@@ -2,7 +2,6 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { hostRequest, readHost, bounded, bridgeProtocol, type HostDescriptor } from './vscode-wire.js';
 import { canonicalJson, routingConfigurationHashes, readInvocation, roleModelPolicy, requireRoutingPolicy, type NativeReceipt } from './routing.js';
-import { hash } from './storage.js';
 import { roleCapabilities } from './tools.js';
 import { vscodeSelection } from './vscode-policy.js';
 import { ownedContext } from './controlled-context.js';
@@ -113,11 +112,8 @@ export class VSCodeSession {
     bounded(event.input);
     const current = readInvocation(this.root, this.receipt.id);
     if (current.state !== 'running') throw new Error('Invocation no longer running.');
-    const owned = ownedContext(this.root, this.receipt.request_id);
-    if (owned) try { await owned.callbacks.trace?.({ event: 'model-tool-request', tool: event.name,
-      model_input: { keys: Object.keys(event.input ?? {}), input_sha256: hash(JSON.stringify(event.input)),
-        ...(typeof event.input?.path === 'string' ? { path: event.input.path.slice(0, 1024) } : {}) },
-      backend_binding: { workflow_id: this.receipt.workflow_id, task_id: this.receipt.task_id, invocation_id: this.receipt.id } }); } catch { /* Trace is advisory. */ }
+    // The owned host already records a redacted semantic request before MCP
+    // schema validation. Do not duplicate it here with raw path/key metadata.
     const result = await this.client.callTool({ name: event.name, arguments: event.input }, undefined,
       { timeout: this.receipt.controlled_execution ? 660000 : 75000, signal: this.controller.signal });
     bounded(result);

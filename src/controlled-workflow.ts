@@ -22,6 +22,7 @@ import { controlledFailure } from './controlled-failure.js';
 import { continuationObligations, controlledFingerprints, executeControlledPilot, materializeControlledEvidence,
   prepareControlledCheckEvidence, verifyControlledTask, type ContinuationObligations } from './controlled-acceptance.js';
 import { evidenceRecordFingerprint, type EvidenceInputSnapshot } from './evidence-inputs.js';
+import type { ProjectRecord } from './types.js';
 
 type Stage = ControlledBinding['stage'];
 export type ControlledState = 'queued' | 'running' | 'waiting' | 'paused' | 'interrupted' | 'uncertain' | 'blocked' | 'cancelled' | 'completed';
@@ -56,6 +57,10 @@ export interface ControlledSnapshot {
   active_invocations: { id: string; role: string; state: string; requested_model: string; confirmed_model: string | null; provider: string | null }[];
   blocker?: { kind: FailureKind; message: string; code?: string; trace_id?: string; owner?: string; next_action?: string }; reuse?: WorkPreparation; final_report_id?: string;
   continuation?: { original_mode: string; original_fingerprint: string; original_contract_hash: string };
+  intake_recovery?: { code: 'INTAKE_OUTCOME_UNCERTAIN'; observed_records: string[]; observed_invocations: string[]; observed_artifacts: string[] };
+  repair_budget?: { schema_version: 1; product: number; protocol: number; environment: number };
+  repair_counter_migration?: { legacy_count: number; product: number; protocol: number; environment: number };
+  role_handoff?: { attempt_id: string; task_id: string; denial_trace: string; target_path: string; legacy_trace: boolean };
   finalizing_report_id?: string;
   procedure_runs?: { id: string; status: string }[]; procedure_candidate_id?: string; procedure_candidate_version?: string; cornell_note_ids?: string[];
   pending_check_review?: boolean;
@@ -63,6 +68,9 @@ export interface ControlledSnapshot {
     state: 'starting' | 'running' | 'completed'; pid?: number; pilot_root?: string; pilot_nonce?: string }[];
 }
 export interface ControlledStartInput { requirement?: string; requirements?: string[]; workflow_id?: string; request_id?: string; title?: string }
+const controlledStartSchema = z.strictObject({ requirement: z.string().trim().min(1).max(20000).optional(),
+  requirements: z.array(z.string().trim().min(1).max(20000)).min(1).max(32).optional(),
+  workflow_id: z.string().min(1).optional(), request_id: z.string().trim().min(1).max(256).optional(), title: z.string().trim().min(1).max(256).optional() });
 const states = '.neomind/controlled/workflows';
 const hosts = new Map<string, Controller>();
 const statePath = (root: string, id: string) => safePath(root, `${states}/${hash(id)}.json`);
@@ -70,6 +78,98 @@ const contractPath = (root: string, id: string, epoch: string) => safePath(root,
 function assertSupportedContinuation(criteria: string[]): void {
   if (continuationObligations(criteria).pilot_kind === 'unsupported-generic')
     throw new ControlledToolError('CONTINUATION_PILOT_UNSUPPORTED', 'The original contract requires an intended-use pilot for a task family without a reviewed runtime adapter. Its obligations remain open; define that adapter before controlled continuation. NeoMind will not substitute LeetCode, Cornell or C/C++ requirements.');
+}
+function assertIntakePayload(parent: ProjectRecord, input: ControlledStartInput): void {
+  if (parent.meta.type !== 'knowledge' || parent.meta.data.kind !== 'manager-workflow')
+    throw new ControlledToolError('WORKFLOW_REQUIRED', 'Select an actual NeoMind manager workflow receipt before continuing saved work.');
+  const supplied = input.requirements ?? (input.requirement ? [input.requirement] : undefined);
+  const original = parent.meta.data.original_requirements ?? [parent.meta.data.original_requirement];
+  if (supplied && canonicalJson(supplied.map(value => value.trim())) !== canonicalJson(original) ||
+      input.title && parent.meta.title !== `Workflow: ${input.title.trim()}`)
+    throw new ControlledToolError('INTAKE_PAYLOAD_MISMATCH', 'The saved request identity belongs to a different requirement or title. Keep that receipt unchanged; submit an intentional new task through a new intake identity.');
+}
+/** Derive only exact saved backend events; unclassified old usage remains product usage. */
+export function controlledRepairBudget(run: Pick<ControlledSnapshot, 'repairs' | 'repair_budget' | 'events'>) {
+  const number = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
+  if (!number(run.repairs)) throw new ControlledToolError('REPAIR_STATE_UNCERTAIN', 'Saved repair usage requires runtime reconciliation.');
+  if (run.repair_budget) {
+    const saved = run.repair_budget;
+    if (saved.schema_version !== 1 || !number(saved.product) || !number(saved.protocol) || !number(saved.environment) || saved.product !== run.repairs)
+      throw new ControlledToolError('REPAIR_STATE_UNCERTAIN', 'Saved repair counters disagree; existing results must be reconciled.');
+    return { ...saved };
+  }
+  const known = { product: 0, protocol: 0, environment: 0 };
+  for (const event of run.events) {
+    if (event.kind !== 'repair') continue;
+    const kind = /^Backend routes (implementation|checker|protocol|environment) to (?:planning|implementation|verification|review|diagnosis|synthesis)\.$/.exec(event.summary)?.[1];
+    if (kind === 'implementation' || kind === 'checker') known.product++;
+    else if (kind === 'protocol') known.protocol++;
+    else if (kind === 'environment') known.environment++;
+  }
+  const unknown = Math.max(0, run.repairs - known.product - known.protocol - known.environment);
+  return { schema_version: 1 as const, product: known.product + unknown, protocol: known.protocol, environment: known.environment };
+}
+/** An absent journal is recoverable only before any execution could have begun. */
+function orphanedIntakeEffects(root: string, parent: ProjectRecord) {
+  const records = loadRecords(root).filter(record => record.meta.id !== parent.meta.id && record.meta.data.workflow_id === parent.meta.id);
+  const invocations: { id: string; epoch?: string }[] = [];
+  const receipts = safePath(root, '.neomind/native/receipts');
+  let receiptCount = 0;
+  if (existsSync(receipts)) for (const name of readdirSync(receipts).filter(name => /^[a-f0-9-]{36}\.json$/.test(name))) {
+    if (++receiptCount > 4096) { invocations.push({ id: 'receipt-scan-limit' }); break; }
+    // Existence is an uncertainty signal, never authenticated completion evidence.
+    // A damaged matching receipt must not authorize a fresh model invocation.
+    try {
+      const path = safePath(root, `.neomind/native/receipts/${name}`), info = lstatSync(path);
+      if (!info.isFile() || info.isSymbolicLink() || info.size > 4 * 1024 * 1024) { invocations.push({ id: 'unreadable-receipt' }); continue; }
+      const receipt = JSON.parse(readFileSync(path, 'utf8'));
+      if (receipt.workflow_id === parent.meta.id) invocations.push({ id: name.slice(0, -5), epoch: receipt.controlled_execution?.epoch_id });
+    } catch { invocations.push({ id: 'unreadable-receipt' }); }
+  }
+  const artifacts: string[] = [], observedEpochs: string[] = [];
+  const created = Date.parse(parent.meta.created_at), queue = [
+    { path: '.neomind/controlled/traces', depth: 0 }, { path: '.neomind/controlled/checks', depth: 0 },
+    { path: '.neomind/controlled/pilots', depth: 0 }, { path: '.neomind/controlled-tools', depth: 0 },
+  ];
+  let examined = 0;
+  while (queue.length) {
+    const entry = queue.shift()!, directory = safePath(root, entry.path);
+    if (!existsSync(directory)) continue;
+    for (const name of readdirSync(directory).sort()) {
+      if (++examined > 4096) { artifacts.push('controlled-signal-scan-limit'); queue.length = 0; break; }
+      const path = `${entry.path}/${name}`, full = safePath(root, path), info = lstatSync(full);
+      if (info.isSymbolicLink()) { artifacts.push(path); continue; }
+      if (info.isDirectory()) { if (entry.depth < 4) queue.push({ path, depth: entry.depth + 1 }); else artifacts.push(path); continue; }
+      if (!info.isFile() || !/\.(?:json|log|tmp)$/.test(name)) continue;
+      if (info.size > 4 * 1024 * 1024) { if (info.mtimeMs >= created) artifacts.push(path); continue; }
+      try {
+        const value = JSON.parse(readFileSync(full, 'utf8'));
+        if (value.workflow_id === parent.meta.id || value.backend_binding?.workflow_id === parent.meta.id || value.binding?.workflow_id === parent.meta.id) {
+          artifacts.push(path); if (typeof value.epoch_id === 'string') observedEpochs.push(value.epoch_id);
+        } else if (info.mtimeMs >= created && value.workflow_id === undefined &&
+            (name === 'intent.json' || name === 'state.json' && Array.isArray(value.writes) && value.writes.length || name.endsWith('.log')))
+          artifacts.push(path); // Unattributed recent writes cannot establish absence of effects.
+      } catch { if (info.mtimeMs >= created) artifacts.push(path); }
+    }
+  }
+  const operations = safePath(root, '.neomind/operations');
+  if (existsSync(operations)) for (const name of readdirSync(operations).filter(name => /^(?:controlled-|workspace-path-).+\.lock$/.test(name))) {
+    const path = `.neomind/operations/${name}`;
+    if (lstatSync(safePath(root, path)).mtimeMs >= created) artifacts.push(path);
+  }
+  const prefix = `${hash(parent.meta.id)}.`, dir = safePath(root, states);
+  const contractExists = existsSync(dir) && readdirSync(dir).some(name => name.startsWith(prefix) && name.endsWith('.contract.json'));
+  const epoch = typeof parent.meta.data.controlled_epoch_id === 'string' ? parent.meta.data.controlled_epoch_id
+    : records.find(record => typeof record.meta.data.epoch_id === 'string')?.meta.data.epoch_id
+      ?? invocations.find(receipt => typeof receipt.epoch === 'string')?.epoch ?? observedEpochs[0];
+  const originals = parent.meta.data.original_requirements;
+  const validPayload = Array.isArray(originals) && originals.length > 0 && originals.every(value => typeof value === 'string' && value.trim() === value && !!value) &&
+    parent.meta.data.original_requirement === (originals.length === 1 ? originals[0] : originals.map((value, index) => `${index + 1}. ${value}`).join('\n'));
+  const pristine = validPayload && parent.meta.data.kind === 'manager-workflow' && parent.meta.data.process_contract === 'software-tools/v2' &&
+    parent.meta.data.transport === 'vscode-lm' && parent.meta.data.phase === 'intake' && parent.meta.status === 'in-progress' &&
+    !parent.meta.data.controlled_epoch_id && !parent.meta.data.controlled_contract_hash && !parent.meta.data.final_report_id && !parent.meta.data.closed_at &&
+    Array.isArray(parent.meta.data.task_ids) && !parent.meta.data.task_ids.length && !records.length && !invocations.length && !artifacts.length && !contractExists;
+  return { pristine, epoch: typeof epoch === 'string' ? epoch : '', records: records.map(record => record.meta.id), invocations: invocations.map(receipt => receipt.id), artifacts };
 }
 const covers = (path: string, roots: string[]) => {
   const key = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
@@ -215,36 +315,61 @@ class Controller {
     } finally { release(); }
   }
   submit(input: ControlledStartInput): ControlledSnapshot {
-    const parsed = z.strictObject({ requirement: z.string().trim().min(1).max(20000).optional(),
-      requirements: z.array(z.string().trim().min(1).max(20000)).min(1).max(32).optional(),
-      workflow_id: z.string().min(1).optional(), request_id: z.string().trim().min(1).max(256).optional(), title: z.string().trim().min(1).max(256).optional() }).parse(input);
+    const parsed = controlledStartSchema.parse(input);
     if (this.closed) throw new Error('Controlled host is closing.');
     requireRoutingPolicy(this.root);
     if (!readAutomationPolicy(this.root).manager_enabled) throw new Error('Project manager is disabled.');
     if (parsed.requirement && parsed.requirements) throw new Error('Provide one requirement or a batch.');
-    const request = parsed.request_id ?? randomUUID();
+    let request = parsed.request_id ?? randomUUID();
     const existing = parsed.workflow_id ? getRecord(this.root, parsed.workflow_id)
       : loadRecords(this.root).find(r => r.meta.data.request_id === request && r.meta.data.kind === 'manager-workflow');
+    if (existing) assertIntakePayload(existing, parsed);
     if (existing && existsSync(statePath(this.root, existing.meta.id))) {
       const saved = readState(this.root, existing.meta.id);
-      if (parsed.requirement && parsed.requirement !== saved.requirement) throw new Error('Receipt already belongs to another request.');
       this.schedule(saved.workflow_id); return saved;
     }
     let original: ReturnType<typeof readNativeSoftwareContract> = null;
-    if (existing) {
+    let recovered = false;
+    if (existing?.meta.data.execution_mode === 'neomind-controlled') {
+      if (typeof existing.meta.data.request_id !== 'string' || !existing.meta.data.request_id ||
+          parsed.request_id !== undefined && parsed.request_id !== existing.meta.data.request_id)
+        throw new ControlledToolError('INTAKE_IDENTITY_MISMATCH', 'Recover this intake with its saved request identity; a different identity cannot replace its missing journal.');
+      request = existing.meta.data.request_id;
+      const effects = orphanedIntakeEffects(this.root, existing);
+      if (!effects.pristine || this.jobs.has(existing.meta.id)) {
+        const uncertain: ControlledSnapshot = { schema_version: 1, workflow_id: existing.meta.id, epoch_id: effects.epoch,
+          status: 'uncertain', phase: 'intake', process_contract: 'software-tools/v2', transport: 'vscode-lm',
+          owner_pid: process.pid, owner_instance: readHost(this.root).instance, updated_at: now(),
+          requirement: String(existing.meta.data.original_requirement), title: existing.meta.title,
+          revision: 0, request_id: request, attempts: [], checks: [], events: [], repairs: 0, active_invocations: [],
+          intake_recovery: { code: 'INTAKE_OUTCOME_UNCERTAIN', observed_records: effects.records, observed_invocations: effects.invocations, observed_artifacts: effects.artifacts },
+          blocker: { kind: 'protocol', code: 'INTAKE_OUTCOME_UNCERTAIN', owner: 'runtime',
+            message: 'The initial workflow journal is missing, but execution records or effects may already exist. No new workflow or model invocation was started.',
+            next_action: 'Reconcile the existing execution records, receipts and side effects before resuming this same intake.' } };
+        save(this.root, uncertain, 'intake-uncertain', uncertain.blocker!.message);
+        this.jobs.get(existing.meta.id)?.abort.abort();
+        return uncertain;
+      }
+      recovered = true;
+    } else if (existing) {
       // Explicit controlled resumption is append-only. No original mode, criteria or reports are rewritten.
       original = readNativeSoftwareContract(this.root, existing.meta.id);
       if (!original || existing.meta.data.phase === 'completed') throw new Error('Controlled continuation requires an open bounded software contract.');
       assertSupportedContinuation(original.plan.acceptance_criteria);
     }
-    const parent = existing ?? beginWorkflow(this.root, { ...parsed, request_id: request, execution_mode: 'neomind-controlled' });
+    const parent = recovered ? beginWorkflow(this.root, { requirements: existing!.meta.data.original_requirements as string[] ?? [String(existing!.meta.data.original_requirement)],
+      request_id: request, execution_mode: 'neomind-controlled' })
+      : existing ?? beginWorkflow(this.root, { ...parsed, request_id: request, execution_mode: 'neomind-controlled' });
     const run: ControlledSnapshot = { schema_version: 1, workflow_id: parent.meta.id, epoch_id: randomUUID(),
       status: 'queued', phase: 'planning', process_contract: 'software-tools/v2', transport: 'vscode-lm',
       owner_pid: process.pid, owner_instance: readHost(this.root).instance, updated_at: now(), requirement: String(parent.meta.data.original_requirement), title: parent.meta.title,
       revision: 0, request_id: request, attempts: [], checks: [], events: [], repairs: 0, active_invocations: [] };
+    run.repair_budget = { schema_version: 1, product: 0, protocol: 0, environment: 0 };
     if (original) run.continuation = { original_mode: String(parent.meta.data.execution_mode),
       original_fingerprint: hash(JSON.stringify(parent)), original_contract_hash: hash(JSON.stringify(original)) };
-    save(this.root, run, 'accepted', 'Request durably accepted by the VS Code owned controller.');
+    save(this.root, run, recovered ? 'intake-recovered' : 'accepted', recovered
+      ? 'Recovered the same unexecuted intake after its interrupted initial journal write; no duplicate workflow was created.'
+      : 'Request durably accepted by the VS Code owned controller.');
     this.schedule(run.workflow_id);
     return readState(this.root, run.workflow_id);
   }
@@ -312,7 +437,7 @@ class Controller {
     const promise = new Promise<void>(resolve => setImmediate(resolve)).then(() => this.drive(id, abort.signal))
       .catch(error => {
         const run = readState(this.root, id);
-        if (!['paused', 'interrupted', 'cancelled'].includes(run.status)) {
+        if (!['paused', 'interrupted', 'cancelled', 'uncertain'].includes(run.status)) {
           const failure = controlledFailure(error), traceId = randomUUID();
           atomicWrite(safePath(this.root, `.neomind/controlled/traces/${traceId}.json`), JSON.stringify({
             event: 'runtime-failure', workflow_id: id, epoch_id: run.epoch_id, stage: run.phase,
@@ -491,11 +616,17 @@ class Controller {
           const kind = receipt.state === 'completed' ? 'protocol' : 'environment';
           const message = receipt.state === 'completed' ? 'Session ended without its required typed result. Saved work is retained; inspect current artifacts then save the missing compact result.'
             : receipt.error ?? 'Model session did not complete.';
-          const hardFailure = /MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED|CONTEXT_LIMIT_EXCEEDED|TOOL_CALLING_UNSUPPORTED|NoPermissions|NotFound|access denied|permission|policy|configuration changed|cancelled|canceled/i.test(message);
+          const hardFailure = /CONTROLLED_TOOL_LOOP|MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED|CONTEXT_LIMIT_EXCEEDED|TOOL_CALLING_UNSUPPORTED|NoPermissions|NotFound|access denied|permission|policy|configuration changed|cancelled|canceled/i.test(message);
           if (!hardFailure && this.repair(run, kind, message)) continue;
           this.block(run, kind, message); return;
         }
         if (active.report.outcome !== 'completed') {
+          const handoff = stage === 'implementation' && active.report.outcome === 'blocked' && contract ? this.roleHandoff(run, active, contract) : null;
+          if (handoff) {
+            run.role_handoff = handoff;
+            if (!this.repair(run, 'protocol', 'A backend-observed write refusal belongs to the independent Verifier. Re-read your current implementation outputs and finish only your own scope. Save a new honest completed producer report only when those outputs are ready; the backend will dispatch Verifier afterwards. The earlier blocked report remains unsubmitted.')) return;
+            continue;
+          }
           if (!this.repair(run, active.report.failure_kind ?? 'unknown', active.report.summary)) return;
           continue;
         }
@@ -628,15 +759,79 @@ class Controller {
     return { checks: run.checks.filter(item => item.attempt_id === attemptId).map(item => ({ title: item.title, passed: item.passed, exit_code: item.exit_code, evidence: item.log_path })) };
   }
   private repair(run: ControlledSnapshot, kind: FailureKind, message: string, diagnosed = false): boolean {
-    const max = readConfig(this.root).repair_attempts;
-    if (run.repairs >= max) { this.block(run, kind, `Repair budget exhausted. ${message}`); return false; }
+    this.reconcileRepairBudget(run);
+    const budget = run.repair_budget!, max = readConfig(this.root).repair_attempts;
     run.blocker = { kind, message: message.slice(0, 2000) };
-    if (kind === 'unknown' && !diagnosed) run.phase = 'diagnosis';
-    else if (kind === 'implementation') { run.phase = 'implementation'; run.repairs++; }
-    else if (kind === 'checker') { run.phase = 'verification'; run.repairs++; }
-    else if (kind === 'protocol' || kind === 'environment') { run.repairs++; }
+    if (kind === 'unknown' && !diagnosed) {
+      if (run.attempts.some(attempt => attempt.stage === 'diagnosis' && attempt.purpose !== 'specialist')) { this.block(run, kind, `Diagnostic reconciliation exhausted. ${message}`); return false; }
+      run.phase = 'diagnosis';
+    } else if (kind === 'implementation' || kind === 'checker') {
+      if (budget.product >= max) { this.block(run, kind, `Product/checker repair budget exhausted. ${message}`); return false; }
+      run.phase = kind === 'implementation' ? 'implementation' : 'verification'; budget.product++; run.repairs = budget.product;
+    } else if (kind === 'protocol' || kind === 'environment') {
+      if (budget[kind] >= 1) { this.block(run, kind, `${kind === 'protocol' ? 'Protocol' : 'Environment'} reconciliation budget exhausted. ${message}`); return false; }
+      budget[kind]++;
+    }
     else { this.block(run, kind, message); return false; }
     run.status = 'queued'; save(this.root, run, 'repair', `Backend routes ${kind} to ${run.phase}.`); return true;
+  }
+  private reconcileRepairBudget(run: ControlledSnapshot): void {
+    if (run.repair_budget) { controlledRepairBudget(run); return; }
+    const legacy = run.repairs, budget = controlledRepairBudget(run);
+    run.repair_budget = budget; run.repairs = budget.product;
+    run.repair_counter_migration = { legacy_count: legacy, product: budget.product, protocol: budget.protocol, environment: budget.environment };
+    save(this.root, run, 'repair-budget-reconciled', 'Saved backend repair events reconciled into separate product, protocol and environment limits; prior events and reports remain unchanged.');
+  }
+  private roleHandoff(run: ControlledSnapshot, attempt: Attempt, contract: Contract): ControlledSnapshot['role_handoff'] | null {
+    if (attempt.role !== 'developer' || !attempt.invocation_id || attempt.report?.outcome !== 'blocked') return null;
+    if (attempt.report.failure_kind !== undefined && attempt.report.failure_kind !== 'protocol') return null;
+    const own = fingerprints(this.root, contract.plan.outputs);
+    if (Object.values(own).some(value => value === 'missing') || !Object.entries(own).every(([path, digest]) => attempt.bound_hashes?.[path] === digest)) return null;
+    const receipt = readInvocation(this.root, attempt.invocation_id);
+    if (receipt.task_id !== contract.task_id || receipt.request_id !== attempt.request_id || receipt.controlled_execution?.epoch_id !== run.epoch_id ||
+        routingProblems(this.root, 'developer', receipt.id, { workflow_id: run.workflow_id, task_id: contract.task_id }).length) return null;
+    const ids = [...new Set(run.events.flatMap(event => /trace ([a-f0-9-]{36})$/.exec(event.summary)?.[1] ?? []))].slice(-512);
+    const traces: { id: string; value: any }[] = [];
+    for (const id of ids) {
+      const path = safePath(this.root, `.neomind/controlled/traces/${id}.json`);
+      if (!existsSync(path) || lstatSync(path).size > 128000) continue;
+      try { const value = JSON.parse(readFileSync(path, 'utf8'));
+        if (value.attempt_id === attempt.id && value.epoch_id === run.epoch_id && value.workflow_id === run.workflow_id) traces.push({ id, value });
+      } catch { return null; }
+    }
+    const bound = (value: any) => value.backend_binding?.workflow_id === run.workflow_id && value.backend_binding?.task_id === contract.task_id && value.backend_binding?.invocation_id === attempt.invocation_id;
+    const verifierPath = (path: unknown): path is string => {
+      if (typeof path !== 'string') return false;
+      try { canonical(this.root, path); } catch { return false; }
+      return covers(path, contract.plan.verification_paths) && !covers(path, contract.plan.allowed_paths) && !covers(path, this.protectedPaths(contract));
+    };
+    const failures = traces.filter(({ value }) => value.event === 'tool-result' && value.tool === 'task_file_write' && value.status === 'failed');
+    if (!failures.length || failures.some(({ value }) => value.code !== 'SCOPE_DENIED')) return null;
+    const ownership = (value: any) => ({ rule: value.rule ?? value.ownership?.rule,
+      target_owner: value.target_owner ?? value.ownership?.target_owner, target_path: value.target_path ?? value.ownership?.target_path });
+    if (failures.every(({ value }) => { const validation = ownership(value);
+      return validation.rule === 'ROLE_HANDOFF_REQUIRED' && validation.target_owner === 'verifier' && verifierPath(validation.target_path) && bound(value); })) {
+      const failed = failures[0]!, validation = ownership(failed.value);
+      return { attempt_id: attempt.id, task_id: contract.task_id, denial_trace: failed.id, target_path: validation.target_path, legacy_trace: false };
+    }
+    // Older 2f results omitted ownership. Pair only a bounded, unambiguous set of
+    // preceding requests in this actual attempt/task. New ownership cannot be
+    // downgraded to this legacy rule when it contradicts the required handoff.
+    if (failures.length > 4 || failures.some(({ value }) => {
+      const validation = ownership(value);
+      return validation.rule !== undefined || validation.target_owner !== undefined || validation.target_path !== undefined;
+    })) return null;
+    let proof: ControlledSnapshot['role_handoff'] | null = null;
+    for (const failed of failures) {
+      const ended = Date.parse(failed.value.at);
+      const requests = traces.filter(({ value }) => value.event === 'tool-request' && value.tool === 'task_file_write' && bound(value) && Date.parse(value.at) <= ended)
+        .sort((a, b) => Date.parse(b.value.at) - Date.parse(a.value.at));
+      const request = requests[0];
+      if (!request || !Number.isFinite(ended) || !verifierPath(request.value.model_input?.path) ||
+          requests[1] && Date.parse(requests[1].value.at) === Date.parse(request.value.at)) return null;
+      proof = { attempt_id: attempt.id, task_id: contract.task_id, denial_trace: failed.id, target_path: request.value.model_input.path, legacy_trace: true };
+    }
+    return proof;
   }
   private block(run: ControlledSnapshot, kind: FailureKind, message: string): void {
     run.status = 'blocked'; run.blocker = { kind, message: message.slice(0, 2000) };
@@ -687,6 +882,7 @@ class Controller {
     const run = readState(this.root, id);
     if (run.status === 'completed' || run.status === 'cancelled') return run;
     const job = this.jobs.get(id);
+    if (action === 'resume' && run.intake_recovery) return run;
     if (action !== 'resume') {
       run.status = action === 'cancel' ? 'cancelled' : 'paused'; save(this.root, run, action, `User requested ${action}.`);
       job?.abort.abort();
@@ -702,6 +898,7 @@ class Controller {
       run.status = 'uncertain'; run.blocker = { kind: 'environment', message: 'A check was interrupted without a durable result. Its saved process/command baseline must be reconciled before another execution; no command was automatically replayed.' };
       save(this.root, run, 'uncertain', run.blocker.message); return run;
     }
+    this.reconcileRepairBudget(run);
     const last = run.attempts.at(-1);
     if (last && ['running', 'starting'].includes(last.state)) {
       if (last.invocation_id && invocationIsActive(readInvocation(this.root, last.invocation_id))) {
@@ -741,10 +938,17 @@ export async function dispatchControlledHost(root: string, operation: string, in
   throw new Error('Unknown controlled host operation.');
 }
 export async function startControlledWorkflow(root: string, input: ControlledStartInput): Promise<ControlledSnapshot> {
+  input = controlledStartSchema.parse(input);
   // Preserve this fixed public diagnostic before the credential-hiding wire seam.
   // The owner repeats the same check against current state before dispatch.
-  if (typeof input.workflow_id === 'string' && input.workflow_id) {
-    const original = readNativeSoftwareContract(root, input.workflow_id);
+  const existing = typeof input.workflow_id === 'string' && input.workflow_id ? getRecord(root, input.workflow_id)
+    : typeof input.request_id === 'string' ? loadRecords(root).find(record => record.meta.data.kind === 'manager-workflow' && record.meta.data.request_id === input.request_id) : undefined;
+  if (existing) {
+    assertIntakePayload(existing, input);
+    if (existing.meta.data.execution_mode === 'neomind-controlled' && !existsSync(statePath(root, existing.meta.id)) &&
+        input.request_id !== undefined && input.request_id !== existing.meta.data.request_id)
+      throw new ControlledToolError('INTAKE_IDENTITY_MISMATCH', 'Recover this intake with its saved request identity; a different identity cannot replace its missing journal.');
+    const original = readNativeSoftwareContract(root, existing.meta.id);
     if (original) assertSupportedContinuation(original.plan.acceptance_criteria);
   }
   return hostRequest(readHost(root), 'controlled-start', input);

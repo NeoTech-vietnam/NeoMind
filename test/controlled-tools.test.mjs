@@ -137,6 +137,32 @@ test('blocked and failed substantive reports persist without task submission or 
   assert.doesNotMatch(JSON.stringify(c.reports), /submit_task|invocation_id|workflow_id/);
 });
 
+test('role briefs and denied writes name the actual file owner and expected handoff without changing reports', async t => {
+  const root = project(t);
+  for (const stage of ['implementation', 'verification', 'review']) {
+    const actor = binding(stage), instructions = controlledInstructions(actor);
+    const declared = JSON.parse(instructions.split('\n')[0].slice('Authoritative role ownership: '.length));
+    assert.deepEqual(declared.your_writable_paths, stage === 'implementation' ? ['src', 'docs'] : stage === 'verification' ? ['checks'] : []);
+    assert.equal(declared.implementation.owner, 'developer'); assert.equal(declared.verification.owner, 'verifier');
+  }
+  const producer = await connect(t, root);
+  const deniedChecker = decode(await producer.call('task_file_write', { path: 'checks/new.mjs', content: 'another role owns this' }));
+  assert.equal(deniedChecker.code, 'SCOPE_DENIED'); assert.equal(deniedChecker.target_owner, 'verifier');
+  assert.equal(deniedChecker.rule, 'ROLE_HANDOFF_REQUIRED'); assert.equal(deniedChecker.target_path, 'checks/new.mjs');
+  const handoffTrace = producer.events.find(event => event.event === 'tool-result' && event.rule === 'ROLE_HANDOFF_REQUIRED');
+  assert.equal(handoffTrace.target_owner, 'verifier'); assert.equal(handoffTrace.target_path, 'checks/new.mjs');
+  assert.equal(handoffTrace.backend_binding.invocation_id, binding().invocation_id);
+  assert.match(handoffTrace.request_sha256, /^[a-f0-9]{64}$/);
+  assert.match(deniedChecker.next_action, /expected.*independent Verifier/);
+  assert.equal(existsSync(join(root, 'checks/new.mjs')), false);
+  const blocked = { outcome: 'blocked', summary: 'A genuine implementation dependency is unavailable.', failure_kind: 'environment' };
+  await producer.call('assignment_report', blocked); assert.deepEqual(producer.reports, [blocked]);
+  const verifier = await connect(t, root, binding('verification'));
+  const deniedProduct = decode(await verifier.call('task_file_write', { path: 'src/value.mjs', content: 'must not overwrite product' }));
+  assert.equal(deniedProduct.target_owner, 'developer'); assert.match(deniedProduct.next_action, /failure_kind implementation/);
+  assert.equal(readFileSync(join(root, 'src/value.mjs'), 'utf8'), 'export const value = 1;\n');
+});
+
 test('private files are omitted from reads, listing and search; project text and semantic plans remain usable', async t => {
   const root = project(t);
   writeFileSync(join(root, '.env'), 'SECRET-MARKER');

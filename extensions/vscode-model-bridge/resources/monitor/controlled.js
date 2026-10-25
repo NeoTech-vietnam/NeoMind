@@ -1,8 +1,10 @@
 (() => {
   'use strict';
   const vscode = acquireVsCodeApi(), byId = id => document.getElementById(id);
-  let workflows = [], selected = null, enabled = false, busy = false;
-  try { selected = vscode.getState()?.selected ?? null; } catch {}
+  let workflows = [], selected = null, enabled = false, busy = false, intake = null, pending = null, deliveredGeneration = null;
+  try { const saved = vscode.getState(); selected = saved?.selected ?? null; intake = saved?.intake ?? null;
+    pending = saved?.pending ?? null; deliveredGeneration = saved?.deliveredGeneration ?? null; byId('requirement').value = saved?.draft ?? ''; } catch {}
+  const saveState = () => { try { vscode.setState({ selected, intake, pending, deliveredGeneration, draft: byId('requirement').value }); } catch {} };
   const element = (tag, text, className) => { const value = document.createElement(tag); value.textContent = text ?? ''; if (className) value.className = className; return value; };
   const action = (name, fields = {}) => vscode.postMessage({ type: 'controlled-action', action: name, ...fields });
   const status = value => value.status ?? value.state ?? 'unknown';
@@ -37,12 +39,14 @@
   }
   function render() {
     byId('owner').textContent = enabled ? 'Model Bridge enabled · controlled execution' : 'Model Bridge disabled · saved state only';
-    byId('enable').hidden = enabled; byId('submit').disabled = busy || !enabled;
+    byId('enable').hidden = enabled; byId('submit').disabled = busy || !enabled || intake?.state === 'accepted';
+    byId('submit').textContent = intake?.state === 'acknowledged' ? 'Start another task'
+      : ['unknown', 'prepared'].includes(intake?.state) && intake?.requirement ? 'Retry saved request' : 'Start workflow';
     const list = byId('workflows'); list.replaceChildren();
     for (const workflow of workflows) {
       const button = element('button', '', `workflow${workflow.workflow_id === selected ? ' selected' : ''}`);
       button.type = 'button'; button.append(element('strong', workflow.title ?? workflow.workflow_id), element('span', `${status(workflow)} · ${workflow.phase ?? 'pending'}`));
-      button.addEventListener('click', () => { selected = workflow.workflow_id; try { vscode.setState({ selected }); } catch {} render(); });
+      button.addEventListener('click', () => { selected = workflow.workflow_id; saveState(); render(); });
       list.append(button);
     }
     if (!workflows.length) list.append(element('p', 'No saved controlled workflows.', 'hint'));
@@ -52,20 +56,33 @@
     const value = event.data;
     if (value?.type === 'controlled-snapshot') {
       workflows = Array.isArray(value.workflows) ? value.workflows : []; enabled = value.enabled === true;
-      byId('workspace').textContent = value.workspace_folder ?? 'Workspace unavailable'; render();
+      intake = value.intake ?? null;
+      if (intake?.requirement && !byId('requirement').value && ['prepared', 'unknown'].includes(intake.state)) byId('requirement').value = intake.requirement;
+      if (pending && pending.requirement === intake?.requirement && !pending.generation) pending.generation = intake.generation;
+      byId('workspace').textContent = value.workspace_folder ?? 'Workspace unavailable'; saveState(); render();
     } else if (value?.type === 'controlled-receipt') {
+      if (value.intake && intake && value.intake.generation !== intake.generation &&
+          (!pending || (value.source_generation ?? null) !== pending.generation)) return;
       const workflow = value.workflows?.[0];
-      if (workflow?.workflow_id) { selected = workflow.workflow_id; try { vscode.setState({ selected }); } catch {} }
-      byId('notice').textContent = value.action === 'submit' ? 'Request saved. NeoMind owns the remaining workflow.' : 'Control request recorded.';
-      if (value.action === 'submit') byId('requirement').value = '';
+      if (workflow?.workflow_id) selected = workflow.workflow_id;
+      byId('notice').textContent = ['submit', 'submit_new'].includes(value.action) ? 'Request saved. NeoMind owns the remaining workflow.' : 'Control request recorded.';
+      if (['submit', 'submit_new'].includes(value.action)) {
+        const alreadyRendered = value.intake?.generation && deliveredGeneration === value.intake.generation;
+        intake = value.intake ?? intake;
+        if (!alreadyRendered) { pending = null; byId('requirement').value = ''; deliveredGeneration = intake?.generation ?? null; }
+        saveState(); render();
+        if (intake?.generation && workflow?.workflow_id) vscode.postMessage({ type: 'controlled-receipt-ack', generation: intake.generation, workflow_id: workflow.workflow_id });
+      }
     } else if (value?.type === 'controlled-error') byId('notice').textContent = `${value.code ?? 'Operation failed'}: ${value.message ?? 'Inspect the runtime journal.'}`;
     else if (value?.type === 'controlled-busy') { busy = value.busy === true; render(); }
   });
   byId('submit').addEventListener('click', () => {
     const requirement = byId('requirement').value.trim();
     if (!requirement) { byId('notice').textContent = 'Describe the requested outcome first.'; return; }
-    action('submit', { requirement });
+    pending = { generation: intake?.generation ?? null, requirement }; saveState();
+    action(intake?.state === 'acknowledged' ? 'submit_new' : 'submit', { requirement, ...(intake?.generation ? { generation: intake.generation } : {}) });
   });
+  byId('requirement').addEventListener('input', saveState);
   byId('refresh').addEventListener('click', () => action('status'));
   byId('enable').addEventListener('click', () => vscode.postMessage({ type: 'controlled-enable' }));
   byId('local-coordinator').addEventListener('click', () => vscode.postMessage({ type: 'controlled-local-coordinator' }));

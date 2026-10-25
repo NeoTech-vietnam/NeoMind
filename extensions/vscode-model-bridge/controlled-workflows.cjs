@@ -1,11 +1,12 @@
 const { randomBytes, randomUUID } = require('node:crypto');
 const { lstatSync, readFileSync, realpathSync } = require('node:fs');
 const { isAbsolute, join, resolve } = require('node:path');
+const { createControlledEntryReceipts, ControlledEntryError } = require('./controlled-entry.cjs');
 
 const TOOL_NAME = 'neomind_controlled_workflow';
 const LOCAL_COORDINATOR_COMMAND = 'neomind.coordinator.openLocal';
 const COORDINATOR_PROFILE = 'NeoMind Coordinator Agent';
-const actions = ['submit', 'status', 'pause', 'resume', 'cancel'];
+const actions = ['submit', 'submit_new', 'status', 'pause', 'resume', 'cancel'];
 const apiNames = ['startControlledWorkflow', 'controlledStatus', 'controlControlledWorkflow'];
 const samePath = (a, b) => process.platform === 'win32' ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b);
 class ControlledUIError extends Error {
@@ -31,6 +32,7 @@ function requireApi(runtime) {
     fail('RUNTIME_UPDATE_REQUIRED', 'Update the NeoMind runtime to use controlled workflows.');
 }
 function publicError(error) {
+  if (error instanceof ControlledEntryError) return { code: error.code, message: error.message };
   if (error?.code === 'CONTINUATION_PILOT_UNSUPPORTED') return {
     code: 'CONTINUATION_PILOT_UNSUPPORTED',
     message: 'This saved contract needs an intended-use adapter for its original task family. Its acceptance conditions remain open; NeoMind will not replace them with LeetCode or C/C++ requirements.',
@@ -60,33 +62,52 @@ function publicStatus(value) {
 function inputValue(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
       Object.keys(value).some(key => !['action', 'workspace_folder', 'requirement', 'workflow_id', 'title'].includes(key)) || !actions.includes(value.action))
-    fail('INVALID_REQUEST', 'Choose submit, status, pause, resume or cancel.');
+    fail('INVALID_REQUEST', 'Choose submit, submit_new, status, pause, resume or cancel.');
   if (value.workflow_id !== undefined && !text(value.workflow_id, 256)) fail('INVALID_REQUEST', 'Use a workflow ID returned by NeoMind.');
   if (value.title !== undefined && !text(value.title, 256)) fail('INVALID_REQUEST', 'Use a title of at most 256 characters.');
-  if (value.action === 'submit') {
+  if (['submit', 'submit_new'].includes(value.action)) {
     if (!text(value.requirement, 20000) || value.workflow_id !== undefined)
       fail('INVALID_REQUEST', 'Submit a new requirement, or resume an existing workflow by its saved ID.');
   } else if (value.requirement !== undefined || value.title !== undefined ||
       (value.action !== 'status' && !value.workflow_id)) fail('INVALID_REQUEST', 'Select the existing workflow for this control action.');
   return value;
 }
-async function perform({ runtime, root, enabled, input }) {
+async function perform({ runtime, root, enabled, input, entries, generation, context, beforeDispatch, surface = 'lm' }) {
   requireApi(runtime);
-  if (input.action === 'status') return publicStatus(await runtime.controlledStatus(root, input.workflow_id));
+  if (input.action === 'status') {
+    const result = publicStatus(await runtime.controlledStatus(root, input.workflow_id));
+    if (input.workflow_id) entries?.acknowledgeWorkflow(input.workflow_id);
+    return result;
+  }
   if (!enabled()) fail('BRIDGE_DISABLED', 'Enable the NeoMind Model Bridge for this workspace before submitting or controlling work.');
-  const result = input.action === 'submit'
-    ? await runtime.startControlledWorkflow(root, { requirement: input.requirement.trim(), request_id: randomUUID(), ...(input.title ? { title: input.title.trim() } : {}) })
-    : await runtime.controlControlledWorkflow(root, { workflow_id: input.workflow_id, action: input.action });
+  if (['submit', 'submit_new'].includes(input.action)) {
+    entries ??= createControlledEntryReceipts({ runtime, root, surface });
+    if (surface === 'panel' && input.action === 'submit_new') generation = entries.newIntent(generation).generation;
+    const result = await entries.submit(input, { generation, newTask: input.action === 'submit_new', context, beforeDispatch });
+    return { ...publicStatus(result.workflow), ...(surface === 'panel' ? { intake: result.intake } : {}) };
+  }
+  const result = await runtime.controlControlledWorkflow(root, { workflow_id: input.workflow_id, action: input.action });
+  entries?.acknowledgeWorkflow(input.workflow_id);
   return publicStatus(result);
 }
 function createControlledPanelHost({ runtime, root, post, alive = () => true, enabled = () => false }) {
-  let busy = false;
+  let busy = false, entries;
+  const receiptStore = () => entries ??= createControlledEntryReceipts({ runtime, root, surface: 'panel' });
   async function snapshot() {
     if (!alive()) return;
-    const state = publicStatus(await runtime.controlledStatus(root));
-    if (alive()) await post({ type: 'controlled-snapshot', workspace_folder: root, enabled: enabled(), ...state });
+    const workflows = await runtime.controlledStatus(root), state = publicStatus(workflows);
+    const pending = await receiptStore().recover(workflows);
+    if (alive()) {
+      await post({ type: 'controlled-snapshot', workspace_folder: root, enabled: enabled(), ...state, intake: pending.intake });
+      if (pending.workflow && pending.intake?.state === 'accepted')
+        await post({ type: 'controlled-receipt', action: 'submit', ...publicStatus(pending.workflow), intake: pending.intake, replay: true });
+    }
   }
   async function handle(message) {
+    if (alive() && message?.type === 'controlled-receipt-ack') {
+      if (receiptStore().acknowledge(message.generation, message.workflow_id)) await snapshot();
+      return;
+    }
     if (!alive() || busy || message?.type !== 'controlled-action') return;
     busy = true;
     try {
@@ -95,8 +116,8 @@ function createControlledPanelHost({ runtime, root, post, alive = () => true, en
       if (input.action === 'status') await snapshot();
       else {
         await post({ type: 'controlled-busy', busy: true });
-        const receipt = await perform({ runtime, root, enabled, input });
-        if (alive()) await post({ type: 'controlled-receipt', action: input.action, ...receipt });
+        const receipt = await perform({ runtime, root, enabled, input, entries: receiptStore(), generation: message.generation, surface: 'panel' });
+        if (alive()) await post({ type: 'controlled-receipt', action: input.action, source_generation: message.generation, ...receipt });
         await snapshot();
       }
     } catch (error) { if (alive()) await post({ type: 'controlled-error', ...publicError(error) }); }
@@ -117,6 +138,8 @@ function renderControlledPanel({ cspSource, script, style, nonce }) {
 }
 function activateControlledWorkflows(vscode, context, loadRuntime, { enabled = () => false } = {}) {
   let panel, timer, opening = false, generation = 0;
+  const invocationContexts = new WeakMap();
+  const invocationOwner = randomUUID();
   function stop() { generation++; clearInterval(timer); timer = undefined; const old = panel; panel = undefined; old?.dispose(); }
   async function openLocalCoordinator() {
     try {
@@ -195,7 +218,16 @@ function activateControlledWorkflows(vscode, context, loadRuntime, { enabled = (
         if (token?.isCancellationRequested) fail('REQUEST_CANCELLED', 'The request was cancelled before NeoMind accepted it.');
         const input = inputValue(options?.input), root = openRoot(vscode, input.workspace_folder), runtime = await loadRuntime(root);
         if (token?.isCancellationRequested) fail('REQUEST_CANCELLED', 'The request was cancelled before NeoMind accepted it.');
-        response = await perform({ runtime, root, enabled: () => enabled(root), input });
+        const opaque = options?.toolInvocationToken;
+        let invocation;
+        if (opaque && typeof opaque === 'object') {
+          if (!invocationContexts.has(opaque)) invocationContexts.set(opaque, randomUUID());
+          invocation = `${invocationOwner}:${invocationContexts.get(opaque)}:${input.action}`;
+        }
+        const entries = ['submit', 'submit_new', 'status', 'pause', 'resume', 'cancel'].includes(input.action)
+          ? createControlledEntryReceipts({ runtime, root, surface: 'lm' }) : undefined;
+        response = await perform({ runtime, root, enabled: () => enabled(root), input, entries, context: invocation,
+          beforeDispatch: () => { if (token?.isCancellationRequested) fail('REQUEST_CANCELLED', 'The request was cancelled before NeoMind accepted it.'); } });
       } catch (error) { response = { error: publicError(error) }; }
       return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(JSON.stringify(response))]);
     },

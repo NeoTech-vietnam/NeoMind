@@ -6,6 +6,7 @@ import { atomicWrite, hash, now, safePath, withOperationLock } from './storage.j
 import { replaceWorkspaceFile, workspaceFileBytes, workspaceContentBytes, workspacePathLockKey } from './workspace.js';
 import { registerProcedureSchema } from './procedures.js';
 import { cornellResearchSchema } from './cornell-workflow.js';
+import { controlledModelInput, controlledValidation, redactControlledValue } from './controlled-observability.js';
 
 export type ControlledStage = 'planning' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
 export interface ControlledBinding {
@@ -63,7 +64,9 @@ export interface ControlledCallbacks {
 }
 /** Only explicitly public controller diagnostics cross the model-facing error seam. */
 export class ControlledToolError extends Error {
-  constructor(readonly code: string, message: string) { super(message); }
+  constructor(readonly code: string, message: string,
+    readonly ownership?: { target_owner: 'developer' | 'verifier' | 'protected-acceptance' | 'outside-scope'; next_action: string;
+      rule?: 'ROLE_HANDOFF_REQUIRED'; target_path?: string }) { super(message); }
 }
 interface ToolState {
   schema_version: 1; binding_hash: string;
@@ -106,9 +109,21 @@ function assertWritable(binding: ControlledBinding, path: string): void {
   const scopes = binding.stage === 'implementation' && binding.role === 'developer' ? binding.implementation_paths
     : binding.stage === 'verification' && ['verifier', 'check-executor'].includes(binding.role) ? binding.verification_paths : [];
   const other = binding.stage === 'implementation' ? binding.verification_paths : binding.implementation_paths;
-  if (!scopes.some(scope => covers(scope, path)) || other.some(scope => covers(scope, path)) ||
-      (binding.protected_paths ?? []).some(scope => covers(scope, path)))
-    throw new ControlledToolError('SCOPE_DENIED', 'This stage cannot modify that path or a protected acceptance artifact.');
+  const protectedTarget = (binding.protected_paths ?? []).some(scope => covers(scope, path));
+  if (!scopes.some(scope => covers(scope, path)) || other.some(scope => covers(scope, path)) || protectedTarget) {
+    const target_owner = protectedTarget ? 'protected-acceptance' : binding.verification_paths.some(scope => covers(scope, path)) ? 'verifier'
+      : binding.implementation_paths.some(scope => covers(scope, path)) ? 'developer' : 'outside-scope';
+    const producerHandoff = binding.stage === 'implementation' && binding.role === 'developer' && target_owner === 'verifier';
+    const verifierProduct = binding.stage === 'verification' && target_owner === 'developer';
+    const next_action = producerHandoff
+      ? 'Finish only your assigned implementation outputs. When they are ready, save assignment_report with outcome completed. Missing checker files and negative-control fixtures are expected: the backend dispatches the independent Verifier next.'
+      : verifierProduct ? 'Do not edit implementation files. Report the concrete product defect with failure_kind implementation; the backend dispatches the implementation repair.'
+      : protectedTarget ? 'Preserve the protected acceptance artifact. Report the constraint for backend reconciliation; this role cannot widen its scope.'
+      : !scopes.length ? 'This role is read-only. Inspect the assigned artifacts and evidence, then report your findings; route required changes to their owning role.'
+      : 'Use only your assigned writable paths. Report any required scope change to the backend instead of editing another role\'s files.';
+    throw new ControlledToolError('SCOPE_DENIED', `Write denied. Target owner: ${target_owner}. ${next_action}`,
+      { target_owner, target_path: path, next_action, ...(producerHandoff ? { rule: 'ROLE_HANDOFF_REQUIRED' } : {}) });
+  }
 }
 export function controlledToolNames(binding: ControlledBinding): string[] {
   return ['project_read', 'project_list', 'project_search', 'assignment_report',
@@ -121,6 +136,10 @@ export function controlledToolNames(binding: ControlledBinding): string[] {
     ...(binding.stage === 'verification' ? ['check_run'] : [])];
 }
 export function controlledInstructions(binding: ControlledBinding): string {
+  const writable = binding.stage === 'implementation' && binding.role === 'developer' ? binding.implementation_paths
+    : binding.stage === 'verification' && ['verifier', 'check-executor'].includes(binding.role) ? binding.verification_paths : [];
+  const ownership = { your_role: binding.role, your_stage: binding.stage, your_writable_paths: writable,
+    implementation: { owner: 'developer', paths: binding.implementation_paths }, verification: { owner: 'verifier', paths: binding.verification_paths } };
   const duties: Record<ControlledStage, string> = {
     planning: 'Inspect relevant files and existing reusable tools. Submit one bounded semantic workflow_plan with acceptance criteria, separate implementation/checker paths and actual check commands. Declare negative_controls using the same checker with verifier-owned deliberately invalid fixtures/inputs and their expected nonzero exits; runtime executes them as evidence. Elevate risk or suggest a bounded specialist only when needed.',
     implementation: 'Read existing files before editing. Implement only the assigned outputs with task_file_write. Backend handles file versions, operation identity and task lifecycle. Preserve independent checker and acceptance files.',
@@ -129,7 +148,9 @@ export function controlledInstructions(binding: ControlledBinding): string {
     diagnosis: 'Inspect available evidence and identify the root cause. Classify failure_kind as implementation, checker, protocol, environment or unknown and recommend one bounded recovery action.',
     synthesis: 'Derive the final requested Cornell research note from actual artifacts and independent evidence. Use cornell_research_compile to preserve the standard format and separate practice/answers. Record limitations and actual sources, then assignment_report. Source implementation and checker files are read-only.',
   };
-  return `You are a NeoMind-owned ${binding.role} session in the ${binding.stage} stage. ${duties[binding.stage]}\n` +
+  return `Authoritative role ownership: ${JSON.stringify(ownership)}\n` +
+    (binding.stage === 'implementation' ? 'Complete only your implementation outputs. The independent Verifier owns all checker files and negative-control fixtures; missing verifier artifacts are EXPECTED at this handoff. Do not create them or mark your work blocked because a later role has not run. When your own outputs are ready, save outcome completed; the backend advances to Verifier. Report blocked only for a real blocker to your assigned implementation.\n' : '') +
+    `You are a NeoMind-owned ${binding.role} session in the ${binding.stage} stage. ${duties[binding.stage]}\n` +
     'Only the supplied tools are available. Their actor, workflow, task, scope and authorization are already bound by the runtime. Supply semantic content and project-relative file paths.\n' +
     'Reuse: planning may bind reuse {procedure_id,version,parameters} after work_prepare reports exact eligibility; implementation calls procedure_run instead of recreating the generator. For newly delivered reusable scripts declare procedure_candidate (manifest without id/version/author); runtime registers it after checked completion without claiming qualification. For requested Cornell notes declare cornell_output_dir and all three note.md/exercises.md/answers.md outputs, then implementation calls cornell_research_compile with substantive research content.\n' +
     'Before ending, save one compact assignment_report with outcome, summary, artifacts and findings. A blocked or failed report preserves useful work and does not submit a task. Reported prose is distinct from observed execution evidence. Runtime events supply progress and advance the workflow; focus on the assigned work.';
@@ -193,7 +214,9 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
   }
   async function trace(event: Record<string, unknown>): Promise<void> {
     // Observability cannot turn a successfully persisted operation into a model retry.
-    try { await callbacks.trace?.({ ...event, stage: binding.stage, at: now() }); } catch { /* advisory */ }
+    try { await callbacks.trace?.({ ...event, stage: binding.stage, at: now(),
+      backend_binding: { workflow_id: binding.workflow_id, task_id: binding.task_id ?? null, invocation_id: binding.invocation_id },
+      owner: 'runtime' }); } catch { /* advisory */ }
   }
   function register(name: string, description: string, schema: z.ZodType, readOnly: boolean,
     action: (args: any) => unknown | Promise<unknown>): void {
@@ -202,19 +225,19 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       try {
         if (closed) throw new ControlledToolError('ACTOR_INACTIVE', 'This worker session has ended.');
         await callbacks.assertActive();
-        await trace({ event: 'tool-request', tool: name, model_input: name === 'task_file_write'
-          ? { path: args.path, bytes: Buffer.byteLength(args.content), content_sha256: hash(args.content) }
-          : name === 'project_read' || name === 'project_list' || name === 'project_search' ? args
-          : { content_sha256: hash(JSON.stringify(args)) },
+        await trace({ event: 'tool-request', tool: name, model_input: controlledModelInput(name, args), owner: 'runtime',
           backend_binding: { workflow_id: binding.workflow_id, task_id: binding.task_id ?? null, invocation_id: binding.invocation_id } });
         const result = await action(args);
         await trace({ event: 'tool-result', tool: name, status: 'succeeded' });
         return { content: [{ type: 'text' as const, text: JSON.stringify(result ?? { saved: true }) }] };
       } catch (error) {
-        const code = error instanceof ControlledToolError ? error.code : 'CONTROLLED_OPERATION_FAILED';
-        await trace({ event: 'tool-result', tool: name, status: 'failed', code });
-        return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify({ error: error instanceof ControlledToolError
-          ? error.message : 'The bound operation could not complete. Inspect the runtime diagnostic; existing work is preserved.', code }) }] };
+        const validation = controlledValidation(error instanceof ControlledToolError ? error.code : undefined,
+          error instanceof ControlledToolError ? error.message : undefined);
+        const ownership = error instanceof ControlledToolError && error.ownership ? redactControlledValue(error.ownership) as Record<string, unknown> : {};
+        await trace({ event: 'tool-result', tool: name, status: 'failed', code: validation.code, validation,
+          request_sha256: hash(JSON.stringify(args)), ...ownership });
+        return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify({ error: validation.rule, code: validation.code,
+          validation, ...ownership }) }] };
       }
     });
   }

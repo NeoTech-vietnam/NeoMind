@@ -92,7 +92,9 @@ function scriptFor(name, stage, attempt, options, held) {
 }
 
 async function setup(t, scenarios) {
-  const parent = realpathSync(tmpdir()), root = realpathSync(mkdtempSync(join(parent, 'neomind-controlled-flow-')));
+  // The owner canonicalizes native roots; direct private callback lookup must use
+  // that same identity when Windows TEMP is exposed through an 8.3 alias.
+  const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-controlled-flow-')));
   initialize(root, { project_id: 'CONTROLLED', name: 'Controlled Bridge fixture', platforms: ['codex', 'copilot'], max_workers: 3, repair_attempts: 1 });
   const policy = ensureRoutingPolicy(root);
   atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([

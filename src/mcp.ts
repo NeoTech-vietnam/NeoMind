@@ -728,6 +728,7 @@ import { publishProjectKnowledge } from './project-knowledge.js';
 export function createMcpServer(root: string, binding: McpBinding = {}): McpServer {
   const runtimeInfo = createRuntimeInfo(root);
   readConfig(root);
+  const controlledParent = !binding.invocation_id && readAutomationPolicy(root).execution_mode === 'neomind-controlled';
   const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const server = new McpServer({ name: 'neomind', version: packageJson.version });
   const ownerToken = randomUUID();
@@ -762,11 +763,16 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     // Creating/recovering packets requires no session; opening/claiming validates
     // packet credentials. Advertising a session here caused fabricated handles.
     const bootstrap = ['assignment_bootstrap', 'assignment_recover', 'assignment_open', 'assignment_claim'].includes(name);
+    // These public entrypoints ask the enabled editor owner to operate. They do
+    // not authenticate a worker. Old clients can retain the former optional
+    // credential field; strip it as unknown input instead of resolving it as an
+    // assignment or teaching the parent model to construct another credential.
+    const publicEntrypoint = controlledParent && ['manager_run', 'manager_status', 'manager_control'].includes(name);
     server.registerTool(
       name,
       {
         description,
-        inputSchema: bootstrap ? z.strictObject(schema) : z.object({ ...schema,
+        inputSchema: publicEntrypoint ? z.object(schema) : bootstrap ? z.strictObject(schema) : z.object({ ...schema,
           reported_assignment: z.object({ id: z.string().regex(/^local-report-[a-f0-9]{40}$/), token: z.string().min(1) }).strict().optional()
             .describe('Use only the private handle returned by assignment_open (or access credential from assignment_claim). Omit this entire field until that call succeeds. A packet claim_token is not an access token; never copy it here.') }).apply(schema => ['assignment_delegate', 'assignment_followup', 'assignment_start', 'assignment_check', 'assignment_review', 'workflow_plan', 'workflow_next'].includes(name) ? schema.strict() : schema),
         annotations: { readOnlyHint: readOnly, destructiveHint: false, openWorldHint: external },
@@ -1204,7 +1210,14 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     'Find saved workflows, current gates, changed decisions, and the next executable action.',
     { workflow_id: z.string().optional() },
     (i) => i.workflow_id && hasControlledWorkflow(root, i.workflow_id) ? controlledStatus(root, i.workflow_id)
-      : Object.assign({}, workflowStatus(root, i.workflow_id), { controlled_workflows: controlledStatus(root) }),
+      : controlledParent && !i.workflow_id ? {
+        execution_mode: 'neomind-controlled', controlled_workflows: controlledStatus(root),
+        // Discovery is a journal read, not a re-run of every historical gate.
+        // Select a legacy ID explicitly to inspect its original acceptance.
+        legacy_workflows: loadRecords(root).filter(record => record.meta.data.kind === 'manager-workflow' &&
+          !hasControlledWorkflow(root, record.meta.id)).map(record => ({ workflow_id: record.meta.id, title: record.meta.title,
+            execution_mode: record.meta.data.execution_mode, phase: record.meta.data.phase, validation: 'not-evaluated' })),
+      } : Object.assign({}, workflowStatus(root, i.workflow_id), { controlled_workflows: controlledStatus(root) }),
   );
   tool('manager_control', 'Pause, resume or cancel one exact controlled workflow through its enabled VS Code owner. Work is independent of this chat connection.', {
     workflow_id: z.string().min(1), action: z.enum(['pause', 'resume', 'cancel']),

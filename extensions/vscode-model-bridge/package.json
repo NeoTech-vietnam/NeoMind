@@ -2,7 +2,7 @@
   "name": "neomind-model-bridge",
   "displayName": "NeoMind Agent Monitor",
   "publisher": "neomind",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "An agent universe with plug-in and MCP controls, Earth FocusSpace, calendar planning, ambient sound and guarded 9router model controls.",
   "engines": {
     "vscode": "^1.109.0"
@@ -47,6 +47,7 @@
     "native-validation.cjs",
     "native-dispatch.cjs",
     "controlled-workflows.cjs",
+    "controlled-entry.cjs",
     "resources/monitor/controlled.js",
     "resources/monitor/controlled.css",
     "resources/monitor/automation.js",
@@ -174,7 +175,7 @@
         "toolReferenceName": "neomindControlledWorkflow",
         "displayName": "Manage NeoMind Controlled Workflow",
         "userDescription": "Give work to NeoMind's own agents, inspect its saved state, or pause, resume and cancel it.",
-        "modelDescription": "Send the user's requirement to the exact open workspace folder. NeoMind owns agent sessions, credentials, IDs, stage transitions and verification. Submit returns a durable receipt quickly; the workflow continues without repeated progress/advance calls while VS Code stays open. Use returned workflow_id for status or controls. A status query without workflow_id lists saved controlled workflows in that exact project. Do not invoke native subagents or implement the accepted task separately. User-requested work and existing project policy define the authorized scope.",
+        "modelDescription": "Send the user's requirement to the exact open workspace folder. NeoMind owns agent sessions, credentials, IDs, stage transitions and verification. Submit returns a durable receipt quickly; repeat unchanged submit to recover a lost response using its saved identity. Use returned workflow_id for status or controls. An intentional identical second task uses submit_new after the prior receipt is acknowledged by status/control. If the client cannot provide a stable fresh turn context, or that context was lost on restart, use Start another task in the Workflows panel; never invent request IDs or platform tokens. A status query without workflow_id lists saved controlled workflows in that exact project. Do not invoke native subagents or implement the accepted task separately. User-requested work and existing project policy define the authorized scope.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "neomind",
@@ -192,6 +193,7 @@
               "type": "string",
               "enum": [
                 "submit",
+                "submit_new",
                 "status",
                 "pause",
                 "resume",
@@ -205,7 +207,7 @@
             "requirement": {
               "type": "string",
               "maxLength": 20000,
-              "description": "The user's requested outcome and constraints. Use only for submit."
+              "description": "The user's requested outcome and constraints. Use for submit or an intentional submit_new; retries of submit retain the saved intake identity."
             },
             "workflow_id": {
               "type": "string",
