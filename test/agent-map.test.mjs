@@ -10,11 +10,12 @@ import { readAgentMap, agentMapLimits } from '../dist/agent-map.js';
 import { reportAgentActivity, agentActivityTtlMs } from '../dist/agent-activity.js';
 import { lightweightRun } from '../dist/lightweight.js';
 import { observeNativeHook } from '../dist/agent-hooks.js';
+import { serveHost } from '../dist/vscode-wire.js';
 
-function setup(t) {
+function setup(t, cleanup = true) {
   const root = mkdtempSync(join(tmpdir(), 'neomind-map-'));
   initialize(root, { project_id: 'MAP', name: 'Map test' });
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  if (cleanup) t.after(() => rmSync(root, { recursive: true, force: true }));
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const pem = publicKey.export({ type: 'spki', format: 'pem' }), keyId = hash(pem);
   mkdirSync(join(root, '.neomind/native/keys'), { recursive: true });
@@ -219,6 +220,52 @@ test('waiting, failed, interrupted and absent owners remain visibly distinct fro
   assert.equal(state(failed.id), 'failed');
   assert.equal(state(interrupted.id), 'blocked');
   assert.equal(state(absent.id), 'blocked');
+});
+
+test('controlled current markers distinguish actual execution and the latest recoverable blocker from immutable attempt history', async t => {
+  const { root, receipt } = setup(t, false), host = await serveHost(root, async () => ({}));
+  t.after(async () => { await host.close(); rmSync(root, { recursive: true, force: true }); });
+  const workflow = nativeWorkflow(root), foreign = nativeWorkflow(root);
+  const legacyActivity = reportAgentActivity(root, { workflow_id: workflow.meta.id, assignment_id: 'legacy-implementer', profile_id: 'implementer', state: 'blocked', summary: 'Earlier unsigned implementation was blocked.' });
+  const foreignActivity = reportAgentActivity(root, { workflow_id: foreign.meta.id, assignment_id: 'foreign-implementer', profile_id: 'implementer', state: 'running', summary: 'Independent unsigned workflow is still working.' });
+  const foreignSigned = receipt({ workflow_id: foreign.meta.id, state: 'running' });
+  const epoch = randomUUID(), old = receipt({ workflow_id: workflow.meta.id, role: 'manager', state: 'blocked' }), interrupted = receipt({ workflow_id: workflow.meta.id, state: 'interrupted' }), current = receipt({ workflow_id: workflow.meta.id, state: 'running' });
+  const attempts = [old, interrupted, current].map((value, index) => ({ id: randomUUID(), invocation_id: value.id, role: value.role,
+    stage: index === 0 ? 'planning' : 'implementation', state: index === 0 ? 'completed' : index === 1 ? 'interrupted' : 'running' }));
+  const run = { schema_version: 1, process_contract: 'software-tools/v2', workflow_id: workflow.meta.id, epoch_id: epoch,
+    status: 'running', phase: 'implementation', owner_pid: process.pid, owner_instance: host.instance, attempts, checks: [],
+    updated_at: new Date().toISOString(), events: attempts.map(attempt => ({ id: randomUUID(), at: new Date().toISOString(), kind: 'dispatch', invocation_id: attempt.invocation_id })) };
+  const dir = join(root, '.neomind/controlled/workflows'); mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${hash(workflow.meta.id)}.json`), save = () => writeFileSync(path, JSON.stringify(run)); save();
+  const beforeReceipts = [old, interrupted, current].map(value => readFileSync(join(root, value.receipt_path)));
+  const controlled = () => readAgentMap(root).nodes.filter(node => node.kind === 'agent' && node.source === 'controlled-runtime');
+  const first = controlled();
+  assert.deepEqual(first.filter(node => node.controlled_current).map(node => node.invocation_id), [current.id]);
+  assert.equal(first.find(node => node.invocation_id === old.id).state, 'blocked');
+  assert.equal(first.find(node => node.invocation_id === interrupted.id).state, 'interrupted');
+  assert.ok(first.every(node => typeof node.controlled_current === 'boolean'));
+  const snapshot = readAgentMap(root), legacy = snapshot.nodes.find(node => node.source_id === legacyActivity.id), unrelated = snapshot.nodes.find(node => node.source_id === foreignActivity.id);
+  assert.equal(legacy.source, 'native-activity'); assert.equal(legacy.state, 'blocked'); assert.equal(legacy.controlled_superseded, true);
+  assert.ok(snapshot.edges.filter(edge => edge.from === legacy.id || edge.to === legacy.id).every(edge => edge.animated === false));
+  assert.equal(unrelated.source, 'native-activity'); assert.equal(unrelated.state, 'running'); assert.equal(unrelated.controlled_superseded, undefined);
+  const signedOther = snapshot.nodes.find(node => node.invocation_id === foreignSigned.id);
+  assert.equal(signedOther.source, 'signed-receipt'); assert.equal(signedOther.state, 'running'); assert.equal(signedOther.controlled_superseded, undefined);
+  const dispatched = readAgentMap(root).edges.filter(edge => edge.source === 'controlled-runtime' && edge.kind === 'handoff');
+  assert.equal(dispatched.length, attempts.length); assert.ok(dispatched.every(edge => edge.from === workflow.meta.id), 'The runtime workflow, not a past Coordinator model, dispatches controlled workers.');
+  assert.equal(dispatched.filter(edge => edge.animated).length, 1);
+  for (const status of ['completed', 'cancelled']) { run.status = status; save(); assert.equal(controlled().some(node => node.controlled_current), false, status); }
+  attempts[2].state = 'interrupted'; run.status = 'queued'; save();
+  assert.equal(controlled().some(node => node.controlled_current), false, 'A queued workflow cannot invent an invocation.');
+  for (const status of ['blocked', 'paused', 'interrupted', 'uncertain']) {
+    run.status = status; save(); const nodes = controlled();
+    assert.deepEqual(nodes.filter(node => node.controlled_current).map(node => node.invocation_id), [current.id], status);
+  }
+  const completed = receipt({ workflow_id: workflow.meta.id, state: 'completed' });
+  run.attempts.push({ id: randomUUID(), invocation_id: completed.id, role: 'developer', stage: 'implementation', state: 'completed' });
+  run.status = 'blocked'; save();
+  const context = controlled().find(node => node.invocation_id === completed.id);
+  assert.equal(context.controlled_current, true); assert.equal(context.state, 'completed'); assert.equal(context.controlled_workflow_state, 'blocked');
+  [old, interrupted, current].forEach((value, index) => assert.deepEqual(readFileSync(join(root, value.receipt_path)), beforeReceipts[index], 'Projection must not rewrite receipts or prior outcomes.'));
 });
 
 test('native self-reports retain reported provenance and cannot invent observed models', t => {

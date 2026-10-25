@@ -24,6 +24,54 @@ test('current view shows one active implementer while completed agents and saved
   assert.equal(stopped.counts.recorded_agents, 0); assert.equal(stopped.edges.length, 0);
 });
 
+test('controlled superseded attempts stay optional static history and cannot override current role state', () => {
+  const controlled = (id, role, state, current) => ({ ...node(id, 'agent', role, state), source: 'controlled-runtime', controlled_current: current });
+  const old = controlled('old-blocked', 'manager', 'blocked', false), past = controlled('old-interrupted', 'developer', 'interrupted', false), live = controlled('new-running', 'developer', 'running', true);
+  const unmarked = { ...node('unmarked', 'agent', 'reviewer', 'running'), source: 'controlled-runtime' };
+  const workflow = { ...node('runtime-workflow', 'workflow', null, 'running'), source: 'controlled-runtime', controlled_current: true };
+  const map = { nodes: [workflow, old, past, live, unmarked], edges: [
+    { id: 'past', from: old.id, to: past.id, source: 'controlled-runtime', kind: 'handoff', animated: true },
+    { id: 'current', from: workflow.id, to: live.id, source: 'controlled-runtime', kind: 'handoff', animated: true },
+  ] };
+  const current = universe.buildScene({ map, roles });
+  assert.equal(current.bodies.some(body => body.id === past.id || body.id === unmarked.id), false);
+  assert.deepEqual(current.bodies.filter(body => body.kind === 'agent' && body.controlled_current).map(body => body.id), ['new-running']);
+  assert.equal(current.bodies.some(body => body.id === old.id), false, 'Runtime dispatch must not resurrect a failed historical Coordinator as its current parent.');
+  assert.equal(current.planets.find(body => body.role === 'manager').state, 'configured');
+  assert.equal(current.counts.running_agents, 1);
+  const history = universe.buildScene({ map, roles, showHistory: true });
+  assert.equal(history.bodies.filter(body => body.kind === 'agent').length, 4);
+  assert.match(history.bodies.find(body => body.id === old.id).label, /^History · /);
+  assert.equal(history.planets.find(body => body.role === 'manager').state, 'recorded');
+  assert.equal(history.planets.find(body => body.role === 'reviewer').state, 'recorded');
+  assert.equal(history.counts.running_agents, 1, 'Unmarked or historical running receipts are not current execution.');
+  assert.equal(history.edges.find(edge => edge.id === 'past').animated, false);
+  assert.equal(history.edges.find(edge => edge.id === 'current').animated, true);
+  const completedContext = universe.buildScene({ roles, map: { nodes: [{ ...live, state: 'completed', controlled_workflow_state: 'blocked' }], edges: [] } });
+  assert.equal(completedContext.bodies.find(body => body.id === live.id).controlled_workflow_state, 'blocked');
+  assert.equal(completedContext.planets.find(body => body.role === 'developer').state, 'completed');
+  assert.equal(completedContext.counts.running_agents, 0);
+});
+
+test('only explicitly superseded unsigned activity becomes history while other workflows and signed activity stay current', () => {
+  const old = { ...node('old-native', 'agent', 'developer', 'blocked'), source: 'native-activity', controlled_superseded: true };
+  const current = { ...node('current-context', 'agent', 'developer', 'completed'), source: 'controlled-runtime', controlled_current: true, controlled_workflow_state: 'blocked' };
+  const workflow = { ...node('workflow', 'workflow', null, 'blocked'), source: 'controlled-runtime', controlled_current: true };
+  const foreign = { ...node('foreign-native', 'agent', 'architect', 'running'), source: 'native-activity' };
+  const signed = { ...node('foreign-signed', 'agent', 'reviewer', 'running'), source: 'signed-receipt' };
+  const map = { nodes: [old, current, workflow, foreign, signed], edges: [{ id: 'old-pulse', from: old.id, to: workflow.id, source: 'native-activity', kind: 'report', animated: true }] };
+  const live = universe.buildScene({ map, roles });
+  assert.equal(live.bodies.some(body => body.id === old.id), false);
+  assert.deepEqual(live.bodies.filter(body => body.kind === 'agent').map(body => body.id), [current.id, foreign.id, signed.id]);
+  assert.equal(live.planets.find(body => body.role === 'developer').state, 'completed');
+  const history = universe.buildScene({ map, roles, showHistory: true });
+  assert.match(history.bodies.find(body => body.id === old.id).label, /^History · /);
+  assert.equal(history.bodies.find(body => body.id === old.id).state, 'blocked');
+  assert.equal(history.planets.find(body => body.role === 'developer').state, 'completed');
+  assert.equal(history.edges.find(edge => edge.id === 'old-pulse').animated, false);
+  assert.equal(history.counts.running_agents, 1);
+});
+
 test('configured planets never fabricate recorded identities or active agents', () => {
   const scene = universe.buildScene({ roles, showHistory: true, map: { nodes: [], edges: [] } });
   assert.deepEqual(scene.planets.map(body => body.id).sort(), roles.map(role => `role:${role.role}`).sort());

@@ -1,6 +1,6 @@
 # Install the NeoMind runtime and VS Code extension
 
-Candidate `v0.1.0-alpha.11` pairs the packages below. Publication is pending completion of the actual Local Copilot validation; source-branch packages are not a published release.
+Version `v0.1.0-alpha.11` pairs the packages below. A source-branch package is not a published release. Check the linked GitHub release and its validation report for the published source, assets and actual-client acceptance.
 
 | Download | Purpose |
 | --- | --- |

@@ -32,6 +32,11 @@ export interface AgentMapNode {
   expired?: boolean;
   reported_state?: AgentActivityState;
   activity_summary?: string;
+  /** Controlled runtime context; superseded attempts retain state as history. */
+  controlled_current?: boolean;
+  controlled_workflow_state?: ControlledSnapshot['status'];
+  /** Unsigned activity retained after this exact workflow became runtime-owned. */
+  controlled_superseded?: true;
 }
 export interface AgentMapEdge {
   id: string;
@@ -264,32 +269,45 @@ export function readAgentMap(root: string): AgentMapSnapshot {
   let controlled: ControlledSnapshot[] = [];
   try { controlled = controlledStatus(root) as ControlledSnapshot[]; } catch { /* Corrupt state cannot establish running activity. */ }
   for (const run of controlled.slice(0, agentMapLimits.records)) {
+    const closed = ['completed', 'cancelled', 'canceled'].includes(run.status);
+    const active = new Set(closed ? [] : run.active_invocations.map(item => item.id));
+    const latest = run.attempts.at(-1);
+    const recoverable = !closed && active.size === 0 && ['blocked', 'paused', 'interrupted', 'uncertain'].includes(run.status);
     const workflow = nodes.get(run.workflow_id);
     if (workflow) {
       workflow.state = run.status === 'paused' ? 'waiting' : run.status === 'cancelled' ? 'interrupted' : run.status;
       workflow.execution_mode = 'neomind-controlled'; workflow.source = 'controlled-runtime';
+      workflow.controlled_current = !closed;
     }
-    let manager: string | undefined;
     for (const attempt of run.attempts) {
       if (!attempt.invocation_id) continue;
       const id = `agent:${attempt.invocation_id}`, node = nodes.get(id);
       if (!node) continue;
       node.execution_mode = 'neomind-controlled'; node.source = 'controlled-runtime';
+      node.controlled_current = !closed && (active.has(attempt.invocation_id) || recoverable && attempt === latest);
+      node.controlled_workflow_state = run.status;
       const live = run.active_invocations.find(item => item.id === attempt.invocation_id);
       node.state = attempt.state === 'interrupted' ? 'interrupted' : live?.state === 'uncertain' ? 'uncertain' : node.state;
-      if (attempt.role === 'manager' && !manager) manager = id;
-      const hub = manager && manager !== id ? manager : run.workflow_id;
+      // Dispatch/report events belong to the runtime-owned workflow. An earlier
+      // Coordinator model session does not remain the executor of later work.
+      const hub = run.workflow_id;
       const dispatched = run.events.find(event => event.kind === 'dispatch' && event.invocation_id === attempt.invocation_id);
-      if (dispatched) edge(hub, id, 'handoff', 'controlled-runtime', dispatched.id, dispatched.at, !!live && node.state === 'running');
+      if (dispatched) edge(hub, id, 'handoff', 'controlled-runtime', dispatched.id, dispatched.at, node.controlled_current && !!live && node.state === 'running');
       if (attempt.report_id) {
         const report = run.events.find(event => event.kind === 'report-saved' && event.invocation_id === attempt.invocation_id);
         if (report) edge(id, hub, 'report', 'controlled-runtime', report.id, report.at, false);
       }
     }
   }
+  const controlledWorkflows = new Set(controlled.map(run => run.workflow_id));
+  for (const node of nodes.values()) if (node.source === 'native-activity' && node.workflow_id && controlledWorkflows.has(node.workflow_id))
+    node.controlled_superseded = true;
+  for (const item of snapshot.edges) if (nodes.get(item.from)?.controlled_superseded || nodes.get(item.to)?.controlled_superseded)
+    item.animated = false;
   // Bound the combined sources after ranking current observations ahead of history.
-  const current = (node: AgentMapNode) => node.expired !== true && node.source !== 'project-record' &&
-    ['running', 'waiting', 'blocked'].includes(node.state);
+  const current = (node: AgentMapNode) => node.source === 'native-activity' && node.controlled_superseded === true ? false
+    : node.source === 'controlled-runtime' ? node.controlled_current === true
+    : node.expired !== true && node.source !== 'project-record' && ['running', 'waiting', 'blocked'].includes(node.state);
   const sortedAgents = [...nodes.values()].filter(node => node.kind === 'agent').sort((a, b) =>
     Number(current(b)) - Number(current(a)) || b.updated_at.localeCompare(a.updated_at) || a.id.localeCompare(b.id));
   for (const node of sortedAgents.slice(agentMapLimits.receipts)) {

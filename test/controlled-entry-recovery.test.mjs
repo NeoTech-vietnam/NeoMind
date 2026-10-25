@@ -140,7 +140,8 @@ test('LM facade restart after a lost delivered result retains its intake; ambigu
 
 test('actual runtime intake accepts through the facade once when the client loses its response', async t => {
   const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-real-entry-')));
-  initialize(root, { name: 'Actual intake recovery', platforms: ['copilot'], repair_attempts: 0 });
+  // This fixture historically ran with initialize's default of one repair.
+  initialize(root, { name: 'Actual intake recovery', platforms: ['copilot'], repair_attempts: 1 });
   const policy = ensureRoutingPolicy(root);
   atomicWrite(safePath(root, '.neomind/routing.json'), JSON.stringify({ ...policy, vscode_effort_policy: 'allow-unavailable' }));
   const api = { version: '1.109.0', workspace: { isTrusted: true, workspaceFolders: [{ uri: { scheme: 'file', fsPath: root } }] },

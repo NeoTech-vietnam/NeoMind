@@ -132,7 +132,9 @@ function validateConfig(config: ProjectConfig): void {
     !Number.isSafeInteger(config.max_workers) ||
     config.max_workers < 1 ||
     config.max_workers > 3 ||
-    config.repair_attempts !== 1 ||
+    !Number.isSafeInteger(config.repair_attempts) ||
+    config.repair_attempts < 1 ||
+    config.repair_attempts > 3 ||
     !config.models
   )
     throw new Error('Unsupported or invalid project configuration.');
@@ -170,7 +172,7 @@ export function initialize(root: string, options: Partial<ProjectConfig> = {}): 
     ...(options.codex_routing ? { codex_routing: options.codex_routing } : {}),
     models: options.models ?? { economy: null, balanced: null, strong: null },
     max_workers: options.max_workers ?? 3,
-    repair_attempts: 1,
+    repair_attempts: options.repair_attempts === undefined ? 1 : options.repair_attempts,
   };
   validateConfig(config);
   atomicWrite(configPath, JSON.stringify(config, null, 2) + '\n');

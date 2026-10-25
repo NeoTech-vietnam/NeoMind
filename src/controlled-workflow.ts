@@ -947,6 +947,34 @@ class Controller {
     }
     this.reconcileRepairBudget(run);
     const last = run.attempts.at(-1);
+    if (run.status === 'blocked' && run.blocker?.message.startsWith('Product/checker repair budget exhausted.') &&
+        (run.blocker.kind === 'implementation' || run.blocker.kind === 'checker')) {
+      // An explicit allowance increase resumes the already diagnosed repair,
+      // rather than rerunning an unchanged failed review. It never refunds usage.
+      if (run.repair_budget!.product >= readConfig(this.root).repair_attempts) return run;
+      if (!last || last.state !== 'completed' || !last.report ||
+          (last.report.outcome === 'completed' && last.report.verdict !== 'fail') ||
+          last.report.failure_kind !== run.blocker.kind || !last.invocation_id || !last.report_id) return run;
+      const contract = readContract(this.root, run), report = getRecord(this.root, last.report_id);
+      const receipt = readInvocation(this.root, last.invocation_id);
+      if (last.report_fingerprint !== evidenceRecordFingerprint(report) ||
+          report.meta.data.report_payload_hash !== hash(canonicalJson(last.report)) ||
+          report.meta.data.kind !== 'controlled-work-record' || report.meta.data.outcome !== last.report.outcome ||
+          report.meta.data.stage !== last.stage ||
+          report.meta.data.workflow_id !== run.workflow_id || report.meta.data.epoch_id !== run.epoch_id ||
+          report.meta.data.task_id !== contract.task_id || report.meta.data.attempt_id !== last.id ||
+          report.meta.data.invocation_id !== last.invocation_id || report.meta.owner !== last.role ||
+          receipt.issuer !== 'neomind-vscode-lm' || receipt.state !== 'completed' || !receipt.inference_completed ||
+          receipt.workflow_id !== run.workflow_id || receipt.task_id !== contract.task_id || receipt.role !== last.role ||
+          receipt.request_id !== last.request_id || receipt.controlled_execution?.epoch_id !== run.epoch_id ||
+          receipt.controlled_execution.stage !== last.stage) return run;
+      // The completed failure is authenticated against its own signed binding.
+      // It is not acceptance evidence under the newly selected project policy.
+      run.owner_pid = process.pid; run.owner_instance = readHost(this.root).instance;
+      if (!this.repair(run, run.blocker.kind, last.report.summary)) return run;
+      save(this.root, run, 'resume', 'Explicit project repair allowance resumed the existing failed result with its next charged product/checker attempt.');
+      this.schedule(id); return run;
+    }
     if (last && ['running', 'starting'].includes(last.state)) {
       if (last.invocation_id && invocationIsActive(readInvocation(this.root, last.invocation_id))) {
         run.status = 'uncertain'; save(this.root, run, 'uncertain', 'Previous owner needs reconciliation before another invocation.'); return run;

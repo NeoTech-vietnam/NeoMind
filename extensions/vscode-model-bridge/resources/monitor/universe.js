@@ -27,7 +27,8 @@
       t ^= t + Math.imul(t ^ t >>> 7, 61 | t); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
   }
   const pretty = role => role.split('-').map(part => part[0]?.toUpperCase() + part.slice(1)).join(' ');
-  const isCurrent = node => node && node.expired !== true &&
+  const isSuperseded = node => node?.source === 'native-activity' && node.controlled_superseded === true;
+  const isCurrent = node => isSuperseded(node) ? false : node?.source === 'controlled-runtime' ? node.controlled_current === true : node && node.expired !== true &&
     ['signed-receipt', 'native-activity', 'native-hook', 'controlled-runtime'].includes(node.source) &&
     ['running', 'waiting', 'blocked', 'queued', 'interrupted', 'uncertain'].includes(node.state);
 
@@ -35,6 +36,7 @@
   function buildScene(input = {}) {
     const map = input.map || {}, supplied = Array.isArray(map.nodes) ? map.nodes : [];
     const showHistory = input.showHistory === true;
+    const supersededIds = new Set(supplied.filter(isSuperseded).map(node => node.id));
     const currentIds = new Set(supplied.filter(isCurrent).map(node => node.id));
     const relatedIds = new Set(currentIds);
     const parentIds = new Set();
@@ -62,7 +64,8 @@
     const names = [...roleNames].sort((a, b) => a.localeCompare(b));
     const planets = names.map(role => {
       const config = configured.get(role), related = nodes.filter(node => node.role === role), agents = related.filter(node => node.kind === 'agent');
-      const observed = agents.filter(node => ['signed-receipt', 'native-activity', 'native-hook', 'controlled-runtime'].includes(node.source));
+      const observed = agents.filter(node => !isSuperseded(node) && ['signed-receipt', 'native-activity', 'native-hook', 'controlled-runtime'].includes(node.source) &&
+        (node.source !== 'controlled-runtime' || isCurrent(node)));
       const activity = agents.filter(node => node.source === 'native-activity');
       const states = ['running', 'waiting', 'uncertain', 'blocked', 'queued', 'interrupted', 'failed', 'completed', 'idle', 'unknown'];
       const state = observed.length ? states.find(state => observed.some(node => node.state === state)) || 'recorded'
@@ -80,8 +83,11 @@
     const planetIds = new Set(planets.map(body => body.id));
     const bodies = [...planets, ...nodes.map(node => {
       const value = seed(node.id), station = node.kind === 'workflow';
-      return { id: node.id, kind: node.kind, label: clean(node.label) || node.id, role: text(node.role) || null,
+      return { id: node.id, kind: node.kind, label: `${isSuperseded(node) || node.source === 'controlled-runtime' && node.controlled_current !== true ? 'History · ' : ''}${clean(node.label) || node.id}`, role: text(node.role) || null,
         state: text(node.state, 'unknown'), source: node.source, source_id: node.source_id,
+        controlled_current: node.source === 'controlled-runtime' ? node.controlled_current === true : undefined,
+        controlled_workflow_state: node.source === 'controlled-runtime' ? node.controlled_workflow_state : undefined,
+        controlled_superseded: isSuperseded(node) || undefined,
         invocation_id: node.invocation_id, workflow_id: node.workflow_id, task_id: node.task_id,
         requested_model: node.requested_model, confirmed_model: node.confirmed_model, provider: node.provider,
         parentId: !station && planetIds.has(`role:${node.role}`) ? `role:${node.role}` : null,
@@ -96,13 +102,15 @@
       if (!edge || !represented.has(edge.from) || !represented.has(edge.to) || edge.from === edge.to || edgeIds.has(edge.id)) continue;
       edges.push({ id: edge.id, from: edge.from, to: edge.to, kind: edge.kind, source: edge.source,
         evidence_id: edge.evidence_id, at: edge.at, animated: edge.animated === true &&
+          !supersededIds.has(edge.from) && !supersededIds.has(edge.to) &&
           ['signed-receipt', 'native-activity', 'native-hook', 'controlled-runtime'].includes(edge.source) &&
           (currentIds.has(edge.from) || currentIds.has(edge.to)) && map.stale !== true });
       edgeIds.add(edge.id);
     }
     return { planets, bodies, edges, stale: map.stale === true,
       counts: { configured_roles: configured.size, recorded_agents: nodes.filter(node => node.kind === 'agent').length,
-        running_agents: nodes.filter(node => node.kind === 'agent' && ['signed-receipt', 'controlled-runtime'].includes(node.source) && node.state === 'running').length,
+        running_agents: nodes.filter(node => node.kind === 'agent' && ['signed-receipt', 'controlled-runtime'].includes(node.source) && node.state === 'running' &&
+          (node.source !== 'controlled-runtime' || isCurrent(node))).length,
         tasks: nodes.filter(node => node.kind === 'task').length, workflows: nodes.filter(node => node.kind === 'workflow').length },
       omitted: { nodes: Math.max(0, supplied.length - nodes.length), edges: Math.max(0, (map.edges?.length || 0) - edges.length) } };
   }

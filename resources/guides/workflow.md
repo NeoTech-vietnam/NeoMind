@@ -29,7 +29,7 @@ Resolve `economy`, `balanced`, and `strong` tiers against the selected platform'
 4. Complete assigned documentation outputs and update affected requirements/designs/interfaces/project guides. Write substantive content under all seven standard work-record sections: concrete sources, decisions and rationale, results, evidence, limitations, and applicable lessons. State a specific no-lesson reason when applicable.
 5. Submit the task with artifact references, actual results, unresolved limitations, and the full `work_record` body through core submission. The core stores its linked knowledge record with `kind: work-record`; the reviewer assesses completeness and consistency on the current documentation baseline. Submission requests review; it does not establish acceptance.
 
-Escalate missing inputs, contradictory requirements, interface changes, work outside scope, or evidence that cannot support the criterion. After one repair attempt, repeated failure returns to the manager for stronger assistance, re-scoping, or a documented blocked state.
+Escalate missing inputs, contradictory requirements, interface changes, work outside scope, or evidence that cannot support the criterion. After the project's configured repair allowance (one by default), repeated failure returns to the manager for stronger assistance, re-scoping, or a documented blocked state. An explicit owner-approved allowance increase retains consumed attempts and requires fresh independent evidence.
 
 ## Review and finish
 

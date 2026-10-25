@@ -18,6 +18,7 @@
   const roleRows = new Map(), nodeRows = new Map(), evidenceRows = new Map(), activityRows = new Map(), selectedActivityRows = new Map(), liveRows = new Map();
   let profiles = [], groups = {};
   let nativeRouting = null;
+  const controlledStates = ['running', 'waiting', 'queued', 'interrupted', 'uncertain', 'blocked'];
   const value = (text, fallback = 'Not recorded') => typeof text === 'string' && text.trim() ? text : fallback;
   const title = role => role.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
   const roleTitle = role => {
@@ -147,10 +148,17 @@
   function updateInteractions() {
     const candidates = (map?.nodes ?? []).filter(node => node.kind === 'agent' &&
       ['native-activity', 'signed-receipt', 'native-hook', 'controlled-runtime'].includes(node.source) &&
-      (['running', 'waiting', 'blocked', 'queued', 'interrupted', 'uncertain'].includes(node.state) || node.expired));
+      (node.source !== 'native-activity' || node.controlled_superseded !== true) &&
+      (node.source !== 'controlled-runtime' || node.controlled_current === true) &&
+      (['running', 'waiting', 'blocked', 'queued', 'interrupted', 'uncertain'].includes(node.state) || node.expired ||
+        node.source === 'controlled-runtime' && node.state === 'completed'));
     const active = candidates.filter(node => !node.expired && node.reported_state !== 'dispatched' && ['running', 'waiting'].includes(node.state));
+    const controlled = candidates.filter(node => node.source === 'controlled-runtime' && !node.expired);
+    const completed = controlled.filter(node => node.state === 'completed').length;
+    const controlledSummary = controlled.length ? `Current NeoMind contexts: ${controlledStates.map(state =>
+      `${controlled.filter(node => node.state === state).length} ${state}`).join(', ')}${completed ? `, ${completed} completed attempt${completed === 1 ? '' : 's'}` : ''} · ` : '';
     setText(byId('live-summary'), unavailable ? 'Activity unavailable; displayed assignments are last known reports.' : candidates.length
-      ? `${active.filter(node => node.source === 'native-hook').length} running hook observations · ${active.filter(node => node.source === 'native-activity').length} reported active assignments · ${active.filter(node => node.source === 'signed-receipt').length} signed sessions. Sources may describe the same agent; unsigned updates expire after five minutes.`
+      ? `${controlledSummary}${active.filter(node => node.source === 'native-hook').length} running hook observations · ${active.filter(node => node.source === 'native-activity').length} reported active assignments · ${active.filter(node => node.source === 'signed-receipt').length} signed sessions. Sources may describe the same agent; unsigned updates expire after five minutes.`
       : 'No current activity observations. Update integration, enable trusted native hooks and start a new chat. Clients that omit agent identity can still report assignment progress through NeoMind.');
     reconcile(byId('live-agents'), liveRows, candidates.slice(0, 12), node => {
       const root = button('', 'live-agent', () => select(node.id, true));
@@ -158,7 +166,10 @@
       return { root, name, detail, time };
     }, (row, node) => {
       setText(row.name, value(node.label, roleTitle(node.role ?? 'unknown')));
-      setText(row.detail, `${node.source === 'native-hook' ? 'Hook observation' : node.source === 'native-activity' ? 'Reported' : 'Signed observation'} ${node.reported_state === 'dispatched' && !node.expired ? 'dispatch attempted' : node.expired ? 'unknown · update expired' : value(node.state)}${node.activity_summary ? ` · ${node.activity_summary}` : ''}`);
+      const state = node.expired ? 'unknown · update expired' : node.source === 'controlled-runtime' && node.state === 'completed'
+        ? `last attempt completed · workflow ${value(node.controlled_workflow_state, 'unknown')}`
+        : node.reported_state === 'dispatched' ? 'dispatch attempted' : value(node.state);
+      setText(row.detail, `${node.source === 'controlled-runtime' ? 'NeoMind-controlled' : node.source === 'native-hook' ? 'Hook observation' : node.source === 'native-activity' ? 'Reported' : 'Signed observation'} ${state}${node.activity_summary ? ` · ${node.activity_summary}` : ''}`);
       setText(row.time, `Updated ${timestamp(node.updated_at)} · ${sourceLabel(node)}`);
       row.root.dataset.state = unavailable || node.expired ? 'unknown' : node.state;
     });
@@ -290,21 +301,24 @@
   function updateStatus() {
     document.body.classList.toggle('is-stale', unavailable);
     const agents = (map?.nodes ?? []).filter(node => node.kind === 'agent');
-    const signed = agents.filter(node => ['signed-receipt', 'controlled-runtime'].includes(node.source)).length;
+    const signed = agents.filter(node => node.source === 'signed-receipt').length;
+    const controlled = agents.filter(node => node.source === 'controlled-runtime' && node.controlled_current === true &&
+      !node.expired && (controlledStates.includes(node.state) || node.state === 'completed')).length;
     const reported = agents.filter(node => node.source === 'project-record').length;
-    const running = agents.filter(node => node.source === 'native-activity' && !node.expired && node.state === 'running').length;
+    const running = agents.filter(node => node.source === 'native-activity' && node.controlled_superseded !== true &&
+      !node.expired && node.state === 'running').length;
     const hooks = agents.filter(node => node.source === 'native-hook' && !node.expired && node.state === 'running').length;
     const records = (map?.nodes ?? []).filter(node => node.kind !== 'agent' && node.source !== 'native-hook').length;
     const omitted = Object.values(map?.diagnostics ?? {}).reduce((sum, count) => sum + (Number.isSafeInteger(count) && count > 0 ? count : 0), 0);
     const controls = changeBlocked();
     const graphicsNotice = graphicsUnavailable ? ' · Universe graphics unavailable; use the lists and model controls.' : '';
     setText(status, (unavailable ? `Saved state unavailable${map ? '; displaying the last snapshot' : ''}. ${errorReason}`
-      : `${signed} signed receipts · ${hooks} running hook observations · ${running} reported running · ${reported} historical contributions · ${records} saved work items${omitted ? ` · ${omitted} invalid or omitted items` : ''}${controls ? ` · ${controls}` : ''}`) + graphicsNotice);
+      : `${signed} signed receipts${controlled ? ` · ${controlled} current NeoMind context${controlled === 1 ? '' : 's'}` : ''} · ${hooks} running hook observations · ${running} reported running · ${reported} historical contributions · ${records} saved work items${omitted ? ` · ${omitted} invalid or omitted items` : ''}${controls ? ` · ${controls}` : ''}`) + graphicsNotice);
     setText(byId('project-name'), value(map?.project?.name, 'NeoMind workspace'));
     setText(byId('router-status'), unavailable || controlUnavailable ? 'Routing status unavailable' : routerConfigured ? '9router configured · access not verified' : 'VS Code model routing');
     const observed = byId('observed-summary');
     if (observed) observed.setAttribute('aria-live', 'off');
-    setText(observed, `${map ? `Snapshot: ${timestamp(map.observed_at)}` : 'Waiting for saved project data'} · ${unavailable || controlUnavailable || activeCount === null ? 'Active signed invocations unavailable' : `${activeCount} active signed invocations`}`);
+    setText(observed, `${map ? `Snapshot: ${timestamp(map.observed_at)}` : 'Waiting for saved project data'} · ${unavailable || controlUnavailable || activeCount === null ? 'Active invocations unavailable' : `${activeCount} active invocations`}`);
     const empty = byId('empty-state');
     if (empty) {
       empty.hidden = !graphicsUnavailable && Boolean(map?.nodes.length);

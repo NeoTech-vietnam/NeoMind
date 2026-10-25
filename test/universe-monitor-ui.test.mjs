@@ -252,6 +252,148 @@ test('interactions show reported running work, dispatch attempts, direction and 
   assert.match(ui.elements.get('live-summary').textContent, /last known reports/);
 });
 
+test('controlled Verifier activity agrees with the map and is counted without receipt attestation', () => {
+  const ui = controller(), snapshot = createPreviewSnapshot('empty');
+  snapshot.active_count = 1;
+  snapshot.controlled_model_changes = true;
+  snapshot.map.nodes.push({ id: 'controlled:verifier:1', kind: 'agent', role: 'verifier', label: 'Verifier',
+    source: 'controlled-runtime', source_id: 'controlled:session:1', state: 'running',
+    workflow_id: 'workflow:1', updated_at: snapshot.map.observed_at, expired: false, controlled_current: true });
+  ui.message(snapshot);
+  const scene = universe.buildScene(ui.calls.data.at(-1));
+  assert.equal(scene.planets.find(planet => planet.role === 'verifier').state, 'running');
+  assert.equal(scene.counts.running_agents, 1);
+  assert.match(ui.elements.get('live-summary').textContent, /Current NeoMind contexts: 1 running/);
+  assert.match(ui.elements.get('live-summary').textContent, /0 signed sessions/);
+  assert.match(ui.elements.get('live-agents').textContent, /NeoMind-controlled running/);
+  assert.match(ui.elements.get('status').textContent, /0 signed receipts/);
+  assert.match(ui.elements.get('status').textContent, /1 current NeoMind context/);
+  assert.match(ui.elements.get('observed-summary').textContent, /1 active invocations/);
+  assert.doesNotMatch(ui.elements.get('observed-summary').textContent, /active signed invocations/);
+});
+
+test('controlled lifecycle counts distinguish queued and interrupted work while retaining other activity sources', () => {
+  const ui = controller(), snapshot = createPreviewSnapshot('empty');
+  const node = (id, state, source = 'controlled-runtime', extra = {}) => ({ id, kind: 'agent', role: 'developer',
+    label: id, source, source_id: id, state, updated_at: snapshot.map.observed_at, expired: false,
+    ...(source === 'controlled-runtime' ? { controlled_current: true } : {}), ...extra });
+  snapshot.map.nodes.push(...['running', 'waiting', 'queued', 'interrupted', 'uncertain', 'blocked', 'completed']
+    .map(state => node(`controlled:${state}`, state, 'controlled-runtime', { controlled_current: state !== 'completed' })),
+  node('controlled:expired', 'running', 'controlled-runtime', { expired: true }),
+  node('controlled:task', 'running', 'controlled-runtime', { kind: 'task' }),
+  node('hook:1', 'running', 'native-hook'), node('report:1', 'waiting', 'native-activity'),
+  node('receipt:1', 'running', 'signed-receipt'));
+  ui.message(snapshot);
+  const summary = ui.elements.get('live-summary').textContent;
+  assert.match(summary, /Current NeoMind contexts: 1 running, 1 waiting, 1 queued, 1 interrupted, 1 uncertain, 1 blocked/);
+  assert.match(summary, /1 running hook observations · 1 reported active assignments · 1 signed sessions/);
+  assert.match(ui.elements.get('status').textContent, /1 signed receipts/);
+  assert.doesNotMatch(summary, /2 running|completed/);
+  snapshot.map.nodes = snapshot.map.nodes.filter(item => item.source === 'controlled-runtime' && item.state === 'queued');
+  ui.message(snapshot);
+  assert.match(ui.elements.get('live-summary').textContent, /Current NeoMind contexts: 0 running, 0 waiting, 1 queued/);
+  assert.equal(ui.elements.get('live-agents').children.length, 1);
+  assert.match(ui.elements.get('live-agents').textContent, /NeoMind-controlled queued/);
+  ui.message({ type: 'error', message: 'Unavailable' });
+  assert.match(ui.elements.get('live-summary').textContent, /last known reports/);
+  assert.doesNotMatch(ui.elements.get('live-summary').textContent, /Current NeoMind contexts: 0 running/);
+});
+
+test('only explicitly current controlled sessions enter live summaries while legacy activity and saved history remain available', () => {
+  const ui = controller(), snapshot = createPreviewSnapshot('empty');
+  const node = (id, state, source, extra = {}) => ({ id, kind: 'agent', role: 'developer',
+    label: id, source, source_id: id, state, updated_at: snapshot.map.observed_at, ...extra });
+  snapshot.map.nodes.push(node('current-verifier', 'running', 'controlled-runtime', { role: 'verifier', controlled_current: true }),
+    node('past-blocked', 'blocked', 'controlled-runtime', { controlled_current: false }),
+    node('past-interrupted', 'interrupted', 'controlled-runtime', { controlled_current: false }),
+    node('unmarked-running', 'running', 'controlled-runtime'),
+    node('legacy-hook', 'running', 'native-hook'), node('legacy-activity', 'waiting', 'native-activity'),
+    node('legacy-receipt', 'running', 'signed-receipt'));
+  ui.message(snapshot);
+  assert.match(ui.elements.get('live-summary').textContent,
+    /Current NeoMind contexts: 1 running, 0 waiting, 0 queued, 0 interrupted, 0 uncertain, 0 blocked/);
+  assert.match(ui.elements.get('live-summary').textContent,
+    /1 running hook observations · 1 reported active assignments · 1 signed sessions/);
+  assert.match(ui.elements.get('status').textContent, /1 signed receipts · 1 current NeoMind context/);
+  const live = ui.elements.get('live-agents');
+  assert.equal(live.children.length, 4);
+  assert.match(live.textContent, /current-verifier|legacy-hook|legacy-activity|legacy-receipt/);
+  assert.doesNotMatch(live.textContent, /past-blocked|past-interrupted|unmarked-running/);
+  assert.match(ui.elements.get('nodes').textContent, /past-blocked/);
+  ui.select('past-blocked');
+  assert.match(ui.elements.get('selection').textContent, /past-blocked/);
+  assert.match(ui.elements.get('selection').textContent, /blocked/);
+  ui.elements.get('show-history').click();
+  assert.equal(ui.calls.data.at(-1).showHistory, true);
+  assert.ok(ui.calls.data.at(-1).map.nodes.some(item => item.id === 'past-interrupted'));
+});
+
+test('completed last attempts retain recoverable workflow context without claiming active execution', () => {
+  const ui = controller(), snapshot = createPreviewSnapshot('empty');
+  const attempt = { id: 'controlled:last-attempt', kind: 'agent', role: 'verifier', label: 'Last Verifier attempt',
+    source: 'controlled-runtime', source_id: 'controlled:last-attempt', state: 'completed',
+    controlled_current: true, controlled_workflow_state: 'blocked', updated_at: snapshot.map.observed_at };
+  snapshot.map.nodes.push(attempt);
+  snapshot.active_count = 0;
+  for (const workflowState of ['blocked', 'paused', 'interrupted', 'uncertain']) {
+    attempt.controlled_workflow_state = workflowState;
+    ui.message(snapshot);
+    const summary = ui.elements.get('live-summary').textContent;
+    assert.match(summary, /Current NeoMind contexts: 0 running, 0 waiting, 0 queued, 0 interrupted, 0 uncertain, 0 blocked, 1 completed attempt/);
+    assert.match(ui.elements.get('status').textContent, /0 signed receipts · 1 current NeoMind context/);
+    assert.match(ui.elements.get('observed-summary').textContent, /0 active invocations/);
+    assert.equal(ui.elements.get('live-agents').children.length, 1);
+    assert.match(ui.elements.get('live-agents').textContent,
+      new RegExp(`last attempt completed · workflow ${workflowState}`));
+    assert.doesNotMatch(ui.elements.get('live-agents').textContent, /NeoMind-controlled running|Signed observation/);
+  }
+  for (const workflowState of ['completed', 'cancelled']) {
+    attempt.controlled_current = false;
+    attempt.controlled_workflow_state = workflowState;
+    ui.message(snapshot);
+    assert.equal(ui.elements.get('live-agents').children.length, 0);
+    assert.doesNotMatch(ui.elements.get('live-summary').textContent, /Current NeoMind contexts|completed attempt/);
+    assert.doesNotMatch(ui.elements.get('status').textContent, /current NeoMind context/);
+    assert.match(ui.elements.get('nodes').textContent, /Last Verifier attempt/);
+  }
+});
+
+test('superseded native reports stay inspectable without inflating current controlled or foreign activity', () => {
+  const ui = controller(), snapshot = createPreviewSnapshot('empty');
+  const node = (id, state, workflow, extra = {}) => ({ id, kind: 'agent', role: 'developer', label: id,
+    source: 'native-activity', source_id: id, state, workflow_id: workflow,
+    updated_at: snapshot.map.observed_at, expired: false, ...extra });
+  snapshot.map.nodes.push(
+    node('current-controlled-verifier', 'completed', 'workflow:controlled', { source: 'controlled-runtime', role: 'verifier',
+      controlled_current: true, controlled_workflow_state: 'blocked' }),
+    node('superseded-blocked', 'blocked', 'workflow:controlled', { controlled_superseded: true }),
+    node('superseded-running', 'running', 'workflow:controlled', { controlled_superseded: true }),
+    node('foreign-blocked', 'blocked', 'workflow:foreign', { role: 'codebase-analyst' }),
+    node('foreign-running', 'running', 'workflow:foreign', { role: 'manager' }));
+  ui.message(snapshot);
+  assert.match(ui.elements.get('live-summary').textContent, /1 reported active assignments/);
+  assert.match(ui.elements.get('status').textContent, /1 reported running/);
+  assert.match(ui.elements.get('status').textContent, /1 current NeoMind context/);
+  const live = ui.elements.get('live-agents');
+  assert.equal(live.children.length, 3);
+  assert.match(live.textContent, /current-controlled-verifier/);
+  assert.match(live.textContent, /foreign-blocked/);
+  assert.match(live.textContent, /foreign-running/);
+  assert.doesNotMatch(live.textContent, /superseded-blocked|superseded-running/);
+  for (const id of ['superseded-blocked', 'superseded-running']) {
+    assert.match(ui.elements.get('nodes').textContent, new RegExp(id));
+    ui.select(id);
+    assert.match(ui.elements.get('selection').textContent, /Unsigned assignment progress/);
+    assert.match(ui.elements.get('selection').textContent, new RegExp(id));
+  }
+  ui.elements.get('show-history').click();
+  assert.equal(ui.calls.data.at(-1).showHistory, true);
+  const old = ui.calls.data.at(-1).map.nodes.find(item => item.id === 'superseded-blocked');
+  assert.equal(old.source, 'native-activity');
+  assert.equal(old.state, 'blocked');
+  assert.equal(old.controlled_superseded, true);
+});
+
 test('error and uncertain invocation state disable model changes while preserving inspectable last selection', () => {
   const ui = controller(); ui.message(createPreviewSnapshot()); ui.select('role:developer');
   const button = inspectorButton(ui), count = ui.calls.messages.length;
