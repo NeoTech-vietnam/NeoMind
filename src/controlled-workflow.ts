@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
-import { posix } from 'node:path';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { join, posix } from 'node:path';
+import { tmpdir } from 'node:os';
 import { z } from 'zod';
 import { atomicWrite, createRecord, getRecord, hash, loadRecords, now, readConfig, safePath,
   saveStatus, saveWorkflowClosure, updateRecord, withOperationLock } from './storage.js';
 import { beginWorkflow, readAutomationPolicy } from './manager.js';
 import { startNative, waitNative, interruptNative, nativeStatus } from './native.js';
-import { invocationIsActive, readInvocation, requireRoutingPolicy, routingProblems, type NativeRole } from './routing.js';
+import { canonicalJson, invocationIsActive, readInvocation, requireRoutingPolicy, routingProblems, type NativeRole } from './routing.js';
 import { exactRoot, hostRequest, readHost } from './vscode-wire.js';
 import { registerControlledContext } from './controlled-context.js';
 import { prepareWork, type WorkPreparation } from './procedure-reuse.js';
@@ -17,6 +18,10 @@ import { ControlledToolError } from './controlled-tools.js';
 import { registerProcedure, resolveProcedure, runProcedure } from './procedures.js';
 import { compileCornellResearch, readCornellDestination, type CornellResearchInput } from './cornell-workflow.js';
 import { createCornellNote, validateCornellNote } from './notes.js';
+import { controlledFailure } from './controlled-failure.js';
+import { continuationObligations, controlledFingerprints, executeControlledPilot, materializeControlledEvidence,
+  prepareControlledCheckEvidence, verifyControlledTask, type ContinuationObligations } from './controlled-acceptance.js';
+import { evidenceRecordFingerprint, type EvidenceInputSnapshot } from './evidence-inputs.js';
 
 type Stage = ControlledBinding['stage'];
 export type ControlledState = 'queued' | 'running' | 'waiting' | 'paused' | 'interrupted' | 'uncertain' | 'blocked' | 'cancelled' | 'completed';
@@ -25,30 +30,37 @@ interface Event { id: string; at: string; kind: string; stage: Stage | 'intake';
 interface Attempt {
   id: string; request_id: string; stage: Stage; role: NativeRole; invocation_id?: string;
   state: 'starting' | 'running' | 'completed' | 'interrupted'; purpose?: 'specialist' | 'diagnosis' | 'check-review'; specialist_index?: number;
-  report?: ControlledReport; report_id?: string; bound_hashes?: Record<string, string>; checked?: boolean;
+  report?: ControlledReport; report_id?: string; report_fingerprint?: string; bound_hashes?: Record<string, string>; checked?: boolean;
 }
-interface CheckReceipt {
+export interface ControlledCheckReceipt {
   id: string; attempt_id: string; invocation_id: string; title: string; command: string[];
   baseline: Record<string, string>; log_path: string; log_sha256: string;
   exit_code: number | null; expected_exit_code: number; negative: boolean; passed: boolean; cancelled: boolean; at: string;
+  planned_command?: string[]; purpose?: 'self-check' | 'intended-use'; evidence_id?: string;
+  evidence_input?: { check_id: string; check_fingerprint: string; record_baseline: Record<string, string>; input_snapshot: EvidenceInputSnapshot };
+  pilot_receipt_path?: string; pilot_receipt_hash?: string;
 }
-interface Contract { schema_version: 2; process: 'software-tools'; workflow_id: string; epoch_id: string;
+export interface ControlledContract { schema_version: 2; process: 'software-tools'; workflow_id: string; epoch_id: string;
   plan: ControlledPlan; plan_hash: string; task_id: string; requirement_ids: string[];
-  reviewer_required: boolean; risk_reasons: string[]; previous_contract_hash?: string; precheck_review: boolean; knowledge_directory?: string }
+  requirement_fingerprints: Record<string, string>; preserved_hashes: Record<string, string>;
+  reviewer_required: boolean; risk_reasons: string[]; previous_contract_hash?: string; precheck_review: boolean; knowledge_directory?: string;
+  continuation?: { original_task_id: string; original_task_fingerprint: string; original_contract_path: string;
+    original_contract_sha256: string; obligations: ContinuationObligations } }
+type Contract = ControlledContract;
 export interface ControlledSnapshot {
   schema_version: 1; workflow_id: string; epoch_id: string; status: ControlledState; phase: Stage | 'intake' | 'completed';
   process_contract: 'software-tools/v2'; transport: 'vscode-lm'; owner_pid: number; updated_at: string;
   owner_instance: string;
   requirement: string; title: string; revision: number; request_id: string; contract_hash?: string;
-  attempts: Attempt[]; checks: CheckReceipt[]; events: Event[]; repairs: number;
+  attempts: Attempt[]; checks: ControlledCheckReceipt[]; events: Event[]; repairs: number;
   active_invocations: { id: string; role: string; state: string; requested_model: string; confirmed_model: string | null; provider: string | null }[];
-  blocker?: { kind: FailureKind; message: string }; reuse?: WorkPreparation; final_report_id?: string;
+  blocker?: { kind: FailureKind; message: string; code?: string; trace_id?: string; owner?: string; next_action?: string }; reuse?: WorkPreparation; final_report_id?: string;
   continuation?: { original_mode: string; original_fingerprint: string; original_contract_hash: string };
   finalizing_report_id?: string;
-  procedure_runs?: { id: string; status: string }[]; procedure_candidate_id?: string; cornell_note_ids?: string[];
+  procedure_runs?: { id: string; status: string }[]; procedure_candidate_id?: string; procedure_candidate_version?: string; cornell_note_ids?: string[];
   pending_check_review?: boolean;
   check_intents?: { id: string; attempt_id: string; title: string; baseline: Record<string, string>;
-    state: 'starting' | 'running' | 'completed'; pid?: number }[];
+    state: 'starting' | 'running' | 'completed'; pid?: number; pilot_root?: string; pilot_nonce?: string }[];
 }
 export interface ControlledStartInput { requirement?: string; requirements?: string[]; workflow_id?: string; request_id?: string; title?: string }
 const states = '.neomind/controlled/workflows';
@@ -96,12 +108,14 @@ function fingerprints(root: string, paths: string[]): Record<string, string> {
   return result;
 }
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-export function controlledRisk(plan: ControlledPlan): { reviewer_required: boolean; reasons: string[] } {
+export function controlledRisk(plan: ControlledPlan, originalRequirement = ''): { reviewer_required: boolean; reasons: string[] } {
   const reasons: string[] = [];
   const paths = [...plan.allowed_paths, ...plan.verification_paths];
   const sensitive = /(?:^|\/)(?:auth[^/]*|security[^/]*|routing[^/]*|storage[^/]*|native[^/]*|controlled[^/]*|workspace[^/]*|engineering[^/]*|manager[^/]*|mcp[^/]*|command-runner[^/]*|vscode[^/]*|installer[^/]*|migration[^/]*)(?:\.|\/|$)/i;
   if (paths.some(path => sensitive.test(path) || path.startsWith('.github/') || /(?:^|\/)(?:package(?:-lock)?\.json|Dockerfile|Makefile|requirements\.txt)|\.sql$/i.test(path))) reasons.push('Security, persistence, execution or orchestration scope.');
-  if (/\b(?:authentication|authorization|credentials|secrets|permissions|database migration|schema migration|orchestration|login|access control|token)\b/i.test(`${plan.title} ${plan.objective} ${plan.rationale} ${plan.acceptance_criteria.join(' ')}`))
+  const intent = `${originalRequirement} ${plan.title} ${plan.objective} ${plan.rationale} ${plan.acceptance_criteria.join(' ')}`
+    .normalize('NFD').replace(/\p{M}/gu, '').replace(/[đĐ]/g, 'd').toLowerCase();
+  if (/\b(?:authentication|authorization|credentials|secrets|permissions|database migration|schema migration|orchestration|login|access control|token|xac thuc|phan quyen|quyen truy cap|mat khau|dieu phoi|luu tru)\b/i.test(intent))
     reasons.push('The plan declares sensitive behavior.');
   if (plan.risk === 'high' || plan.risk === 'elevated') reasons.push('Coordinator elevated the risk.');
   if (plan.risk === undefined) reasons.push('Risk has not been explicitly assessed.');
@@ -114,12 +128,16 @@ function validatePlan(root: string, value: ControlledPlan): ControlledPlan {
     if (!/^\.(?:agents|github)\/skills\/[^/]+\/(?:assets|scripts)\/.+\.(?:md|py|mjs|cjs|js|json)$/i.test(path))
       throw new Error('input_paths names exact hidden skill asset/script inputs; ordinary source files are already readable.');
   }
+  for (const path of plan.preservation_paths ?? []) canonical(root, path);
   if (!plan.acceptance_criteria.length || !plan.outputs.length || !plan.checks.length || !plan.allowed_paths.length || !plan.verification_paths.length)
     throw new Error('Plan needs explicit acceptance, implementation scope, outputs and independent checks.');
   for (const key of ['allowed_paths', 'verification_paths', 'outputs', 'documentation_paths'] as const)
     plan[key] = [...new Set(plan[key].map(path => canonical(root, path)))];
   if (plan.allowed_paths.some(path => covers(path, plan.verification_paths)) || plan.verification_paths.some(path => covers(path, plan.allowed_paths)))
     throw new Error('Implementation and independent checker scopes must be disjoint.');
+  if ((plan.preservation_paths ?? []).some(path => covers(path, [...plan.allowed_paths, ...plan.verification_paths]) ||
+      [...plan.allowed_paths, ...plan.verification_paths].some(owned => covers(owned, [path]))))
+    throw new Error('Preservation paths must be outside all producer and checker write scopes.');
   if ([...plan.outputs, ...plan.documentation_paths].some(path => !covers(path, plan.allowed_paths))) throw new Error('Outputs must be within implementation scope.');
   for (const check of plan.checks) {
     if ((check.expected_exit_code ?? 0) !== 0) throw new Error('The positive independent check must exit zero; declare expected failures as negative controls.');
@@ -232,8 +250,14 @@ class Controller {
       for (const key of ['allowed_paths', 'verification_paths', 'outputs', 'documentation_paths'] as const)
         if (!same([...original.plan[key]].sort(), [...plan[key]].sort())) throw new Error('Continuation cannot change the original scope or delivered outputs.');
       if (original.plan.acceptance_criteria.some(item => !plan.acceptance_criteria.includes(item)) || original.plan.checks.some(old => !plan.checks.some(check =>
-        same(old.command, check.command) && same(old.baseline_paths, check.baseline_paths) && (old.expected_exit_code ?? 0) === (check.expected_exit_code ?? 0))))
+        same(old.command, check.command) && same(old.baseline_paths, check.baseline_paths) && (old.expected_exit_code ?? 0) === (check.expected_exit_code ?? 0) &&
+        (check.timeout_ms ?? 60000) >= (old.timeout_ms ?? 60000))))
         throw new Error('Continuation must retain every original acceptance criterion and positive check.');
+      const obligations = continuationObligations(original.plan.acceptance_criteria);
+      if (obligations.registration && !plan.procedure_candidate) throw new Error('Original acceptance requires a planned reusable procedure candidate using the actual producer and checker scripts.');
+      if (obligations.intended_use && !plan.checks.some(check => check.purpose === 'intended-use' && !original.plan.checks.some(old => same(old.command, check.command))))
+        throw new Error('Original acceptance needs a separate intended-use pilot check; keep the original fixture self-check and add purpose intended-use with its own checker argv.');
+      if (obligations.preservation && !plan.preservation_paths?.length) throw new Error('Declare the existing exercise/asset preservation paths; backend fingerprints them before work.');
     }
     if (run.contract_hash) {
       const prior = readContract(this.root, run);
@@ -241,20 +265,34 @@ class Controller {
       return { saved: true, next: 'Finish the planning report; runtime dispatches the next stage.' };
     }
     const parent = getRecord(this.root, run.workflow_id);
-    const task = run.continuation ? getRecord(this.root, readNativeSoftwareContract(this.root, run.workflow_id)!.task_id)
-      : createRecord(this.root, { type: 'task', title: plan.title, owner: 'developer', status: 'ready',
+    const original = run.continuation ? readNativeSoftwareContract(this.root, run.workflow_id)! : null;
+    const requirementIds = [...new Set([...(original?.requirement_ids ?? []), String(parent.meta.data.requirement_id),
+      ...(Array.isArray(parent.meta.data.requirement_ids) ? parent.meta.data.requirement_ids.filter((id): id is string => typeof id === 'string') : [])])];
+    const task = loadRecords(this.root).find(record => record.meta.type === 'task' && record.meta.data.workflow_id === run.workflow_id && record.meta.data.epoch_id === run.epoch_id)
+      ?? createRecord(this.root, { type: 'task', title: plan.title, owner: 'developer', status: 'ready',
+        links: [...requirementIds.map(target => ({ type: 'satisfies' as const, target })), ...(original ? [{ type: 'derives-from' as const, target: original.task_id }] : [])],
         data: { workflow_id: run.workflow_id, process_contract: 'software-tools/v2', epoch_id: run.epoch_id,
           acceptance_criteria: plan.acceptance_criteria, allowed_paths: plan.allowed_paths, verification_paths: plan.verification_paths,
-          outputs: plan.outputs, documentation_paths: plan.documentation_paths }, body: `# Objective\n${plan.objective}\n\n# Acceptance\n${plan.acceptance_criteria.map(x => `- ${x}`).join('\n')}\n` });
-    const risk = controlledRisk(plan);
+          outputs: plan.outputs, documentation_paths: plan.documentation_paths, ...(original ? { previous_task_id: original.task_id } : {}) },
+        body: `# Objective\n${plan.objective}\n\n# Acceptance\n${plan.acceptance_criteria.map(x => `- ${x}`).join('\n')}\n` });
+    const risk = controlledRisk(plan, run.requirement);
     const contract: Contract = { schema_version: 2, process: 'software-tools', workflow_id: run.workflow_id, epoch_id: run.epoch_id,
       plan, plan_hash: hash(JSON.stringify(plan)), task_id: task.meta.id,
-      requirement_ids: [String(parent.meta.data.requirement_id)], reviewer_required: !!run.continuation || risk.reviewer_required,
+      requirement_ids: requirementIds, requirement_fingerprints: Object.fromEntries(requirementIds.map(id => [id, evidenceRecordFingerprint(getRecord(this.root, id))])),
+      preserved_hashes: controlledFingerprints(this.root, [...new Set([...(plan.preservation_paths ?? []), ...(plan.input_paths ?? []),
+        ...(original ? ['.gitignore', '.agents/skills/leetcode-notes/assets/cornell-note-template.md', '.agents/skills/leetcode-notes/scripts/validate_notes.py']
+          .filter(path => existsSync(safePath(this.root, path))) : [])])]),
+      reviewer_required: !!run.continuation || risk.reviewer_required,
       risk_reasons: risk.reasons, previous_contract_hash: run.continuation?.original_contract_hash,
-      precheck_review: !!run.continuation, ...(run.continuation ? { knowledge_directory: `${readCornellDestination(this.root).directory}/${run.workflow_id.toLowerCase()}` } : {}) };
+      precheck_review: !!run.continuation, ...(original ? { knowledge_directory: `${readCornellDestination(this.root).directory}/${run.workflow_id.toLowerCase()}`,
+        continuation: { original_task_id: original.task_id, original_task_fingerprint: hash(JSON.stringify(getRecord(this.root, original.task_id))),
+          original_contract_path: `.neomind/native/software-workflows/${hash(run.workflow_id)}.contract.json`,
+          original_contract_sha256: hash(readFileSync(safePath(this.root, `.neomind/native/software-workflows/${hash(run.workflow_id)}.contract.json`))),
+          obligations: continuationObligations(original.plan.acceptance_criteria) } } : {}) };
     const bytes = JSON.stringify(contract, null, 2) + '\n';
     atomicWrite(contractPath(this.root, run.workflow_id, run.epoch_id), bytes);
     run.contract_hash = hash(bytes);
+    updateRecord(this.root, task.meta.id, { data: { controlled_contract_hash: run.contract_hash } });
     updateRecord(this.root, run.workflow_id, { data: { controlled_epoch_id: run.epoch_id, controlled_contract_hash: run.contract_hash,
       task_ids: [...new Set([...(Array.isArray(parent.meta.data.task_ids) ? parent.meta.data.task_ids : []), task.meta.id])] } });
     save(this.root, run, 'plan-saved', 'Backend created the bound task and immutable scope/check contract.');
@@ -266,10 +304,16 @@ class Controller {
     if (['completed', 'cancelled', 'paused', 'blocked', 'uncertain'].includes(state.status)) return;
     const abort = new AbortController();
     const promise = new Promise<void>(resolve => setImmediate(resolve)).then(() => this.drive(id, abort.signal))
-      .catch(() => {
+      .catch(error => {
         const run = readState(this.root, id);
         if (!['paused', 'interrupted', 'cancelled'].includes(run.status)) {
-          run.status = 'blocked'; run.blocker = { kind: 'protocol', message: 'Controller could not reconcile its saved state. Inspect the sanitized trace; no stage was blindly replayed.' };
+          const failure = controlledFailure(error), traceId = randomUUID();
+          atomicWrite(safePath(this.root, `.neomind/controlled/traces/${traceId}.json`), JSON.stringify({
+            event: 'runtime-failure', workflow_id: id, epoch_id: run.epoch_id, stage: run.phase,
+            attempt_id: run.attempts.at(-1)?.id, at: now(), ...failure,
+          }, null, 2) + '\n');
+          run.status = 'blocked'; run.blocker = { kind: failure.kind, message: failure.message,
+            code: failure.code, trace_id: traceId, owner: failure.owner, next_action: failure.next_action };
           save(this.root, run, 'blocked', run.blocker.message);
         }
       }).finally(() => this.jobs.delete(id));
@@ -301,6 +345,7 @@ class Controller {
         ...(specialist ? { purpose: 'specialist', specialist_index: specialistIndex } : {}),
         ...(stage === 'review' && run.pending_check_review ? { purpose: 'check-review' } : {}) };
       run.attempts.push(attempt); run.status = 'running'; run.owner_pid = process.pid;
+      if (stage === 'implementation' && contract) saveStatus(this.root, contract.task_id, 'in-progress');
       save(this.root, run, 'dispatch', `NeoMind dispatches ${role} for ${stage}.`);
       const binding: ControlledBinding = { workflow_id: id, task_id: stage === 'planning' ? undefined : contract?.task_id,
         stage, role, implementation_paths: contract?.plan.allowed_paths ?? [], verification_paths: contract?.plan.verification_paths ?? [],
@@ -328,7 +373,7 @@ class Controller {
           if (['verification', 'review'].includes(stage) && report.outcome === 'completed' && !report.verdict)
             throw new ControlledToolError('VERDICT_REQUIRED', 'Completed independent verification or review must state verdict pass or fail.');
           if (active.report) {
-            if (!same(active.report, report)) throw new Error('Attempt already saved a different report.');
+            if (canonicalJson(active.report) !== canonicalJson(report)) throw new Error('Attempt already saved a different report.');
             return { saved: true, outcome: report.outcome };
           }
           const artifactPaths = [...new Set([...(report.artifacts ?? []), ...(stage === 'implementation' ? contract!.plan.outputs : []),
@@ -338,15 +383,40 @@ class Controller {
             throw new ControlledToolError('SCOPE_DENIED', 'Report artifact exceeds assigned scope.');
           active.bound_hashes = fingerprints(this.root, artifactPaths);
           active.report = report;
-          const record = createRecord(this.root, { type: stage === 'review' ? 'review' : 'knowledge', title: `${role}: ${current.title}`.slice(0, 256), owner: role,
+          const payloadHash = hash(canonicalJson(report));
+          const priorReport = loadRecords(this.root).find(record => record.meta.data.kind === 'controlled-work-record' &&
+            record.meta.data.epoch_id === current.epoch_id && record.meta.data.attempt_id === active.id);
+          if (priorReport && priorReport.meta.data.report_payload_hash !== payloadHash) throw new Error('Attempt already saved a different report.');
+          if (priorReport && !same(priorReport.meta.data.artifact_hashes, active.bound_hashes))
+            throw new ControlledToolError('INPUT_CHANGED', 'Artifacts changed after the durable report; do not refresh an old result against new bytes.');
+          const record = priorReport ?? createRecord(this.root, { type: stage === 'review' ? 'review' : 'knowledge', title: `${role}: ${current.title}`.slice(0, 256), owner: role,
             data: { kind: 'controlled-work-record', workflow_id: id, task_id: contract?.task_id, invocation_id: active.invocation_id,
-              epoch_id: current.epoch_id, outcome: report.outcome, artifact_hashes: active.bound_hashes },
+              epoch_id: current.epoch_id, attempt_id: active.id, stage, report_payload_hash: payloadHash, outcome: report.outcome, artifact_hashes: active.bound_hashes },
             body: `# Result\n${report.summary}\n\n# Findings\n${(report.findings ?? []).join('\n')}\n\n# Limitations\n${(report.limitations ?? []).join('\n')}\n` });
           active.report_id = record.meta.id;
+          active.report_fingerprint = evidenceRecordFingerprint(record);
           save(this.root, current, 'report-saved', `${role} saved ${report.outcome}; acceptance is pending backend evidence.`);
           return { saved: true, outcome: report.outcome, next: 'Return your final concise result. Runtime advances after your actual session completes.' };
         },
         runCheck: title => this.checks(id, attempt.id, attemptAbort.signal, title),
+        readEvidence: title => {
+          assertActive();
+          return readState(this.root, id).checks.filter(check => title === undefined || check.title === title).slice(-16).map(check => {
+            const log = JSON.parse(readFileSync(safePath(this.root, check.log_path), 'utf8'));
+            return { title: check.title, purpose: check.purpose ?? 'self-check', negative: check.negative, passed: check.passed,
+              command: check.command, exit_code: check.exit_code, expected_exit_code: check.expected_exit_code,
+              stdout: typeof log.result?.stdout === 'string' ? log.result.stdout.slice(-8000) : '',
+              stderr: typeof log.result?.stderr === 'string' ? log.result.stderr.slice(-8000) : '',
+              ...(check.pilot_receipt_path ? { intended_use: (() => {
+                const proof = JSON.parse(readFileSync(safePath(this.root, check.pilot_receipt_path), 'utf8'));
+                const command = (value: any) => ({ command: value.command, passed: value.passed, exit_code: value.result?.exit_code,
+                  stdout: typeof value.result?.stdout === 'string' ? value.result.stdout.slice(-4000) : '',
+                  stderr: typeof value.result?.stderr === 'string' ? value.result.stderr.slice(-4000) : '' });
+                return { kind: proof.kind, validation: command(proof.validation), artifacts: proof.artifacts,
+                  solutions: proof.solutions.map((solution: any) => ({ language: solution.language, compile: command(solution.compile), run: command(solution.run) })) };
+              })() } : {}) };
+          });
+        },
         runProcedure: async parameters => {
           assertActive();
           const reuse = contract?.plan.reuse;
@@ -370,7 +440,11 @@ class Controller {
           if (!directory) throw new ControlledToolError('NO_CORNELL_OUTPUT', 'The immutable plan does not include a Cornell research bundle.');
           const requirement = getRecord(this.root, contract!.requirement_ids[0]!);
           try {
-            const compiled = compileCornellResearch(this.root, { ...input, requirement_id: requirement.meta.id,
+            const completed = readState(this.root, id), verifier = [...completed.attempts].reverse().find(item => item.stage === 'verification' && item.state === 'completed');
+            const evidenceIds = completed.checks.filter(check => !check.negative && check.passed && check.attempt_id === verifier?.id)
+              .map(check => check.evidence_id).filter((id): id is string => !!id);
+            const worked = input.worked_example && typeof input.worked_example === 'object' ? input.worked_example as Record<string, unknown> : {};
+            const compiled = compileCornellResearch(this.root, { ...input, worked_example: { ...worked, evidence_ids: evidenceIds }, requirement_id: requirement.meta.id,
               expected_requirement_revision: requirement.meta.revision, workflow_id: id, task_id: contract!.task_id,
               owner: role, output_dir: directory } as CornellResearchInput);
             const note = createCornellNote(this.root, compiled.note);
@@ -411,7 +485,7 @@ class Controller {
           const kind = receipt.state === 'completed' ? 'protocol' : 'environment';
           const message = receipt.state === 'completed' ? 'Session ended without its required typed result. Saved work is retained; inspect current artifacts then save the missing compact result.'
             : receipt.error ?? 'Model session did not complete.';
-          const hardFailure = /NoPermissions|NotFound|access denied|permission|policy|configuration changed|cancelled|canceled/i.test(message);
+          const hardFailure = /MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED|CONTEXT_LIMIT_EXCEEDED|TOOL_CALLING_UNSUPPORTED|NoPermissions|NotFound|access denied|permission|policy|configuration changed|cancelled|canceled/i.test(message);
           if (!hardFailure && this.repair(run, kind, message)) continue;
           this.block(run, kind, message); return;
         }
@@ -423,7 +497,7 @@ class Controller {
         if (stage === 'planning') {
           if (!run.contract_hash) { this.block(run, 'protocol', 'Planning session returned without saving a semantic plan.'); return; }
           run.phase = 'implementation';
-        } else if (stage === 'implementation') run.phase = 'verification';
+        } else if (stage === 'implementation') { saveStatus(this.root, contract!.task_id, 'submitted'); run.phase = 'verification'; }
         else if (stage === 'verification') {
           if (contract?.precheck_review && !this.checkApproval(run, contract)) {
             run.pending_check_review = true; run.phase = 'review'; run.status = 'queued'; save(this.root, run, 'check-review-needed', 'Original contract requires independent approval of exact checker bytes before executing pilots.'); continue;
@@ -435,6 +509,18 @@ class Controller {
           if (!evidence.length || evidence.some(check => !check.passed) || active.report.verdict !== 'pass') {
             if (!this.repair(run, active.report.failure_kind ?? 'unknown', active.report.summary)) return;
             continue;
+          }
+          if (contract!.plan.procedure_candidate) {
+            const producer = [...run.attempts].reverse().find(item => item.stage === 'implementation' && item.state === 'completed');
+            const definition = contract!.plan.procedure_candidate;
+            const existing = run.procedure_candidate_id ? resolveProcedure(this.root, run.procedure_candidate_id, run.procedure_candidate_version ?? '1.0.0') : null;
+            if (!existing || existing.script_sha256 !== hash(readFileSync(safePath(this.root, definition.script))) ||
+                existing.verification_sha256 !== hash(readFileSync(safePath(this.root, definition.verification_script)))) {
+              const candidate = registerProcedure(this.root, { ...definition,
+                id: `workflow-${hash(run.workflow_id).slice(0, 24)}`, version: `1.0.${run.repairs}`, author: producer!.invocation_id! });
+              run.procedure_candidate_id = candidate.id; run.procedure_candidate_version = candidate.version;
+              save(this.root, run, 'procedure-registered', 'Actual scripts registered as a reusable candidate before independent final review; fixture runs do not qualify it.');
+            }
           }
           run.phase = contract?.knowledge_directory && !run.cornell_note_ids?.length ? 'synthesis' : readContract(this.root, run).reviewer_required ? 'review' : 'completed';
         } else if (stage === 'review') {
@@ -461,14 +547,16 @@ class Controller {
       stage === 'planning' ? 'Inspect the project and existing scripts. Save one bounded workflow_plan, then assignment_report. Define an independently authored checker in verification_paths, disjoint from implementation paths. Use explicit check argv. Keep ordinary work low-risk; elevate real security/storage/runtime changes.' : '',
       contract ? `Immutable plan:\n${JSON.stringify(contract.plan)}` : '',
       contract?.knowledge_directory ? `Managed final knowledge destination: ${contract.knowledge_directory}. Coordinator synthesis must compile a separate evidence-derived research Cornell bundle after checks and before final review.` : '',
+      contract?.continuation ? `Continuation uses a NEW execution task linked to the unchanged historical task. Required obligations: ${JSON.stringify(contract.continuation.obligations)}. Preservation inputs are backend-fingerprinted. A planned intended-use check is separate from fixture checks; the backend appends --neomind-pilot-root <owned-temp-directory> and --neomind-pilot-nonce <nonce>. That independently authored checker mode must prepare pilot-input.json in that directory: {schema_version:1,kind:"intended-use",nonce,note:"relative/note.md",python:"absolute configured Python",case_classes:[at least ten meaningful classes],solutions:[{language:"c11",source:"relative/program.c",compiler:"absolute configured gcc",local_test:true|false},{language:"cpp17",source:"relative/program.cpp",compiler:"absolute configured g++",local_test:true|false}]}. Generate an explicitly disposable intended-use exercise via the actual adapter, with problem-specific notes and independently authored per-language oracle/harness; do not copy fixture outcomes. The backend independently runs the canonical Cornell validator, fresh strict builds and each executable, retaining actual evidence. Do not remove the owned pilot directory before the backend collects it.` : '',
       run.pending_check_review ? 'This is the original contract required pre-execution check review. Read the exact checker source and protected cases; pass only if the checker/oracle and negative controls are adequate. No check execution is claimed yet.' : '',
       run.continuation && !contract ? `Original saved plan, scope, outputs, criteria and positive checks must be retained. Reuse it; only add explicit negative controls in its existing verification scope:\n${JSON.stringify(readNativeSoftwareContract(this.root, run.workflow_id)!.plan)}` : '',
       run.reuse?.manager_brief ?? '',
       `Cornell destination default: ${readCornellDestination(this.root).directory}/${run.workflow_id.toLowerCase()}. Only add a Cornell bundle when requested by the user.`,
       run.blocker ? `Repair/diagnosis context:\n${JSON.stringify(run.blocker)}` : '',
       `Prior reports:\n${JSON.stringify(run.attempts.filter(item => item.report).slice(-4).map(item => ({ stage: item.stage, report: item.report })))}`,
+      stage === 'synthesis' ? `Current actual evidence: ${JSON.stringify(run.checks.filter(check => !check.negative && check.passed).map(check => ({ title: check.title, evidence_id: check.evidence_id, log: check.log_path })))}. The compiler binds evidence IDs automatically; describe observed facts supported by these actual checks.` : '',
       stage === 'verification' ? 'Independently inspect implementation, author only checker files, execute check_run, and report pass/fail. Include negative controls that prove bad output fails. Distinguish product defects from checker defects.' : '',
-      stage === 'review' ? 'Review the actual change, acceptance criteria and current checks independently. Save assignment_report with verdict pass or fail.' : '',
+      stage === 'review' ? 'Review the actual change, acceptance criteria and current checks independently. Read check_evidence for actual stdout/stderr and intended-use build/run receipts; private runtime files remain unavailable. Save assignment_report with verdict pass or fail.' : '',
       stage === 'diagnosis' ? 'Diagnose existing evidence without modifying files. Report failure_kind implementation/checker/protocol/environment, concrete findings, and bounded repair direction.' : '',
     ].filter(Boolean).join('\n\n');
   }
@@ -488,21 +576,37 @@ class Controller {
       const prior = run.checks.find(item => item.attempt_id === attemptId && item.title === check.title && same(item.baseline, baseline));
       if (prior) continue;
       const checkId = randomUUID(), logPath = `.neomind/controlled/checks/${checkId}.log`;
+      const purpose = !check.negative && 'purpose' in check && check.purpose === 'intended-use' ? 'intended-use' as const : 'self-check' as const;
+      const pilotRoot = purpose === 'intended-use' ? realpathSync.native(mkdtempSync(join(realpathSync.native(tmpdir()), 'neomind-intended-use-'))) : undefined;
+      const pilotNonce = pilotRoot ? randomUUID() : undefined;
+      const command = pilotRoot ? [...check.command, '--neomind-pilot-root', pilotRoot, '--neomind-pilot-nonce', pilotNonce!] : check.command;
+      const evidenceInput = prepareControlledCheckEvidence(this.root, run, contract, check, baseline, attempt.invocation_id);
       run.check_intents ??= [];
-      run.check_intents.push({ id: checkId, attempt_id: attemptId, title: check.title, baseline, state: 'starting' });
+      run.check_intents.push({ id: checkId, attempt_id: attemptId, title: check.title, baseline, state: 'starting',
+        ...(pilotRoot ? { pilot_root: pilotRoot, pilot_nonce: pilotNonce } : {}) });
       save(this.root, run, 'check-start', check.title);
-      const result = await runCommand({ command: check.command, cwd: this.root, signal, timeout_ms: check.timeout_ms ?? 60000,
+      const deadline = Date.now() + (check.timeout_ms ?? 60000);
+      const result = await runCommand({ command, cwd: this.root, signal, timeout_ms: check.timeout_ms ?? 60000,
         onStart: pid => { const current = readState(this.root, id), intent = current.check_intents!.find(item => item.id === checkId)!;
           intent.state = 'running'; intent.pid = pid; save(this.root, current); } });
-      const log = JSON.stringify({ command: check.command, baseline, result }, null, 2) + '\n';
+      let pilot: { path: string; sha256: string } | undefined, pilotError: string | undefined;
+      if (pilotRoot && result.exit_code === 0 && !result.cancelled && !result.timed_out && !result.output_limited && !result.error) {
+        try { pilot = await executeControlledPilot(this.root, run, checkId, pilotRoot, pilotNonce!, signal, deadline); }
+        catch { pilotError = 'The intended-use pilot did not produce valid retained artifacts and passing independent validation/build/run results.'; }
+      }
+      const log = JSON.stringify({ command, planned_command: check.command, purpose, baseline, result, pilot, pilot_error: pilotError }, null, 2) + '\n';
       atomicWrite(safePath(this.root, logPath), log);
       run = readState(this.root, id);
       run.check_intents!.find(item => item.id === checkId)!.state = 'completed';
       run.checks.push({ id: checkId, attempt_id: attemptId, invocation_id: attempt.invocation_id, title: check.title,
-        command: check.command, baseline, log_path: logPath, log_sha256: hash(log), exit_code: result.exit_code,
+        command, planned_command: check.command, purpose, baseline, log_path: logPath, log_sha256: hash(log), exit_code: result.exit_code,
         expected_exit_code: check.expected_exit_code ?? 0, negative: check.negative,
-        passed: result.exit_code === (check.expected_exit_code ?? 0) && !result.cancelled && !result.timed_out && !result.output_limited && !result.error && same(baseline, fingerprints(this.root, check.baseline_paths)),
-        cancelled: result.cancelled, at: now() });
+        passed: result.exit_code === (check.expected_exit_code ?? 0) && !result.cancelled && !result.timed_out && !result.output_limited && !result.error && !pilotError &&
+          (purpose !== 'intended-use' || !!pilot) && same(baseline, fingerprints(this.root, check.baseline_paths)),
+        cancelled: result.cancelled, at: now(), evidence_input: evidenceInput,
+        ...(pilot ? { pilot_receipt_path: pilot.path, pilot_receipt_hash: pilot.sha256 } : {}) });
+      const savedCheck = run.checks.at(-1)!;
+      savedCheck.evidence_id = materializeControlledEvidence(this.root, run, contract, savedCheck);
       save(this.root, run, 'check-result', `${check.title}: ${run.checks.at(-1)!.passed ? 'passed' : 'failed'}.`);
       if (signal.aborted) break;
     }
@@ -539,42 +643,29 @@ class Controller {
   private complete(run: ControlledSnapshot): void {
     const contract = readContract(this.root, run);
     const latest = (stage: Stage) => [...run.attempts].reverse().find(item => item.stage === stage && item.state === 'completed');
-    const producer = latest('implementation'), verifier = latest('verification'), reviewer = latest('review'), synthesis = latest('synthesis');
-    for (const attempt of [producer, verifier, ...(contract.reviewer_required ? [reviewer] : []), ...(contract.knowledge_directory ? [synthesis] : [])]) {
-      if (!attempt?.invocation_id || attempt.report?.outcome !== 'completed') throw new Error('Required completed independent result missing.');
-      const receipt = readInvocation(this.root, attempt.invocation_id);
-      if (routingProblems(this.root, attempt.role, receipt.id, { workflow_id: run.workflow_id }).length ||
-          receipt.issuer !== 'neomind-vscode-lm' || !receipt.inference_completed) throw new Error('Actual owned session evidence is invalid.');
-      if (!same(attempt.bound_hashes, fingerprints(this.root, Object.keys(attempt.bound_hashes ?? {})))) throw new Error('Reported artifacts changed after their result.');
-    }
-    if (producer!.invocation_id === verifier!.invocation_id || reviewer?.invocation_id === producer!.invocation_id) throw new Error('Verification/review must be independent.');
-    if (verifier!.report!.verdict !== 'pass') throw new Error('Independent verifier did not pass.');
-    if (contract.reviewer_required && reviewer?.report?.verdict !== 'pass') throw new Error('Independent review did not pass.');
+    const producer = latest('implementation'), verifier = latest('verification'), reviewer = latest('review');
+    const acceptance = () => {
+      const verified = verifyControlledTask(this.root, getRecord(this.root, contract.task_id), 'accepted');
+      if (!verified?.ok) throw new ControlledToolError('ACCEPTANCE_INCOMPLETE', verified?.findings.map(item => item.message).join('\n') ?? 'Controlled acceptance is unavailable.');
+    };
+    acceptance();
     const checks = run.checks.filter(check => check.attempt_id === verifier!.id);
-    if (!contract.plan.checks.every(check => checks.some(result => result.title === check.title && result.passed &&
-      result.log_sha256 === hash(readFileSync(safePath(this.root, result.log_path))) && same(result.baseline, fingerprints(this.root, check.baseline_paths))))) throw new Error('Fresh independent check evidence missing.');
-    if (!contract.plan.checks.every(check => check.negative_controls?.every(negative => checks.some(result => result.negative && result.title === negative.title &&
-        result.passed && result.expected_exit_code === negative.expected_exit_code && result.log_sha256 === hash(readFileSync(safePath(this.root, result.log_path))) &&
-        same(result.baseline, fingerprints(this.root, negative.baseline_paths)))))) throw new Error('Actual negative-control evidence missing.');
     const output = fingerprints(this.root, contract.plan.outputs);
-    if (Object.values(output).some(value => value === 'missing')) throw new Error('Delivered output missing.');
-    if ((contract.plan.cornell_output_dir || contract.knowledge_directory) && (!run.cornell_note_ids?.length || run.cornell_note_ids.some(id => !validateCornellNote(this.root, id).ok)))
-      throw new Error('Requested Cornell output must pass its existing formatter and structural validation.');
-    if (contract.plan.procedure_candidate && !run.procedure_candidate_id) {
-      const candidate = registerProcedure(this.root, { ...contract.plan.procedure_candidate,
-        id: `workflow-${hash(run.workflow_id).slice(0, 24)}`, version: '1.0.0', author: producer!.invocation_id! });
-      run.procedure_candidate_id = candidate.id; save(this.root, run, 'procedure-registered', 'Reusable scripts registered as a candidate; qualification still requires independent review and real uses.');
-    }
-    const report = run.finalizing_report_id ? getRecord(this.root, run.finalizing_report_id) : createRecord(this.root, { type: 'knowledge', title: `Completed: ${contract.plan.title}`.slice(0, 256), owner: 'manager',
+    const existingReport = run.finalizing_report_id ? getRecord(this.root, run.finalizing_report_id)
+      : loadRecords(this.root).find(record => record.meta.data.kind === 'controlled-final-report' && record.meta.data.workflow_id === run.workflow_id && record.meta.data.epoch_id === run.epoch_id);
+    const report = existingReport ?? createRecord(this.root, { type: 'knowledge', title: `Completed: ${contract.plan.title}`.slice(0, 256), owner: 'manager',
       data: { kind: 'controlled-final-report', workflow_id: run.workflow_id, epoch_id: run.epoch_id, contract_hash: run.contract_hash,
         invocation_ids: [producer!.invocation_id, verifier!.invocation_id, reviewer?.invocation_id].filter(Boolean),
         evidence: checks.map(check => check.log_path), output_hashes: output, cornell_note_ids: run.cornell_note_ids ?? [], assurance: 'invocation-bound-local' },
       body: `# Result\n${producer!.report!.summary}\n\n# Independent verification\n${verifier!.report!.summary}\n\n# Evidence\n${checks.map(check => `- ${check.log_path}`).join('\n')}\n\n# Limitations\nModel identities are local VS Code vendor/model observations; upstream 9router model identity is unverified.\n` });
+    if (report.meta.data.kind !== 'controlled-final-report' || report.meta.data.workflow_id !== run.workflow_id || report.meta.data.epoch_id !== run.epoch_id ||
+        report.meta.data.contract_hash !== run.contract_hash || !same(report.meta.data.output_hashes, output)) throw new Error('Saved final report belongs to another controlled result.');
     if (!run.finalizing_report_id) { run.finalizing_report_id = report.meta.id; save(this.root, run, 'finalizing', 'Validated closure intent saved.'); }
-    saveStatus(this.root, contract.task_id, 'accepted', () => { readContract(this.root, run); });
+    saveStatus(this.root, contract.task_id, 'accepted', acceptance);
     saveWorkflowClosure(this.root, run.workflow_id, { data: { phase: 'completed', final_report_id: report.meta.id,
-      closed_at: now(), controlled_epoch_id: run.epoch_id, controlled_contract_hash: run.contract_hash } }, () => { readContract(this.root, run); });
-    saveStatus(this.root, run.workflow_id, 'accepted', () => { readContract(this.root, run); });
+      closed_at: now(), controlled_epoch_id: run.epoch_id, controlled_contract_hash: run.contract_hash,
+      completed_execution_task_id: contract.task_id } }, acceptance);
+    saveStatus(this.root, run.workflow_id, 'accepted', acceptance);
     run.final_report_id = report.meta.id; run.status = 'completed'; run.phase = 'completed'; delete run.blocker;
     save(this.root, run, 'completed', 'Actual independent checks and required review passed; workflow accepted.');
   }

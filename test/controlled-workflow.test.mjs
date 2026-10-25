@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { initialize, atomicWrite, getRecord, hash, loadRecords, safePath } from '../dist/storage.js';
+import { initialize, atomicWrite, createRecord, getRecord, hash, loadRecords, safePath } from '../dist/storage.js';
 import { executionModes } from '../dist/execution-mode.js';
 import { ensureRoutingPolicy, readInvocation } from '../dist/routing.js';
 import { enableVSCodeHost } from '../dist/vscode-host.js';
@@ -11,6 +11,12 @@ import { shutdownNative } from '../dist/native.js';
 import { startControlledHost, startControlledWorkflow, controlControlledWorkflow, controlledStatus } from '../dist/controlled-workflow.js';
 import { setRoleModel } from '../dist/model-control.js';
 import { readAgentMap } from '../dist/agent-map.js';
+import { verify } from '../dist/engineering.js';
+import { ownedContext } from '../dist/controlled-context.js';
+import { beginWorkflow } from '../dist/manager.js';
+import { prepareReportedAssignment } from '../dist/native-assignment.js';
+import { openAssignment } from '../dist/assignment-runtime.js';
+import { planNativeSoftware, readNativeSoftwareContract } from '../dist/native-software.js';
 
 // These tests exercise the actual signed local Bridge, MCP, filesystem and child runner.
 // The language model and editor API are deterministic fixtures, not actual Copilot/Codex inference.
@@ -171,6 +177,28 @@ test('real signed Bridge/MCP drives normal and risk-based workflows with actual 
     for (const check of done.checks) assert.equal(hash(readFileSync(join(env.root, check.log_path))), check.log_sha256);
     assert.equal(getRecord(env.root, done.workflow_id).meta.data.phase, 'completed');
     assert.equal(getRecord(env.root, done.final_report_id).meta.data.assurance, 'invocation-bound-local');
+    const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.workflow_id === done.workflow_id && record.meta.data.epoch_id === done.epoch_id);
+    assert.ok(task, 'The completed epoch needs its own bound execution task.');
+    assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true, 'Public task verification must agree with controller acceptance.');
+    for (const check of done.checks) {
+      const evidence = getRecord(env.root, check.evidence_id);
+      assert.equal(evidence.meta.type, 'evidence');
+      assert.equal(evidence.meta.data.kind, 'controlled-execution-evidence');
+      assert.equal(evidence.meta.data.workflow_id, done.workflow_id);
+      assert.equal(evidence.meta.data.controlled_epoch_id, done.epoch_id);
+      assert.equal(evidence.meta.data.task_id, task.meta.id);
+      assert.equal(evidence.meta.data.execution_invocation_id, check.invocation_id);
+      assert.equal(evidence.meta.data.controlled_check_id, check.id);
+      assert.ok(evidence.meta.links.some(link => link.type === 'evidence-for' && link.target === check.evidence_input.check_id));
+    }
+    const output = safePath(env.root, planFor(name).outputs[0]), prior = readFileSync(output);
+    try {
+      atomicWrite(output, '2\n');
+      const stale = verify(env.root, task.meta.id, 'accepted');
+      assert.equal(stale.ok, false, 'An accepted flag cannot preserve evidence against changed implementation bytes.');
+      assert.ok(stale.findings.some(finding => finding.code === 'controlled-acceptance'));
+    } finally { atomicWrite(output, prior); }
+    assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true, 'Restoring the exact bound bytes restores current acceptance.');
     const repeated = await submit(env.root, name);
     assert.equal(repeated.workflow_id, done.workflow_id); assert.equal(repeated.attempts.length, done.attempts.length);
   }
@@ -229,6 +257,77 @@ test('parallel workflows retain their own tasks, artifacts, reports and receipt 
     assert.equal(getRecord(env.root, attempt.report_id).meta.data.workflow_id, run.workflow_id);
   }
   assert.notEqual(done[0].final_report_id, done[1].final_report_id);
+  const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.workflow_id === done[0].workflow_id && record.meta.data.epoch_id === done[0].epoch_id);
+  const journalPath = safePath(env.root, `.neomind/controlled/workflows/${hash(done[0].workflow_id)}.json`), original = readFileSync(journalPath);
+  const foreign = done[1].attempts.find(attempt => attempt.stage === 'verification');
+  assert.equal(readInvocation(env.root, foreign.invocation_id).state, 'completed', 'The substituted receipt is genuine and signed, not corrupt JSON.');
+  try {
+    const journal = JSON.parse(original.toString('utf8')), verifier = journal.attempts.find(attempt => attempt.stage === 'verification');
+    verifier.invocation_id = foreign.invocation_id; verifier.request_id = foreign.request_id; verifier.report_id = foreign.report_id;
+    atomicWrite(journalPath, JSON.stringify(journal, null, 2) + '\n');
+    const swapped = verify(env.root, task.meta.id, 'accepted');
+    assert.equal(swapped.ok, false, 'A completed signed Verifier from another workflow/epoch cannot satisfy this task.');
+    assert.ok(swapped.findings.some(finding => finding.code === 'controlled-acceptance' && /signed task, epoch, stage and request/.test(finding.message)));
+  } finally { atomicWrite(journalPath, original); }
+  assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true);
+  assert.equal(env.errors.length, 0);
+});
+
+test('duplicate reports save once and retained late callbacks cannot alter an advanced workflow', async t => {
+  const env = await setup(t, { callbacks: { holdImplementation: true } });
+  const initial = await submit(env.root, 'callbacks');
+  const held = await until(env.root, initial.workflow_id, () => env.held.entered, 'producer should remain active for callback replay', env.errors);
+  const attempt = held.attempts.at(-1), context = ownedContext(env.root, attempt.request_id);
+  assert.ok(context, 'Only the actual owned attempt supplies its private backend callback.');
+  const payload = { outcome: 'completed', summary: 'implementation completed with actual scoped artifacts.',
+    findings: ['Independent implementation result recorded.'], artifacts: planFor('callbacks').outputs };
+  const saveReport = context.callbacks.saveReport;
+  await saveReport(payload);
+  const records = () => loadRecords(env.root).filter(record => record.meta.data.kind === 'controlled-work-record' && record.meta.data.invocation_id === attempt.invocation_id);
+  assert.equal(records().length, 1);
+  assert.deepEqual(await saveReport(payload), { saved: true, outcome: 'completed' });
+  assert.equal(records().length, 1, 'A response retry must reuse its durable report.');
+  await assert.rejects(async () => saveReport({ ...payload, summary: 'A different result cannot replace the saved report.' }), /already saved a different report/);
+  assert.equal(records().length, 1);
+  env.held.release = true;
+  const done = await until(env.root, initial.workflow_id, run => run.status === 'completed', 'the model should finish using its already-saved identical report', env.errors);
+  const journalPath = safePath(env.root, `.neomind/controlled/workflows/${hash(done.workflow_id)}.json`), before = readFileSync(journalPath), count = loadRecords(env.root).length;
+  await assert.rejects(async () => saveReport(payload), /ended or changed owner/);
+  assert.deepEqual(readFileSync(journalPath), before, 'A late result cannot append events or alter accepted state.');
+  assert.equal(loadRecords(env.root).length, count, 'A late result cannot create another report or evidence record.');
+  assert.deepEqual(env.errors, [], 'A replay must not force a model-facing protocol error and repair.');
+});
+
+test('controlled continuation creates separate execution lineage and preserves legacy task, contract and evidence bytes', async t => {
+  const env = await setup(t, { legacy: { holdImplementation: true } }), fixturePlan = planFor('legacy');
+  const workflow = beginWorkflow(env.root, { requirement: 'Scenario: legacy\nCreate and independently verify the requested scalar.', execution_mode: 'copilot-native' });
+  const packet = prepareReportedAssignment(env.root, { workflow_id: workflow.meta.id, profile_id: 'coordinator', role: 'manager',
+    assignment_id: 'legacy-continuation-fixture', objective: 'Define the actual bounded software contract before its controlled execution continuation.' });
+  const handle = openAssignment(env.root, packet.open_input).handle;
+  const { risk, checks, ...semantic } = fixturePlan;
+  const original = planNativeSoftware(env.root, handle, { ...semantic, process: 'software-tools',
+    checks: checks.map(({ negative_controls, ...check }) => check) });
+  const legacyContract = readNativeSoftwareContract(env.root, workflow.meta.id);
+  const oldEvidence = createRecord(env.root, { type: 'evidence', title: 'Historical failed check retained for continuation lineage', owner: 'verifier', status: 'failed',
+    links: [{ type: 'evidence-for', target: original.check_ids[0] }, { type: 'documents', target: original.task_id }],
+    data: { workflow_id: workflow.meta.id, task_id: original.task_id, result: 'fail' },
+    body: '# Historical observation\nNo successful verification is claimed for this legacy evidence.\n' });
+  const historicalPaths = [getRecord(env.root, original.task_id).path, oldEvidence.path,
+    `.neomind/native/software-workflows/${hash(workflow.meta.id)}.contract.json`];
+  const historical = historicalPaths.map(path => ({ path, bytes: readFileSync(safePath(env.root, path)) }));
+  await startControlledWorkflow(env.root, { workflow_id: workflow.meta.id, request_id: 'controlled-legacy-lineage-fixture' });
+  const running = await until(env.root, workflow.meta.id, () => env.held.entered, 'continuation should reach its separately bound producer', env.errors);
+  const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.workflow_id === workflow.meta.id && record.meta.data.epoch_id === running.epoch_id);
+  assert.ok(task); assert.notEqual(task.meta.id, original.task_id);
+  assert.ok(task.meta.links.some(link => link.type === 'derives-from' && link.target === original.task_id));
+  for (const id of legacyContract.requirement_ids) assert.ok(task.meta.links.some(link => link.type === 'satisfies' && link.target === id), id);
+  for (const criterion of legacyContract.plan.acceptance_criteria) assert.ok(task.meta.data.acceptance_criteria.includes(criterion), criterion);
+  assert.equal(readInvocation(env.root, running.attempts.at(-1).invocation_id).task_id, task.meta.id);
+  const paused = await controlControlledWorkflow(env.root, { workflow_id: workflow.meta.id, action: 'pause' });
+  assert.equal(paused.status, 'paused');
+  for (const { path, bytes } of historical) assert.deepEqual(readFileSync(safePath(env.root, path)), bytes, path);
+  assert.notEqual(getRecord(env.root, original.task_id).meta.status, 'accepted');
+  assert.equal(verify(env.root, task.meta.id, 'accepted').ok, false, 'Lineage and an implementation artifact alone cannot accept the continuation.');
   assert.equal(env.errors.length, 0);
 });
 

@@ -23,6 +23,7 @@ export const controlledPlanSchema = z.strictObject({
   allowed_paths: paths.min(1), verification_paths: paths.min(1), outputs: paths.min(1),
   documentation_paths: paths.default([]),
   checks: z.array(z.strictObject({ title: text.max(256),
+    purpose: z.enum(['self-check', 'intended-use']).optional(),
     command: z.array(z.string().min(1).max(8000)).min(2).max(128),
     baseline_paths: paths.min(1), expected_exit_code: z.number().int().min(0).max(255).optional(),
     timeout_ms: z.number().int().min(1).max(600000).optional(),
@@ -36,6 +37,7 @@ export const controlledPlanSchema = z.strictObject({
   procedure_candidate: registerProcedureSchema.omit({ id: true, version: true, author: true }).optional(),
   cornell_output_dir: z.string().min(1).max(1024).optional(),
   input_paths: paths.optional(),
+  preservation_paths: paths.optional(),
   specialists: z.array(z.strictObject({ role: text.max(100), objective: text })).max(4).optional(),
 });
 export type ControlledPlan = z.infer<typeof controlledPlanSchema>;
@@ -56,6 +58,7 @@ export interface ControlledCallbacks {
   prepareWork?(query: { request: string; parameters?: Record<string, unknown> }): unknown | Promise<unknown>;
   runProcedure?(parameters?: Record<string, unknown>): unknown | Promise<unknown>;
   compileResearch?(input: Record<string, unknown>): unknown | Promise<unknown>;
+  readEvidence?(title?: string): unknown | Promise<unknown>;
   trace?(event: Record<string, unknown>): void | Promise<void>;
 }
 /** Only explicitly public controller diagnostics cross the model-facing error seam. */
@@ -114,6 +117,7 @@ export function controlledToolNames(binding: ControlledBinding): string[] {
       (binding.stage === 'verification' && ['verifier', 'check-executor'].includes(binding.role)) ? ['task_file_write'] : []),
     ...(binding.stage === 'implementation' ? ['procedure_run'] : []),
     ...(['implementation', 'synthesis'].includes(binding.stage) ? ['cornell_research_compile'] : []),
+    ...(['verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage) ? ['check_evidence'] : []),
     ...(binding.stage === 'verification' ? ['check_run'] : [])];
 }
 export function controlledInstructions(binding: ControlledBinding): string {
@@ -138,7 +142,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
     if (!/^\.(?:agents|github)\/skills\/[^/]+\/(?:assets|scripts)\/.+\.(?:md|py|mjs|cjs|js|json)$/i.test(path) || privatePath(path.split('/').slice(4).join('/')))
       throw new Error('Approved hidden inputs must be bounded skill assets or script sources, never client/runtime configuration.');
   if (!binding.invocation_id || !binding.workflow_id || !binding.role ||
-      !['planning', 'implementation', 'verification', 'review', 'diagnosis'].includes(binding.stage))
+      !['planning', 'implementation', 'verification', 'review', 'diagnosis', 'synthesis'].includes(binding.stage))
     throw new Error('Controlled MCP requires a backend-bound actual invocation.');
   for (const scope of [...binding.implementation_paths, ...binding.verification_paths, ...(binding.read_paths ?? []), ...(binding.protected_paths ?? [])])
     canonical(scope, true);
@@ -337,6 +341,12 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
           throw new ControlledToolError('INVALID_CHECK', 'Choose one of the prescribed check titles supplied in the assignment.');
         if (!callbacks.runCheck) throw new ControlledToolError('UNSUPPORTED_STAGE', 'Check execution is unavailable in this invocation.');
         return callbacks.runCheck(args.title);
+      });
+  if (['verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage))
+    register('check_evidence', 'Read actual bound check commands, execution output and intended-use evidence without private runtime files or identity fields.',
+      z.strictObject({ title: text.max(256).optional() }), true, args => {
+        if (!callbacks.readEvidence) throw new ControlledToolError('NO_CHECK_EVIDENCE', 'No bound check evidence is available in this session.');
+        return callbacks.readEvidence(args.title);
       });
   if (binding.stage === 'implementation') {
     register('procedure_run', 'Run only the qualified procedure bound in the plan; backend derives identity, scope and execution key.',

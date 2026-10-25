@@ -44,7 +44,7 @@ async function connect(t, root, actor = binding(), callbacks = {}) {
 
 test('controlled workers discover only role-local semantic inputs, without identity/credential/lifecycle fields', async t => {
   const root = project(t);
-  for (const stage of ['planning', 'implementation', 'verification', 'review', 'diagnosis']) {
+  for (const stage of ['planning', 'implementation', 'verification', 'review', 'diagnosis', 'synthesis']) {
     const actor = binding(stage), c = await connect(t, root, actor);
     const tools = (await c.client.listTools()).tools;
     assert.deepEqual(tools.map(item => item.name).sort(), controlledToolNames(actor).sort());
@@ -54,6 +54,17 @@ test('controlled workers discover only role-local semantic inputs, without ident
     assert.ok(!tools.some(item => /record_(create|update)|claim|progress|workflow_next/.test(item.name)));
     assert.doesNotMatch(controlledInstructions(actor), /seven.section|assignment_open|claim_token|assignment_claim/);
   }
+});
+
+test('final synthesis can read bound execution evidence and compile notes without receiving source-write tools', async t => {
+  const observed = [], root = project(t), c = await connect(t, root, binding('synthesis'), {
+    readEvidence(title) { observed.push(title); return [{ title: 'Independent check', exit_code: 0, stdout: 'actual bounded output' }]; },
+  });
+  const names = (await c.client.listTools()).tools.map(tool => tool.name);
+  assert.ok(names.includes('cornell_research_compile')); assert.ok(names.includes('check_evidence'));
+  assert.equal(names.includes('task_file_write'), false); assert.equal(names.includes('check_run'), false);
+  assert.equal(decode(await c.call('check_evidence', { title: 'Independent check' }))[0].exit_code, 0);
+  assert.deepEqual(observed, ['Independent check']);
 });
 
 test('identity spoofing is rejected before the bound report callback and no supplied secret is echoed', async t => {

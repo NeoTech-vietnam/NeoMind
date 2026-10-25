@@ -23,6 +23,9 @@ test('explicit controlled adapters register both clients and preserve parent pro
   const codex = toml(readFileSync(safePath(root, '.codex/config.toml'), 'utf8'));
   assert.equal(codex.model, 'parent-model'); assert.equal(codex.model_provider, 'parent-provider');
   assert.deepEqual(codex.mcp_servers.neomind.enabled_tools, ['manager_run', 'manager_status', 'manager_control']);
+  const codexInstructions = readFileSync(safePath(root, 'AGENTS.md'), 'utf8');
+  assert.match(codexInstructions, /discover the connected NeoMind tools/);
+  assert.match(codexInstructions, /ALL_TOOLS/);
   const copilot = JSON.parse(readFileSync(safePath(root, '.vscode/mcp.json'), 'utf8'));
   assert.equal(copilot.servers.existing.command, 'existing-provider');
   assert.ok(copilot.servers.neomind.args.includes(root));

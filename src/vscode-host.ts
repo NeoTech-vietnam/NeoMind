@@ -10,6 +10,7 @@ import { readRoleUpstreamInstructions } from './upstreams.js';
 import { controlledInstructions, controlledToolNames } from './controlled-tools.js';
 import { ownedContext } from './controlled-context.js';
 import { invocationPolicy, invocationConfigurationHashes } from './routing.js';
+import { vscodeProviderDiagnostic } from './vscode-provider-diagnostic.js';
 
 // VS Code is supplied by extension host, not imported into CLI or added as dependency.
 type VSCode = any;
@@ -133,7 +134,9 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
         'Unsupported model response part.', 'Model did not demonstrate required tool calling.', 'Tool round limit reached.',
       ];
       const hostError = hostErrors.find(message => message === diagnostic?.message);
-      const detail = hostError ?? (code ? `${code}: ${codes[code]}` : `${name}; inspect VS Code Copilot and extension-host logs`);
+      const provider = vscodeProviderDiagnostic(error);
+      const detail = hostError ?? (provider ? `${provider.code}: ${provider.message}` :
+        code ? `${code}: ${codes[code]}` : `${name}; inspect VS Code Copilot and extension-host logs`);
       stop(turn, 'blocked', `VS Code model request blocked during ${phase}: ${detail}. No raw provider error was persisted.`);
     }
   }

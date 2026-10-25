@@ -20,13 +20,13 @@
     }
     if (workflow.blocker) {
       const value = workflow.blocker;
-      byId('controls').append(element('p', typeof value === 'string' ? value : `${value.code ?? 'Blocker'} · ${value.owner ?? 'runtime'}: ${value.message ?? value.next_action ?? 'Inspect the runtime journal.'}`, 'blocker'));
+      byId('controls').append(element('p', typeof value === 'string' ? value : `${value.code ?? value.kind ?? 'Blocker'} · ${value.owner ?? 'runtime'}: ${value.message ?? value.next_action ?? 'Inspect the runtime journal.'}${value.trace_id ? ` · Trace: ${value.trace_id}` : ''}`, 'blocker'));
     }
     for (const agent of workflow.active_invocations ?? []) {
       const card = element('article', '', 'agent');
       card.append(element('strong', `${agent.role ?? 'Agent'} · ${status(agent)}`),
         element('p', `Requested: ${agent.requested_model ?? 'unavailable'}`),
-        element('p', `Observed by Bridge: ${agent.model_provider ?? 'unavailable'} / ${agent.confirmed_model ?? 'unavailable'}`));
+        element('p', `Observed by Bridge: ${agent.model_provider ?? agent.provider ?? 'unavailable'} / ${agent.confirmed_model ?? 'unavailable'}`));
       byId('agents').append(card);
     }
     if (!byId('agents').children.length) byId('agents').append(element('p', 'No currently owned agent sessions.', 'hint'));
@@ -68,6 +68,7 @@
   });
   byId('refresh').addEventListener('click', () => action('status'));
   byId('enable').addEventListener('click', () => vscode.postMessage({ type: 'controlled-enable' }));
+  byId('local-coordinator').addEventListener('click', () => vscode.postMessage({ type: 'controlled-local-coordinator' }));
   byId('universe').addEventListener('click', () => vscode.postMessage({ type: 'controlled-universe' }));
   action('status');
 })();

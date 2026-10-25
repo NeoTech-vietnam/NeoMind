@@ -1,18 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, readFileSync, rmSync, realpathSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, realpathSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 const require = createRequire(import.meta.url);
-const { TOOL_NAME, activateControlledWorkflows, createControlledPanelHost, publicStatus, renderControlledPanel } = require('../extensions/vscode-model-bridge/controlled-workflows.cjs');
+const { TOOL_NAME, LOCAL_COORDINATOR_COMMAND, activateControlledWorkflows, createControlledPanelHost, publicStatus, renderControlledPanel } = require('../extensions/vscode-model-bridge/controlled-workflows.cjs');
 const workflowId = 'NM-TEST-KNW-0001';
 
 function app(t) {
   const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-controlled-ui-')));
   t.after(() => { assert.equal(dirname(resolve(root)), parent); rmSync(root, { force: true, recursive: true }); });
-  const calls = [], sent = [], commands = new Map(), tools = new Map(), subscriptions = [];
+  const calls = [], sent = [], errors = [], commands = new Map(), tools = new Map(), subscriptions = [];
   let active = true, enabled = true;
   const workflow = { workflow_id: workflowId, title: '<img onerror=evil()>', status: 'queued', phase: 'intake', transport: 'vscode-lm',
     process_contract: 'software-tools/v2', token: 'PRIVATE', prompt: 'PRIVATE',
@@ -26,6 +26,7 @@ function app(t) {
   const vscode = {
     workspace: { isTrusted: true, workspaceFolders: [{ uri: { scheme: 'file', fsPath: root } }], onDidChangeWorkspaceFolders: () => ({ dispose() {} }) },
     commands: { registerCommand(name, fn) { commands.set(name, fn); return { dispose() {} }; } },
+    window: { showErrorMessage: async message => errors.push(message) },
     lm: { registerTool(name, value) { tools.set(name, value); return { dispose() {} }; } },
     LanguageModelToolResult: class { constructor(content) { this.content = content; } },
     LanguageModelTextPart: class { constructor(value) { this.value = value; } },
@@ -33,9 +34,71 @@ function app(t) {
   const host = createControlledPanelHost({ runtime, root, post: async value => sent.push(value), alive: () => active, enabled: () => enabled });
   activateControlledWorkflows(vscode, { subscriptions }, async selected => { assert.equal(selected, root); return runtime; }, { enabled: selected => selected === root && enabled });
   const invoke = async input => JSON.parse((await tools.get(TOOL_NAME).invoke({ input })).content[0].value);
-  return { root, workflow, runtime, vscode, calls, sent, host, invoke, tool: tools.get(TOOL_NAME), subscriptions,
+  return { root, workflow, runtime, vscode, calls, sent, errors, commands, host, invoke, tool: tools.get(TOOL_NAME), subscriptions,
     active: value => { active = value; }, enabled: value => { enabled = value; } };
 }
+
+function localCoordinator(a) {
+  mkdirSync(join(a.root, '.github/agents'), { recursive: true });
+  writeFileSync(join(a.root, '.github/agents/neomind-coordinator.agent.md'), '---\nname: "NeoMind Coordinator Agent"\n---\nProject Coordinator.\n');
+  a.vscode.commands.getCommands = async () => ['workbench.action.chat.newLocalChat', 'workbench.action.chat.open'];
+  return () => a.commands.get(LOCAL_COORDINATOR_COMMAND)();
+}
+
+test('Local Coordinator waits for Local chat creation before selecting the profile and preserves model choice', async t => {
+  const a = app(t), open = localCoordinator(a), executed = [];
+  let localCreated;
+  const local = new Promise(resolve => { localCreated = resolve; });
+  a.vscode.commands.executeCommand = async (...args) => {
+    executed.push(args);
+    if (args[0] === 'workbench.action.chat.newLocalChat') await local;
+  };
+  const pending = open();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(executed, [['workbench.action.chat.newLocalChat']]);
+  localCreated();
+  assert.deepEqual(await pending, { opened: true, target: 'local', profile: 'NeoMind Coordinator Agent', model_selection: 'user-picker' });
+  assert.deepEqual(executed, [
+    ['workbench.action.chat.newLocalChat'],
+    ['workbench.action.chat.open', { mode: 'NeoMind Coordinator Agent' }],
+  ]);
+  assert.deepEqual(a.calls, [], 'Opening chat must not submit a workflow or change routing.');
+  assert.deepEqual(a.errors, []);
+});
+
+test('missing or failing Local chat command stops before profile launch without a generic fallback', async t => {
+  const a = app(t), open = localCoordinator(a), executed = [];
+  a.vscode.commands.executeCommand = async (...args) => { executed.push(args); throw new Error('PRIVATE_PROVIDER_ERROR'); };
+  a.vscode.commands.getCommands = async () => ['workbench.action.chat.open'];
+  assert.equal((await open()).error.code, 'LOCAL_CHAT_UNAVAILABLE');
+  assert.deepEqual(executed, []);
+  a.vscode.commands.getCommands = async () => ['workbench.action.chat.newLocalChat', 'workbench.action.chat.open'];
+  assert.equal((await open()).error.code, 'LOCAL_CHAT_UNAVAILABLE');
+  assert.deepEqual(executed, [['workbench.action.chat.newLocalChat']]);
+  assert.equal(JSON.stringify(a.errors).includes('PRIVATE'), false);
+});
+
+test('Local Coordinator requires a trusted project and the installed named profile before opening chat', async t => {
+  const a = app(t), executed = [];
+  a.vscode.commands.executeCommand = async (...args) => executed.push(args);
+  const open = () => a.commands.get(LOCAL_COORDINATOR_COMMAND)();
+  assert.equal((await open()).error.code, 'COORDINATOR_PROFILE_REQUIRED');
+  a.vscode.workspace.isTrusted = false;
+  assert.equal((await open()).error.code, 'WORKSPACE_UNTRUSTED');
+  assert.deepEqual(executed, []);
+});
+
+test('profile selection failure preserves the Local-only path and does not submit a request', async t => {
+  const a = app(t), open = localCoordinator(a), executed = [];
+  a.vscode.commands.executeCommand = async (...args) => {
+    executed.push(args);
+    if (args[0] === 'workbench.action.chat.open') throw new Error('PRIVATE_CHAT_FAILURE');
+  };
+  const result = await open();
+  assert.equal(result.opened, false); assert.equal(result.error.code, 'LOCAL_COORDINATOR_UNAVAILABLE');
+  assert.deepEqual(executed, [['workbench.action.chat.newLocalChat'], ['workbench.action.chat.open', { mode: 'NeoMind Coordinator Agent' }]]);
+  assert.deepEqual(a.calls, []); assert.equal(JSON.stringify(result).includes('PRIVATE'), false);
+});
 
 test('panel submit uses its bound workspace, backend generates request identity, and snapshots exclude private fields', async t => {
   const a = app(t);
@@ -130,6 +193,18 @@ test('queued, waiting, interrupted and uncertain state are preserved without inf
   assert.deepEqual(publicStatus({ workflows: values }).workflows.map(value => value.status), values.map(value => value.status));
 });
 
+test('public status preserves observed provider and safe blocker diagnostics without raw payloads', () => {
+  const result = publicStatus({ workflow_id: workflowId, status: 'blocked',
+    active_invocations: [{ role: 'developer', provider: '9router', confirmed_model: 'worker-alias', token: 'PRIVATE' }],
+    blocker: { kind: 'environment', code: 'MODEL_ACCESS', trace_id: 'trace-001', owner: 'provider',
+      message: 'Model access is unavailable.', next_action: 'Check provider access.', raw_payload: 'PRIVATE' },
+  }).workflows[0];
+  assert.equal(result.active_invocations[0].provider, '9router');
+  assert.equal(result.blocker.kind, 'environment'); assert.equal(result.blocker.trace_id, 'trace-001');
+  assert.equal(result.blocker.owner, 'provider');
+  assert.equal(JSON.stringify(result).includes('PRIVATE'), false);
+});
+
 test('runtime/provider errors are not copied into chat or webview', async t => {
   const a = app(t);
   a.runtime.startControlledWorkflow = async () => { throw new Error('Bearer PRIVATE_PROVIDER_CREDENTIAL'); };
@@ -146,5 +221,8 @@ test('controlled panel uses isolated CSP, safe rendering and packaged tool regis
   const manifest = JSON.parse(readFileSync(new URL('../extensions/vscode-model-bridge/package.json', import.meta.url), 'utf8'));
   assert.ok(manifest.contributes.languageModelTools.some(value => value.name === TOOL_NAME));
   assert.ok(manifest.contributes.commands.some(value => value.command === 'neomind.workflows.open'));
+  assert.ok(manifest.contributes.commands.some(value => value.command === LOCAL_COORDINATOR_COMMAND && value.title === 'NeoMind: Open Local Coordinator'));
+  assert.match(html, /id="local-coordinator"/);
+  assert.match(html, /model picker/);
   for (const file of ['controlled-workflows.cjs', 'resources/monitor/controlled.js', 'resources/monitor/controlled.css']) assert.ok(manifest.files.includes(file));
 });

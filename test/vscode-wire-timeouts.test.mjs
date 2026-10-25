@@ -33,6 +33,20 @@ test('selection and result delivery have explicit larger budgets than lightweigh
   await assert.rejects(hostRequest(host, 'poll', {}, undefined, options), /timed out during poll/);
 });
 
+test('control calls after synchronous local work use fresh connections without replaying mutations', async t => {
+  const observed = [];
+  const host = await endpoint(t, req => {
+    observed.push({ port: req.socket.remotePort, connection: req.headers.connection, operation: req.url });
+    return { accepted: observed.length };
+  });
+  assert.deepEqual(await hostRequest(host, 'controlled-start', { request_id: 'first-mutation' }), { accepted: 1 });
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40);
+  assert.deepEqual(await hostRequest(host, 'controlled-start', { request_id: 'second-mutation' }), { accepted: 2 });
+  assert.equal(observed.length, 2, 'Each mutation is sent exactly once.');
+  assert.ok(observed.every(item => item.connection === 'close'), 'Control IPC must not enter the global keep-alive pool.');
+  assert.notEqual(observed[0].port, observed[1].port);
+});
+
 test('actual connection refusal remains a stale/connection blocker and cancellation stays distinct', async t => {
   const unavailable = createServer(); await new Promise(done => unavailable.listen(0, '127.0.0.1', done));
   const port = unavailable.address().port; await new Promise(done => unavailable.close(done));

@@ -222,6 +222,10 @@
     ],
     "commands": [
       {
+        "command": "neomind.coordinator.openLocal",
+        "title": "NeoMind: Open Local Coordinator"
+      },
+      {
         "command": "neomind.workflows.open",
         "title": "NeoMind: Open Workflows"
       },

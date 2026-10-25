@@ -33,6 +33,7 @@ import {
   type EvidenceInputSnapshot,
 } from './evidence-inputs.js';
 import type { Finding, Gate, ProjectRecord, Verification } from './types.js';
+import { verifyControlledTask } from './controlled-acceptance.js';
 import { nativeSoftwareTaskContract, nativeSoftwareCheckContract, readNativeSoftwareContract, assertSoftwareActor,
   effectiveNativeSoftwareCriteria, type NativeSoftwareContract } from './native-software.js';
 
@@ -975,6 +976,8 @@ export function verify(
       });
       continue;
     }
+    const controlled = verifyControlledTask(root, task, gate);
+    if (controlled) { findings.push(...controlled.findings); continue; }
     const add = (code: string, message: string) =>
       findings.push({ code, record: task.meta.id, message });
     const strict = strictRecord(root, task);

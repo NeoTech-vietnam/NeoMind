@@ -15,6 +15,8 @@ import {
   writeFileSync,
   openSync,
   closeSync,
+  lstatSync,
+  renameSync,
 } from 'node:fs';
 import { dirname, join, resolve, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +29,7 @@ import {
   withOperationLock,
   getRecord,
   resourceRoot,
+  retryWindowsFileOperation,
 } from './storage.js';
 import {
   canonicalJson,
@@ -94,47 +97,125 @@ function cleanError(error: unknown): string {
     .replace(/\b(?:sk-|sess-)[A-Za-z0-9_-]{8,}/g, '[redacted credential]')
     .slice(0, 3000);
 }
+export class NativeSigningError extends Error {
+  constructor(readonly code: 'NATIVE_SIGNING_TRUST_INVALID' | 'NATIVE_SIGNING_HISTORY_REQUIRES_TRUST' |
+    'NATIVE_SIGNING_KEY_INVALID' | 'NATIVE_SIGNING_KEY_UNTRUSTED', message: string) {
+    super(message); this.name = 'NativeSigningError';
+  }
+}
 function receiptKey(root: string): { privateKey: string; id: string } {
   return withOperationLock(root, 'native-receipt-key', () => {
     const privatePath = safePath(root, '.neomind/cache/native/private-key.pem');
-    if (!existsSync(privatePath)) {
-      const keys = generateKeyPairSync('ed25519');
-      const privateKey = keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
-      const publicKey = keys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const trustPath = safePath(root, '.neomind/native/trust.json');
+    const receiptsPath = safePath(root, '.neomind/native/receipts');
+    const pendingPath = safePath(root, '.neomind/cache/native/pending-key.pem');
+    // A missing registry cannot be recreated around historical evidence. Even
+    // unrecognized entries are history to reconcile, not permission to rotate.
+    const hasHistory = existsSync(receiptsPath) && readdirSync(receiptsPath).length > 0;
+    const missingTrust = !existsSync(trustPath);
+    let trusted: { schema_version?: number; keys: string[]; [key: string]: unknown };
+    try {
+      if (!missingTrust && !lstatSync(trustPath).isFile()) throw new Error();
+      trusted = missingTrust ? { schema_version: 1, keys: [] } : JSON.parse(readFileSync(trustPath, 'utf8'));
+      if (!trusted || typeof trusted !== 'object' || Array.isArray(trusted) ||
+          trusted.schema_version !== undefined && trusted.schema_version !== 1 ||
+          !Array.isArray(trusted.keys) || trusted.keys.some(key => typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key))) throw new Error();
+    } catch {
+      throw new NativeSigningError('NATIVE_SIGNING_TRUST_INVALID',
+        'Native signing trust is malformed. Restore the reviewed registry; no key or trust data was replaced.');
+    }
+    if (missingTrust && hasHistory)
+      throw new NativeSigningError('NATIVE_SIGNING_HISTORY_REQUIRES_TRUST',
+        'Native signing trust is missing while receipt history exists. Restore its trusted public keys before resuming; history was preserved.');
+    let current: { privateKey: string; publicKey: string; id: string } | undefined;
+    if (existsSync(privatePath)) {
+      try {
+        const info = lstatSync(privatePath);
+        if (!info.isFile() || info.nlink !== 1) throw new Error();
+        const privateKey = readFileSync(privatePath, 'utf8'), parsed = createPrivateKey(privateKey);
+        if (parsed.asymmetricKeyType !== 'ed25519') throw new Error();
+        const publicKey = createPublicKey(parsed).export({ type: 'spki', format: 'pem' }).toString();
+        current = { privateKey, publicKey, id: hash(publicKey) };
+      } catch {
+        throw new NativeSigningError('NATIVE_SIGNING_KEY_INVALID',
+          'Native signing key is invalid. Restore the reviewed identity; its cached bytes were preserved.');
+      }
+      const publicPath = safePath(root, `.neomind/native/keys/${current.id}.pem`);
+      if (!missingTrust && trusted.keys.includes(current.id) && existsSync(publicPath) &&
+          lstatSync(publicPath).isFile() && readFileSync(publicPath, 'utf8') === current.publicKey)
+        return { privateKey: current.privateKey, id: current.id };
+      if (hasHistory)
+        throw new NativeSigningError('NATIVE_SIGNING_KEY_UNTRUSTED',
+          'Native signing key has no matching trusted public key and receipt history exists. Restore its reviewed trust data; no identity was changed.');
+      if (!missingTrust && !existsSync(pendingPath))
+        throw new NativeSigningError('NATIVE_SIGNING_KEY_UNTRUSTED',
+          'Native signing key is excluded by existing trust data. Restore its reviewed identity; automatic recovery cannot override a trust restriction.');
+      // A cached key with no signed history is an incomplete bootstrap. Never
+      // silently trust it. Retain it privately and mint a distinct new identity.
+      const retired = safePath(root, `.neomind/cache/native/retired/${current.id}.pem`);
+      mkdirSync(dirname(retired), { recursive: true, mode: 0o700 });
+      if (!existsSync(retired)) writeFileSync(retired, current.privateKey, { flag: 'wx', mode: 0o600 });
+      else if (!lstatSync(retired).isFile() || readFileSync(retired, 'utf8') !== current.privateKey)
+        throw new NativeSigningError('NATIVE_SIGNING_KEY_UNTRUSTED',
+          'Native signing recovery conflicts with retained private history. Reconcile the cached identities before retrying.');
+    }
+    {
+      let privateKey: string, publicKey: string;
+      if (existsSync(pendingPath)) {
+        if (hasHistory)
+          throw new NativeSigningError('NATIVE_SIGNING_HISTORY_REQUIRES_TRUST',
+            'Native signing bootstrap is incomplete while receipt history exists. Reconcile the retained identity before continuing.');
+        try {
+          const info = lstatSync(pendingPath);
+          if (!info.isFile() || info.nlink !== 1) throw new Error();
+          privateKey = readFileSync(pendingPath, 'utf8');
+          const parsed = createPrivateKey(privateKey);
+          if (parsed.asymmetricKeyType !== 'ed25519') throw new Error();
+          publicKey = createPublicKey(parsed).export({ type: 'spki', format: 'pem' }).toString();
+        } catch {
+          throw new NativeSigningError('NATIVE_SIGNING_KEY_INVALID',
+            'Pending native signing identity is invalid. Reconcile the retained bootstrap; its bytes were preserved.');
+        }
+        if (current && publicKey === current.publicKey)
+          throw new NativeSigningError('NATIVE_SIGNING_KEY_UNTRUSTED',
+            'Pending native signing bootstrap cannot reauthorize the orphaned cached identity. Restore a reviewed identity.');
+        if (!missingTrust) {
+          const pendingId = hash(publicKey), pendingPublic = safePath(root, `.neomind/native/keys/${pendingId}.pem`);
+          let approved = false;
+          try { approved = trusted.keys.includes(pendingId) && existsSync(pendingPublic) &&
+            lstatSync(pendingPublic).isFile() && readFileSync(pendingPublic, 'utf8') === publicKey; } catch { /* Fail closed below. */ }
+          if (!approved)
+            throw new NativeSigningError('NATIVE_SIGNING_KEY_UNTRUSTED',
+              'Pending native signing identity is not approved by the existing trust data. Restore its reviewed bootstrap; automatic recovery cannot override a trust restriction.');
+        }
+      } else {
+        const keys = generateKeyPairSync('ed25519');
+        privateKey = keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+        publicKey = keys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+        mkdirSync(dirname(pendingPath), { recursive: true, mode: 0o700 });
+        writeFileSync(pendingPath, privateKey, { flag: 'wx', mode: 0o600 });
+      }
       const id = hash(publicKey);
       const publicPath = safePath(root, `.neomind/native/keys/${id}.pem`);
       atomicWrite(publicPath, publicKey);
-      const trustPath = safePath(root, '.neomind/native/trust.json');
-      const old = existsSync(trustPath)
-        ? JSON.parse(readFileSync(trustPath, 'utf8'))
-        : { schema_version: 1, keys: [] };
-      if (!Array.isArray(old.keys)) throw new Error('Native trust registry is malformed.');
       atomicWrite(
         trustPath,
-        JSON.stringify({ schema_version: 1, keys: [...new Set([...old.keys, id])] }, null, 2) +
+        JSON.stringify({ ...trusted, schema_version: 1, keys: [...new Set([...trusted.keys, id])] }, null, 2) +
           '\n',
       );
       // Publish the public trust data first. An interrupted first-key creation can
       // safely retry rather than leaving an unusable private key without proof.
-      atomicWrite(privatePath, privateKey);
+      // Renaming the exclusive 0600 pending file preserves private permissions
+      // and leaves a resumable pending identity if publication is interrupted.
+      retryWindowsFileOperation(() => renameSync(pendingPath, privatePath));
+      return { privateKey, id };
     }
-    const privateKey = readFileSync(privatePath, 'utf8');
-    const publicKey = createPublicKey(createPrivateKey(privateKey))
-      .export({ type: 'spki', format: 'pem' })
-      .toString();
-    const id = hash(publicKey);
-    const publicPath = safePath(root, `.neomind/native/keys/${id}.pem`);
-    const trusted = JSON.parse(
-      readFileSync(safePath(root, '.neomind/native/trust.json'), 'utf8'),
-    );
-    if (
-      !existsSync(publicPath) ||
-      readFileSync(publicPath, 'utf8') !== publicKey ||
-      !trusted.keys?.includes(id)
-    )
-      throw new Error('Native signing key has no matching trusted public key.');
-    return { privateKey, id };
   });
+}
+/** Safe runtime preflight. No private key material leaves the signing boundary. */
+export function ensureNativeSigningIdentity(root: string): { key_id: string } {
+  readConfig(root);
+  return { key_id: receiptKey(root).id };
 }
 function persist(root: string, receipt: NativeReceipt): NativeReceipt {
   const key = receiptKey(root);

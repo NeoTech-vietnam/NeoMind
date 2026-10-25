@@ -21,7 +21,13 @@ Local mode preserves `.gitignore` and existing local exclusions. Git exclusions 
 
 ## Give NeoMind a task
 
-Use **NeoMind: Open Workflows**, or ask the NeoMind Coordinator in Copilot/Codex to submit the complete outcome and constraints. The MCP entrypoint accepts:
+Use **NeoMind: Open Workflows**, or ask the NeoMind Coordinator in Copilot/Codex to submit the complete outcome and constraints.
+
+For VS Code **Local Copilot Chat**, run **NeoMind: Open Local Coordinator** or use the button in Workflows. NeoMind first creates a Local chat, then selects the installed **NeoMind Coordinator Agent** profile. If VS Code cannot create Local Chat, the command stops with an error. It does not substitute an SDK, Auto or cloud session. This opens an empty chat; it does not submit work automatically.
+
+In that chat, check the **Local** label and choose your custom-endpoint/9router model, such as your configured `top-models` alias, in Copilot's model picker. NeoMind leaves the parent chat's model, provider and permissions under your control. The owned workers independently use the role models configured for the Model Bridge. Opening a profile alone does not prove model access or a successful workflow; verify the actual runtime receipt and observed worker vendor/model.
+
+The MCP entrypoint accepts:
 
 ```json
 {
@@ -38,6 +44,7 @@ The default execution is Coordinator, Implementer and independent Verifier. Addi
 
 - Workers use the role/vendor/model configured for the VS Code Bridge, including a registered 9router custom provider. Codex remains a submission client; its parent provider/model is not rewritten by controlled adapter generation.
 - Requested model, Bridge-observed vendor/model and actual upstream identity are different observations. A 9router alias and unavailable reasoning-effort metadata remain visibly limited.
+- A model picker entry or `/v1/models` result confirms discovery, not a successful model request. `MODEL_NOT_SUPPORTED` means the endpoint rejected the configured target. Keep your chosen alias and correct its upstream chain in 9router, then resume the same workflow. NeoMind stops this configuration failure without silently replacing the model or spending its repair budget on repeated calls.
 - Closing chat or the panel does not stop accepted work while VS Code stays open. Closing VS Code or disabling the Bridge stops owned sessions/checks. Reopen and resume from the last durable checkpoint after uncertain effects have been reconciled.
 - Existing legacy workflows preserve their saved mode, history and committed acceptance conditions. Controlled continuation adds execution lineage rather than rewriting old evidence or manufacturing completion.
 - The first controlled executor requires VS Code. Headless/daemon execution and Linux desktop support require their own actual-client conformance; Ubuntu core tests alone are not desktop inference evidence.

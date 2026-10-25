@@ -427,6 +427,26 @@ test('host errors expose phase and allowlisted codes without raw provider secret
   }
 });
 
+test('nested provider model_not_supported stream failure preserves a fixed actionable diagnostic without secrets', async t => {
+  const { root, model } = await setup(t);
+  const secret = 'PRIVATE_CUSTOM_ENDPOINT_TOKEN';
+  model.api.lm.selectChatModels = async selector => [{ ...selector, capabilities: { toolCalling: true },
+    sendRequest: async () => ({ stream: (async function* () {
+      throw new Error(`HTTP 400: ${JSON.stringify(JSON.stringify({ error: { code: 'model_not_supported',
+        message: `https://private-endpoint.invalid/?api_key=${secret}`, token: secret } }))}`);
+    })() }) }];
+  const started = await startNative(root, { role: 'manager', prompt: 'Inspect a bounded provider failure.' });
+  const blocked = await ended(root, started.id);
+  assert.equal(blocked.state, 'blocked'); assert.equal(blocked.inference_completed, false);
+  assert.match(blocked.error, /blocked during response-stream: MODEL_NOT_SUPPORTED:/);
+  assert.match(blocked.error, /9router alias.*upstream model target/);
+  assert.match(blocked.error, /No substitute model was selected/);
+  assert.equal(JSON.stringify(blocked).includes(secret), false);
+  const stored = readFileSync(join(root, blocked.receipt_path), 'utf8');
+  assert.equal(stored.includes(secret), false); assert.equal(stored.includes('private-endpoint.invalid'), false);
+  assert.match(readInvocation(root, blocked.id).error, /MODEL_NOT_SUPPORTED/);
+});
+
 test('manager resumes unchanged configuration but starts fresh in same workflow after policy change', async t => {
   const { root, policy } = await setup(t);
   const first = await managedRun(root, { requirement: 'Keep same workflow across model policy updates.', request_id: 'config-refresh' });

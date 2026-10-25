@@ -111,7 +111,10 @@ export async function hostRequest(host: HostDescriptor, operation: string, input
     const timedOut = () => new Error(timeoutPhase === 'connection'
       ? 'VS Code bridge connection timed out; the host may be busy or unavailable.'
       : `VS Code bridge request timed out during ${Object.hasOwn(operationTimeouts, operation) ? operation : 'control operation'}; inspect host load before retrying. No operation was automatically retried.`);
-    const req = request({ hostname: '127.0.0.1', port: host.port, path: `/${operation}`, method: 'POST',
+    // Control IPC can follow synchronous local hashing/review work. A pooled idle
+    // socket may expire while that work blocks the event loop; never replay a
+    // mutation after ECONNRESET or reuse a possibly expired connection.
+    const req = request({ hostname: '127.0.0.1', port: host.port, path: `/${operation}`, method: 'POST', agent: false,
       headers: { authorization: `Bearer ${host.token}`, 'x-neomind-host': host.instance,
         'content-type': 'application/json', 'content-length': Buffer.byteLength(text) }, signal }, async (res) => {
       try {
