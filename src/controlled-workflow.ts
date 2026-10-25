@@ -47,6 +47,8 @@ export interface ControlledSnapshot {
   finalizing_report_id?: string;
   procedure_runs?: { id: string; status: string }[]; procedure_candidate_id?: string; cornell_note_ids?: string[];
   pending_check_review?: boolean;
+  check_intents?: { id: string; attempt_id: string; title: string; baseline: Record<string, string>;
+    state: 'starting' | 'running' | 'completed'; pid?: number }[];
 }
 export interface ControlledStartInput { requirement?: string; requirements?: string[]; workflow_id?: string; request_id?: string; title?: string }
 const states = '.neomind/controlled/workflows';
@@ -461,11 +463,16 @@ class Controller {
       const prior = run.checks.find(item => item.attempt_id === attemptId && item.title === check.title && same(item.baseline, baseline));
       if (prior) continue;
       const checkId = randomUUID(), logPath = `.neomind/controlled/checks/${checkId}.log`;
+      run.check_intents ??= [];
+      run.check_intents.push({ id: checkId, attempt_id: attemptId, title: check.title, baseline, state: 'starting' });
       save(this.root, run, 'check-start', check.title);
-      const result = await runCommand({ command: check.command, cwd: this.root, signal, timeout_ms: check.timeout_ms ?? 60000 });
+      const result = await runCommand({ command: check.command, cwd: this.root, signal, timeout_ms: check.timeout_ms ?? 60000,
+        onStart: pid => { const current = readState(this.root, id), intent = current.check_intents!.find(item => item.id === checkId)!;
+          intent.state = 'running'; intent.pid = pid; save(this.root, current); } });
       const log = JSON.stringify({ command: check.command, baseline, result }, null, 2) + '\n';
       atomicWrite(safePath(this.root, logPath), log);
       run = readState(this.root, id);
+      run.check_intents!.find(item => item.id === checkId)!.state = 'completed';
       run.checks.push({ id: checkId, attempt_id: attemptId, invocation_id: attempt.invocation_id, title: check.title,
         command: check.command, baseline, log_path: logPath, log_sha256: hash(log), exit_code: result.exit_code,
         expected_exit_code: check.expected_exit_code ?? 0, negative: check.negative,
@@ -561,6 +568,10 @@ class Controller {
       save(this.root, current); return current;
     }
     if (job) return readState(this.root, id);
+    if (run.check_intents?.some(intent => intent.state !== 'completed')) {
+      run.status = 'uncertain'; run.blocker = { kind: 'environment', message: 'A check was interrupted without a durable result. Its saved process/command baseline must be reconciled before another execution; no command was automatically replayed.' };
+      save(this.root, run, 'uncertain', run.blocker.message); return run;
+    }
     const last = run.attempts.at(-1);
     if (last && ['running', 'starting'].includes(last.state)) {
       if (last.invocation_id && invocationIsActive(readInvocation(this.root, last.invocation_id))) {

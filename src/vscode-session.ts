@@ -114,10 +114,10 @@ export class VSCodeSession {
     const current = readInvocation(this.root, this.receipt.id);
     if (current.state !== 'running') throw new Error('Invocation no longer running.');
     const owned = ownedContext(this.root, this.receipt.request_id);
-    if (owned) await owned.callbacks.trace?.({ event: 'model-tool-request', tool: event.name,
+    if (owned) try { await owned.callbacks.trace?.({ event: 'model-tool-request', tool: event.name,
       model_input: { keys: Object.keys(event.input ?? {}), input_sha256: hash(JSON.stringify(event.input)),
         ...(typeof event.input?.path === 'string' ? { path: event.input.path.slice(0, 1024) } : {}) },
-      backend_binding: { workflow_id: this.receipt.workflow_id, task_id: this.receipt.task_id, invocation_id: this.receipt.id } });
+      backend_binding: { workflow_id: this.receipt.workflow_id, task_id: this.receipt.task_id, invocation_id: this.receipt.id } }); } catch { /* Trace is advisory. */ }
     const result = await this.client.callTool({ name: event.name, arguments: event.input }, undefined,
       { timeout: this.receipt.controlled_execution ? 660000 : 75000, signal: this.controller.signal });
     bounded(result);
