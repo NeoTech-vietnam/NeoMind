@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { cornellResearchSchema, compileCornellResearch } from '../dist/cornell-workflow.js';
 import { createCornellNote, validateCornellNote } from '../dist/notes.js';
+import { hash } from '../dist/storage.js';
 import { researchFixture } from './cornell-research-fixture.mjs';
 
 test('Cornell research accepts the actual command-plus-steps request shape and renders every step without executing commands', t => {
@@ -97,4 +98,84 @@ test('command-only and manual-only research preserve their canonical practice co
   assert.equal(compiled.note.practice.mode, undefined);
   assert.equal(compiled.note.practice.procedure, undefined);
   assert.equal(compiled.note.practice.exercise, manual.note.practice.exercise);
+});
+
+test('natural research claim labels compile to their declared canonical classifications without inventing a basis', t => {
+  const { root, input } = researchFixture(t);
+  input.methods = 'Observed: Read the saved requirement and independently enumerate the finite example [S1].';
+  input.explanations[0].body = 'Source-reported: Each first-set element pairs with every second-set element [S1].';
+  input.results = 'Expected: Three elements paired with two elements yield six distinct ordered pairs [S1].';
+  input.discussion = 'Inferred: Finite enumeration supports this bounded example rather than every possible counting problem [S1].';
+  const before = structuredClone(input), compiled = compileCornellResearch(root, input);
+  assert.deepEqual(input, before);
+  for (const [label, body] of [['observed', input.methods], ['source-reported', input.explanations[0].body],
+    ['expected', input.results], ['inferred', input.discussion]])
+    assert.ok(compiled.note.main_notes.includes(`[${label}]${body.slice(body.indexOf(':') + 1)}`));
+  const note = createCornellNote(root, compiled.note);
+  assert.deepEqual(validateCornellNote(root, note.meta.id).problems, []);
+  const methods = z.toJSONSchema(cornellResearchSchema).properties.methods;
+  assert.match(methods.description, /Observed:.*Source-reported:.*Expected:.*Inferred:/);
+});
+
+test('claim rendering preserves literal code, expected output, commands and unclassified prose', t => {
+  const { root, input } = researchFixture(t);
+  const fenced = '```text\nObserved: EXACT_STDOUT\nExpected: EXACT_EXPECTATION\n```';
+  const indented = '    Inferred: INDENTED_LITERAL';
+  input.methods = `Observed: Compare the explicit finite result with its source [S1].\n\n${fenced}\n\n${indented}\n\nThe literal \`Observed: VALUE\` is an example output.`;
+  input.explanations[0].body = '    Expected: this indented code remains a literal rather than a classification.';
+  input.worked_example.body = 'Observed: this example text is literal and remains unchanged.';
+  input.worked_example.expected = 'Expected: this exact expected-output string must remain unchanged.';
+  const compiled = compileCornellResearch(root, input);
+  assert.ok(compiled.note.main_notes.includes(fenced));
+  assert.ok(compiled.note.main_notes.includes(indented));
+  assert.ok(compiled.note.main_notes.includes('The literal `Observed: VALUE` is an example output.'));
+  assert.ok(compiled.note.main_notes.includes('\n\n    Expected: this indented code remains a literal rather than a classification.\n\n'));
+  assert.ok(!compiled.note.main_notes.includes('[expected] this indented code'));
+  assert.deepEqual(compiled.note.demonstration, input.worked_example);
+  assert.deepEqual(compiled.note.practice.command, input.practice.command);
+  const note = createCornellNote(root, compiled.note);
+  assert.equal(validateCornellNote(root, note.meta.id).ok, true);
+});
+
+test('unlabeled narratives and unsupported observation claims still fail the canonical gates with exact syntax guidance', t => {
+  for (const invalid of ['unlabeled', 'unsupported-label', 'code-only-label', 'observed-without-evidence']) {
+    const { root, input } = researchFixture(t);
+    if (invalid === 'observed-without-evidence') input.worked_example.observed = 'Observed: The claimed test passed, but no actual execution evidence was supplied.';
+    else {
+      input.methods = invalid === 'code-only-label' ? '```text\nObserved: example output only\n```' :
+        `${invalid === 'unsupported-label' ? 'Measured: ' : ''}Read the finite example and count its entries [S1].`;
+      input.explanations[0].body = 'Each first-set element pairs with every second-set element [S1].';
+      input.results = 'Three elements paired with two elements produce six ordered pairs [S1].';
+      input.discussion = 'This finite example does not establish every possible counting result [S1].';
+    }
+    const compiled = compileCornellResearch(root, input);
+    assert.throws(() => createCornellNote(root, compiled.note), invalid === 'observed-without-evidence'
+      ? /observed demonstration requires evidence record IDs/i : /\[observed\].*\[source-reported\].*\[expected\].*\[inferred\]/);
+    assert.equal(existsSync(join(root, compiled.note.path)), false);
+  }
+});
+
+test('trusted exact file-source approval permits canonical skill assets without relaxing output paths or private sources', t => {
+  const { root, input } = researchFixture(t), source = '.agents/skills/research/assets/reference.md';
+  mkdirSync(join(root, '.agents/skills/research/assets'), { recursive: true });
+  const content = '# Finite research reference\nThe saved finite example has six ordered pairs.\n';
+  writeFileSync(join(root, source), content);
+  input.sources = [{ id: 'S1', title: 'Canonical finite research source', uri: source, retrieved_at: '2026-10-25T00:00:00Z' }];
+  assert.throws(() => compileCornellResearch(root, input), /canonical visible/);
+  assert.throws(() => compileCornellResearch(root, input, { approved_source_files: [source + '.other'] }), /canonical visible/);
+  const policy = { approved_source_files: [source] }, compiled = compileCornellResearch(root, input, policy);
+  assert.equal(compiled.note.sources[0].sha256, hash(content));
+  assert.equal(compiled.note.sources[0].uri, source);
+  assert.throws(() => compileCornellResearch(root, { ...input, output_dir: '.agents/research-output' }, policy), /canonical visible/);
+  assert.throws(() => compileCornellResearch(root, { ...input, sources: [{ ...input.sources[0], uri: '.neomind/project.yaml' }] },
+    { approved_source_files: ['.neomind/project.yaml'] }), /private|canonical visible/);
+  for (const alias of ['.neomind./source.md', '.git /source.md', '.agents/skills/research/assets/reference.md ',
+    '.agents/skills/research/assets/CON.md', '.agents/skills/research/assets/NUL', '.agents/skills/research/assets/com1.json',
+    '.agents/skills/research/assets/reference.md:stream', '.agents/skills/research/assets/*.md'])
+    assert.throws(() => compileCornellResearch(root, { ...input, sources: [{ ...input.sources[0], uri: alias }] },
+      { approved_source_files: [alias] }), /Approved research sources must be canonical relative files/, alias);
+  const note = createCornellNote(root, compiled.note);
+  assert.equal(validateCornellNote(root, note.meta.id).ok, true);
+  writeFileSync(join(root, source), content + 'A later change invalidates the earlier source baseline.\n');
+  assert.equal(validateCornellNote(root, note.meta.id).ok, false, 'Approval never substitutes for current source freshness.');
 });

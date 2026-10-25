@@ -459,7 +459,7 @@ function writeCornellNote(
   }
   if (!/\[(?:observed|source-reported|expected|inferred)\]/.test(input.main_notes))
     throw new Error(
-      'Main notes must label claims as observed, source-reported, expected, or inferred.',
+      'Main notes must label claims using the exact bracket syntax [observed], [source-reported], [expected], or [inferred].',
     );
   if (
     !input.sources.length ||

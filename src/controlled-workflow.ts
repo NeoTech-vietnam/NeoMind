@@ -14,7 +14,8 @@ import { prepareWork, type WorkPreparation } from './procedure-reuse.js';
 import { runCommand } from './command-runner.js';
 import { readNativeSoftwareContract } from './native-software.js';
 import type { ControlledBinding, ControlledCallbacks, ControlledPlan, ControlledReport } from './controlled-tools.js';
-import { ControlledToolError, controlledReviewInstructions } from './controlled-tools.js';
+import { ControlledToolError, controlledReviewInstructions, controlledPublicReferencePath, controlledSkillInputPath } from './controlled-tools.js';
+import { normalizeControlledCornellSources, existingControlledCornellNote, controlledCornellResult, type ControlledCornellSourceContext, type ControlledCornellResult } from './controlled-cornell-sources.js';
 import { registerProcedure, resolveProcedure, runProcedure } from './procedures.js';
 import { compileCornellResearch, readCornellDestination, type CornellResearchInput } from './cornell-workflow.js';
 import { createCornellNote, validateCornellNote } from './notes.js';
@@ -65,6 +66,7 @@ export interface ControlledSnapshot {
   role_handoff?: { attempt_id: string; task_id: string; denial_trace: string; target_path: string; legacy_trace: boolean };
   finalizing_report_id?: string;
   procedure_runs?: { id: string; status: string }[]; procedure_candidate_id?: string; procedure_candidate_version?: string; cornell_note_ids?: string[];
+  cornell_results?: ControlledCornellResult[];
   pending_check_review?: boolean;
   check_intents?: { id: string; attempt_id: string; title: string; baseline: Record<string, string>;
     state: 'starting' | 'running' | 'completed'; pid?: number; pilot_root?: string; pilot_nonce?: string }[];
@@ -616,14 +618,27 @@ class Controller {
             const completed = readState(this.root, id), verifier = [...completed.attempts].reverse().find(item => item.stage === 'verification' && item.state === 'completed');
             const evidenceIds = completed.checks.filter(check => !check.negative && check.passed && check.attempt_id === verifier?.id)
               .map(check => check.evidence_id).filter((id): id is string => !!id);
+            const sourceContext: ControlledCornellSourceContext = { workflow_id: id, epoch_id: completed.epoch_id,
+              task_id: contract!.task_id, requirement_ids: contract!.requirement_ids,
+              saved_results: completed.cornell_results,
+              evidence: completed.checks.filter(check => !check.negative && check.passed && check.attempt_id === verifier?.id && check.evidence_id)
+                .map(check => ({ evidence_id: check.evidence_id!, log_path: check.log_path })),
+              file_allowed: path => (controlledPublicReferencePath(path) ||
+                !!binding.approved_inputs?.includes(path) && controlledSkillInputPath(path)) &&
+                (binding.read_paths ?? ['.']).some(scope => scope === '.' || covers(path, [scope])) };
+            const sources = normalizeControlledCornellSources(this.root, input.sources, sourceContext);
             const worked = input.worked_example && typeof input.worked_example === 'object' ? input.worked_example as Record<string, unknown> : {};
-            const compiled = compileCornellResearch(this.root, { ...input, worked_example: { ...worked, evidence_ids: evidenceIds }, requirement_id: requirement.meta.id,
+            const compiled = compileCornellResearch(this.root, { ...input, sources: sources.sources, worked_example: { ...worked, evidence_ids: evidenceIds }, requirement_id: requirement.meta.id,
               expected_requirement_revision: requirement.meta.revision, workflow_id: id, task_id: contract!.task_id,
-              owner: role, output_dir: directory } as CornellResearchInput);
-            const note = createCornellNote(this.root, compiled.note);
+              owner: role, output_dir: directory } as CornellResearchInput, { approved_source_files: sources.approved_source_files });
+            const note = existingControlledCornellNote(this.root, compiled, sourceContext) ?? createCornellNote(this.root, compiled.note);
             const current = readState(this.root, id); current.cornell_note_ids = [...new Set([...(current.cornell_note_ids ?? []), note.meta.id])];
+            if (!current.cornell_results?.some(result => result.note_id === note.meta.id && result.input_hash === compiled.input_hash))
+              current.cornell_results = [...(current.cornell_results ?? []), controlledCornellResult(compiled, note)];
             save(this.root, current, 'cornell-compiled', 'Research note, exercises and separate answers compiled by the existing Cornell formatter.');
-            return { saved: true, artifacts: [`${directory}/note.md`, `${directory}/exercises.md`, `${directory}/answers.md`] };
+            return { saved: true, artifacts: [`${directory}/note.md`, `${directory}/exercises.md`, `${directory}/answers.md`],
+              ...(sources.unfetched_sources.length ? { unfetched_source_ids: sources.unfetched_sources,
+                source_limitation: 'External URLs are recorded references; the runtime did not fetch or verify their contents.' } : {}) };
           } catch (error) { throw new ControlledToolError('CORNELL_INVALID', error instanceof Error ? error.message : 'Research did not satisfy the Cornell format.'); }
         },
         prepareWork: query => prepareWork(this.root, { request: query.request, parameters: query.parameters,
@@ -723,6 +738,7 @@ class Controller {
     const original = run.continuation && !contract ? readNativeSoftwareContract(this.root, run.workflow_id) : undefined;
     const obligations = original ? continuationObligations(original.plan.acceptance_criteria) : undefined;
     const recovery = stage === 'planning' ? controlledPlanningRecovery(this.root, run) : [];
+    const currentVerifier = stage === 'synthesis' ? [...run.attempts].reverse().find(item => item.stage === 'verification' && item.state === 'completed') : undefined;
     return [
       `User requirement:\n${run.requirement}`,
       `Your stage: ${stage}. Use only the supplied semantic tools. Runtime owns identity, records, transitions and checks.`,
@@ -742,7 +758,7 @@ class Controller {
       `Cornell destination default: ${readCornellDestination(this.root).directory}/${run.workflow_id.toLowerCase()}. Only add a Cornell bundle when requested by the user.`,
       run.blocker ? `Repair/diagnosis context:\n${JSON.stringify(run.blocker)}` : '',
       `Prior reports:\n${JSON.stringify(run.attempts.filter(item => item.report).slice(-4).map(item => ({ stage: item.stage, report: item.report })))}`,
-      stage === 'synthesis' ? `Current actual evidence: ${JSON.stringify(run.checks.filter(check => !check.negative && check.passed).map(check => ({ title: check.title, evidence_id: check.evidence_id, log: check.log_path })))}. The compiler binds evidence IDs automatically; describe observed facts supported by these actual checks.` : '',
+      stage === 'synthesis' ? `Current actual evidence: ${JSON.stringify(run.checks.filter(check => !check.negative && check.passed && check.attempt_id === currentVerifier?.id).map(check => ({ title: check.title, evidence_id: check.evidence_id, source_uri: `record:${check.evidence_id}` })))}. Use check_evidence for bounded actual stdout/stderr; private runtime log files are not readable source files. The backend binds evidence and source metadata automatically; cite supplied source_uri or readable project files, and describe only facts supported by these checks.` : '',
       stage === 'verification' ? 'Independently inspect implementation, author only checker files, execute check_run, and report pass/fail. Include negative controls that prove bad output fails. Distinguish product defects from checker defects.' : '',
       stage === 'review' ? controlledReviewInstructions(reviewPurpose) : '',
       stage === 'diagnosis' ? 'Diagnose existing evidence without modifying files. Report failure_kind implementation/checker/protocol/environment, concrete findings, and bounded repair direction.' : '',

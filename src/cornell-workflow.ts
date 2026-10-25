@@ -6,10 +6,14 @@ import { normalizeCornellOwnership, prepareRecipe, type RecipeInput } from './re
 import { validateCornellNote, type CornellInput } from './notes.js';
 import { atomicWrite, getRecord, hash, loadRecords, now, readConfig, safePath, withOperationLock } from './storage.js';
 import type { ProjectRecord } from './types.js';
-import { hasUnfinishedCornellProse } from './cornell-content.js';
+import { hasUnfinishedCornellProse, renderCornellClaimLabels } from './cornell-content.js';
 
 const prose = z.string().trim().min(8).max(32_000).refine(value => !hasUnfinishedCornellProse(value), 'Complete substantive prose is required.')
   .describe('Complete substantive prose. Discussion of TODO or placeholder validation is allowed; unfinished markers, filler and unexpanded template tokens are not.');
+// Preserve indentation until rendering so literal code cannot become a claim
+// merely because the general prose schema trims its leading whitespace.
+const narrative = z.string().min(8).max(32_000).refine(value => value.trim().length >= 8 && !hasUnfinishedCornellProse(value), 'Complete substantive prose is required.')
+  .describe('Declare the actual basis of narrative claims using [observed], [source-reported], [expected] or [inferred], or a prose-line prefix Observed:, Source-reported:, Expected:, Inferred:. The compiler renders declared prefixes canonically; it never invents a classification or changes literal code/output. At least one narrative claim label is required.');
 const objective = z.object({ id: z.string().regex(/^O[1-9][0-9]*$/), text: prose }).strict();
 const question = (prefix: string) => z.object({ id: z.string().regex(new RegExp(`^${prefix}[1-9][0-9]*$`)), prompt: prose,
   objective_ids: z.array(z.string().regex(/^O[1-9][0-9]*$/)).min(1).max(32), answer: prose }).strict();
@@ -32,15 +36,17 @@ export const cornellResearchSchema = z.object({
   workflow_id: z.string().optional(), task_id: z.string().optional(), owner: z.string().optional(),
   topic: prose, date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), output_dir: z.string().min(1),
   context: prose, constraints: z.array(prose).min(1).max(32), abstract: prose,
-  learning_objectives: z.array(objective).min(1).max(32), methods: prose,
-  explanations: z.array(z.object({ heading: prose, body: prose }).strict()).min(1).max(32),
-  results: prose, discussion: prose, questions: z.array(question('Q')).min(1).max(40),
+  learning_objectives: z.array(objective).min(1).max(32), methods: narrative,
+  explanations: z.array(z.object({ heading: prose, body: narrative }).strict()).min(1).max(32),
+  results: narrative, discussion: narrative, questions: z.array(question('Q')).min(1).max(40),
   worked_example: z.object({ body: prose, expected: prose, command: z.array(z.string().min(1)).min(1).max(64).optional(),
     observed: prose.optional(), evidence_ids: z.array(z.string()).max(32).optional() }).strict(),
   practice,
   sources: z.array(source).min(1).max(64), failure_cases: z.array(prose).min(1).max(32), summary: prose,
 }).strict();
 export type CornellResearchInput = z.infer<typeof cornellResearchSchema>;
+/** Trusted backend source authorization; never part of model-supplied research. */
+export interface CornellSourcePolicy { approved_source_files: readonly string[] }
 export interface CompiledCornellResearch { input_hash: string; note: CornellInput; recipe_input: RecipeInput }
 export interface PreparedCornellResearch extends CompiledCornellResearch {
   status: 'prepared' | 'reused'; recipe_instance: ProjectRecord; existing_note_id?: string;
@@ -61,9 +67,23 @@ function visiblePath(root: string, value: string): string {
 function unique(values: string[], label: string): void {
   if (new Set(values).size !== values.length) throw new Error(`${label} IDs must be distinct.`);
 }
+function researchSourcePath(root: string, value: string, policy?: CornellSourcePolicy): string {
+  if (!Array.isArray(policy?.approved_source_files) || !policy.approved_source_files.includes(value)) return visiblePath(root, value);
+  const parts = value.split('/');
+  if (!value || /[\\:*?\x00-\x1f]/.test(value) || isAbsolute(value) ||
+      parts.some(part => !part || part === '.' || part === '..' || /[. ]$/.test(part) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part)) ||
+      parts.some(part => /^\.(?:git|neomind|taskforces|verythinker)$/i.test(part)))
+    throw new Error('Approved research sources must be canonical relative files outside private runtime paths.');
+  const target = safePath(root, value);
+  if (relative(resolve(root), target).replaceAll('\\', '/') !== value) throw new Error('Research source path is not canonical.');
+  noLinks(root, value);
+  const info = lstatSync(target);
+  if (!info.isFile() || info.nlink !== 1 || info.size > 2 * 1024 * 1024) throw new Error('Approved research sources require bounded regular unlinked files.');
+  return value;
+}
 
 /** Compile supplied research, never synthesize facts or execute its commands. */
-export function compileCornellResearch(root: string, value: CornellResearchInput): CompiledCornellResearch {
+export function compileCornellResearch(root: string, value: CornellResearchInput, sourcePolicy?: CornellSourcePolicy): CompiledCornellResearch {
   if (Buffer.byteLength(JSON.stringify(value)) > 512 * 1024) throw new Error('Research input exceeds 512 KiB.');
   const input = cornellResearchSchema.parse(value);
   const requirement = getRecord(root, input.requirement_id);
@@ -90,7 +110,7 @@ export function compileCornellResearch(root: string, value: CornellResearchInput
     if (!sourceIds.has(match[1]!)) throw new Error(`Unknown source citation [${match[1]}].`);
   for (const item of input.sources) {
     if (!item.record_id && !/^https:\/\//.test(item.uri)) {
-      visiblePath(root, item.uri);
+      researchSourcePath(root, item.uri, sourcePolicy);
       const digest = hash(readFileSync(safePath(root, item.uri)));
       if (item.sha256 && item.sha256 !== digest) throw new Error('Research source hash changed.');
       item.sha256 = digest;
@@ -108,7 +128,7 @@ export function compileCornellResearch(root: string, value: CornellResearchInput
     path: `${input.output_dir}/note.md`, workflow_id: input.workflow_id,
     requirement_ids: [requirement.meta.id], context: input.context, constraints: input.constraints,
     cues: input.questions.map(item => `${item.id} (${item.objective_ids.join(', ')}): ${item.prompt}`),
-    main_notes: `### Methods\n\n${input.methods}\n\n${input.explanations.map(item => `### ${item.heading}\n\n${item.body}`).join('\n\n')}\n\n### Results\n\n${input.results}\n\n### Discussion\n\n${input.discussion}\n\n### Research Questions\n\n${questions(input.questions)}`,
+    main_notes: `### Methods\n\n${renderCornellClaimLabels(input.methods)}\n\n${input.explanations.map(item => `### ${item.heading}\n\n${renderCornellClaimLabels(item.body)}`).join('\n\n')}\n\n### Results\n\n${renderCornellClaimLabels(input.results)}\n\n### Discussion\n\n${renderCornellClaimLabels(input.discussion)}\n\n### Research Questions\n\n${questions(input.questions)}`,
     demonstration: input.worked_example, sources: input.sources, failure_cases: input.failure_cases, summary: input.summary,
     practice: { exercise_path: `${input.output_dir}/exercises.md`, answer_path: `${input.output_dir}/answers.md`,
       exercise: `# Research and practice questions\n\nAnswer the research questions before consulting the separate answer file. Explain the assumptions and reasoning in your own words.\n\n${questions(input.questions)}\n## Practice\n\n${questions(input.practice.questions)}` +

@@ -12,3 +12,25 @@ export function hasUnfinishedCornellProse(value: string): boolean {
     return /^(?:[\p{L}][\p{L}\p{N} _/-]{0,64}:\s*)?(?:TODO|TBD|placeholder(?:\s+(?:text|content|answer|description))?|insert here|fill in)[\s.!]*$/iu.test(content);
   });
 }
+
+/** Render only classifications explicitly supplied at the start of prose lines. */
+export function renderCornellClaimLabels(value: string): string {
+  let fence: { marker: string; width: number } | undefined;
+  return value.split(/(?<=\n)/).map(line => {
+    const body = line.replace(/\r?\n$/, '');
+    if (fence) {
+      const closing = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(body)?.[1];
+      if (closing?.charAt(0) === fence.marker && closing.length >= fence.width) fence = undefined;
+      return line;
+    }
+    const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(body);
+    if (opening && !(opening[1]!.charAt(0) === '`' && opening[2]!.includes('`'))) {
+      fence = { marker: opening[1]!.charAt(0), width: opening[1]!.length };
+      return line;
+    }
+    // Four-space and tab-indented lines are literal code. Inline code cannot
+    // begin with this unquoted classification prefix and is never rewritten.
+    return line.replace(/^( {0,3})(observed|source-reported|expected|inferred):(?=[ \t\r\n]|$)/i,
+      (_match, indentation: string, label: string) => `${indentation}[${label.toLowerCase()}]`);
+  }).join('');
+}

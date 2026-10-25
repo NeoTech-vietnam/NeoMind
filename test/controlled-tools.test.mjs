@@ -7,6 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { initialize } from '../dist/storage.js';
 import { createControlledMcpServer, controlledInstructions, controlledToolNames } from '../dist/controlled-tools.js';
+import { researchFixture } from './cornell-research-fixture.mjs';
 
 const decode = result => JSON.parse(result.content[0].text);
 function project(t) {
@@ -65,6 +66,24 @@ test('final synthesis can read bound execution evidence and compile notes withou
   assert.equal(names.includes('task_file_write'), false); assert.equal(names.includes('check_run'), false);
   assert.equal(decode(await c.call('check_evidence', { title: 'Independent check' }))[0].exit_code, 0);
   assert.deepEqual(observed, ['Independent check']);
+});
+
+test('controlled Cornell sources advertise only semantic citations and strip only cached provenance fields', async t => {
+  const { root, input } = researchFixture(t), captured = [], c = await connect(t, root, binding('synthesis'), {
+    compileResearch(value) { captured.push(value); return { saved: true }; },
+  });
+  const declared = (await c.client.listTools()).tools.find(tool => tool.name === 'cornell_research_compile').inputSchema;
+  assert.deepEqual(Object.keys(declared.properties.sources.items.properties).sort(), ['id', 'locator', 'title', 'uri']);
+  const { requirement_id, expected_requirement_revision, workflow_id, task_id, owner, output_dir, ...semantic } = input;
+  semantic.sources = [{ id: 'S1', title: 'Actual README provenance', uri: 'scripts/README-leetcode.md',
+    record_id: 'invented-description', sha256: '0'.repeat(64), retrieved_at: 'invented timestamp' }];
+  const response = await c.call('cornell_research_compile', semantic);
+  assert.equal(response.isError, undefined);
+  assert.deepEqual(captured[0].sources, [{ id: 'S1', title: 'Actual README provenance', uri: 'scripts/README-leetcode.md' }]);
+  const unknown = await c.call('cornell_research_compile', { ...semantic,
+    sources: [{ ...semantic.sources[0], unsupported_source_field: true }] });
+  assert.equal(unknown.isError, true);
+  assert.equal(captured.length, 1, 'Only the three obsolete provenance fields may be discarded.');
 });
 
 test('identity spoofing is rejected before the bound report callback and no supplied secret is echoed', async t => {
