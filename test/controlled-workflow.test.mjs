@@ -10,7 +10,8 @@ import { executionModes } from '../dist/execution-mode.js';
 import { ensureRoutingPolicy, readInvocation } from '../dist/routing.js';
 import { enableVSCodeHost } from '../dist/vscode-host.js';
 import { shutdownNative } from '../dist/native.js';
-import { startControlledHost, startControlledWorkflow, controlControlledWorkflow, controlledStatus } from '../dist/controlled-workflow.js';
+import { startControlledHost, startControlledWorkflow, controlControlledWorkflow, controlledStatus, reconcileInterruptedControlledChecks } from '../dist/controlled-workflow.js';
+import { readCheckReconciliations, unresolvedControlledChecks, assertFreshVerifierAfterReconciliation, reconciliationPath } from '../dist/controlled-check-reconciliation.js';
 import { setRoleModel } from '../dist/model-control.js';
 import { readAgentMap } from '../dist/agent-map.js';
 import { verify } from '../dist/engineering.js';
@@ -106,7 +107,10 @@ function scriptFor(name, stage, attempt, options, held) {
   }
   if (stage === 'verification') {
     const wrongChecker = options.checkerFailure && attempt === 1;
-    const content = options.readOnlyBaseline ? "const run=require('node:child_process').spawnSync(process.execPath,['scripts/verify-leetcode-exercise.mjs',process.argv[2]],{encoding:'utf8'});process.stdout.write(run.stdout??'');process.stderr.write(run.stderr??'');process.exit(run.status??2);\n"
+    const childCode = `require('node:fs').writeFileSync(${JSON.stringify(`${name}/verify/child.json`)},JSON.stringify({pid:process.pid,created_at:new Date(performance.timeOrigin).toISOString()}));setInterval(()=>{},1000);`;
+    const content = options.slowChecker && attempt === (options.orphanHistory ? 2 : 1)
+      ? `const child=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(childCode)}],{stdio:'ignore',windowsHide:true});require('node:fs').writeFileSync(${JSON.stringify(`${name}/verify/running.json`)},JSON.stringify({pid:process.pid,created_at:new Date(performance.timeOrigin).toISOString(),child:child.pid}));console.log('owned long checker started');setInterval(()=>{},1000);\n`
+      : options.readOnlyBaseline ? "const run=require('node:child_process').spawnSync(process.execPath,['scripts/verify-leetcode-exercise.mjs',process.argv[2]],{encoding:'utf8'});process.stdout.write(run.stdout??'');process.stderr.write(run.stderr??'');process.exit(run.status??2);\n"
       : options.unsafeChecker ? "require('node:fs').writeFileSync(require('node:path').join(__dirname,'../../escape.txt'),'outside assigned scope');\n"
       : options.exitZeroChecker ? 'process.exit(0);\n'
       : `const assert=require('node:assert/strict'); const fs=require('node:fs'); assert.equal(Number(fs.readFileSync(process.argv[2],'utf8')),${wrongChecker ? 2 : 1}); console.log('scalar validated');\n`;
@@ -124,7 +128,8 @@ function scriptFor(name, stage, attempt, options, held) {
   }
   if (stage === 'review') {
     const scopeReview = options.reviewScope || options.unsafeChecker;
-    const result = report({ verdict: options.unsafeChecker ? 'fail' : 'pass', artifacts: [output, checker, bad],
+    const result = report({ verdict: options.unsafeChecker || options.orphanHistory && attempt === 1 ? 'fail' : 'pass', artifacts: [output, checker, bad],
+      ...(options.orphanHistory && attempt === 1 ? { failure_kind: 'checker', findings: ['A separate current verification attempt is required before final acceptance.'] } : {}),
       ...(options.unsafeChecker ? { failure_kind: 'checker', findings: ['Checker writes escape.txt outside its assigned/disposable execution scope; do not execute it.'] }
         : options.reviewScope ? { findings: ['The product scalar is two; the sound independent checker will safely diagnose that product defect by rejecting it.'],
           limitations: ['Pre-execution checker readiness is separate from product acceptance; no execution evidence exists yet.'] } : {}) });
@@ -143,11 +148,11 @@ function scriptFor(name, stage, attempt, options, held) {
   throw new Error(`Unexpected fixture stage ${stage}`);
 }
 
-async function setup(t, scenarios) {
+async function setup(t, scenarios, existingRoot) {
   // The owner canonicalizes native roots; direct private callback lookup must use
   // that same identity when Windows TEMP is exposed through an 8.3 alias.
-  const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-controlled-flow-')));
-  initialize(root, { project_id: 'CONTROLLED', name: 'Controlled Bridge fixture', platforms: ['codex', 'copilot'], max_workers: 3, repair_attempts: 1 });
+  const parent = realpathSync.native(tmpdir()), root = existingRoot ? realpathSync.native(existingRoot) : realpathSync.native(mkdtempSync(join(parent, 'neomind-controlled-flow-')));
+  if (!existingRoot) initialize(root, { project_id: 'CONTROLLED', name: 'Controlled Bridge fixture', platforms: ['codex', 'copilot'], max_workers: 3, repair_attempts: 1 });
   if (Object.values(scenarios).some(options => options.readOnlyBaseline)) {
     atomicWrite(safePath(root, 'scripts/verify-leetcode-exercise.mjs'), "import {readFileSync} from 'node:fs';const expected=JSON.parse(readFileSync('.agents/skills/helpers/assets/oracle.json','utf8')).expected;const value=Number(readFileSync(process.argv[2],'utf8'));console.log('readonly delegate observed scalar: '+value);process.exit(value===expected?0:1);\n");
     atomicWrite(safePath(root, '.agents/skills/helpers/assets/oracle.json'), '{"expected":1}\n');
@@ -196,10 +201,34 @@ async function setup(t, scenarios) {
   let bridge = await enableVSCodeHost(api, root), owner = await startControlledHost(root);
   t.after(async () => { await owner.close(); await shutdownNative(root); await bridge.close();
     assert.equal(dirname(root), parent); rmSync(root, { recursive: true, force: true }); });
-  return { root, observed, errors, held, restart: async () => {
+  return { root, observed, errors, held, closeOwner: () => owner.close(), closeBridge: () => bridge.close(), restart: async () => {
     await owner.close(); await shutdownNative(root); await bridge.close();
     bridge = await enableVSCodeHost(api, root); owner = await startControlledHost(root);
   } };
+}
+
+// A separate real owner creates signed producer/interrupted-Verifier receipts.
+// A targeted I/O failure leaves an actual unknown command intent; no signature or
+// receipt ownership is fabricated, and the creating owner then genuinely exits.
+if (process.env.NEOMIND_TEST_ORPHAN_OWNER === '1') {
+  const env = await setup({ after() {} }, { orphaned: { slowChecker: true, highRisk: true, orphanHistory: true } });
+  const initial = await startControlledWorkflow(env.root, { requirement: 'Scenario: orphaned\nCreate and independently verify the requested scalar.', request_id: 'fixture-orphaned' }), marker = safePath(env.root, 'orphaned/verify/running.json'), childMarker = safePath(env.root, 'orphaned/verify/child.json');
+  await until(env.root, initial.workflow_id, () => existsSync(marker) && existsSync(childMarker), 'fixture checker tree should start', env.errors);
+  const parentIdentity = JSON.parse(readFileSync(marker, 'utf8')), childIdentity = JSON.parse(readFileSync(childMarker, 'utf8'));
+  const write = fs.writeFileSync;
+  fs.writeFileSync = function (path, ...args) {
+    if (typeof path === 'string' && /\/\.neomind\/controlled\/checks\/[^/]+\.log\.[^/]+\.tmp$/.test(path.replaceAll('\\', '/')))
+      throw Object.assign(new Error('Injected check-log persistence failure.'), { code: 'EIO' });
+    return write.call(this, path, ...args);
+  };
+  syncBuiltinESMExports();
+  try { await env.closeOwner(); }
+  finally { fs.writeFileSync = write; syncBuiltinESMExports(); }
+  await shutdownNative(env.root); await env.closeBridge();
+  process.stdout.write(`${JSON.stringify({ root: env.root, workflow_id: initial.workflow_id,
+    process_identities: [{ pid: parentIdentity.pid, created_at: parentIdentity.created_at, role: 'check-root' },
+      { pid: childIdentity.pid, created_at: childIdentity.created_at, role: 'descendant' }] })}\n`);
+  process.exit(0);
 }
 async function until(root, workflow, predicate, message, errors = []) {
   const deadline = Date.now() + (process.platform === 'win32' ? 180000 : 60000);
@@ -462,6 +491,132 @@ test('pause and owner restart retain checkpoint artifacts and resume the same wo
   assert.equal(done.attempts.filter(attempt => attempt.stage === 'planning').length, 1);
   assert.ok(done.attempts.some(attempt => attempt.state === 'interrupted'));
   assert.equal(loadRecords(env.root).filter(record => record.meta.data.kind === 'manager-workflow').length, 1);
+});
+
+test('owner close waits for actual checker-tree cancellation and durable failed evidence before returning, then resumes the same workflow', async t => {
+  const env = await setup(t, { closingchecker: { slowChecker: true } });
+  const initial = await submit(env.root, 'closingchecker'), marker = safePath(env.root, 'closingchecker/verify/running.json');
+  await until(env.root, initial.workflow_id, run => run.check_intents?.some(intent => intent.state === 'running') && existsSync(marker),
+    'actual owned checker and descendant must be running before owner close', env.errors);
+  const owned = JSON.parse(readFileSync(marker, 'utf8')), started = Date.now();
+  const closing = env.closeOwner();
+  await assert.rejects(controlControlledWorkflow(env.root, { workflow_id: initial.workflow_id, action: 'resume' }));
+  await assert.rejects(startControlledWorkflow(env.root, { requirement: 'No admission during shutdown.', request_id: 'shutdown-race' }));
+  await closing;
+  assert.equal(loadRecords(env.root).filter(record => record.meta.data.kind === 'manager-workflow').length, 1);
+  assert.ok(Date.now() - started < 8000, 'Owned command cancellation and persistence must be bounded.');
+  const stopped = controlledStatus(env.root, initial.workflow_id);
+  assert.equal(stopped.status, 'interrupted');
+  assert.ok(stopped.check_intents.every(intent => intent.state === 'completed'), 'Owner close must wait for domain persistence, not only cancelled MCP delivery.');
+  assert.equal(stopped.checks.length, 1);
+  const check = stopped.checks[0], log = JSON.parse(readFileSync(safePath(env.root, check.log_path), 'utf8'));
+  assert.equal(check.cancelled, true); assert.equal(check.passed, false); assert.equal(log.result.cancelled, true);
+  assert.equal(getRecord(env.root, check.evidence_id).meta.data.result, 'fail');
+  const alive = pid => {
+    try {
+      process.kill(pid, 0);
+      return !(process.platform === 'linux' && /\) Z /.test(readFileSync(`/proc/${pid}/stat`, 'utf8')));
+    } catch { return false; }
+  };
+  const deadline = Date.now() + 3000;
+  while ((alive(owned.pid) || alive(owned.child)) && Date.now() < deadline) await delay(20);
+  assert.equal(alive(owned.pid), false); assert.equal(alive(owned.child), false);
+  assert.equal(stopped.final_report_id, undefined);
+  await env.restart();
+  await controlControlledWorkflow(env.root, { workflow_id: initial.workflow_id, action: 'resume' });
+  const done = await until(env.root, initial.workflow_id, run => run.status === 'completed',
+    'a durably cancelled attempt must permit explicit same-workflow continuation with fresh checks', env.errors);
+  assert.equal(done.workflow_id, initial.workflow_id); assert.equal(done.attempts.filter(attempt => attempt.stage === 'planning').length, 1);
+  assert.equal(done.checks[0].id, check.id); assert.equal(done.checks[0].cancelled, true, 'Historical cancellation must not be rewritten as success.');
+  assert.ok(done.checks.slice(1).every(item => item.passed));
+});
+
+test('trusted orphan maintenance preserves UNKNOWN history, rejects unsafe evidence, replays idempotently and requires fresh signed verification', { timeout: 240000 }, async t => {
+  const { spawn } = await import('node:child_process');
+  const child = spawn(process.execPath, ['test/controlled-workflow.test.mjs'], {
+    cwd: process.cwd(), env: { ...process.env, NEOMIND_TEST_ORPHAN_OWNER: '1' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const output = [], errors = [];
+  child.stdout.on('data', chunk => output.push(chunk)); child.stderr.on('data', chunk => errors.push(chunk));
+  const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
+  assert.equal(code, 0, Buffer.concat(errors).toString());
+  const packet = JSON.parse(Buffer.concat(output).toString().trim()), root = realpathSync.native(packet.root), workflow = packet.workflow_id;
+  assert.equal(dirname(root), realpathSync.native(tmpdir())); assert.ok(root.includes('neomind-controlled-flow-'));
+  let cleanup;
+  t.after(async () => { if (cleanup) await cleanup(); else rmSync(root, { recursive: true, force: true }); });
+  const state = safePath(root, `.neomind/controlled/workflows/${hash(workflow)}.json`), original = JSON.parse(readFileSync(state, 'utf8'));
+  const contract = JSON.parse(readFileSync(safePath(root, `.neomind/controlled/workflows/${hash(workflow)}.${original.epoch_id}.contract.json`), 'utf8'));
+  const pending = original.check_intents.filter(intent => intent.state !== 'completed');
+  assert.equal(pending.length, 1); assert.equal(original.status, 'interrupted');
+  assert.ok(original.attempts.some(attempt => attempt.stage === 'verification' && attempt.state === 'completed' && attempt.report.verdict === 'pass'));
+  const interrupted = original.attempts.at(-1), nativePath = safePath(root, `.neomind/native/receipts/${interrupted.invocation_id}.json`), nativeBytes = readFileSync(nativePath);
+  assert.equal(readInvocation(root, interrupted.invocation_id).state, 'interrupted');
+  const input = { workflow_id: workflow, expected_revision: original.revision, assessment: {
+    operator: 'codex-maintenance-operator', project_effects: 'none-observed', external_effects: 'authorized-disposable-os-temp-only',
+    command_and_delegate_reviewed: true, process_identities: packet.process_identities } };
+  const assertUnchanged = () => assert.deepEqual(readFileSync(state), Buffer.from(JSON.stringify(original, null, 2) + '\n'));
+  const { randomUUID } = await import('node:crypto');
+  const unlinked = safePath(root, reconciliationPath(randomUUID())); fs.mkdirSync(dirname(unlinked), { recursive: true });
+  try {
+    fs.writeFileSync(unlinked, JSON.stringify({ outcome: 'pass', claim: 'An arbitrary file is not a runtime-linked reconciliation.' }));
+    const recognized = readCheckReconciliations(root, original, contract);
+    assert.deepEqual(recognized, []); assert.equal(unresolvedControlledChecks(original, recognized).length, 1);
+  } finally { fs.unlinkSync(unlinked); }
+  assert.throws(() => reconcileInterruptedControlledChecks(root, { ...input, expected_revision: original.revision + 1 }), /exact inactive interrupted revision/); assertUnchanged();
+  assert.throws(() => reconcileInterruptedControlledChecks(root, { ...input, assessment: { ...input.assessment,
+    process_identities: [...packet.process_identities, { pid: process.pid, created_at: new Date(performance.timeOrigin).toISOString(), role: 'descendant' }] } }), /Every known observed process/); assertUnchanged();
+  const source = safePath(root, 'orphaned/src/value.txt'), sourceBytes = readFileSync(source);
+  try { atomicWrite(source, 'changed\n'); assert.throws(() => reconcileInterruptedControlledChecks(root, input), /baseline changed/); }
+  finally { atomicWrite(source, sourceBytes); }
+  assertUnchanged();
+  const fakeResult = safePath(root, `.neomind/controlled/checks/${pending[0].id}.log`);
+  try { fs.writeFileSync(fakeResult, '{"result":"not-authoritative"}'); assert.throws(() => reconcileInterruptedControlledChecks(root, input), /result or partial result file/); }
+  finally { fs.unlinkSync(fakeResult); }
+  assertUnchanged();
+  const pilot = safePath(root, `.neomind/controlled/pilots/${pending[0].id}`);
+  try { fs.mkdirSync(pilot, { recursive: true }); assert.throws(() => reconcileInterruptedControlledChecks(root, input), /pilot results or partial artifacts/); }
+  finally { fs.rmdirSync(pilot); }
+  try { const corrupt = JSON.parse(nativeBytes); corrupt.signature = 'invalid'; atomicWrite(nativePath, JSON.stringify(corrupt));
+    assert.throws(() => reconcileInterruptedControlledChecks(root, input), /signature|receipt|trusted/i); }
+  finally { atomicWrite(nativePath, nativeBytes); }
+  assertUnchanged();
+  const env = await setup({ after(fn) { cleanup = fn; } }, { orphaned: {} }, root);
+  const repeated = await startControlledWorkflow(root, { workflow_id: workflow });
+  assert.equal(repeated.status, 'interrupted');
+  await delay(100);
+  assert.equal(env.observed.length, 0, 'manager_run repeated intake must not dispatch or replay an unresolved orphan.');
+  assert.deepEqual(JSON.parse(readFileSync(state, 'utf8')).attempts, original.attempts);
+  await env.closeOwner(); await env.closeBridge();
+  assertUnchanged();
+  const result = reconcileInterruptedControlledChecks(root, input), afterBytes = readFileSync(state), acknowledged = JSON.parse(afterBytes);
+  assert.equal(result.outcome, 'unknown'); assert.equal(result.assurance, 'unsigned-local-maintenance-attestation'); assert.equal(result.replayed, false);
+  assert.deepEqual(acknowledged.check_intents, original.check_intents); assert.deepEqual(acknowledged.checks, original.checks);
+  assert.deepEqual(readFileSync(nativePath), nativeBytes);
+  const ledgerPath = safePath(root, reconciliationPath(result.id)), ledgerBytes = readFileSync(ledgerPath);
+  const ledgers = readCheckReconciliations(root, acknowledged, contract);
+  const oldVerifier = original.attempts.find(attempt => attempt.stage === 'verification' && attempt.state === 'completed');
+  assert.throws(() => assertFreshVerifierAfterReconciliation(acknowledged, ledgers, oldVerifier.id, original.checks), /fresh independent Verifier/);
+  assert.deepEqual(reconcileInterruptedControlledChecks(root, { ...input, assessment: { ...input.assessment,
+    process_identities: [...input.assessment.process_identities].reverse() } }), { ...result, replayed: true });
+  assert.deepEqual(readFileSync(state), afterBytes); assert.deepEqual(readFileSync(ledgerPath), ledgerBytes);
+  try { fs.appendFileSync(ledgerPath, ' '); assert.throws(() => reconcileInterruptedControlledChecks(root, input), /immutable reconciliation ledger changed/); }
+  finally { fs.writeFileSync(ledgerPath, ledgerBytes); }
+  await env.restart();
+  const acknowledgedReceipt = await startControlledWorkflow(root, { workflow_id: workflow });
+  assert.equal(acknowledgedReceipt.status, 'interrupted');
+  await delay(100);
+  assert.equal(env.observed.length, 0, 'A ledger alone is not an explicit resume or command replay request.');
+  const resumed = await controlControlledWorkflow(root, { workflow_id: workflow, action: 'resume' });
+  assert.equal(resumed.workflow_id, workflow);
+  assert.equal(verify(root, contract.task_id, 'verified').ok, false, 'A queued replacement may not reuse the older passing Verifier.');
+  const done = await until(root, workflow, run => run.status === 'completed', 'fresh actual verification/review must complete the reconciled workflow', env.errors);
+  const latestVerifier = done.attempts.findLast(attempt => attempt.stage === 'verification');
+  assert.equal(latestVerifier.state, 'completed'); assert.ok(done.checks.filter(check => check.attempt_id === latestVerifier.id).every(check => check.passed));
+  assert.equal(done.checks.some(check => check.id === pending[0].id), false, 'No execution result may be fabricated for the unknown historical check.');
+  assert.deepEqual(done.check_intents.find(intent => intent.id === pending[0].id), pending[0]);
+  assert.equal(verify(root, contract.task_id, 'accepted').ok, true);
+  const completedBytes = readFileSync(state);
+  assert.deepEqual(reconcileInterruptedControlledChecks(root, input), { ...result, replayed: true }, 'Historical response replay works after completion with a live new owner.');
+  assert.deepEqual(readFileSync(state), completedBytes); assert.deepEqual(readFileSync(ledgerPath), ledgerBytes);
 });
 
 test('preserved read-only delegated checker dependency is captured by positive and negative execution after owner restart without widening writes', async t => {

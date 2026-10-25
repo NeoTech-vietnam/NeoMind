@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
-import { join, posix } from 'node:path';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, posix, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { z } from 'zod';
 import { atomicWrite, createRecord, getRecord, hash, loadRecords, now, readConfig, safePath,
@@ -21,13 +21,17 @@ import { compileCornellResearch, readCornellDestination, type CornellResearchInp
 import { createCornellNote, validateCornellNote } from './notes.js';
 import { controlledFailure } from './controlled-failure.js';
 import { continuationObligations, controlledFingerprints, controlledFingerprintsAsync, executeControlledPilot, materializeControlledEvidence,
-  prepareControlledCheckEvidence, verifyControlledTask, type ContinuationObligations } from './controlled-acceptance.js';
+  prepareControlledCheckEvidence, verifyControlledTask, controlledContractForTask, type ContinuationObligations } from './controlled-acceptance.js';
 import { evidenceRecordFingerprint, type EvidenceInputSnapshot } from './evidence-inputs.js';
 import type { ProjectRecord } from './types.js';
 import { normalizeControlledPlanInput, controlledConsultationRole } from './controlled-plan-input.js';
 import { controlledPlanningRecovery } from './controlled-recovery-context.js';
 import { controlledRegistrationEvidence } from './controlled-registration-evidence.js';
 import { assertControlledReadBaseline } from './controlled-read-baselines.js';
+import { ControlledOperationDrain } from './controlled-operation-drain.js';
+import { readCheckReconciliations, unresolvedControlledChecks, recheckBeforeReconciledResume, normalizedMaintenanceInput,
+  prepareInterruptedCheckReconciliation, reconciliationPath, maintenanceLockKey, type InterruptedCheckMaintenanceInput,
+  type InterruptedCheckReconciliationLink } from './controlled-check-reconciliation.js';
 
 type Stage = ControlledBinding['stage'];
 export type ControlledState = 'queued' | 'running' | 'waiting' | 'paused' | 'interrupted' | 'uncertain' | 'blocked' | 'cancelled' | 'completed';
@@ -69,6 +73,7 @@ export interface ControlledSnapshot {
   finalizing_report_id?: string;
   procedure_runs?: { id: string; status: string }[]; procedure_candidate_id?: string; procedure_candidate_version?: string; cornell_note_ids?: string[];
   cornell_results?: ControlledCornellResult[];
+  check_reconciliations?: InterruptedCheckReconciliationLink[];
   pending_check_review?: boolean;
   check_intents?: { id: string; attempt_id: string; title: string; baseline: Record<string, string>;
     state: 'starting' | 'running' | 'completed'; pid?: number; pilot_root?: string; pilot_nonce?: string }[];
@@ -302,6 +307,8 @@ class Controller {
   private closed = false;
   private launchTail: Promise<void> = Promise.resolve();
   private jobs = new Map<string, { promise: Promise<void>; abort: AbortController }>();
+  private operationDrain = new ControlledOperationDrain();
+  private closing: Promise<void> | null = null;
   constructor(readonly root: string) {}
   private async launch(input: Parameters<typeof startNative>[1], signal: AbortSignal) {
     const prior = this.launchTail;
@@ -328,7 +335,10 @@ class Controller {
     if (existing) assertIntakePayload(existing, parsed);
     if (existing && existsSync(statePath(this.root, existing.meta.id))) {
       const saved = readState(this.root, existing.meta.id);
-      this.schedule(saved.workflow_id); return saved;
+      // A repeated intake is a receipt, not permission to resume interrupted
+      // command effects. Only explicit control.resume may continue that state.
+      if (saved.status !== 'interrupted') this.schedule(saved.workflow_id);
+      return readState(this.root, saved.workflow_id);
     }
     let original: ReturnType<typeof readNativeSoftwareContract> = null;
     let recovered = false;
@@ -497,10 +507,23 @@ class Controller {
       }).finally(() => this.jobs.delete(id));
     this.jobs.set(id, { promise, abort });
   }
+  private admitCheckEffects(run: ControlledSnapshot): boolean {
+    const contract = run.contract_hash ? readContract(this.root, run) : undefined;
+    const reconciliations = contract ? readCheckReconciliations(this.root, run, contract) : [];
+    if (unresolvedControlledChecks(run, reconciliations).length) {
+      run.status = 'uncertain'; run.blocker = { kind: 'environment', message: 'A check was interrupted without a durable result. Its saved process/command baseline must be reconciled before another execution; no command was automatically replayed.' };
+      save(this.root, run, 'uncertain', run.blocker.message); return false;
+    }
+    recheckBeforeReconciledResume(this.root, run, reconciliations, paths => fingerprints(this.root, paths));
+    return true;
+  }
   private async drive(id: string, signal: AbortSignal): Promise<void> {
     while (!this.closed && !signal.aborted) {
+      await this.operationDrain.drain(id);
+      if (this.closed || signal.aborted) return;
       let run = readState(this.root, id);
       if (!['queued', 'running', 'waiting', 'interrupted'].includes(run.status)) return;
+      if (!this.admitCheckEffects(run)) return;
       if (run.attempts.at(-1)?.state === 'running' || run.attempts.at(-1)?.state === 'starting') {
         run.status = 'uncertain'; run.blocker = { kind: 'protocol', message: 'Previous invocation needs reconciliation before resume.' };
         save(this.root, run, 'uncertain', run.blocker.message); return;
@@ -583,7 +606,10 @@ class Controller {
           save(this.root, current, 'report-saved', `${role} saved ${report.outcome}; acceptance is pending backend evidence.`);
           return { saved: true, outcome: report.outcome, next: 'Return your final concise result. Runtime advances after your actual session completes.' };
         },
-        runCheck: title => this.checks(id, attempt.id, attemptAbort.signal, title),
+        runCheck: title => {
+          assertActive();
+          return this.operationDrain.run(id, () => this.checks(id, attempt.id, attemptAbort.signal, title));
+        },
         readEvidence: (title, kind = 'execution') => {
           assertActive();
           const current = readState(this.root, id);
@@ -604,22 +630,24 @@ class Controller {
               })() } : {}) };
           });
         },
-        runProcedure: async parameters => {
+        runProcedure: parameters => {
           assertActive();
-          const reuse = contract?.plan.reuse;
-          if (!reuse || parameters && !same(parameters, reuse.parameters)) throw new ControlledToolError('NO_BOUND_PROCEDURE', 'Use the exact parameters of the saved qualified procedure.');
-          const preparation = prepareWork(this.root, { request: run.requirement, parameters: reuse.parameters,
-            procedure_id: reuse.procedure_id, procedure_version: reuse.version, environment: { client: 'copilot' },
-            scope: { allowed_paths: contract!.plan.allowed_paths, network: false, publication: false, mode: 'neomind-controlled', assurance: 'invocation-bound-local' } });
-          if (preparation.decision !== 'exact' || !preparation.selected_procedure) throw new ControlledToolError('REUSE_NOT_APPLICABLE', preparation.next_action);
-          const procedure = resolveProcedure(this.root, preparation.selected_procedure.id, preparation.selected_procedure.version);
-          const result = await runProcedure(this.root, { procedure_id: procedure.id, version: procedure.version, parameters: reuse.parameters,
-            request_id: `${run.epoch_id}:procedure:${procedure.contract_hash}`, actor: binding.invocation_id ?? readState(this.root, id).attempts.at(-1)!.invocation_id!,
-            client: 'copilot', mode: 'automatic', authorized_effects: { write_roots: contract!.plan.allowed_paths, network: false, publication: false },
-            workflow_mode: 'neomind-controlled', assurance: 'invocation-bound-local' }, { signal: attemptAbort.signal });
-          const current = readState(this.root, id); current.procedure_runs = [...(current.procedure_runs ?? []), { id: result.id, status: result.status }];
-          save(this.root, current, 'procedure-result', `Qualified procedure ${procedure.id}: ${result.status}.`);
-          return { status: result.status, outputs: result.outputs, error: result.status === 'succeeded' ? undefined : 'Procedure did not succeed; retained outputs require reconciliation.' };
+          return this.operationDrain.run(id, async () => {
+            const reuse = contract?.plan.reuse;
+            if (!reuse || parameters && !same(parameters, reuse.parameters)) throw new ControlledToolError('NO_BOUND_PROCEDURE', 'Use the exact parameters of the saved qualified procedure.');
+            const preparation = prepareWork(this.root, { request: run.requirement, parameters: reuse.parameters,
+              procedure_id: reuse.procedure_id, procedure_version: reuse.version, environment: { client: 'copilot' },
+              scope: { allowed_paths: contract!.plan.allowed_paths, network: false, publication: false, mode: 'neomind-controlled', assurance: 'invocation-bound-local' } });
+            if (preparation.decision !== 'exact' || !preparation.selected_procedure) throw new ControlledToolError('REUSE_NOT_APPLICABLE', preparation.next_action);
+            const procedure = resolveProcedure(this.root, preparation.selected_procedure.id, preparation.selected_procedure.version);
+            const result = await runProcedure(this.root, { procedure_id: procedure.id, version: procedure.version, parameters: reuse.parameters,
+              request_id: `${run.epoch_id}:procedure:${procedure.contract_hash}`, actor: binding.invocation_id ?? readState(this.root, id).attempts.at(-1)!.invocation_id!,
+              client: 'copilot', mode: 'automatic', authorized_effects: { write_roots: contract!.plan.allowed_paths, network: false, publication: false },
+              workflow_mode: 'neomind-controlled', assurance: 'invocation-bound-local' }, { signal: attemptAbort.signal });
+            const current = readState(this.root, id); current.procedure_runs = [...(current.procedure_runs ?? []), { id: result.id, status: result.status }];
+            save(this.root, current, 'procedure-result', `Qualified procedure ${procedure.id}: ${result.status}.`);
+            return { status: result.status, outputs: result.outputs, error: result.status === 'succeeded' ? undefined : 'Procedure did not succeed; retained outputs require reconciliation.' };
+          });
         },
         compileResearch: input => {
           assertActive();
@@ -778,6 +806,7 @@ class Controller {
       contract?.plan.procedure_candidate && (stage === 'synthesis' || stage === 'review' && reviewPurpose === 'final-product')
         ? `Current backend registry observation: ${JSON.stringify(controlledRegistrationEvidence(this.root, run, contract))}\nUse check_evidence({kind:"registration"}) to refresh this exact bound manifest observation. It is actual registry provenance, not a separate native signed receipt, independent contract review or automatic-reuse qualification.` : '',
       stage === 'verification' ? 'Independently inspect implementation, author only checker files, execute check_run, and report pass/fail. Include negative controls that prove bad output fails. Distinguish product defects from checker defects.' : '',
+      stage === 'verification' && run.check_reconciliations?.length ? 'Historical interruption context: an earlier checker has outcome UNKNOWN under an explicit unsigned local maintenance effect assessment. Its original intent and interrupted session remain unchanged. No command was automatically replayed and no passing/cancelled execution result was invented. Inspect the current bound implementation/checker inputs and obtain fresh prescribed positive/negative evidence through this new Verifier session before reporting a verdict.' : '',
       stage === 'review' ? controlledReviewInstructions(reviewPurpose) : '',
       stage === 'diagnosis' ? 'Diagnose existing evidence without modifying files. Report failure_kind implementation/checker/protocol/environment, concrete findings, and bounded repair direction.' : '',
     ].filter(Boolean).join('\n\n');
@@ -964,8 +993,22 @@ class Controller {
     save(this.root, run, 'completed', 'Actual independent checks and required review passed; workflow accepted.');
   }
   async control(id: string, action: 'pause' | 'resume' | 'cancel'): Promise<ControlledSnapshot> {
+    if (this.closed && action === 'resume') throw new ControlledToolError('ACTOR_INACTIVE', 'The controlled owner is closing; reopen the Model Bridge before resuming work.');
+    const admission = maintenanceLockKey(id), deadline = Date.now() + 8000;
+    for (;;) {
+      try { withOperationLock(this.root, admission, () => {}, 0); break; }
+      catch (error) {
+        if (!(error instanceof Error) || !error.message.startsWith(`Operation ${admission} remains locked.`) || Date.now() >= deadline) throw error;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    }
+    if (this.closed && action === 'resume') throw new ControlledToolError('ACTOR_INACTIVE', 'The controlled owner is closing; reopen the Model Bridge before resuming work.');
+    if (action === 'resume' && !this.jobs.has(id)) await this.operationDrain.drain(id);
+    if (this.closed && action === 'resume') throw new ControlledToolError('ACTOR_INACTIVE', 'The controlled owner is closing; reopen the Model Bridge before resuming work.');
     const run = readState(this.root, id);
-    if (run.status === 'completed' || run.status === 'cancelled') return run;
+    if (run.status === 'completed' || run.status === 'cancelled') {
+      await this.operationDrain.drain(id); return readState(this.root, id);
+    }
     const job = this.jobs.get(id);
     if (action === 'resume' && run.intake_recovery) return run;
     if (action !== 'resume') {
@@ -973,16 +1016,16 @@ class Controller {
       job?.abort.abort();
       const active = run.attempts.at(-1);
       if (active?.invocation_id) await interruptNative(this.root, active.invocation_id);
+      // Cancelling an MCP client settles its delivery promise before the actual
+      // server-side check has finished killing its process and persisting EVD.
+      await this.operationDrain.drain(id);
       await job?.promise;
       const current = readState(this.root, id), last = current.attempts.at(-1);
       if (last && last.state !== 'completed') last.state = 'interrupted';
       save(this.root, current); return current;
     }
     if (job) return readState(this.root, id);
-    if (run.check_intents?.some(intent => intent.state !== 'completed')) {
-      run.status = 'uncertain'; run.blocker = { kind: 'environment', message: 'A check was interrupted without a durable result. Its saved process/command baseline must be reconciled before another execution; no command was automatically replayed.' };
-      save(this.root, run, 'uncertain', run.blocker.message); return run;
-    }
+    if (!this.admitCheckEffects(run)) return run;
     this.reconcileRepairBudget(run);
     const last = run.attempts.at(-1);
     if (run.status === 'blocked' && run.blocker?.message.startsWith('Product/checker repair budget exhausted.') &&
@@ -1022,13 +1065,63 @@ class Controller {
     run.status = 'queued'; run.owner_pid = process.pid; run.owner_instance = readHost(this.root).instance; delete run.blocker;
     save(this.root, run, 'resume', 'Resume from durable contract and prior results.'); this.schedule(id); return run;
   }
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
     this.closed = true;
-    await Promise.allSettled([...this.jobs.keys()].map(async id => {
-      await this.control(id, 'pause');
-      const run = readState(this.root, id); if (run.status === 'paused') { run.status = 'interrupted'; save(this.root, run, 'interrupted', 'VS Code owner closed.'); }
-    }));
+    for (const job of this.jobs.values()) job.abort.abort();
+    this.closing = (async () => {
+      const workflows = new Set([...this.jobs.keys(), ...this.operationDrain.workflows()]);
+      await Promise.allSettled([...workflows].map(async id => {
+        await this.control(id, 'pause');
+        await this.operationDrain.drain(id);
+        const run = readState(this.root, id); if (run.status === 'paused') { run.status = 'interrupted'; save(this.root, run, 'interrupted', 'VS Code owner closed.'); }
+      }));
+    })();
+    return this.closing;
   }
+}
+
+/** INTERNAL trusted-operator maintenance. Never registered as an MCP worker tool. */
+export function reconcileInterruptedControlledChecks(root: string, value: InterruptedCheckMaintenanceInput) {
+  root = exactRoot(root);
+  const input = normalizedMaintenanceInput(value);
+  return withOperationLock(root, maintenanceLockKey(input.workflow_id), () => {
+    const run = readState(root, input.workflow_id), sealed = readFileSync(contractPath(root, run.workflow_id, run.epoch_id));
+    const contract = JSON.parse(sealed.toString('utf8')) as Contract;
+    if (hash(sealed) !== run.contract_hash || contract.workflow_id !== run.workflow_id || contract.epoch_id !== run.epoch_id ||
+        contract.plan_hash !== hash(JSON.stringify(contract.plan))) throw new Error('The immutable execution identity changed.');
+    const existing = readCheckReconciliations(root, run, contract).find(ledger => ledger.expected_revision === input.expected_revision);
+    const response = (ledger: typeof existing & {}, sha256: string, replayed: boolean) => ({ id: ledger.id, sha256,
+      workflow_id: ledger.workflow_id, epoch_id: ledger.epoch_id, outcome: ledger.outcome, assurance: ledger.assurance, replayed });
+    if (existing) {
+      if (canonicalJson(existing.assessment) !== canonicalJson(input.assessment)) throw new Error('This maintenance revision already belongs to a different effect assessment.');
+      return response(existing, run.check_reconciliations!.find(link => link.id === existing.id)!.sha256, true);
+    }
+    readContract(root, run);
+    const requireDisabledBridge = () => {
+      let enabled = false;
+      try { readHost(root); enabled = true; } catch { /* A dead or absent descriptor cannot own execution. */ }
+      if (enabled) throw new Error('Disable this project Model Bridge before trusted external interruption maintenance.');
+    };
+    requireDisabledBridge();
+    const before = readFileSync(statePath(root, run.workflow_id));
+    const authority = controlledContractForTask(root, getRecord(root, contract.task_id));
+    if (authority.run.revision !== run.revision || authority.run.contract_hash !== run.contract_hash)
+      throw new Error('The authoritative workflow changed before maintenance.');
+    const ledger = prepareInterruptedCheckReconciliation(root, run, contract, input, paths => fingerprints(root, paths));
+    requireDisabledBridge();
+    if (hash(readFileSync(statePath(root, run.workflow_id))) !== hash(before) ||
+        hash(readFileSync(contractPath(root, run.workflow_id, run.epoch_id))) !== run.contract_hash)
+      throw new Error('Workflow revision or immutable contract changed during maintenance; no ledger was committed.');
+    const bytes = `${JSON.stringify(ledger, null, 2)}\n`, path = safePath(root, reconciliationPath(ledger.id));
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, bytes, { flag: 'wx', mode: 0o600 });
+    const sha256 = hash(readFileSync(path));
+    if (sha256 !== hash(bytes)) throw new Error('Immutable maintenance ledger did not persist completely.');
+    run.check_reconciliations = [...(run.check_reconciliations ?? []), { id: ledger.id, sha256, intent_ids: ledger.intents.map(intent => intent.id) }];
+    save(root, run, 'check-interruption-reconciled', 'Trusted local maintenance assessed quiescent effects; historical command outcome remains UNKNOWN. No execution result was created and no command was replayed.');
+    return response(ledger, sha256, false);
+  }, 0);
 }
 
 /** Called only by the explicitly enabled VS Code Bridge owner; MCP clients never own execution. */

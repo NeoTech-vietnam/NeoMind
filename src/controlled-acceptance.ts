@@ -10,6 +10,7 @@ import { resolveProcedure } from './procedures.js';
 import { runCommand, type CommandResult } from './command-runner.js';
 import type { ControlledContract, ControlledSnapshot, ControlledCheckReceipt } from './controlled-workflow.js';
 import type { Gate, ProjectRecord, Verification } from './types.js';
+import { readCheckReconciliations, unresolvedControlledChecks, assertFreshVerifierAfterReconciliation } from './controlled-check-reconciliation.js';
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const roots = '.neomind/controlled/workflows';
@@ -316,15 +317,16 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
     const { run, contract } = contractForTask(root, task, recordAt, budget.check);
     if (['cancelled', 'uncertain', 'interrupted'].includes(run.status)) throw new Error('Controlled effects require reconciliation before acceptance.');
     if (['ready', 'design-ready'].includes(gate)) return { ok: true, gate, findings, checked_at: now() };
-    if (run.attempts.some(attempt => ['starting', 'running'].includes(attempt.state)) || run.check_intents?.some(intent => intent.state !== 'completed'))
+    const reconciliations = readCheckReconciliations(root, run, contract);
+    if (run.attempts.some(attempt => ['starting', 'running'].includes(attempt.state)) || unresolvedControlledChecks(run, reconciliations).length)
       throw new Error('An active replacement session or unresolved check effect still needs reconciliation.');
-    const latest = (stage: string) => [...run.attempts].reverse().find(item => item.stage === stage && item.purpose !== 'check-review' && item.state === 'completed');
+    const latest = (stage: string) => [...run.attempts].reverse().find(item => item.stage === stage && item.purpose !== 'check-review' && item.purpose !== 'specialist');
     const producer = latest('implementation'), verifier = latest('verification'), reviewer = latest('review'), synthesis = latest('synthesis');
     const required = [producer, verifier, ...(gate === 'accepted' && contract.reviewer_required ? [reviewer] : []),
       ...(gate === 'accepted' && contract.knowledge_directory ? [synthesis] : [])];
     for (const attempt of required) {
       budget.check();
-      if (!attempt?.invocation_id || !attempt.report_id || attempt.report?.outcome !== 'completed') throw new Error('Required independently completed result is missing.');
+      if (!attempt?.invocation_id || attempt.state !== 'completed' || !attempt.report_id || attempt.report?.outcome !== 'completed') throw new Error('Required independently completed result is missing.');
       const receipt = readInvocation(root, attempt.invocation_id), report = recordAt(attempt.report_id);
       if (routingProblems(root, attempt.role, receipt.id, { workflow_id: run.workflow_id, task_id: contract.task_id, require_completed: true }).length ||
           receipt.issuer !== 'neomind-vscode-lm' || !receipt.inference_completed || receipt.state !== 'completed' || receipt.task_id !== contract.task_id ||
@@ -340,6 +342,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
     if (run.attempts.indexOf(verifier!) <= run.attempts.indexOf(producer!)) throw new Error('Independent verification must follow the latest producer result.');
     if (verifier!.report?.verdict !== 'pass' || gate === 'accepted' && contract.reviewer_required && reviewer?.report?.verdict !== 'pass') throw new Error('Independent verification or required review did not pass.');
     const checks = run.checks.filter(item => item.attempt_id === verifier!.id);
+    assertFreshVerifierAfterReconciliation(run, reconciliations, verifier!.id, checks);
     for (const planned of contract.plan.checks) for (const selected of [{ ...planned, negative: false }, ...(planned.negative_controls ?? []).map(value => ({ ...value, negative: true }))]) {
       budget.check();
       const result = checks.find(item => item.title === selected.title && item.negative === selected.negative &&

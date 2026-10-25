@@ -12,11 +12,18 @@ let bridge;
 let bridgeRoot;
 let controlledEnabled = false;
 let generation = 0;
-async function disable() {
+let closing = Promise.resolve();
+function disable() {
   generation++;
   const current = bridge; bridge = undefined;
   bridgeRoot = undefined; controlledEnabled = false;
-  await current?.close();
+  if (current) {
+    closing = closing.then(() => current.close());
+    // Disposal can be fire-and-forget. Observe failure without replacing the
+    // shared promise: deactivation and a later enable must still await it.
+    void closing.catch(() => {});
+  }
+  return closing;
 }
 function activate(context) {
   let enabling = false;
@@ -45,6 +52,8 @@ function activate(context) {
       const token = generation;
       enabling = true;
       try {
+        await closing;
+        if (token !== generation) return;
         if (!vscode.workspace.isTrusted) throw new Error('Workspace Trust required.');
         if (bridge) throw new Error('Bridge already enabled. Disable before changing workspace or runtime.');
         const folders = vscode.workspace.workspaceFolders?.filter(folder => folder.uri.scheme === 'file') ?? [];
@@ -83,8 +92,8 @@ function activate(context) {
       } finally { enabling = false; }
     }),
     vscode.commands.registerCommand('neomind.bridge.disable', disable),
-    vscode.workspace.onDidChangeWorkspaceFolders(() => { void disable(); }),
-    { dispose: () => { void disable(); } },
+    vscode.workspace.onDidChangeWorkspaceFolders(disable),
+    { dispose: disable },
   );
 }
 module.exports = { activate, deactivate: disable };

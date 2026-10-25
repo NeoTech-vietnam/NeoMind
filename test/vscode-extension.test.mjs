@@ -18,14 +18,22 @@ function deferred() {
   return { promise, resolve };
 }
 
-function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'neomind', controlled = false, controlledFailure = false } = {}) {
+function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'neomind', controlled = false, controlledFailure = false,
+  closeAt, closeFailure = false } = {}) {
   const entered = deferred(), release = deferred();
+  const closeEntered = deferred(), closeRelease = deferred();
+  let closeHeld = false, controlledCloses = 0;
   const calls = { folder: 0, consent: 0, import: 0, startup: 0, close: 0 };
   const info = [], errors = [], commands = new Map(), subscriptions = [];
   const lifecycle = [];
   const runtime = resolve('trusted-runtime'), root = resolve('workspace');
   const folder = { uri: { scheme: 'file', fsPath: root } };
-  const host = { async close() { calls.close++; lifecycle.push('bridge-close'); } };
+  async function closingStep(stage) {
+    if (closeAt !== stage || closeHeld) return;
+    closeHeld = true; closeEntered.resolve(); await closeRelease.promise;
+    if (closeFailure) throw new Error('Fixture owner close did not finish safely.');
+  }
+  const host = { async close() { calls.close++; lifecycle.push('bridge-close'); await closingStep('bridge'); } };
   function step(name, value) {
     calls[name]++;
     if (name !== blocked || calls[name] > 1) return Promise.resolve(value);
@@ -81,7 +89,7 @@ function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'n
         async startControlledHost(selectedRoot) {
           assert.equal(selectedRoot, root); lifecycle.push('controlled-start');
           if (controlledFailure) throw new Error('Controller startup failed.');
-          return { async close() { lifecycle.push('controlled-close'); } };
+          return { async close() { controlledCloses++; lifecycle.push('controlled-close'); await closingStep('controlled'); } };
         },
       } : {});
       assert.equal(url, pathToFileURL(resolve(runtime, 'dist/vscode-host.js')).href);
@@ -95,6 +103,8 @@ function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'n
   module.exports.activate({ subscriptions });
   return {
     calls, info, errors, lifecycle, root, entered: entered.promise, release: release.resolve,
+    closeEntered: closeEntered.promise, releaseClose: closeRelease.resolve,
+    get controlledCloses() { return controlledCloses; },
     enable: commands.get('neomind.bridge.enable'),
     disable: commands.get('neomind.bridge.disable'),
     deactivate: module.exports.deactivate,
@@ -102,6 +112,62 @@ function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'n
     dispose: () => subscriptions.at(-1).dispose(),
   };
 }
+
+for (const closeAt of ['controlled', 'bridge']) {
+  test(`concurrent disable, disposal and deactivation wait for the same ${closeAt} shutdown`, async () => {
+    const app = setup(undefined, { controlled: true, closeAt });
+    await app.enable();
+    const first = app.disable(); await app.closeEntered;
+    const repeated = [app.disable(), app.dispose(), app.deactivate()];
+    const settled = repeated.map(() => false);
+    repeated.forEach((promise, index) => Promise.resolve(promise).then(() => { settled[index] = true; }));
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(settled, [false, false, false], 'Editor disposal/deactivation must not finish while the owner is still draining.');
+      repeated.forEach(promise => assert.equal(promise, first, 'All lifecycle entry points retain the same in-flight close promise.'));
+      assert.equal(app.controlledCloses, 1);
+      assert.equal(app.calls.close, closeAt === 'controlled' ? 0 : 1);
+    } finally { app.releaseClose(); await Promise.all([first, ...repeated]); }
+    assert.equal(app.controlledCloses, 1); assert.equal(app.calls.close, 1);
+  });
+}
+
+test('enable waits for the prior owner to finish closing before consent or replacement startup', async () => {
+  const app = setup(undefined, { controlled: true, closeAt: 'controlled' });
+  await app.enable();
+  const close = app.disable(); await app.closeEntered;
+  const enable = app.enable();
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(app.calls.consent, 1, 'No replacement consent or host startup while the previous owner drains.');
+    assert.equal(app.calls.startup, 1);
+  } finally { app.releaseClose(); await Promise.all([close, enable]); }
+  assert.equal(app.calls.startup, 2); assert.equal(app.info.length, 2);
+  await app.disable(); assert.equal(app.calls.close, 2); assert.equal(app.controlledCloses, 2);
+});
+
+test('disposal revokes a replacement enable that is still awaiting the prior shutdown', async () => {
+  const app = setup(undefined, { controlled: true, closeAt: 'controlled' });
+  await app.enable();
+  const close = app.disable(); await app.closeEntered;
+  const enable = app.enable();
+  const dispose = app.dispose();
+  app.releaseClose(); await Promise.all([close, dispose, enable]);
+  assert.equal(app.calls.consent, 1); assert.equal(app.calls.startup, 1);
+  assert.equal(app.info.length, 1); assert.deepEqual(app.errors, []);
+});
+
+test('a failed owner close remains observable and prevents an unsafe replacement enable', async () => {
+  const app = setup(undefined, { controlled: true, closeAt: 'controlled', closeFailure: true });
+  await app.enable();
+  const close = app.disable(); await app.closeEntered;
+  app.releaseClose(); await assert.rejects(close, /Fixture owner close/);
+  await app.enable();
+  assert.equal(app.calls.startup, 1); assert.equal(app.calls.consent, 1);
+  assert.equal(app.errors.length, 1, 'A replacement attempt surfaces the prior shutdown failure.');
+  await assert.rejects(app.deactivate(), /Fixture owner close/);
+  assert.equal(app.calls.close, 1, 'The model host close still runs after a controlled-owner close failure.');
+});
 
 test('controlled runtime starts only after consented Bridge and shuts down before model host', async () => {
   const app = setup(undefined, { controlled: true });
