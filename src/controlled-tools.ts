@@ -65,7 +65,7 @@ export interface ControlledCallbacks {
   prepareWork?(query: { request: string; parameters?: Record<string, unknown> }): unknown | Promise<unknown>;
   runProcedure?(parameters?: Record<string, unknown>): unknown | Promise<unknown>;
   compileResearch?(input: Record<string, unknown>): unknown | Promise<unknown>;
-  readEvidence?(title?: string): unknown | Promise<unknown>;
+  readEvidence?(title?: string, kind?: 'execution' | 'registration'): unknown | Promise<unknown>;
   trace?(event: Record<string, unknown>): void | Promise<void>;
 }
 /** Only explicitly public controller diagnostics cross the model-facing error seam. */
@@ -151,7 +151,7 @@ export function controlledToolNames(binding: ControlledBinding): string[] {
 export function controlledReviewInstructions(purpose: ControlledReviewPurpose): string {
   return purpose === 'checker-readiness'
     ? 'Review purpose: checker-readiness. Independently inspect the exact checker source/argv, oracle, protected cases and negative controls against the unchanged criteria. Judge checker adequacy and safe bounded execution in the declared scope and disposable pilot workspace when required, including any generator or product code the planned commands execute. This review precedes execution: not-yet-run evidence is expected, and an empty check_evidence result is not a readiness failure. Product defects that the planned checker can safely diagnose belong in findings and limitations; they are not final acceptance decisions. Fail readiness for an unsound/incomplete checker or a real execution-safety defect, including scope escape, destructive effects or unauthorized data access/publication. Classify the actual cause with failure_kind. Do not execute checks in this read-only review. Save assignment_report with verdict pass or fail; readiness approval does not establish product correctness or workflow completion.'
-    : 'Review purpose: final-product. Independently inspect the delivered artifacts against all unchanged acceptance criteria. Require fresh positive and negative execution evidence, required intended-use pilot receipts and the requested evidence-derived Cornell bundle. Read check_evidence for actual stdout/stderr and intended-use build/run results; absent, stale or failing required evidence cannot support a pass. Private runtime files remain unavailable. Save assignment_report with verdict pass or fail and substantive findings; pre-execution checker readiness is not final product acceptance.';
+    : 'Review purpose: final-product. Independently inspect the delivered artifacts against all unchanged acceptance criteria. Require fresh positive and negative execution evidence, required intended-use pilot receipts and the requested evidence-derived Cornell bundle. Read check_evidence for actual stdout/stderr and intended-use build/run results; absent, stale or failing required evidence cannot support a pass. When registration is required, read check_evidence({kind:"registration"}) for the actual bound registry manifest and current code-hash comparisons; registered candidate is not qualification. Do not infer missing registration from the absence of a separate signed receipt or try private registry files. Private runtime files remain unavailable. Save assignment_report with verdict pass or fail and substantive findings; pre-execution checker readiness is not final product acceptance.';
 }
 export function controlledInstructions(binding: ControlledBinding): string {
   const writable = binding.stage === 'implementation' && binding.role === 'developer' ? binding.implementation_paths
@@ -165,7 +165,7 @@ export function controlledInstructions(binding: ControlledBinding): string {
     verification: 'Inspect the delivered implementation. Author and repair only the independent checker paths, including deliberately invalid fixtures for the prescribed negative_controls. Run the prescribed checks with check_run; backend executes both positive and negative commands. Report prose alone is not negative-control evidence. Distinguish a product defect from a checker or environment failure.',
     review: controlledReviewInstructions(binding.review_purpose ?? 'final-product'),
     diagnosis: 'Inspect available evidence and identify the root cause. Classify failure_kind as implementation, checker, protocol, environment or unknown and recommend one bounded recovery action.',
-    synthesis: 'Derive the final requested Cornell research note from actual artifacts and independent evidence. Use cornell_research_compile to preserve the standard format and separate practice/answers. Record limitations and actual sources, then assignment_report. Source implementation and checker files are read-only.',
+    synthesis: 'Derive the final requested Cornell research note from actual artifacts and independent evidence. Use cornell_research_compile to preserve the standard format and separate practice/answers. For a planned reusable candidate, read check_evidence({kind:"registration"}) for actual registry provenance and current code hashes; registration does not establish qualification. Record limitations and actual sources, then assignment_report. Source implementation and checker files are read-only.',
   };
   return `Authoritative role ownership: ${JSON.stringify(ownership)}\n` +
     (binding.stage === 'implementation' ? 'Complete only your implementation outputs. The independent Verifier owns all checker files and negative-control fixtures; missing verifier artifacts are EXPECTED at this handoff. Do not create them or mark your work blocked because a later role has not run. When your own outputs are ready, save outcome completed; the backend advances to Verifier. Report blocked only for a real blocker to your assigned implementation.\n' : '') +
@@ -393,10 +393,10 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         return callbacks.runCheck(args.title);
       });
   if (['verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage))
-    register('check_evidence', 'Read actual bound check commands, execution output and intended-use evidence without private runtime files or identity fields.',
-      z.strictObject({ title: text.max(256).optional() }), true, args => {
+    register('check_evidence', 'Read bound execution evidence (default), or the actual workflow registration manifest and current code-hash comparisons. Registration is not qualification; no private registry access or caller-provided identities.',
+      z.strictObject({ title: text.max(256).optional(), kind: z.enum(['execution', 'registration']).default('execution') }), true, args => {
         if (!callbacks.readEvidence) throw new ControlledToolError('NO_CHECK_EVIDENCE', 'No bound check evidence is available in this session.');
-        return callbacks.readEvidence(args.title);
+        return callbacks.readEvidence(args.title, args.kind);
       });
   if (binding.stage === 'implementation') {
     register('procedure_run', 'Run only the qualified procedure bound in the plan; backend derives identity, scope and execution key.',

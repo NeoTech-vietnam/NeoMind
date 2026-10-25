@@ -58,13 +58,22 @@ function semanticToolValue(messages) {
 function planFor(name, options = {}) {
   const output = `${name}/src/value.txt`, checker = `${name}/verify/check.cjs`, bad = `${name}/verify/bad.txt`;
   const baseline = [output, checker];
-  return { title: `Produce ${name} scalar`, objective: 'Persist a scalar equal to one with independent positive and negative verification.',
+  const plan = { title: `Produce ${name} scalar`, objective: 'Persist a scalar equal to one with independent positive and negative verification.',
     rationale: 'A bounded test artifact demonstrates actual workflow transitions and execution evidence.',
     acceptance_criteria: ['The delivered scalar is one.', 'The independent checker rejects a scalar equal to two.'],
     allowed_paths: [output], verification_paths: [`${name}/verify`], outputs: [output], documentation_paths: [],
     checks: [{ title: 'Validate scalar', command: [process.execPath, checker, output], baseline_paths: baseline,
       negative_controls: [{ title: 'Reject incorrect scalar', command: [process.execPath, checker, bad], baseline_paths: [checker, bad], expected_exit_code: 1 }] }],
     risk: options.highRisk ? 'high' : 'low' };
+  if (options.registrationEvidence) {
+    const script = `${name}/src/generate.cjs`;
+    plan.allowed_paths.push(script); plan.outputs.push(script);
+    plan.procedure_candidate = { title: 'Reusable scalar producer', description: 'Generate a future scalar and check it independently.',
+      script, verification_script: checker, parameters: { output: { type: 'string', path: true, required: true } },
+      outputs: [{ path: '{output}', min_bytes: 1 }], environment: { platforms: [process.platform], clients: ['codex', 'copilot', 'cli'] },
+      effects: { write_roots: ['generated'], network: false, publication: false } };
+  }
+  return plan;
 }
 function scriptFor(name, stage, attempt, options, held) {
   const plan = planFor(name, options), output = plan.outputs[0], checker = plan.checks[0].command[1], bad = plan.checks[0].negative_controls[0].command[2];
@@ -74,6 +83,8 @@ function scriptFor(name, stage, attempt, options, held) {
   if (stage === 'implementation') {
     const value = options.precheckProductFailure || options.productFailure && attempt === 1 ? '2\n' : '1\n';
     return [call('project_read', { path: output }), call('task_file_write', { path: output, content: value }),
+      ...(options.registrationEvidence ? [call('task_file_write', { path: plan.procedure_candidate.script,
+        content: "let input='';process.stdin.on('data',part=>input+=part);process.stdin.on('end',()=>{const packet=JSON.parse(input);require('node:fs').writeFileSync(packet.outputs[0],'1\\n');});\n" })] : []),
       ...(options.holdImplementation && attempt === 1 ? [async ({ token }) => {
         held.entered = true;
         while (!token.isCancellationRequested && !held.release) await delay(10);
@@ -105,6 +116,9 @@ function scriptFor(name, stage, attempt, options, held) {
         : options.reviewScope ? { findings: ['The product scalar is two; the sound independent checker will safely diagnose that product defect by rejecting it.'],
           limitations: ['Pre-execution checker readiness is separate from product acceptance; no execution evidence exists yet.'] } : {}) });
     return [call('project_read', { path: output }), call('project_read', { path: checker }),
+      ...(options.registrationEvidence ? [call('check_evidence', { kind: 'registration' }), async ({ messages }) => {
+        held.registrationEvidence = semanticToolValue(messages); return new Call('fixture-registration-read', 'project_read', { path: output });
+      }] : []),
       ...(scopeReview || options.holdFinalReview ? [call('check_evidence', {})] : []),
       ...(options.reviewScope || options.holdFinalReview ? [async ({ token, messages }) => {
         held.reviewEvidence = semanticToolValue(messages); held.reviewEntered = true;
@@ -290,6 +304,27 @@ test('actual final Reviewer receives only latest Verifier evidence while identic
   const done = await until(env.root, initial.workflow_id, run => run.status === 'completed',
     'a sound current review can close without deleting old failed observations', env.errors);
   assert.equal(done.checks.length, 4);
+});
+
+test('actual final Reviewer receives the registered bound candidate through the existing signed Bridge tool set', async t => {
+  const env = await setup(t, { registrationview: { highRisk: true, holdFinalReview: true, registrationEvidence: true } });
+  const initial = await submit(env.root, 'registrationview');
+  const reviewing = await until(env.root, initial.workflow_id, () => env.held.reviewEntered,
+    'final Reviewer must receive actual registry provenance after checks and registration', env.errors);
+  const evidence = env.held.registrationEvidence;
+  assert.equal(evidence.registered, true); assert.equal(evidence.id, reviewing.procedure_candidate_id);
+  assert.equal(evidence.version, reviewing.procedure_candidate_version); assert.equal(evidence.status, 'candidate');
+  assert.equal(evidence.current_code_matches, true); assert.equal(evidence.author_matches_latest_producer, true);
+  assert.ok(reviewing.checks.every(check => check.passed)); assert.equal(reviewing.final_report_id, undefined);
+  const review = env.observed.find(item => item.name === 'registrationview' && item.stage === 'review');
+  assert.equal(review.tools.includes('procedure_registration'), false, 'Existing signed tool names must remain stable.');
+  for (const prompt of review.promptLayers) assert.match(prompt, /check_evidence\(\{kind:\"registration\"\}\)/);
+  const snapshotPrompt = review.promptLayers.find(prompt => prompt.includes('Current backend registry observation:'));
+  assert.ok(snapshotPrompt); assert.ok(snapshotPrompt.includes(evidence.contract_hash)); assert.ok(snapshotPrompt.includes(evidence.created_at));
+  env.held.reviewRelease = true;
+  const done = await until(env.root, initial.workflow_id, run => run.status === 'completed',
+    'actual registration evidence must remain distinct from required independent review and closure', env.errors);
+  assert.equal(done.procedure_candidate_id, evidence.id);
 });
 
 test('real signed Bridge/MCP drives normal and risk-based workflows with actual command evidence', async t => {

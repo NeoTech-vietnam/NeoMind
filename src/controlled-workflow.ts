@@ -26,6 +26,7 @@ import { evidenceRecordFingerprint, type EvidenceInputSnapshot } from './evidenc
 import type { ProjectRecord } from './types.js';
 import { normalizeControlledPlanInput, controlledConsultationRole } from './controlled-plan-input.js';
 import { controlledPlanningRecovery } from './controlled-recovery-context.js';
+import { controlledRegistrationEvidence } from './controlled-registration-evidence.js';
 
 type Stage = ControlledBinding['stage'];
 export type ControlledState = 'queued' | 'running' | 'waiting' | 'paused' | 'interrupted' | 'uncertain' | 'blocked' | 'cancelled' | 'completed';
@@ -579,9 +580,11 @@ class Controller {
           return { saved: true, outcome: report.outcome, next: 'Return your final concise result. Runtime advances after your actual session completes.' };
         },
         runCheck: title => this.checks(id, attempt.id, attemptAbort.signal, title),
-        readEvidence: title => {
+        readEvidence: (title, kind = 'execution') => {
           assertActive();
-          return currentControlledChecks(readState(this.root, id)).filter(check => title === undefined || check.title === title).slice(-16).map(check => {
+          const current = readState(this.root, id);
+          if (kind === 'registration') return controlledRegistrationEvidence(this.root, current, contract);
+          return currentControlledChecks(current).filter(check => title === undefined || check.title === title).slice(-16).map(check => {
             const log = JSON.parse(readFileSync(safePath(this.root, check.log_path), 'utf8'));
             return { title: check.title, purpose: check.purpose ?? 'self-check', negative: check.negative, passed: check.passed,
               command: check.command, exit_code: check.exit_code, expected_exit_code: check.expected_exit_code,
@@ -768,6 +771,8 @@ class Controller {
       run.blocker ? `Repair/diagnosis context:\n${JSON.stringify(run.blocker)}` : '',
       `Prior reports:\n${JSON.stringify(run.attempts.filter(item => item.report).slice(-4).map(item => ({ stage: item.stage, report: item.report })))}`,
       stage === 'synthesis' ? `Current actual evidence: ${JSON.stringify(currentControlledChecks(run).filter(check => !check.negative && check.passed).map(check => ({ title: check.title, evidence_id: check.evidence_id, source_uri: `record:${check.evidence_id}` })))}. Use check_evidence for bounded actual stdout/stderr; private runtime log files are not readable source files. The backend binds evidence and source metadata automatically; cite supplied source_uri or readable project files, and describe only facts supported by these checks.` : '',
+      contract?.plan.procedure_candidate && (stage === 'synthesis' || stage === 'review' && reviewPurpose === 'final-product')
+        ? `Current backend registry observation: ${JSON.stringify(controlledRegistrationEvidence(this.root, run, contract))}\nUse check_evidence({kind:"registration"}) to refresh this exact bound manifest observation. It is actual registry provenance, not a separate native signed receipt, independent contract review or automatic-reuse qualification.` : '',
       stage === 'verification' ? 'Independently inspect implementation, author only checker files, execute check_run, and report pass/fail. Include negative controls that prove bad output fails. Distinguish product defects from checker defects.' : '',
       stage === 'review' ? controlledReviewInstructions(reviewPurpose) : '',
       stage === 'diagnosis' ? 'Diagnose existing evidence without modifying files. Report failure_kind implementation/checker/protocol/environment, concrete findings, and bounded repair direction.' : '',
