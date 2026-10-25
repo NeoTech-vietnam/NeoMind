@@ -221,14 +221,15 @@ function validateResult(value: AssignmentResultInput): AssignmentResultInput {
   const changes = parsed.changes === undefined ? [] : parsed.changes;
   if (!Array.isArray(changes) || changes.length > 128) fail('Changes must be a bounded artifact array.');
   if (parsed.submit_task !== undefined && typeof parsed.submit_task !== 'boolean') fail('submit_task must be boolean.');
-  if (parsed.submit_task === true && parsed.outcome !== 'completed') fail('Only a completed producer result can request task submission.');
   return { schema_version: 1, outcome: parsed.outcome as AssignmentResultInput['outcome'],
     summary: text(parsed.summary, 'Summary'), inputs: list(parsed.inputs, 'Inputs'), decisions,
     evidence_refs: list(parsed.evidence_refs, 'Evidence references'), evidence_notes: list(parsed.evidence_notes, 'Evidence notes'),
     limitations: list(parsed.limitations, 'Limitations'), lessons: list(parsed.lessons, 'Lessons'),
     changes: changes.map(item => { const change = object(item, ['path', 'description']);
       return { path: text(change.path, 'Artifact path', 1024), description: text(change.description, 'Artifact description') }; }),
-    submit_task: parsed.submit_task === true };
+    // An incomplete outcome is authoritative: persist the findings without a
+    // submission side effect, even when a client repeats its default true flag.
+    submit_task: parsed.outcome === 'completed' && parsed.submit_task === true };
 }
 function artifact(root: string, actor: ReportedAssignment, change: { path: string; description: string }): Artifact {
   const path = change.path.replaceAll('\\', '/'), normalized = posix.normalize(path);

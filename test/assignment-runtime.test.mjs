@@ -129,3 +129,20 @@ test('artifact checks enforce real files and assigned paths, then submit through
   assert.throws(() => assignmentResult(root, session.handle, retryInput), error => error.code === 'STALE_BASELINE');
   assert.equal(readFileSync(join(root, 'src/value.mjs'), 'utf8'), 'export const value = 2;\n');
 });
+
+test('blocked and failed producer reports ignore a contradictory submission flag without losing findings or submitting work', t => {
+  for (const outcome of ['blocked', 'failed']) {
+    const { root, workflow } = fixture(t);
+    const task = createRecord(root, { type: 'task', owner: 'developer', title: 'Preserve incomplete producer findings',
+      status: 'in-progress', data: { workflow_id: workflow.meta.id, allowed_paths: ['src'] } });
+    const session = open(root, packet(root, workflow, { profile_id: 'implementer', role: 'developer',
+      assignment_id: `incomplete-${outcome}`, task_id: task.meta.id }));
+    updateRecord(root, task.meta.id, { data: { invocation_id: session.handle.id } });
+    const saved = assignmentResult(root, session.handle, content({ outcome, submit_task: true }));
+    assert.equal(saved.outcome, outcome);
+    assert.equal(saved.submitted_task_id, null);
+    assert.equal(getRecord(root, task.meta.id).meta.status, 'in-progress');
+    assert.equal(getRecord(root, saved.report_id).meta.data.kind, 'work-record');
+    assert.deepEqual(assignmentResult(root, session.handle, content({ outcome, submit_task: false })), saved);
+  }
+});
