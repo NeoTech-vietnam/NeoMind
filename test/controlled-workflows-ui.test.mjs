@@ -4,12 +4,13 @@ import { createRequire } from 'node:module';
 import { mkdtempSync, readFileSync, rmSync, realpathSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 const require = createRequire(import.meta.url);
 const { TOOL_NAME, activateControlledWorkflows, createControlledPanelHost, publicStatus, renderControlledPanel } = require('../extensions/vscode-model-bridge/controlled-workflows.cjs');
 const workflowId = 'NM-TEST-KNW-0001';
 
 function app(t) {
-  const parent = realpathSync(tmpdir()), root = realpathSync(mkdtempSync(join(parent, 'neomind-controlled-ui-')));
+  const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-controlled-ui-')));
   t.after(() => { assert.equal(dirname(resolve(root)), parent); rmSync(root, { force: true, recursive: true }); });
   const calls = [], sent = [], commands = new Map(), tools = new Map(), subscriptions = [];
   let active = true, enabled = true;
@@ -65,6 +66,7 @@ test('panel mutations require enabled owner, while journal reads remain availabl
 test('chat tool binds the exact open workspace and never invokes a native subagent', async t => {
   const a = app(t);
   const response = await a.invoke({ action: 'submit', workspace_folder: a.root, requirement: 'Implement a task.' });
+  assert.equal(response.error, undefined, JSON.stringify(response));
   assert.equal(response.workflows[0].workflow_id, workflowId);
   assert.equal(a.calls[0][1], a.root);
   assert.equal(JSON.stringify(response).includes('PRIVATE'), false);
@@ -78,6 +80,24 @@ test('chat tool binds the exact open workspace and never invokes a native subage
   assert.equal(denied.error.code, 'WORKSPACE_UNTRUSTED'); assert.equal(a.calls.length, 1);
   const source = readFileSync(new URL('../extensions/vscode-model-bridge/controlled-workflows.cjs', import.meta.url), 'utf8');
   assert.equal(source.includes('invokeTool'), false); assert.equal(source.includes('runSubagent'), false);
+});
+
+test('chat accepts an actual Windows short-path workspace alias and binds the physical root', { skip: process.platform !== 'win32' }, async t => {
+  const a = app(t);
+  const short = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+    '$folder = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:NEOMIND_TEST_SHORT_PATH); [Console]::Write($folder.ShortPath)'],
+  { encoding: 'utf8', windowsHide: true, timeout: 10000, env: { ...process.env, NEOMIND_TEST_SHORT_PATH: a.root } });
+  assert.equal(short.status, 0, short.error?.message ?? short.stderr);
+  const alias = short.stdout.trim();
+  if (resolve(alias).toLowerCase() === resolve(a.root).toLowerCase()) {
+    t.skip('This Windows volume does not provide an 8.3 alias for the fixture.'); return;
+  }
+  assert.equal(realpathSync.native(alias), a.root);
+  a.vscode.workspace.workspaceFolders[0].uri.fsPath = alias;
+  const response = await a.invoke({ action: 'submit', workspace_folder: alias, requirement: 'Implement a task through its workspace alias.' });
+  assert.equal(response.error, undefined, JSON.stringify(response));
+  assert.equal(response.workflows[0].workflow_id, workflowId);
+  assert.equal(a.calls[0][1], a.root);
 });
 
 test('chat lifecycle cannot cancel accepted work, but cancelled unaccepted calls do not submit', async t => {
