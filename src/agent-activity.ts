@@ -3,7 +3,7 @@ import { closeSync, fstatSync, lstatSync, openSync, readSync, readdirSync } from
 import { agentProfiles, type AgentProfileId } from './agent-profiles.js';
 import { isNativeExecutionMode } from './execution-mode.js';
 import { nativeWorkflowRecord, strictRecord } from './engineering.js';
-import { atomicWrite, getRecord, now, readConfig, safePath, withLock, withOperationLock } from './storage.js';
+import { atomicWrite, getRecord, loadRecords, now, readConfig, safePath, withLock, withOperationLock } from './storage.js';
 import type { NativeRole } from './routing.js';
 import type { ProjectRecord } from './types.js';
 
@@ -60,20 +60,27 @@ function entry(path: string): ReturnType<typeof lstatSync> | null {
   try { return lstatSync(path); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
 }
-function workflow(root: string, id: string): ProjectRecord {
-  const record = getRecord(root, id), data = record.meta.data;
+interface ProjectionRecords { records: readonly ProjectRecord[]; byId: ReadonlyMap<string, ProjectRecord> }
+function recordAt(root: string, id: string, projection?: ProjectionRecords): ProjectRecord {
+  if (!projection) return getRecord(root, id);
+  const record = projection.byId.get(id);
+  if (!record) throw new Error(`Record not found: ${id}`);
+  return structuredClone(record);
+}
+function workflow(root: string, id: string, projection?: ProjectionRecords): ProjectRecord {
+  const record = recordAt(root, id, projection), data = record.meta.data;
   const native = record.meta.type === 'knowledge' && data.kind === 'manager-workflow' &&
-    isNativeExecutionMode(data.execution_mode) && data.routing_required === false && nativeWorkflowRecord(root, record);
+    isNativeExecutionMode(data.execution_mode) && data.routing_required === false && nativeWorkflowRecord(root, record, new Set<string>(), projection?.records);
   // createRecord currently stamps lightweight records routing_required when a routing
   // policy exists; the exact saved kind/mode/backend/assurance establish this branch.
   const lightweight = record.meta.type === 'knowledge' && data.kind === 'lightweight-workflow' &&
     data.execution_mode === 'lightweight' && isNativeExecutionMode(data.backend) && data.assurance === 'unsigned-native-report' &&
     data.workflow_id === undefined && data.intake_workflow_id === undefined &&
-    record.meta.links.every(link => !strictRecord(root, getRecord(root, link.target)));
+    record.meta.links.every(link => !strictRecord(root, recordAt(root, link.target, projection), new Set<string>(), projection?.records));
   if (!native && !lightweight) throw new Error('Unsigned activity requires a saved native or lightweight workflow.');
   return record;
 }
-function normalizedInput(root: string, value: unknown, persisted = false, parents = new Map<string, ProjectRecord>()): { input: AgentActivityInput; workflow: ProjectRecord; role: NativeRole } {
+function normalizedInput(root: string, value: unknown, persisted = false, parents = new Map<string, ProjectRecord>(), projection?: ProjectionRecords): { input: AgentActivityInput; workflow: ProjectRecord; role: NativeRole } {
   const data = object(value);
   if (Object.keys(data).some(key => !(persisted ? eventKeys : inputKeys).has(key)))
     throw new Error('Unknown activity fields are not permitted.');
@@ -90,14 +97,14 @@ function normalizedInput(root: string, value: unknown, persisted = false, parent
   };
   if ((profile.id === 'coordinator') !== (input.assignment_id === 'coordinator'))
     throw new Error('Only the Coordinator uses assignment_id coordinator.');
-  const parent = parents.get(input.workflow_id) ?? workflow(root, input.workflow_id);
+  const parent = parents.get(input.workflow_id) ?? workflow(root, input.workflow_id, projection);
   parents.set(input.workflow_id, parent);
   if (!persisted && closedPhases.has(String(parent.meta.data.phase)))
     throw new Error('Completed workflows cannot receive new activity.');
   if (input.task_id) {
-    const task = getRecord(root, input.task_id);
+    const task = recordAt(root, input.task_id, projection);
     if (task.meta.type !== 'task' || task.meta.data.workflow_id !== parent.meta.id ||
-        (parent.meta.data.kind === 'manager-workflow' && !nativeWorkflowRecord(root, task)) ||
+        (parent.meta.data.kind === 'manager-workflow' && !nativeWorkflowRecord(root, task, new Set<string>(), projection?.records)) ||
         (parent.meta.data.kind === 'lightweight-workflow' && task.meta.data.intake_workflow_id !== undefined))
       throw new Error('Activity task must belong to the same unsigned workflow.');
   }
@@ -125,7 +132,7 @@ export function reportAgentActivity(root: string, value: AgentActivityInput): Ag
   }), 10_000);
 }
 /** Inspect only the newest bounded disk window; omitted events may contain older heads. */
-export function readAgentActivity(root: string, options: { now?: string } = {}): AgentActivitySnapshot {
+export function readAgentActivity(root: string, options: { now?: string } = {}, projectionRecords?: readonly ProjectRecord[]): AgentActivitySnapshot {
   const current = options.now === undefined ? Date.now() : Date.parse(options.now);
   if (!Number.isFinite(current)) throw new Error('Activity projection time must be a valid timestamp.');
   const result: AgentActivitySnapshot = { events: [], latest: [], invalid: 0, omitted: 0 };
@@ -150,6 +157,10 @@ export function readAgentActivity(root: string, options: { now?: string } = {}):
   }
   candidates.sort((a, b) => b.time - a.time || b.name.localeCompare(a.name));
   result.omitted = Math.max(0, candidates.length - agentActivityLimits.events);
+  // The optional input belongs only to a synchronous read-only projection such
+  // as readAgentMap. Mutation callers never receive or reuse this snapshot.
+  const records = projectionRecords ?? loadRecords(root);
+  const projection: ProjectionRecords = { records, byId: new Map(records.map(record => [record.meta.id, record])) };
   const observed: { event: AgentActivityEvent; workflow: ProjectRecord; time: number }[] = [];
   const parents = new Map<string, ProjectRecord>();
   for (const candidate of candidates.slice(0, agentActivityLimits.events)) {
@@ -163,7 +174,7 @@ export function readAgentActivity(root: string, options: { now?: string } = {}):
       const bytes = Buffer.alloc(agentActivityLimits.bytes + 1), length = readSync(fd, bytes, 0, bytes.length, 0);
       if (length > agentActivityLimits.bytes) throw new Error('Oversized activity file.');
       const data = object(JSON.parse(bytes.subarray(0, length).toString('utf8')));
-      const parsed = normalizedInput(root, data, true, parents);
+      const parsed = normalizedInput(root, data, true, parents, projection);
       if (Object.entries(parsed.input).some(([key, value]) => data[key] !== value) ||
           data.schema_version !== 1 || data.id !== candidate.name.slice(0, -5) || data.project_id !== project ||
           data.source !== 'native-activity' || data.execution_mode !== 'unsigned-native-progress' || data.role !== parsed.role ||

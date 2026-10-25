@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync, symlinkSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync, symlinkSync, linkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -135,6 +135,37 @@ test('blocked and failed substantive reports persist without task submission or 
   }
   assert.equal(c.reports.length, 2);
   assert.doesNotMatch(JSON.stringify(c.reports), /submit_task|invocation_id|workflow_id/);
+});
+
+test('literal search accepts a file path and retains directory search and match limits', async t => {
+  const root = project(t), c = await connect(t, root);
+  writeFileSync(join(root, 'src/main.mjs'), 'async function main() {\n  const marker = "main()";\n  return marker;\n}\n');
+  const file = await c.call('project_search', { query: 'async function main()', path: 'src/main.mjs', max_matches: 5 });
+  assert.equal(file.isError, undefined, JSON.stringify(file));
+  assert.deepEqual(decode(file), { matches: [{ path: 'src/main.mjs', line: 1, text: 'async function main() {' }], truncated: false });
+  const tree = decode(await c.call('project_search', { query: 'async function main()', path: 'src', max_matches: 5 }));
+  assert.deepEqual(tree, decode(file));
+  const limited = decode(await c.call('project_search', { query: 'marker', path: 'src/main.mjs', max_matches: 1 }));
+  assert.equal(limited.matches.length, 1); assert.equal(limited.matches[0].line, 2); assert.equal(limited.truncated, true);
+});
+
+test('file-path search still refuses private, out-of-scope, oversized and linked inputs', async t => {
+  const root = project(t), c = await connect(t, root);
+  writeFileSync(join(root, '.env'), 'PRIVATE_SEARCH_CREDENTIAL');
+  const privateFile = await c.call('project_search', { query: 'PRIVATE_SEARCH', path: '.env' });
+  assert.equal(privateFile.isError, true); assert.equal(decode(privateFile).code, 'PRIVATE_PATH');
+  assert.doesNotMatch(JSON.stringify(privateFile), /PRIVATE_SEARCH_CREDENTIAL/);
+  const scoped = await connect(t, root, binding('review', { read_paths: ['docs'] }));
+  assert.equal(decode(await scoped.call('project_search', { query: 'value', path: 'src/value.mjs' })).code, 'SCOPE_DENIED');
+  writeFileSync(join(root, 'src/oversized.txt'), Buffer.alloc(2 * 1024 * 1024 + 1, 65));
+  assert.equal(decode(await c.call('project_search', { query: 'A', path: 'src/oversized.txt' })).code, 'INVALID_FILE');
+  linkSync(join(root, 'src/value.mjs'), join(root, 'src/value-alias.mjs'));
+  assert.equal(decode(await c.call('project_search', { query: 'value', path: 'src/value-alias.mjs' })).code, 'INVALID_FILE');
+  try { symlinkSync(join(root, 'docs'), join(root, 'src/link'), process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) { if (process.platform === 'win32' && ['EPERM', 'EACCES'].includes(error.code)) { t.diagnostic('Windows junction privilege unavailable; other path guards were checked.'); return; } throw error; }
+  writeFileSync(join(root, 'docs/linked.txt'), 'LINK_TARGET_CONTENT');
+  const linked = await c.call('project_search', { query: 'LINK_TARGET', path: 'src/link/linked.txt' });
+  assert.equal(linked.isError, true); assert.doesNotMatch(JSON.stringify(linked), /LINK_TARGET_CONTENT/);
 });
 
 test('role briefs and denied writes name the actual file owner and expected handoff without changing reports', async t => {

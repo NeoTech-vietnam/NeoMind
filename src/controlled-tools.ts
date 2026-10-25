@@ -292,10 +292,17 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
   register('project_list', 'List readable project files; private runtime, credential and dependency directories are excluded.',
     z.strictObject({ path: z.string().min(1).max(1024).default('.'), limit: z.number().int().min(1).max(1000).default(200) }), true,
     args => walk(args.path, args.limit));
-  register('project_search', 'Find literal text in readable project files without invoking a shell.',
+  register('project_search', 'Find literal text in one readable project file or a readable directory tree without invoking a shell.',
     z.strictObject({ query: z.string().min(1).max(1000), path: z.string().min(1).max(1024).default('.'),
       max_matches: z.number().int().min(1).max(100).default(40) }), true, args => {
-      const found = walk(args.path, 1000), matches: { path: string; line: number; text: string }[] = [];
+      const selected = publicTarget(root, args.path);
+      assertReadable(binding, args.path, true);
+      const info = lstatSync(selected);
+      assertReadable(binding, args.path, info.isDirectory());
+      if (!info.isFile() && !info.isDirectory() || info.isFile() && (info.nlink !== 1 || info.size > 2 * 1024 * 1024))
+        throw new ControlledToolError('INVALID_FILE', 'Search an ordinary unlinked text file up to 2 MiB, or a readable directory.');
+      const found = info.isFile() ? { files: [args.path], truncated: false } : walk(args.path, 1000);
+      const matches: { path: string; line: number; text: string }[] = [];
       for (const path of found.files) {
         const target = publicTarget(root, path), info = lstatSync(target);
         if (info.size > 2 * 1024 * 1024 || info.nlink > 1) continue;

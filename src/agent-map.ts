@@ -78,7 +78,7 @@ function receiptState(receipt: NativeReceipt): AgentMapState {
 /** A bounded, read-only projection. Receipt signatures establish provenance, not task acceptance. */
 export function readAgentMap(root: string): AgentMapSnapshot {
   const config = readConfig(root), records = loadRecords(root);
-  const observedAt = now(), activity = readAgentActivity(root, { now: observedAt });
+  const observedAt = now(), activity = readAgentActivity(root, { now: observedAt }, records);
   const diagnostics = { invalid_receipts: 0, omitted_receipts: 0, omitted_records: 0, omitted_edges: 0,
     invalid_activity: activity.invalid, omitted_activity: activity.omitted };
   const snapshot: AgentMapSnapshot = {

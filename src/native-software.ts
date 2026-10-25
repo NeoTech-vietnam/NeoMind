@@ -115,7 +115,15 @@ function unsignedWorkflow(parent: ProjectRecord): boolean {
 }
 /** No SQLite or mutable flag can authorize scoped exceptions. Validate the authoritative saved contract each time. */
 export function readNativeSoftwareContract(root: string, workflowId: string): NativeSoftwareContract | null {
-  const parent = getRecord(root, workflowId), marker = parent.meta.data.native_software_contract;
+  // One fresh inventory/byte read per synchronous authority check. Repeated
+  // lookups must not rescan the whole record store for every captured entity.
+  const records = new Map(loadRecords(root).map(record => [record.meta.id, record]));
+  const recordAt = (id: string): ProjectRecord => {
+    const record = records.get(id);
+    if (!record) throw new Error(`Record not found: ${id}`);
+    return structuredClone(record);
+  };
+  const parent = recordAt(workflowId), marker = parent.meta.data.native_software_contract;
   if (marker === undefined) return null;
   if (!unsignedWorkflow(parent)) throw new Error('Software contract cannot reclassify strict or legacy workflow history.');
   const value = JSON.parse(readFileSync(contractPath(root, workflowId), 'utf8')) as NativeSoftwareContract;
@@ -124,18 +132,18 @@ export function readNativeSoftwareContract(root: string, workflowId: string): Na
       hash(JSON.stringify(normalizePlan(root, value.plan))) !== value.plan_hash ||
       !Array.isArray(value.check_ids) || !value.check_ids.length || !Array.isArray(value.requirement_ids) || !value.requirement_ids.length)
     throw new Error('Native software contract integrity changed; inspect the immutable plan before continuing.');
-  const task = getRecord(root, value.task_id);
+  const task = recordAt(value.task_id);
   if (task.meta.type !== 'task' || task.meta.data.workflow_id !== workflowId || task.meta.data.routing_required === true ||
       task.meta.data.native_software_plan_hash !== value.plan_hash || taskHash(task) !== value.task_hash)
     throw new Error('Native software task scope or semantic baseline changed after planning.');
   for (const id of value.check_ids) {
-    const check = getRecord(root, id);
+    const check = recordAt(id);
     if (check.meta.type !== 'check' || check.meta.data.workflow_id !== workflowId || check.meta.data.routing_required === true ||
         check.meta.data.native_software_plan_hash !== value.plan_hash || checkHash(check) !== value.check_hashes[id])
       throw new Error('Native software check command or semantic baseline changed after planning.');
   }
   for (const id of value.requirement_ids) {
-    const requirement = getRecord(root, id);
+    const requirement = recordAt(id);
     if (requirement.meta.type !== 'requirement' || requirement.meta.data.routing_required === true ||
         requirement.meta.data.intake_workflow_id !== workflowId || recordFingerprint(requirement) !== value.requirement_hashes[id])
       throw new Error('Native software requirement intent or acceptance baseline changed after planning.');
@@ -146,7 +154,7 @@ export function readNativeSoftwareContract(root: string, workflowId: string): Na
       throw new Error('Software historical planning scope is invalid.');
     for (const [category, entries] of Object.entries({ administrative_records: history.administrative_records, cornell_notes: history.cornell_notes }))
       for (const entry of entries) {
-        const record = getRecord(root, entry.id);
+        const record = recordAt(entry.id);
         if (record.meta.data.workflow_id !== workflowId || recordFingerprint(record) !== entry.fingerprint ||
             (category === 'administrative_records' ? !['manager-discussion', 'review'].includes(String(record.meta.data.kind ?? record.meta.type)) : record.meta.data.format !== 'cornell-v1'))
           throw new Error('Pre-contract historical planning records changed or escape their captured scope.');

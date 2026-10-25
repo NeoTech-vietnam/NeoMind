@@ -43,10 +43,11 @@ export function strictRecord(
   root: string,
   record: ProjectRecord,
   visited = new Set<string>(),
+  projectionRecords?: readonly ProjectRecord[],
 ): boolean {
   if (record.meta.data.routing_required === true) return true;
   if (!existsSync(safePath(root, '.neomind/routing.json'))) return false;
-  const byId = new Map(loadRecords(root).map((item) => [item.meta.id, item]));
+  const byId = new Map((projectionRecords ?? loadRecords(root)).map((item) => [item.meta.id, item]));
   function walk(item: ProjectRecord): boolean {
     if (visited.has(item.meta.id)) return false;
     visited.add(item.meta.id);
@@ -69,8 +70,9 @@ export function nativeWorkflowRecord(
   root: string,
   record: ProjectRecord,
   visited = new Set<string>(),
+  projectionRecords?: readonly ProjectRecord[],
 ): boolean {
-  const byId = new Map(loadRecords(root).map((item) => [item.meta.id, item]));
+  const byId = new Map((projectionRecords ?? loadRecords(root)).map((item) => [item.meta.id, item]));
   function walk(item: ProjectRecord): { strict: boolean; native: boolean } {
     if (visited.has(item.meta.id)) return { strict: false, native: false };
     visited.add(item.meta.id);
@@ -91,7 +93,7 @@ export function nativeWorkflowRecord(
     return { strict, native };
   }
   const { strict, native } = walk(record);
-  return native && !strict && !strictRecord(root, record);
+  return native && !strict && !strictRecord(root, record, new Set<string>(), projectionRecords);
 }
 function strictExecution(root: string, record: ProjectRecord): boolean {
   // Native increments keep the full lifecycle but never require a signed receipt.
