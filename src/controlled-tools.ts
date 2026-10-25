@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { z } from 'zod';
 import { atomicWrite, hash, now, safePath, withOperationLock } from './storage.js';
 import { replaceWorkspaceFile, workspaceFileBytes, workspaceContentBytes, workspacePathLockKey } from './workspace.js';
-import { registerProcedureSchema } from './procedures.js';
+import { registerProcedureSchema, procedureInputContractHint } from './procedures.js';
 import { cornellResearchSchema } from './cornell-workflow.js';
 import { controlledModelInput, controlledValidation, redactControlledValue } from './controlled-observability.js';
 
@@ -153,6 +153,7 @@ export function controlledInstructions(binding: ControlledBinding): string {
     `You are a NeoMind-owned ${binding.role} session in the ${binding.stage} stage. ${duties[binding.stage]}\n` +
     'Only the supplied tools are available. Their actor, workflow, task, scope and authorization are already bound by the runtime. Supply semantic content and project-relative file paths.\n' +
     'Reuse: planning may bind reuse {procedure_id,version,parameters} after work_prepare reports exact eligibility; implementation calls procedure_run instead of recreating the generator. For newly delivered reusable scripts declare procedure_candidate (manifest without id/version/author); runtime registers it after checked completion without claiming qualification. For requested Cornell notes declare cornell_output_dir and all three note.md/exercises.md/answers.md outputs, then implementation calls cornell_research_compile with substantive research content.\n' +
+    procedureInputContractHint() +
     'Before ending, save one compact assignment_report with outcome, summary, artifacts and findings. A blocked or failed report preserves useful work and does not submit a task. Reported prose is distinct from observed execution evidence. Runtime events supply progress and advance the workflow; focus on the assigned work.';
 }
 

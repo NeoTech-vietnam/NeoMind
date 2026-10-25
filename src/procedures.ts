@@ -52,6 +52,27 @@ export type ProcedureStatus = 'candidate' | 'reviewed' | 'eligible' | 'suspended
 export interface ProcedureProcessResult {
   exit_code: number | null; stdout: string; stderr: string; timed_out: boolean; output_limited: boolean;
 }
+/** Public subprocess input contract. Identity values are supplied by the runner. */
+export interface ProcedureInputPacket {
+  schema_version: 1; request_id: string; procedure_id: string; version: string;
+  parameters: Record<string, unknown>; outputs: string[];
+}
+export function createProcedureInputPacket(input: Omit<ProcedureInputPacket, 'schema_version'>): ProcedureInputPacket {
+  return { schema_version: 1, request_id: input.request_id, procedure_id: input.procedure_id, version: input.version,
+    parameters: input.parameters, outputs: input.outputs };
+}
+export function serializeProcedureInputPacket(packet: ProcedureInputPacket): string {
+  return JSON.stringify(createProcedureInputPacket(packet)) + '\n';
+}
+/** Generated from the actual packet constructor; no private records or identity values. */
+export function procedureInputContractHint(): string {
+  const example = createProcedureInputPacket({ request_id: '<backend-issued request identity>',
+    procedure_id: '<registered procedure id>', version: '<registered procedure version>',
+    parameters: { example_parameter: '<validated parameter value>' }, outputs: ['<resolved project-relative output path>'] });
+  return `Procedure subprocess stdin contract: ${JSON.stringify(example)}\n` +
+    'The runtime sends one UTF-8 JSON object followed by a newline, closes stdin, and supplies the identical packet to the generator and independent verification script. Read all stdin and JSON.parse it; task values live in packet.parameters and resolved output paths in packet.outputs. The outer object is not the flat task-parameter object.\n' +
+    'schema_version is 1. request_id, procedure_id and version are backend-owned metadata, not model inputs: consume their supplied values without hardcoding the illustrative placeholders, generating IDs or asking for credentials. Workers invoke the bound procedure_run tool with its saved parameters (or omit parameters); the runtime creates this envelope. An adapter that also supports direct CLI JSON must distinguish that direct input from this procedure envelope instead of requiring callers to fabricate envelope metadata.\n';
+}
 export interface ProcedureRun {
   id: string; request_id: string; procedure_id: string; version: string; contract_hash: string;
   parameters_hash: string; parameters: Record<string, unknown>; actor: string; client: string;
@@ -332,11 +353,12 @@ function authorize(root: string, manifest: ProcedureManifest, input: z.infer<typ
     if (path === manifest.script || path === manifest.verification_script) throw new Error('Procedure cannot overwrite its executable scripts.');
   }
 }
-async function execute(root: string, script: string, input: unknown, timeout: number, cap: number, signal?: AbortSignal): Promise<ProcedureProcessResult> {
+async function execute(root: string, script: string, input: ProcedureInputPacket, timeout: number, cap: number, signal?: AbortSignal): Promise<ProcedureProcessResult> {
   const node = process.versions.electron ? (await import('./adapters.js')).adapterNodeCommand(root) : process.execPath;
+  const stdin = serializeProcedureInputPacket(input);
   if (signal) {
     const result = await runCommand({ command: [node, checkedPath(root, script)], cwd: resolve(root),
-      stdin: JSON.stringify(input) + '\n', timeout_ms: timeout, max_output_bytes: cap, signal });
+      stdin, timeout_ms: timeout, max_output_bytes: cap, signal });
     return { exit_code: result.exit_code, stdout: result.stdout, stderr: result.stderr,
       timed_out: result.timed_out || result.cancelled, output_limited: result.output_limited };
   }
@@ -364,7 +386,7 @@ async function execute(root: string, script: string, input: unknown, timeout: nu
     child.stdout.on('data', chunk => collect(Buffer.from(chunk), 'stdout')); child.stderr.on('data', chunk => collect(Buffer.from(chunk), 'stderr'));
     const finish = (code: number | null) => { if (settled) return; settled = true; clearTimeout(timer); child.stdout.destroy(); child.stderr.destroy(); resolveResult({ exit_code: code, stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8'), timed_out, output_limited }); };
     child.on('error', error => { collect(Buffer.from(error.message), 'stderr'); finish(null); }); child.on('close', code => finish(code));
-    child.stdin.on('error', () => {}); child.stdin.end(JSON.stringify(input) + '\n');
+    child.stdin.on('error', () => {}); child.stdin.end(stdin);
   });
 }
 /** New output paths only. A repeated request returns its durable result; uncertain attempts are never replayed. */
@@ -392,7 +414,8 @@ export async function runProcedure(root: string, input: RunProcedureInput, optio
   if (!prepared.execute) return { ...prepared.run, replayed: true };
   const { manifest, run, base, key } = prepared;
   try {
-    const packet = { schema_version: 1, request_id: run.request_id, procedure_id: manifest.id, version: manifest.version, parameters: run.parameters, outputs: manifest.outputs.map(output => substitute(output.path, run.parameters)) };
+    const packet = createProcedureInputPacket({ request_id: run.request_id, procedure_id: manifest.id, version: manifest.version,
+      parameters: run.parameters, outputs: manifest.outputs.map(output => substitute(output.path, run.parameters)) });
     if (scriptHash(root, manifest.script) !== manifest.script_sha256 || scriptHash(root, manifest.verification_script) !== manifest.verification_sha256 || canonical(dependencyHashes(root, manifest.dependencies)) !== canonical(manifest.dependency_sha256)) throw new Error('Procedure code or dependencies changed before execution.');
     run.generator = await execute(root, manifest.script, packet, manifest.timeout_ms, manifest.max_output_bytes, options.signal);
     if (run.generator.exit_code !== 0 || run.generator.timed_out || run.generator.output_limited) throw new Error('Procedure generation failed, timed out, or exceeded its output limit.');
