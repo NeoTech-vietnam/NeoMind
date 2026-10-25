@@ -60,14 +60,70 @@ const contentCodes = new Set(['PLAN_INVALID', 'INVALID_PATH', 'PRIVATE_PATH', 'S
 const runtimeCodes = new Set(['ACTOR_INACTIVE', 'INPUT_CHANGED', 'STATE_UNCERTAIN', 'PROTOCOL_ERROR', 'UNSUPPORTED_STAGE',
   'NO_BOUND_PROCEDURE', 'NO_CORNELL_OUTPUT', 'NO_CHECK_EVIDENCE', 'REUSE_NOT_APPLICABLE', 'CONTROLLED_OPERATION_FAILED',
   'ACCEPTANCE_INCOMPLETE', 'CONTINUATION_PILOT_UNSUPPORTED', 'INTAKE_IDENTITY_MISMATCH', 'INTAKE_PAYLOAD_MISMATCH']);
-export function controlledValidation(code: unknown, rule?: unknown) {
+const schemaMessages = {
+  invalid_type: 'Use the declared field type and include required fields.',
+  too_big: 'The field exceeds its declared size or length limit.',
+  too_small: 'The field has fewer items or characters than the schema requires.',
+  invalid_value: 'Use a value allowed by the declared schema.',
+  unrecognized_keys: 'Remove extra fields not declared by this tool schema.',
+  invalid_format: 'Use the declared string, date or identifier format.',
+  not_multiple_of: 'Use a number satisfying the declared numeric constraint.',
+  invalid_union: 'Use one of the declared input shapes.',
+  custom: 'A declared cross-field or content rule was not satisfied.',
+  schema_mismatch: 'The field does not match the declared schema.',
+} as const;
+const schemaTypes = new Set(['string', 'number', 'boolean', 'array', 'object', 'null', 'undefined', 'int', 'bigint']);
+// Schema names, not model-provided dictionary keys. Unknown/sensitive names never enter traces.
+const schemaFields = new Set(('schema_version id version title objective rationale acceptance_criteria allowed_paths verification_paths outputs documentation_paths checks purpose command baseline_paths expected_exit_code timeout_ms negative_controls risk reuse procedure_id parameters procedure_candidate script verification_script dependencies effects write_roots read_roots network publication task_family environment input_paths preservation_paths specialists role cornell_output_dir path max_chars start_line query max_matches content outcome summary artifacts findings failure_kind verdict limitations requirement_id expected_requirement_revision workflow_id task_id owner topic date output_dir context constraints abstract learning_objectives text methods explanations heading body results discussion questions prompt objective_ids answer worked_example expected observed evidence_ids practice procedure steps solution_path starter sources uri retrieved_at locator record_id sha256 failure_cases').split(' '));
+interface SafeSchemaIssue { path: (string | number)[]; code: keyof typeof schemaMessages; message: string }
+function safeSchemaIssues(value: unknown): SafeSchemaIssue[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 8).filter(issue => issue && typeof issue === 'object').map(issue => {
+    const code: keyof typeof schemaMessages = typeof issue.code === 'string' && Object.hasOwn(schemaMessages, issue.code)
+      ? issue.code as keyof typeof schemaMessages : 'schema_mismatch';
+    const path = (Array.isArray(issue.path) ? issue.path : []).slice(0, 8).map((part: unknown) =>
+      typeof part === 'string' ? sensitiveKey.test(part) ? '[redacted-field]' : schemaFields.has(part) ? part : '[field]'
+        : Number.isSafeInteger(part) && Number(part) >= 0 && Number(part) <= 1000000 ? Number(part) : '[index]');
+    return { path, code, message: code === 'invalid_type' && typeof issue.expected === 'string' && schemaTypes.has(issue.expected)
+      ? `Expected ${issue.expected}.` : schemaMessages[code] };
+  });
+}
+function sdkSchemaIssues(text: string): unknown[] {
+  const start = text.indexOf('[');
+  if (start >= 0) try {
+    const issues = JSON.parse(text.slice(start));
+    if (Array.isArray(issues)) return issues;
+  } catch { /* Current SDK formats plain message/path lines instead of a JSON issue array. */ }
+  const marker = text.indexOf('Input validation error:');
+  if (marker < 0) return [];
+  const body = text.slice(marker + 'Input validation error:'.length)
+    .replace(/^\s*Invalid arguments for tool [A-Za-z0-9_-]+:\s*/, '');
+  return body.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 8).map(line => {
+    const at = line.lastIndexOf(' at '), message = at >= 0 ? line.slice(0, at) : line,
+      dotted = at >= 0 ? line.slice(at + 4) : '';
+    const path = dotted.length <= 512 && /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*|\[\d{1,9}\])*$/.test(dotted)
+      ? [...dotted.matchAll(/[A-Za-z_]\w*|\[(\d+)\]/g)].map(part => part[1] === undefined ? part[0] : Number(part[1])) : [];
+    const expected = /^Invalid input: expected ([a-z]+), received\b/.exec(message)?.[1];
+    const code = expected ? 'invalid_type' : /^Too small:/.test(message) ? 'too_small'
+      : /^Too big:/.test(message) ? 'too_big' : /^Unrecognized keys?:/.test(message) ? 'unrecognized_keys'
+        : /^Invalid (?:option|value):/.test(message) ? 'invalid_value'
+          : /^Invalid (?:string|ISO |UUID|url|email|format)/.test(message) ? 'invalid_format'
+            : /^Invalid number:.*multiple of/.test(message) ? 'not_multiple_of'
+              : message === 'Invalid input' ? 'invalid_union' : 'custom';
+    return { path, code, expected }; // Never return raw messages, values, enum choices or unknown key names.
+  });
+}
+export function controlledValidation(code: unknown, rule?: unknown, schemaIssues?: unknown) {
   const known = typeof code === 'string' && (contentCodes.has(code) || runtimeCodes.has(code));
   const safeCode = known ? code : 'CONTROLLED_OPERATION_FAILED';
-  const redacted = known && typeof rule === 'string' ? redactControlledValue(rule) : undefined;
+  const issues = safeCode === 'SCHEMA_INVALID' ? safeSchemaIssues(schemaIssues) : [];
+  const schemaRule = issues.length ? `Input schema validation failed: ${JSON.stringify(issues)}. Check the declared tool schema.`
+    : 'The supplied arguments do not match this tool\'s declared schema. Check its required fields, field types and forbidden extra fields.';
+  const redacted = safeCode === 'SCHEMA_INVALID' ? schemaRule : known && typeof rule === 'string' ? redactControlledValue(rule) : undefined;
   const safeRule = redacted !== undefined ? (typeof redacted === 'string' ? redacted : JSON.stringify(redacted)).slice(0, 2000)
     : 'The bound operation could not complete. The runtime must reconcile the failed boundary; existing work is preserved.';
   return { code: safeCode, rule: safeRule, owner: contentCodes.has(safeCode) ? 'agent-content' : 'runtime',
-    rule_id: `controlled.${safeCode.toLowerCase()}` };
+    rule_id: `controlled.${safeCode.toLowerCase()}`, ...(issues.length ? { issues } : {}) };
 }
 export function controlledResultFailure(result: any) {
   if (result?.isError !== true) return undefined;
@@ -75,19 +131,13 @@ export function controlledResultFailure(result: any) {
     if (block?.type !== 'text' || typeof block.text !== 'string') continue;
     try {
       const value = JSON.parse(block.text.slice(0, 16000));
-      if (typeof value?.code === 'string') return controlledValidation(value.code, value.validation?.rule ?? value.error);
+      if (typeof value?.code === 'string') return controlledValidation(value.code, value.validation?.rule ?? value.error,
+        value.code === 'SCHEMA_INVALID' ? value.validation?.issues ?? sdkSchemaIssues(String(value.validation?.rule ?? value.error ?? '').slice(0, 16000)) : undefined);
     } catch { /* SDK schema errors are projected below; raw errors never become trace text. */ }
     try {
-      const text = block.text.slice(0, 16000), start = text.indexOf('[');
-      if (start < 0) continue;
-      const issues = JSON.parse(text.slice(start));
-      const codes = new Set(['invalid_type', 'too_big', 'too_small', 'invalid_value', 'unrecognized_keys',
-        'invalid_format', 'not_multiple_of', 'invalid_union', 'custom']);
-      if (!Array.isArray(issues) || !issues.length) continue;
-      const rules = issues.slice(0, 8).map(issue => ({ rule: codes.has(issue?.code) ? issue.code : 'schema_mismatch',
-        path: (Array.isArray(issue?.path) ? issue.path : []).slice(0, 8).map((part: unknown) => typeof part === 'string'
-          ? sensitiveKey.test(part) ? '[redacted-field]' : redactedText(part).slice(0, 80) : typeof part === 'number' ? part : '[field]') }));
-      return controlledValidation('SCHEMA_INVALID', `Input schema validation failed: ${JSON.stringify(rules)}. Check the declared tool schema.`);
+      const issues = sdkSchemaIssues(block.text.slice(0, 16000));
+      if (!issues.length) continue;
+      return controlledValidation('SCHEMA_INVALID', undefined, issues);
     } catch { /* Unknown SDK errors use a fixed rule without raw provider text. */ }
   }
   return controlledValidation('SCHEMA_INVALID', 'The supplied arguments do not match this tool\'s declared schema. Check its required fields, field types and forbidden extra fields.');

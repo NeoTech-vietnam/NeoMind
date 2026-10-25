@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { z } from 'zod';
 import { controlledModelInput, controlledValidation, controlledResultFailure, redactControlledValue, ControlledFailureLoop } from '../dist/controlled-observability.js';
 
 test('semantic tracing keeps actionable plans and reports but redacts bounded nested credentials and file bodies', () => {
@@ -40,6 +44,53 @@ test('validation traces contain the actual redacted rule and static repair owner
   ]) }] });
   assert.equal(schema.code, 'SCHEMA_INVALID'); assert.match(schema.rule, /invalid_type|checks|command/);
   assert.doesNotMatch(JSON.stringify(schema), /SECRET_/);
+});
+
+test('actual SDK flat schema diagnostics become safe structured trace issues without changing the model result', async t => {
+  const server = new McpServer({ name: 'actual-schema-diagnostics', version: '1' }),
+    client = new Client({ name: 'schema-diagnostics-client', version: '1' });
+  let called = 0;
+  server.registerTool('research', { inputSchema: z.strictObject({
+    sources: z.array(z.strictObject({ title: z.string().min(8) })),
+    practice: z.strictObject({ command: z.array(z.string()).optional(), procedure: z.array(z.string()).optional() })
+      .refine(value => Boolean(value.command || value.procedure), 'SECRET_CUSTOM_MESSAGE'),
+  }) }, () => { called++; return { content: [{ type: 'text', text: '{}' }] }; });
+  const [a, b] = InMemoryTransport.createLinkedPair(); await server.connect(b); await client.connect(a);
+  t.after(async () => { await client.close(); await server.close(); });
+  const result = await client.callTool({ name: 'research', arguments: {
+    sources: [{ title: 123 }], practice: {}, api_key: 'SECRET_INPUT_VALUE',
+  } });
+  assert.equal(result.isError, true); assert.equal(called, 0);
+  assert.ok(result.content.some(block => block.type === 'text' && block.text.includes(' at sources[0].title')),
+    'Use the installed SDK formatter rather than fabricating its schema error shape.');
+  const original = JSON.stringify(result), failure = controlledResultFailure(result);
+  assert.ok(Array.isArray(failure.issues), 'Human traces must retain safe field-level SDK validation issues.');
+  assert.equal(failure.owner, 'agent-content'); assert.equal(failure.rule_id, 'controlled.schema_invalid');
+  assert.ok(failure.issues.some(issue => issue.code === 'invalid_type' && JSON.stringify(issue.path) === '["sources",0,"title"]'));
+  assert.ok(failure.issues.some(issue => issue.code === 'custom' && JSON.stringify(issue.path) === '["practice"]'));
+  assert.ok(failure.issues.every(issue => typeof issue.message === 'string' && issue.message.length > 0));
+  assert.doesNotMatch(JSON.stringify(failure), /SECRET_|api_key/);
+  assert.equal(JSON.stringify(result), original, 'The raw SDK tool result delivered to the model is neither wrapped nor changed.');
+});
+
+test('schema issue projections bound paths and hide values, custom text, unknown field names and credential names', () => {
+  const flat = controlledResultFailure({ isError: true, content: [{ type: 'text', text:
+    'Input validation error: Invalid arguments for tool research: Invalid input: expected string, received SECRET_VALUE at sources[1].title\n' +
+    'SECRET_CUSTOM_MESSAGE at private_customer_name\n' +
+    'Invalid input: expected string, received undefined at api_key\n' +
+    'Unrecognized key: "SECRET_EXTRA_FIELD"' }] });
+  assert.ok(flat.issues.some(issue => JSON.stringify(issue.path) === '["sources",1,"title"]'));
+  assert.doesNotMatch(JSON.stringify(flat), /SECRET_|private_customer_name|api_key/);
+  const nested = controlledResultFailure({ isError: true, content: [{ type: 'text', text: 'Input validation error: ' + JSON.stringify(
+    Array.from({ length: 30 }, (_, index) => ({ code: index ? 'custom' : 'invalid_type', expected: 'string',
+      path: ['sources', index, 'title', 'api_key', 'SECRET_FIELD', 'command', 'practice', 'procedure', 'too_deep'],
+      message: 'SECRET_CUSTOM_MESSAGE', input: 'SECRET_INPUT_VALUE', keys: ['SECRET_EXTRA_FIELD'] }))) }] });
+  assert.equal(nested.issues.length, 8);
+  assert.ok(nested.issues.every(issue => issue.path.length <= 8));
+  assert.doesNotMatch(JSON.stringify(nested), /SECRET_|api_key|too_deep/);
+  assert.ok(JSON.stringify(nested).length < 8000);
+  const direct = controlledValidation('SCHEMA_INVALID', 'SECRET_RAW_SCHEMA_ERROR');
+  assert.doesNotMatch(JSON.stringify(direct), /SECRET_/);
 });
 
 test('loop guard refuses only a third identical failure in unchanged state, allowing corrected work', () => {

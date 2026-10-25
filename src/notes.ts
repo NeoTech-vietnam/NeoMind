@@ -17,6 +17,7 @@ import {
 } from './storage.js';
 import type { ProjectRecord } from './types.js';
 import { evidenceRecordFingerprint } from './evidence-inputs.js';
+import { hasUnfinishedCornellProse } from './cornell-content.js';
 
 export const cornellQuote =
   '<p align="center"><strong><em>"DO NOT JUST TALK ABOUT IT — SHOW IT"</em></strong></p>';
@@ -202,7 +203,7 @@ function text(value: unknown, label: string): asserts value is string {
   if (
     typeof value !== 'string' ||
     value.trim().length < 8 ||
-    /\b(?:TODO|TBD|insert here|fill in|placeholder)\b/i.test(value)
+    hasUnfinishedCornellProse(value)
   )
     throw new Error(`${label} needs substantive content without placeholders.`);
 }
@@ -875,7 +876,7 @@ export function validateCornellNote(
       if (!new RegExp(`^#{2,3} ${section}\\s*$`, 'm').test(body))
         problems.push(`Cornell section is missing: ${section}`);
     }
-    if (/\b(?:TODO|TBD|insert here|fill in|placeholder)\b/i.test(body))
+    if (hasUnfinishedCornellProse(body))
       problems.push('Cornell note still contains placeholders.');
     const sources = Array.isArray(data.sources)
       ? (data.sources as (CornellSource & { baseline?: string })[])

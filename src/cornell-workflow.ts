@@ -6,11 +6,25 @@ import { normalizeCornellOwnership, prepareRecipe, type RecipeInput } from './re
 import { validateCornellNote, type CornellInput } from './notes.js';
 import { atomicWrite, getRecord, hash, loadRecords, now, readConfig, safePath, withOperationLock } from './storage.js';
 import type { ProjectRecord } from './types.js';
+import { hasUnfinishedCornellProse } from './cornell-content.js';
 
-const prose = z.string().trim().min(8).max(32_000).refine(value => !/\b(?:TODO|TBD|placeholder|insert here|fill in|lorem ipsum)\b/i.test(value), 'Complete substantive prose is required.');
+const prose = z.string().trim().min(8).max(32_000).refine(value => !hasUnfinishedCornellProse(value), 'Complete substantive prose is required.')
+  .describe('Complete substantive prose. Discussion of TODO or placeholder validation is allowed; unfinished markers, filler and unexpanded template tokens are not.');
 const objective = z.object({ id: z.string().regex(/^O[1-9][0-9]*$/), text: prose }).strict();
 const question = (prefix: string) => z.object({ id: z.string().regex(new RegExp(`^${prefix}[1-9][0-9]*$`)), prompt: prose,
   objective_ids: z.array(z.string().regex(/^O[1-9][0-9]*$/)).min(1).max(32), answer: prose }).strict();
+const practiceCommand = z.array(z.string().min(1)).min(1).max(64)
+  .describe('Runnable argument vector, documented but never executed by the research compiler. May accompany descriptive procedure steps.');
+const practiceProcedure = z.array(prose).min(1).max(32)
+  .describe('Complete human-readable practice steps. May accompany a runnable command or define manual practice on their own.');
+const practiceBase = z.object({ questions: z.array(question('P')).min(1).max(40),
+  solution_path: z.string().optional(), starter: z.string().max(64_000).optional() });
+// An explicit union preserves the at-least-one requirement in advertised JSON
+// Schema as well as runtime validation. Both fields are useful learner content.
+const practice = z.union([
+  practiceBase.extend({ command: practiceCommand, procedure: practiceProcedure.optional() }).strict(),
+  practiceBase.extend({ command: practiceCommand.optional(), procedure: practiceProcedure }).strict(),
+]).describe('Provide a runnable command, descriptive procedure steps, or both. At least one is required; all supplied steps are preserved.');
 const source = z.object({ id: z.string().regex(/^S[1-9][0-9]*$/), title: prose, uri: z.string().min(1).max(2_000),
   retrieved_at: z.string().datetime({ offset: true }), locator: z.string().max(1_000).optional(), record_id: z.string().optional(), sha256: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
 export const cornellResearchSchema = z.object({
@@ -23,10 +37,7 @@ export const cornellResearchSchema = z.object({
   results: prose, discussion: prose, questions: z.array(question('Q')).min(1).max(40),
   worked_example: z.object({ body: prose, expected: prose, command: z.array(z.string().min(1)).min(1).max(64).optional(),
     observed: prose.optional(), evidence_ids: z.array(z.string()).max(32).optional() }).strict(),
-  practice: z.object({ questions: z.array(question('P')).min(1).max(40),
-    command: z.array(z.string().min(1)).min(1).max(64).optional(), procedure: z.array(prose).min(1).max(32).optional(),
-    solution_path: z.string().optional(), starter: z.string().max(64_000).optional() }).strict()
-    .refine(value => Boolean(value.command) !== Boolean(value.procedure), 'Choose a runnable command or an explicit manual procedure.'),
+  practice,
   sources: z.array(source).min(1).max(64), failure_cases: z.array(prose).min(1).max(32), summary: prose,
 }).strict();
 export type CornellResearchInput = z.infer<typeof cornellResearchSchema>;
@@ -100,7 +111,8 @@ export function compileCornellResearch(root: string, value: CornellResearchInput
     main_notes: `### Methods\n\n${input.methods}\n\n${input.explanations.map(item => `### ${item.heading}\n\n${item.body}`).join('\n\n')}\n\n### Results\n\n${input.results}\n\n### Discussion\n\n${input.discussion}\n\n### Research Questions\n\n${questions(input.questions)}`,
     demonstration: input.worked_example, sources: input.sources, failure_cases: input.failure_cases, summary: input.summary,
     practice: { exercise_path: `${input.output_dir}/exercises.md`, answer_path: `${input.output_dir}/answers.md`,
-      exercise: `# Research and practice questions\n\nAnswer the research questions before consulting the separate answer file. Explain the assumptions and reasoning in your own words.\n\n${questions(input.questions)}\n## Practice\n\n${questions(input.practice.questions)}`,
+      exercise: `# Research and practice questions\n\nAnswer the research questions before consulting the separate answer file. Explain the assumptions and reasoning in your own words.\n\n${questions(input.questions)}\n## Practice\n\n${questions(input.practice.questions)}` +
+        (input.practice.command && input.practice.procedure ? `\n### Practice steps\n\n${input.practice.procedure.map((step, index) => `${index + 1}. ${step}`).join('\n\n')}\n` : ''),
       answer: `# Answers and reasoning\n\nThese supplied reference answers support comparison; completing the learner's exercises is not claimed.\n\n${answers}`,
       ...(input.practice.command ? { command: input.practice.command } : { mode: 'manual', procedure: input.practice.procedure }),
       ...(input.practice.solution_path ? { solution_path: input.practice.solution_path, starter: input.practice.starter } : {}) },

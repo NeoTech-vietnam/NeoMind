@@ -64,7 +64,7 @@ neomind cornell prepare --data-file research.json
 
 MCP offers read-only `cornell_research_compile`, which returns `recipe_input`. Pass that envelope to the existing `recipe_prepare`, then use `recipe_run` after the normal reviews and task gates. Mutation stays behind the existing Cornell ownership rules; strict workflows retain invocation-bound authorization. The CLI `cornell prepare` provides deterministic preparation/reuse directly. The original `note_create` and `note_validate` paths and legacy Cornell inputs remain supported.
 
-For executable practice, replace `practice.procedure` with `practice.command`, an argument array such as `["node", "examples/count-pairs.mjs"]`. A structured research note may instead carry a substantive manual procedure. Preparation and format validation execute neither practice form. An observed worked result still requires actual passing evidence; expected results and supplied reference answers cannot establish execution, independent correctness or learner completion.
+For executable practice, supply `practice.command`, an argument array such as `["node", "examples/count-pairs.mjs"]`. Supply `practice.procedure` for descriptive steps, or provide both: the compiler keeps the runnable command and renders every supplied step in the exercise. At least one form is required. Preparation and format validation execute neither form. Complete discussion of TODO or placeholder validation is allowed; unfinished markers and unexpanded templates are rejected. An observed worked result still requires actual passing evidence; expected results and supplied reference answers cannot establish execution, independent correctness or learner completion.
 
 ## Preview a local notes copy
 
