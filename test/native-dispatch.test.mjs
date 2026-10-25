@@ -33,7 +33,7 @@ function cancellation() {
     cancel() { this.isCancellationRequested = true; for (const fn of listeners) fn(); } };
 }
 function fixture(t, settings = {}) {
-  const base = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), 'neomind-native-dispatch-')));
+  const base = realpathSync.native(mkdtempSync(join(realpathSync.native(tmpdir()), 'neomind-native-dispatch-')));
   const root = join(base, 'project'), runtimeRoot = join(base, 'runtime');
   mkdirSync(join(root, '.github/agents'), { recursive: true }); mkdirSync(runtimeRoot);
   writeFileSync(join(runtimeRoot, 'package.json'), JSON.stringify({ name: 'neomind', version: '0.1.0-alpha.9' }));
@@ -70,7 +70,7 @@ function fixture(t, settings = {}) {
   const host = createNativeDispatchHost({ vscode, context, loadRuntime });
   const opaque = Object.freeze({ opaque: 'the-real-host-token' }), token = cancellation();
   const input = { reported_assignment: manager };
-  t.after(() => { host.dispose(); assert.equal(dirname(base), realpathSync(tmpdir())); rmSync(base, { recursive: true, force: true }); });
+  t.after(() => { host.dispose(); assert.equal(dirname(base), realpathSync.native(tmpdir())); rmSync(base, { recursive: true, force: true }); });
   return { root, runtimeRoot, calls, state, registered, changes, workspace, runtime, vscode, context, host, opaque, token, input, loadRuntime };
 }
 
