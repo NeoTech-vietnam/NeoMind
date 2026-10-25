@@ -392,7 +392,8 @@ class Controller {
     return readState(this.root, run.workflow_id);
   }
   private async plan(run: ControlledSnapshot, proposed: ControlledPlan, signal: AbortSignal, assertActive: () => void): Promise<unknown> {
-    const supplied = run.contract_hash ? proposed : { ...proposed, execution_steps: proposed.execution_steps ?? [] };
+    const emptyExecutionDefault = !run.contract_hash || readContract(this.root, run).plan.execution_steps?.length === 0;
+    const supplied = proposed.execution_steps === undefined && emptyExecutionDefault ? { ...proposed, execution_steps: [] } : proposed;
     const plan = validatePlan(this.root, normalizeControlledPlanInput(this.root, mergeOriginalCriteria(this.root, run, supplied),
       run.continuation ? readNativeSoftwareContract(this.root, run.workflow_id)?.plan.checks ?? [] : []));
     if (run.continuation) {
