@@ -211,6 +211,11 @@ test('runtime/provider errors are not copied into chat or webview', async t => {
   const response = await a.invoke({ action: 'submit', workspace_folder: a.root, requirement: 'Work.' });
   assert.equal(response.error.code, 'CONTROLLED_OPERATION_FAILED');
   assert.equal(JSON.stringify(response).includes('PRIVATE'), false);
+  a.runtime.startControlledWorkflow = async () => { throw Object.assign(new Error('PRIVATE_PROVIDER_ERROR'), { code: 'CONTINUATION_PILOT_UNSUPPORTED' }); };
+  const unsupported = await a.invoke({ action: 'submit', workspace_folder: a.root, requirement: 'Continue bounded work.' });
+  assert.equal(unsupported.error.code, 'CONTINUATION_PILOT_UNSUPPORTED');
+  assert.match(unsupported.error.message, /original task family/);
+  assert.equal(JSON.stringify(unsupported).includes('PRIVATE'), false);
 });
 
 test('controlled panel uses isolated CSP, safe rendering and packaged tool registration', () => {

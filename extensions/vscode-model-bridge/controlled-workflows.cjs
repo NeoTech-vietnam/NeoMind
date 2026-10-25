@@ -31,6 +31,10 @@ function requireApi(runtime) {
     fail('RUNTIME_UPDATE_REQUIRED', 'Update the NeoMind runtime to use controlled workflows.');
 }
 function publicError(error) {
+  if (error?.code === 'CONTINUATION_PILOT_UNSUPPORTED') return {
+    code: 'CONTINUATION_PILOT_UNSUPPORTED',
+    message: 'This saved contract needs an intended-use adapter for its original task family. Its acceptance conditions remain open; NeoMind will not replace them with LeetCode or C/C++ requirements.',
+  };
   return error instanceof ControlledUIError ? { code: error.code, message: error.message }
     : { code: 'CONTROLLED_OPERATION_FAILED', message: 'NeoMind could not complete this operation. Inspect the workflow journal and Bridge status; the accepted workflow is preserved.' };
 }

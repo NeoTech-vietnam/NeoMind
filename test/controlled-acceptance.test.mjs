@@ -14,6 +14,11 @@ import { createCornellNote, validateCornellNote } from '../dist/notes.js';
 import { runCommand } from '../dist/command-runner.js';
 import { cornellFixture } from './cornell-fixture.mjs';
 import { controlledRisk } from '../dist/controlled-workflow.js';
+import { startControlledWorkflow } from '../dist/controlled-workflow.js';
+import { beginWorkflow, nativeAutomationPolicy } from '../dist/manager.js';
+import { prepareReportedAssignment } from '../dist/native-assignment.js';
+import { openAssignment } from '../dist/assignment-runtime.js';
+import { planNativeSoftware } from '../dist/native-software.js';
 
 // Structural backend fixtures do not claim actual model or signed-session acceptance.
 function fixture(t, continuation = false) {
@@ -47,7 +52,7 @@ function fixture(t, continuation = false) {
     task_id: task.meta.id, requirement_ids: [requirement.meta.id], requirement_fingerprints: { [requirement.meta.id]: evidenceRecordFingerprint(requirement) },
     preserved_hashes: { 'preserved.txt': hash('original\n') }, reviewer_required: false, risk_reasons: [], precheck_review: false,
     ...(old ? { continuation: { original_task_id: old.meta.id, original_task_fingerprint: hash(JSON.stringify(old)), original_contract_path: originalContractPath,
-      original_contract_sha256: hash(readFileSync(safePath(root, originalContractPath))), obligations: { registration: true, intended_use: true, preservation: true } } } : {}) };
+      original_contract_sha256: hash(readFileSync(safePath(root, originalContractPath))), obligations: { registration: true, intended_use: true, preservation: true, pilot_kind: 'unsupported-generic' } } } : {}) };
   const bytes = JSON.stringify(contract, null, 2) + '\n', contractHash = hash(bytes);
   atomicWrite(safePath(root, `.neomind/controlled/workflows/${hash(workflow.meta.id)}.${epoch}.contract.json`), bytes);
   updateRecord(root, task.meta.id, { data: { controlled_contract_hash: contractHash } });
@@ -108,8 +113,10 @@ test('actual positive command receipt materializes Cornell-compatible evidence; 
 
 test('continuation obligations retain registration, intended-use and preservation independently', () => {
   assert.deepEqual(continuationObligations(['Register actual versioned procedure.', 'Intended-use pilot uses an approved disposable exercise.', 'Preserve all existing exercises.']),
-    { registration: true, intended_use: true, preservation: true });
-  assert.deepEqual(continuationObligations(['Return the integer one.']), { registration: false, intended_use: false, preservation: false });
+    { registration: true, intended_use: true, preservation: true, pilot_kind: 'unsupported-generic' });
+  assert.deepEqual(continuationObligations(['Return the integer one.']), { registration: false, intended_use: false, preservation: false, pilot_kind: null });
+  assert.equal(continuationObligations(['LeetCode Cornell note with C11 and C++17 solutions.', 'Run an intended-use pilot.']).pilot_kind, 'leetcode-c11-cpp17');
+  assert.equal(continuationObligations(['Run an intended-use pilot for the JavaScript CLI.']).pilot_kind, 'unsupported-generic');
 });
 
 test('minimum review risk retains the original English and Vietnamese user intent despite an innocuous low-risk plan', t => {
@@ -117,6 +124,27 @@ test('minimum review risk retains the original English and Vietnamese user inten
   assert.equal(controlledRisk(plan).reviewer_required, false);
   for (const request of ['Change authentication and authorization.', 'Cải thiện xác thực và phân quyền.', 'Sửa quyền truy cập và mật khẩu.', 'Thay đổi điều phối hoặc lưu trữ.'])
     assert.equal(controlledRisk(plan, request).reviewer_required, true, request);
+});
+
+test('public continuation preflight preserves an actionable unsupported-family error before host lookup or model dispatch', async t => {
+  const a = fixture(t);
+  atomicWrite(safePath(a.root, '.neomind/automation.json'), JSON.stringify(nativeAutomationPolicy()));
+  const workflow = beginWorkflow(a.root, { execution_mode: 'copilot-native', requirement: 'Implement a JavaScript scalar CLI with an explicitly required intended-use pilot.' });
+  const packet = prepareReportedAssignment(a.root, { workflow_id: workflow.meta.id, profile_id: 'coordinator', role: 'manager',
+    assignment_id: 'generic-pilot-preflight-fixture', objective: 'Save the actual generic software contract without authorizing a language-specific replacement pilot.' });
+  const handle = openAssignment(a.root, packet.open_input).handle;
+  const { checks, risk, ...plan } = a.contract.plan;
+  planNativeSoftware(a.root, handle, { ...plan, title: 'Generic JavaScript CLI intended-use pilot', process: 'software-tools',
+    rationale: 'This JavaScript software contract needs its own intended-use proof and has no Cornell or C/C++ outputs.',
+    acceptance_criteria: [...plan.acceptance_criteria, 'Run an intended-use pilot for the JavaScript CLI.'],
+    checks: checks.map(({ negative_controls, ...check }) => check) });
+  await assert.rejects(startControlledWorkflow(a.root, { workflow_id: workflow.meta.id }), error => {
+    assert.equal(error.code, 'CONTINUATION_PILOT_UNSUPPORTED');
+    assert.match(error.message, /reviewed runtime adapter/);
+    assert.doesNotMatch(error.message, /re-enable|descriptor|credential|token/i);
+    return true;
+  });
+  assert.equal(existsSync(safePath(a.root, `.neomind/controlled/workflows/${hash(workflow.meta.id)}.json`)), false);
 });
 
 test('fixture outcome and wrong pilot nonce cannot create intended-use proof', async t => {

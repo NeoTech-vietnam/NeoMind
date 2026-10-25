@@ -67,6 +67,10 @@ const states = '.neomind/controlled/workflows';
 const hosts = new Map<string, Controller>();
 const statePath = (root: string, id: string) => safePath(root, `${states}/${hash(id)}.json`);
 const contractPath = (root: string, id: string, epoch: string) => safePath(root, `${states}/${hash(id)}.${epoch}.contract.json`);
+function assertSupportedContinuation(criteria: string[]): void {
+  if (continuationObligations(criteria).pilot_kind === 'unsupported-generic')
+    throw new ControlledToolError('CONTINUATION_PILOT_UNSUPPORTED', 'The original contract requires an intended-use pilot for a task family without a reviewed runtime adapter. Its obligations remain open; define that adapter before controlled continuation. NeoMind will not substitute LeetCode, Cornell or C/C++ requirements.');
+}
 const covers = (path: string, roots: string[]) => {
   const key = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
   return roots.some(root => key(path) === key(root) || key(path).startsWith(`${key(root)}/`));
@@ -231,6 +235,7 @@ class Controller {
       // Explicit controlled resumption is append-only. No original mode, criteria or reports are rewritten.
       original = readNativeSoftwareContract(this.root, existing.meta.id);
       if (!original || existing.meta.data.phase === 'completed') throw new Error('Controlled continuation requires an open bounded software contract.');
+      assertSupportedContinuation(original.plan.acceptance_criteria);
     }
     const parent = existing ?? beginWorkflow(this.root, { ...parsed, request_id: request, execution_mode: 'neomind-controlled' });
     const run: ControlledSnapshot = { schema_version: 1, workflow_id: parent.meta.id, epoch_id: randomUUID(),
@@ -254,6 +259,7 @@ class Controller {
         (check.timeout_ms ?? 60000) >= (old.timeout_ms ?? 60000))))
         throw new Error('Continuation must retain every original acceptance criterion and positive check.');
       const obligations = continuationObligations(original.plan.acceptance_criteria);
+      if (obligations.pilot_kind === 'unsupported-generic') throw new Error('The original intended-use task family has no reviewed pilot adapter; keep its original acceptance open.');
       if (obligations.registration && !plan.procedure_candidate) throw new Error('Original acceptance requires a planned reusable procedure candidate using the actual producer and checker scripts.');
       if (obligations.intended_use && !plan.checks.some(check => check.purpose === 'intended-use' && !original.plan.checks.some(old => same(old.command, check.command))))
         throw new Error('Original acceptance needs a separate intended-use pilot check; keep the original fixture self-check and add purpose intended-use with its own checker argv.');
@@ -541,6 +547,8 @@ class Controller {
     }
   }
   private prompt(run: ControlledSnapshot, stage: Stage, contract?: Contract): string {
+    const original = run.continuation && !contract ? readNativeSoftwareContract(this.root, run.workflow_id) : undefined;
+    const obligations = original ? continuationObligations(original.plan.acceptance_criteria) : undefined;
     return [
       `User requirement:\n${run.requirement}`,
       `Your stage: ${stage}. Use only the supplied semantic tools. Runtime owns identity, records, transitions and checks.`,
@@ -549,7 +557,13 @@ class Controller {
       contract?.knowledge_directory ? `Managed final knowledge destination: ${contract.knowledge_directory}. Coordinator synthesis must compile a separate evidence-derived research Cornell bundle after checks and before final review.` : '',
       contract?.continuation ? `Continuation uses a NEW execution task linked to the unchanged historical task. Required obligations: ${JSON.stringify(contract.continuation.obligations)}. Preservation inputs are backend-fingerprinted. A planned intended-use check is separate from fixture checks; the backend appends --neomind-pilot-root <owned-temp-directory> and --neomind-pilot-nonce <nonce>. That independently authored checker mode must prepare pilot-input.json in that directory: {schema_version:1,kind:"intended-use",nonce,note:"relative/note.md",python:"absolute configured Python",case_classes:[at least ten meaningful classes],solutions:[{language:"c11",source:"relative/program.c",compiler:"absolute configured gcc",local_test:true|false},{language:"cpp17",source:"relative/program.cpp",compiler:"absolute configured g++",local_test:true|false}]}. Generate an explicitly disposable intended-use exercise via the actual adapter, with problem-specific notes and independently authored per-language oracle/harness; do not copy fixture outcomes. The backend independently runs the canonical Cornell validator, fresh strict builds and each executable, retaining actual evidence. Do not remove the owned pilot directory before the backend collects it.` : '',
       run.pending_check_review ? 'This is the original contract required pre-execution check review. Read the exact checker source and protected cases; pass only if the checker/oracle and negative controls are adequate. No check execution is claimed yet.' : '',
-      run.continuation && !contract ? `Original saved plan, scope, outputs, criteria and positive checks must be retained. Reuse it; only add explicit negative controls in its existing verification scope:\n${JSON.stringify(readNativeSoftwareContract(this.root, run.workflow_id)!.plan)}` : '',
+      original ? `Original saved plan, scope, outputs, criteria and positive checks must be retained. Reuse these exact scope values and argv:\n${JSON.stringify(original.plan)}` : '',
+      obligations ? `Required continuation plan additions: ${[
+        'Explicit negative controls in the existing independent verification scope.',
+        ...(obligations.registration ? ['A procedure_candidate manifest bound to the actual producer and independent checker scripts; inspect their existing CLI schema before declaring parameters.'] : []),
+        ...(obligations.intended_use ? ['Keep the original self-check and add a separate check with purpose intended-use. Runtime appends --neomind-pilot-root and --neomind-pilot-nonce arguments to the reviewed checker; its pilot mode prepares pilot-input.json there. Runtime validates it and executes fresh canonical Cornell/C11/C++17 checks.'] : []),
+        ...(obligations.preservation ? ['preservation_paths listing the existing exercises and canonical assets that must remain byte-identical.'] : []),
+      ].join(' ')}` : '',
       run.reuse?.manager_brief ?? '',
       `Cornell destination default: ${readCornellDestination(this.root).directory}/${run.workflow_id.toLowerCase()}. Only add a Cornell bundle when requested by the user.`,
       run.blocker ? `Repair/diagnosis context:\n${JSON.stringify(run.blocker)}` : '',
@@ -727,6 +741,12 @@ export async function dispatchControlledHost(root: string, operation: string, in
   throw new Error('Unknown controlled host operation.');
 }
 export async function startControlledWorkflow(root: string, input: ControlledStartInput): Promise<ControlledSnapshot> {
+  // Preserve this fixed public diagnostic before the credential-hiding wire seam.
+  // The owner repeats the same check against current state before dispatch.
+  if (typeof input.workflow_id === 'string' && input.workflow_id) {
+    const original = readNativeSoftwareContract(root, input.workflow_id);
+    if (original) assertSupportedContinuation(original.plan.acceptance_criteria);
+  }
   return hostRequest(readHost(root), 'controlled-start', input);
 }
 export async function controlControlledWorkflow(root: string, input: { workflow_id: string; action: 'pause' | 'resume' | 'cancel' }): Promise<ControlledSnapshot> {

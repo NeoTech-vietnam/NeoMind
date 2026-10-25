@@ -199,6 +199,32 @@ test('real signed Bridge/MCP drives normal and risk-based workflows with actual 
       assert.ok(stale.findings.some(finding => finding.code === 'controlled-acceptance'));
     } finally { atomicWrite(output, prior); }
     assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true, 'Restoring the exact bound bytes restores current acceptance.');
+    const journalPath = safePath(env.root, `.neomind/controlled/workflows/${hash(done.workflow_id)}.json`), journalBytes = readFileSync(journalPath);
+    const unresolved = [
+      ['producer after Verifier', journal => {
+        const producer = journal.attempts.find(attempt => attempt.stage === 'implementation');
+        journal.attempts = [...journal.attempts.filter(attempt => attempt !== producer), producer];
+      }],
+      ...['starting', 'running'].map(state => [`unfinished ${state} invocation`, journal => {
+        journal.attempts.push({ id: 'unresolved-attempt', request_id: 'unresolved-request', stage: 'implementation', role: 'developer', state });
+      }]),
+      ['unresolved command intent', journal => {
+        journal.check_intents ??= [];
+        journal.check_intents.push({ id: 'unresolved-check', attempt_id: journal.attempts.find(attempt => attempt.stage === 'verification').id,
+          title: 'Unreconciled command', baseline: {}, state: 'running', pid: process.pid });
+      }],
+    ];
+    for (const [reason, change] of unresolved) {
+      try {
+        const journal = JSON.parse(journalBytes.toString('utf8')); change(journal);
+        atomicWrite(journalPath, JSON.stringify(journal, null, 2) + '\n');
+        const rejected = verify(env.root, task.meta.id, 'accepted');
+        assert.equal(rejected.ok, false, `Genuine completed receipts cannot override ${reason}.`);
+        assert.ok(rejected.findings.some(finding => finding.code === 'controlled-acceptance'));
+      } finally { atomicWrite(journalPath, journalBytes); }
+    }
+    assert.deepEqual(readFileSync(journalPath), journalBytes);
+    assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true, 'Exact journal restoration recovers the valid signed execution.');
     const repeated = await submit(env.root, name);
     assert.equal(repeated.workflow_id, done.workflow_id); assert.equal(repeated.attempts.length, done.attempts.length);
   }

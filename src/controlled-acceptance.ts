@@ -11,12 +11,15 @@ import type { Gate, ProjectRecord, Verification } from './types.js';
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const roots = '.neomind/controlled/workflows';
-export interface ContinuationObligations { registration: boolean; intended_use: boolean; preservation: boolean }
+export interface ContinuationObligations { registration: boolean; intended_use: boolean; preservation: boolean;
+  pilot_kind: 'leetcode-c11-cpp17' | 'unsupported-generic' | null }
 export function continuationObligations(criteria: string[]): ContinuationObligations {
   const text = criteria.join('\n');
-  return { registration: /register[^\n]*procedure|procedure[^\n]*regist/i.test(text),
-    intended_use: /intended.use|pre.pilot|approved disposable exercise/i.test(text),
-    preservation: /preserv|byte.identical|pre.existing[^\n]*unchanged/i.test(text) };
+  const intended = /intended.use|pre.pilot|approved disposable exercise/i.test(text);
+  const leetcode = /leet.?code/i.test(text) && /cornell/i.test(text) && /\bc11\b/i.test(text) && /c\+\+17|cpp17/i.test(text);
+  return { registration: /register[^\n]*procedure|procedure[^\n]*regist/i.test(text), intended_use: intended,
+    preservation: /preserv|byte.identical|pre.existing[^\n]*unchanged/i.test(text),
+    pilot_kind: intended ? leetcode ? 'leetcode-c11-cpp17' : 'unsupported-generic' : null };
 }
 /** Public input fingerprints reject links and preserve missing files as missing. */
 export function controlledFingerprints(root: string, paths: string[]): Record<string, string> {
@@ -131,6 +134,8 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
     const { run, contract } = controlledContractForTask(root, task);
     if (['cancelled', 'uncertain', 'interrupted'].includes(run.status)) throw new Error('Controlled effects require reconciliation before acceptance.');
     if (['ready', 'design-ready'].includes(gate)) return { ok: true, gate, findings, checked_at: now() };
+    if (run.attempts.some(attempt => ['starting', 'running'].includes(attempt.state)) || run.check_intents?.some(intent => intent.state !== 'completed'))
+      throw new Error('An active replacement session or unresolved check effect still needs reconciliation.');
     const latest = (stage: string) => [...run.attempts].reverse().find(item => item.stage === stage && item.purpose !== 'check-review' && item.state === 'completed');
     const producer = latest('implementation'), verifier = latest('verification'), reviewer = latest('review'), synthesis = latest('synthesis');
     const required = [producer, verifier, ...(gate === 'accepted' && contract.reviewer_required ? [reviewer] : []),
@@ -149,6 +154,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
     }
     if (producer!.invocation_id === verifier!.invocation_id || reviewer?.invocation_id === producer!.invocation_id || reviewer?.invocation_id === verifier!.invocation_id)
       throw new Error('Verification and review must use independent sessions.');
+    if (run.attempts.indexOf(verifier!) <= run.attempts.indexOf(producer!)) throw new Error('Independent verification must follow the latest producer result.');
     if (verifier!.report?.verdict !== 'pass' || gate === 'accepted' && contract.reviewer_required && reviewer?.report?.verdict !== 'pass') throw new Error('Independent verification or required review did not pass.');
     const checks = run.checks.filter(item => item.attempt_id === verifier!.id);
     for (const planned of contract.plan.checks) for (const selected of [{ ...planned, negative: false }, ...(planned.negative_controls ?? []).map(value => ({ ...value, negative: true }))]) {
@@ -173,6 +179,8 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
     if (Object.values(controlledFingerprints(root, contract.plan.outputs)).some(value => value === 'missing')) throw new Error('Delivered output is missing.');
     if (!same(contract.preserved_hashes, controlledFingerprints(root, Object.keys(contract.preserved_hashes)))) throw new Error('Protected pre-existing files changed.');
     if (contract.continuation?.obligations.intended_use) {
+      if (contract.continuation.obligations.pilot_kind !== 'leetcode-c11-cpp17')
+        throw new Error('This continuation needs a reviewed intended-use adapter for its original task family; a LeetCode C11/C++17 pilot cannot replace generic acceptance.');
       const pilot = checks.find(item => item.purpose === 'intended-use' && !item.negative);
       if (!pilot?.pilot_receipt_path || !pilot.pilot_receipt_hash || hash(readFileSync(safePath(root, pilot.pilot_receipt_path))) !== pilot.pilot_receipt_hash)
         throw new Error('Original acceptance requires a separately executed intended-use pilot; fixture self-checks cannot replace it.');
