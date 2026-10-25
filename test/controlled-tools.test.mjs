@@ -154,6 +154,36 @@ test('controlled Cornell practice and demonstrations hide backend paths, evidenc
   assert.equal(captured.length, 4, 'Cached metadata stripping must not discard arbitrary unknown properties.');
 });
 
+test('producer Cornell tools omit future observations and accept cached placeholder fields without promoting them to claims', async t => {
+  const { root, input } = researchFixture(t), captured = [], c = await connect(t, root, binding('implementation'), {
+    compileResearch(value) { captured.push(value); return { saved: true }; },
+  });
+  const declared = (await c.client.listTools()).tools.find(tool => tool.name === 'cornell_research_compile').inputSchema;
+  assert.equal('observed' in declared.properties.worked_example.properties, false);
+  assert.equal('evidence_ids' in declared.properties.worked_example.properties, false);
+  for (const option of declared.properties.practice.anyOf) assert.equal('starter' in option.properties, false);
+  const { requirement_id, expected_requirement_revision, workflow_id, task_id, owner, output_dir, ...semantic } = input;
+  for (const observed of ['not executed', 'omit this field', 'Đã đọc source; chưa chạy CLI.']) {
+    const response = await c.call('cornell_research_compile', { ...semantic,
+      worked_example: { ...semantic.worked_example, observed, evidence_ids: ['cached-unbound-id'] },
+      practice: { ...semantic.practice, starter: '# Unplanned worksheet content' } });
+    assert.equal(response.isError, undefined);
+    assert.equal('observed' in captured.at(-1).worked_example, false);
+    assert.equal('evidence_ids' in captured.at(-1).worked_example, false);
+    assert.equal(captured.at(-1).worked_example.expected, semantic.worked_example.expected);
+    assert.equal('starter' in captured.at(-1).practice, false);
+  }
+});
+
+test('missing future output directories are an empty readable listing, while private paths still fail closed', async t => {
+  const root = project(t), c = await connect(t, root, binding('planning'));
+  const result = await c.call('project_list', { path: 'future-output/not-created' });
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(decode(result), { files: [], truncated: false });
+  assert.equal(existsSync(join(root, 'future-output')), false);
+  assert.equal((await c.call('project_list', { path: '.neomind/not-created' })).isError, true);
+});
+
 test('identity spoofing is rejected before the bound report callback and no supplied secret is echoed', async t => {
   const c = await connect(t, project(t));
   for (const field of ['workflow_id', 'task_id', 'invocation_id', 'claim_token', 'reported_assignment', 'submit_task']) {

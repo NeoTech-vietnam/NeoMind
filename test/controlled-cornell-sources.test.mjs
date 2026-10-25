@@ -4,13 +4,15 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { z } from 'zod';
 import { researchFixture } from './cornell-research-fixture.mjs';
-import { atomicWrite, createRecord, hash, loadRecords, safePath } from '../dist/storage.js';
+import { atomicWrite, createRecord, hash, loadRecords, safePath, updateRecord } from '../dist/storage.js';
 import { runCheck, reviewRecord } from '../dist/engineering.js';
 import { compileCornellResearch } from '../dist/cornell-workflow.js';
 import { createCornellNote, validateCornellNote } from '../dist/notes.js';
 import { controlledPublicReferencePath, controlledSkillInputPath } from '../dist/controlled-tools.js';
-import { normalizeControlledCornellSources, existingControlledCornellNote, controlledCornellResult, bindControlledCornellPractice, bindControlledCornellDemonstration } from '../dist/controlled-cornell-sources.js';
+import { normalizeControlledCornellSources, existingControlledCornellNote, controlledCornellResult, bindControlledCornellPractice,
+  bindControlledCornellDemonstration, controlledCornellResearchSchema } from '../dist/controlled-cornell-sources.js';
 
 test('unobserved Cornell work needs no record identity, while actual observations bind only backend evidence', () => {
   const expected = { body: 'Walk the finite input through the algorithm.', expected: 'The expected scalar result is six.' };
@@ -19,6 +21,48 @@ test('unobserved Cornell work needs no record identity, while actual observation
     /Omit worked_example.observed and provide expected only/);
   assert.deepEqual(bindControlledCornellDemonstration({ ...expected, observed: 'The independent run returned six.', evidence_ids: ['invented-id'] }, ['actual-bound-evidence']),
     { ...expected, observed: 'The independent run returned six.', evidence_ids: ['actual-bound-evidence'] });
+});
+
+test('producer Cornell interface hides observations and defers only cached observation fields without altering professional content', () => {
+  const professional = { body: 'Trace the finite inputs through the proposed procedure.', expected: 'The expected scalar result is six.',
+    command: ['node', 'documented-example.mjs'] };
+  const schema = controlledCornellResearchSchema(false), advertised = z.toJSONSchema(schema, { io: 'output' });
+  assert.equal('observed' in advertised.properties.worked_example.properties, false);
+  assert.equal('evidence_ids' in advertised.properties.worked_example.properties, false);
+  assert.equal('observed' in z.toJSONSchema(controlledCornellResearchSchema(), { io: 'output' }).properties.worked_example.properties, true);
+  for (const observed of ['not executed', 'omit this field', 'Đã đọc source; chưa chạy CLI.', 'Unsupported proposed success claim.', null, { guessed: true }]) {
+    const cached = { ...professional, observed, evidence_ids: ['invented-cached-id'] };
+    assert.deepEqual(schema.shape.worked_example.parse(cached), professional);
+    assert.deepEqual(bindControlledCornellDemonstration(cached, ['old-or-current-backend-evidence'], false),
+      { ...professional, evidence_ids: [] });
+  }
+  assert.throws(() => schema.shape.worked_example.parse({ ...professional, arbitrary_path: '../outside.md' }));
+  assert.throws(() => bindControlledCornellDemonstration({ ...professional, observed: 'An actual run succeeded.' }, []));
+  assert.deepEqual(bindControlledCornellDemonstration({ ...professional, observed: 'An actual run succeeded.', evidence_ids: ['invented'] }, ['current-evidence']),
+    { ...professional, observed: 'An actual run succeeded.', evidence_ids: ['current-evidence'] });
+});
+
+test('unplanned starter policy hides only starter and cached paths while preserving both practice modes', () => {
+  const practice = { questions: [{ id: 'P1', prompt: 'Enumerate the finite ordered pairs independently.', objective_ids: ['O1'],
+    answer: 'Each first-set element pairs with every second-set element.' }], command: ['node', 'practice-check.mjs'],
+  procedure: ['List the finite input elements and enumerate every ordered pair.'] };
+  const schema = controlledCornellResearchSchema(false, false),
+    advertised = z.toJSONSchema(schema, { io: 'output' }).properties.practice;
+  const arms = advertised.anyOf ?? advertised.oneOf;
+  assert.equal(arms.length, 2);
+  for (const arm of arms) {
+    assert.equal('starter' in arm.properties, false); assert.equal('solution_path' in arm.properties, false);
+  }
+  const { command: _command, ...manual } = practice, { procedure: _procedure, ...runnable } = practice;
+  for (const semantic of [practice, manual, runnable]) for (const starter of ['# Unplanned learner worksheet\n', null, { cached: true }]) {
+    const supplied = { ...semantic, starter, solution_path: '../unplanned-answers.md' };
+    assert.deepEqual(schema.shape.practice.parse(supplied), semantic);
+    assert.deepEqual(bindControlledCornellPractice(supplied, 'docs/fixed-cornell', false), semantic);
+  }
+  assert.throws(() => schema.shape.practice.parse({ ...practice, arbitrary_path: '../outside.md' }));
+  const starter = '# Explicitly allowed independent learner worksheet\n';
+  assert.deepEqual(bindControlledCornellPractice({ ...practice, starter, solution_path: '../untrusted.md' }, 'docs/fixed-cornell'),
+    { ...practice, starter, solution_path: 'docs/fixed-cornell/practice-solution.md' });
 });
 
 const template = '.agents/skills/leetcode-notes/assets/cornell-note-template.md';
@@ -64,6 +108,85 @@ function compile(a, sources) {
     worked_example: { ...a.input.worked_example, observed: 'The independent command printed six pairs and exited successfully.',
       evidence_ids: a.evidence.map(record => record.meta.id) } }, { approved_source_files: sources.approved_source_files });
 }
+function expectedPrimary(t) {
+  const a = researchFixture(t);
+  const task = createRecord(a.root, { type: 'task', title: 'Produce the primary expected Cornell bundle', owner: 'developer',
+    data: { workflow_id: a.workflow.meta.id }, links: [{ type: 'satisfies', target: a.requirement.meta.id }] });
+  const context = { workflow_id: a.workflow.meta.id, epoch_id: randomUUID(), task_id: task.meta.id,
+    requirement_ids: [a.requirement.meta.id], evidence: [], file_allowed: () => false };
+  const compileExpected = () => {
+    const normalized = normalizeControlledCornellSources(a.root, a.input.sources, context);
+    return compileCornellResearch(a.root, { ...a.input, task_id: task.meta.id, sources: normalized.sources,
+      worked_example: bindControlledCornellDemonstration(a.input.worked_example, []) },
+    { approved_source_files: normalized.approved_source_files });
+  };
+  return { ...a, task, context, compileExpected };
+}
+
+test('three-artifact primary compilation cannot create an unplanned fourth learner worksheet', t => {
+  const a = expectedPrimary(t), normalized = normalizeControlledCornellSources(a.root, a.input.sources, a.context),
+    practice = bindControlledCornellPractice(a.input.practice, a.input.output_dir, false);
+  const compiled = compileCornellResearch(a.root, { ...a.input, task_id: a.task.meta.id, practice, sources: normalized.sources,
+    worked_example: bindControlledCornellDemonstration(a.input.worked_example, [], false) },
+  { approved_source_files: normalized.approved_source_files });
+  const note = createCornellNote(a.root, compiled.note);
+  assert.equal(validateCornellNote(a.root, note.meta.id).ok, true);
+  assert.equal(Object.keys(note.meta.data.artifact_hashes).length, 3);
+  assert.equal(compiled.note.practice.solution_path, undefined);
+  assert.equal(existsSync(safePath(a.root, `${a.input.output_dir}/practice-solution.md`)), false);
+  assert.deepEqual(practice.questions, a.input.practice.questions);
+  assert.deepEqual(practice.procedure, a.input.practice.procedure);
+});
+
+test('persisted expected-only primary Cornell bundle replays after a lost response without new evidence or artifact writes', t => {
+  const a = expectedPrimary(t), compiled = a.compileExpected(), note = createCornellNote(a.root, compiled.note);
+  assert.equal(validateCornellNote(a.root, note.meta.id).ok, true);
+  assert.equal(existingControlledCornellNote(a.root, compiled, a.context), undefined, 'An unjournaled note remains an uncertain cutpoint.');
+  a.context.saved_results = JSON.parse(JSON.stringify([controlledCornellResult(compiled, note)]));
+  const before = loadRecords(a.root).length, paths = Object.keys(note.meta.data.artifact_hashes);
+  const bytes = paths.map(path => readFileSync(safePath(a.root, path)));
+  const repeated = a.compileExpected();
+  assert.equal(repeated.input_hash, compiled.input_hash);
+  assert.deepEqual(repeated.note.demonstration.evidence_ids, []);
+  assert.equal(repeated.note.demonstration.observed, undefined);
+  assert.equal(existingControlledCornellNote(a.root, repeated, a.context)?.meta.id, note.meta.id);
+  assert.equal(loadRecords(a.root).length, before);
+  paths.forEach((path, index) => assert.deepEqual(readFileSync(safePath(a.root, path)), bytes[index]));
+  assert.match(readFileSync(safePath(a.root, compiled.note.path), 'utf8'), /has not been executed; no observed result is claimed/);
+});
+
+test('expected-only primary replay rejects changed artifacts and changed record fingerprints without overwriting them', t => {
+  const a = expectedPrimary(t), compiled = a.compileExpected(), note = createCornellNote(a.root, compiled.note);
+  a.context.saved_results = [controlledCornellResult(compiled, note)];
+  const path = safePath(a.root, compiled.note.path), original = readFileSync(path);
+  writeFileSync(path, 'Independent user note edit must survive.\n');
+  assert.equal(existingControlledCornellNote(a.root, compiled, a.context), undefined);
+  assert.equal(readFileSync(path, 'utf8'), 'Independent user note edit must survive.\n');
+  writeFileSync(path, original);
+  updateRecord(a.root, note.meta.id, {}, `${note.body}\nIndependent record correction.\n`);
+  assert.equal(validateCornellNote(a.root, note.meta.id).ok, true, 'Artifact structure alone does not authorize a changed record.');
+  assert.equal(existingControlledCornellNote(a.root, compiled, a.context), undefined);
+  assert.deepEqual(readFileSync(path), original);
+});
+
+test('cached note or demonstration IDs cannot authorize expected-primary or stale-observed replay', t => {
+  const a = expectedPrimary(t), compiled = a.compileExpected(), note = createCornellNote(a.root, compiled.note);
+  const saved = controlledCornellResult(compiled, note);
+  a.context.saved_results = [{ ...saved, note_id: 'invented-cached-note-id' }];
+  assert.equal(existingControlledCornellNote(a.root, compiled, a.context), undefined);
+  a.context.saved_results = [{ ...saved, record_fingerprint: '0'.repeat(64) }];
+  assert.equal(existingControlledCornellNote(a.root, compiled, a.context), undefined);
+  a.context.saved_results = [saved];
+  assert.equal(existingControlledCornellNote(a.root, compiled, { ...a.context,
+    evidence: [{ evidence_id: 'invented-cached-evidence-id', log_path: '.neomind/controlled/checks/foreign.log' }] }), undefined);
+  assert.deepEqual(bindControlledCornellDemonstration({ ...a.input.worked_example, evidence_ids: ['invented-cached-evidence-id'] }, []).evidence_ids, []);
+  const actual = fixture(t), observed = compile(actual, normalizeControlledCornellSources(actual.root, captured(actual), actual.context));
+  const observedNote = createCornellNote(actual.root, observed.note);
+  actual.context.saved_results = [controlledCornellResult(observed, observedNote)];
+  assert.equal(existingControlledCornellNote(actual.root, observed, actual.context)?.meta.id, observedNote.meta.id);
+  assert.equal(existingControlledCornellNote(actual.root, observed, { ...actual.context, evidence: [] }), undefined,
+    'Historical observed evidence is not current evidence for an expected-only producer context.');
+});
 
 test('captured file/EVD misattribution becomes honest current provenance and persists a valid Cornell note', t => {
   const a = fixture(t), original = captured(a), before = structuredClone(original);

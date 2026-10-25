@@ -193,6 +193,20 @@ export function controlledContractForTask(root: string, task: ProjectRecord, che
   const recordAt = freshRecords(root, checkBudget);
   return contractForTask(root, currentTask(task, recordAt), recordAt, checkBudget);
 }
+/** Primary note artifacts remain producer outputs, including an explicitly planned worksheet. */
+export function controlledPrimaryCornellArtifactPaths(plan: Pick<ControlledContract['plan'], 'cornell_output_dir' | 'outputs'>,
+  solutionPath?: unknown): { rendered: string[]; all: string[] } {
+  if (!plan.cornell_output_dir) throw new Error('Primary Cornell output needs its declared directory.');
+  const rendered = ['note.md', 'exercises.md', 'answers.md'].map(name => `${plan.cornell_output_dir}/${name}`);
+  if (rendered.some(path => !plan.outputs.includes(path))) throw new Error('Primary Cornell artifacts must be declared task outputs.');
+  const all = [...rendered];
+  if (solutionPath !== undefined && solutionPath !== null) {
+    if (typeof solutionPath !== 'string' || solutionPath !== `${plan.cornell_output_dir}/practice-solution.md` || !plan.outputs.includes(solutionPath))
+      throw new Error('Primary Cornell learner solution must use the fixed declared practice-solution.md output.');
+    all.push(solutionPath);
+  }
+  return { rendered, all };
+}
 /** A fresh snapshot lives only within this synchronous authority evaluation. */
 function contractForTask(root: string, task: ProjectRecord, recordAt: RecordAt, checkBudget: () => void): { run: ControlledSnapshot; contract: ControlledContract } {
   checkBudget();
@@ -412,7 +426,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
             procedure.script_sha256 !== hash(readFileSync(safePath(root, procedure.script))) || procedure.verification_sha256 !== hash(readFileSync(safePath(root, procedure.verification_script))))
           throw new Error('Registered candidate does not match current producer and independent verifier scripts.');
       }
-      if (contract.knowledge_directory || contract.plan.cornell_output_dir) {
+      if (contract.knowledge_directory) {
         const positive = checks.filter(check => !check.negative).map(check => check.evidence_id!);
         if (!run.cornell_note_ids?.length) throw new Error('Requested evidence-derived Cornell note is missing.');
         for (const id of run.cornell_note_ids) {
@@ -420,6 +434,34 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
           const note = recordAt(id), evidence = (note.meta.data.demonstration as { evidence_ids?: string[] })?.evidence_ids ?? [];
           if (!validateCornellNote(root, id).ok || note.meta.data.workflow_id !== run.workflow_id || !positive.every(id => evidence.includes(id)))
             throw new Error('Final Cornell output must reference every current passing positive execution.');
+        }
+      } else if (contract.plan.cornell_output_dir) {
+        // Primary Cornell deliverables are checked inputs, so inserting those
+        // checks' later evidence IDs would invalidate their own baselines.
+        // The separate knowledge_directory branch above retains that stronger
+        // post-verification evidence requirement without this circularity.
+        if (!run.cornell_note_ids?.length) throw new Error('Requested primary Cornell bundle is missing.');
+        const positive = checks.filter(check => !check.negative && check.passed);
+        for (const id of run.cornell_note_ids) {
+          budget.check();
+          const note = recordAt(id), data = note.meta.data;
+          const practice = data.practice as { exercise_path?: string; answer_path?: string; solution_path?: string | null } | undefined;
+          const paths = controlledPrimaryCornellArtifactPaths(contract.plan, practice?.solution_path);
+          const artifacts = data.artifact_hashes as Record<string, string> | undefined;
+          if (!validateCornellNote(root, id).ok || data.workflow_id !== run.workflow_id || data.artifact_path !== paths.rendered[0] ||
+              practice?.exercise_path !== paths.rendered[1] || practice?.answer_path !== paths.rendered[2] || !artifacts ||
+              !same(Object.keys(artifacts).sort(), [...paths.rendered].sort()))
+            throw new Error('Primary Cornell output must be the valid same-workflow bundle declared by this task.');
+          const generated = run.cornell_results?.find(result => result.note_id === id);
+          const research = data.research as { input_hash?: string } | undefined;
+          if (!generated || generated.input_hash !== research?.input_hash || generated.record_fingerprint !== evidenceRecordFingerprint(note) ||
+              !same(generated.artifact_hashes, artifacts))
+            throw new Error('Primary Cornell output lacks its current task\'s intact backend generation result.');
+          const current = budget.fingerprints(paths.all);
+          if (paths.rendered.some(path => artifacts[path] !== current[path]) ||
+              paths.all.some(path => !positive.some(check => check.baseline[path] === current[path])) ||
+              !!practice?.solution_path && producer!.bound_hashes?.[practice.solution_path] !== current[practice.solution_path])
+            throw new Error('Current passing positive check baselines must cover every primary Cornell artifact.');
         }
       }
       if (contract.reviewer_required && run.attempts.indexOf(reviewer!) < Math.max(run.attempts.indexOf(verifier!), synthesis ? run.attempts.indexOf(synthesis) : -1))

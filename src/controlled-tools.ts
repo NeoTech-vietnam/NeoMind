@@ -23,6 +23,7 @@ export interface ControlledBinding {
   approved_inputs?: string[];
   execution_steps?: ControlledExecutionDeclaration[];
   procedure_bound?: boolean;
+  cornell_starter_allowed?: boolean;
 }
 const text = z.string().trim().min(1).max(8000);
 const paths = z.array(z.string().min(1).max(1024)).max(128);
@@ -161,7 +162,7 @@ export function controlledToolNames(binding: ControlledBinding): string[] {
 export function controlledReviewInstructions(purpose: ControlledReviewPurpose): string {
   return purpose === 'checker-readiness'
     ? 'Review purpose: checker-readiness. Independently inspect the exact checker source/argv, oracle, protected cases and negative controls against the unchanged criteria. Judge checker adequacy and safe bounded execution in the declared scope and disposable pilot workspace when required, including any generator or product code the planned commands execute. This review precedes execution: not-yet-run evidence is expected, and an empty check_evidence result is not a readiness failure. Product defects that the planned checker can safely diagnose belong in findings and limitations; they are not final acceptance decisions. Fail readiness for an unsound/incomplete checker or a real execution-safety defect, including scope escape, destructive effects or unauthorized data access/publication. Classify the actual cause with failure_kind. Do not execute checks in this read-only review. Save assignment_report with verdict pass or fail; readiness approval does not establish product correctness or workflow completion.'
-    : 'Review purpose: final-product. Independently inspect the delivered artifacts against all unchanged acceptance criteria. Require fresh positive and negative execution evidence, required intended-use pilot receipts and the requested evidence-derived Cornell bundle. Read check_evidence for actual stdout/stderr and intended-use build/run results; absent, stale or failing required evidence cannot support a pass. When registration is required, read check_evidence({kind:"registration"}) for the actual bound registry manifest and current code-hash comparisons; registered candidate is not qualification. Do not infer missing registration from the absence of a separate signed receipt or try private registry files. Private runtime files remain unavailable. Save assignment_report with verdict pass or fail and substantive findings; pre-execution checker readiness is not final product acceptance.';
+    : 'Review purpose: final-product. Independently inspect the delivered artifacts against all unchanged acceptance criteria. Require fresh positive and negative execution evidence, required intended-use pilot receipts and the requested Cornell output. A producer-authored Cornell deliverable is independently checked without rewriting its captured bytes to embed future proof IDs; a separately assigned post-verification knowledge bundle must satisfy its evidence-derived synthesis obligations. Read check_evidence for actual stdout/stderr and intended-use build/run results; absent, stale or failing required evidence cannot support a pass. When registration is required, read check_evidence({kind:"registration"}) for the actual bound registry manifest and current code-hash comparisons; registered candidate is not qualification. Do not infer missing registration from the absence of a separate signed receipt or try private registry files. Private runtime files remain unavailable. Save assignment_report with verdict pass or fail and substantive findings; pre-execution checker readiness is not final product acceptance.';
 }
 export function controlledInstructions(binding: ControlledBinding): string {
   const writable = binding.stage === 'implementation' && binding.role === 'developer' ? binding.implementation_paths
@@ -302,7 +303,8 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       return callbacks.runtimeContext(query);
     });
   function walk(directory: string, limit = 200): { files: string[]; truncated: boolean } {
-    publicTarget(root, directory); assertReadable(binding, directory, true);
+    const target = publicTarget(root, directory); assertReadable(binding, directory, true);
+    if (!existsSync(target)) return { files: [], truncated: false };
     const files: string[] = [], queue = [directory]; let examined = 0;
     while (queue.length && files.length < limit && examined < 5000) {
       const parent = queue.shift()!;
@@ -446,8 +448,10 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
     }
   }
   if (['implementation', 'synthesis'].includes(binding.stage)) {
-    register('cornell_research_compile', 'Compile research into the saved Cornell format with separate questions and answers inside the assigned note folder.',
-      controlledCornellResearchSchema(), false,
+    register('cornell_research_compile', binding.stage === 'implementation'
+      ? 'Compile the primary research deliverable with an expected worked example and separate questions/answers inside the assigned folder. Independent Verifier runs next. Observed-result fields and evidence identities are backend-owned at this stage; do not submit placeholder observations.'
+      : 'Compile post-verification research using actual current independent evidence, with separate questions and answers inside the assigned note folder.',
+      controlledCornellResearchSchema(binding.stage === 'synthesis', binding.stage === 'synthesis' || binding.cornell_starter_allowed === true), false,
       args => {
         if (!callbacks.compileResearch) throw new ControlledToolError('NO_CORNELL_OUTPUT', 'The plan does not request Cornell output.');
         return callbacks.compileResearch(args);

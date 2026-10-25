@@ -89,6 +89,11 @@ export function currentControlledChecks(run: Pick<ControlledSnapshot, 'attempts'
   const verifier = run.attempts.findLast(attempt => attempt.stage === 'verification');
   return verifier ? run.checks.filter(check => check.attempt_id === verifier.id) : [];
 }
+/** Repair diagnostics retain old checks; new knowledge may cite only a later independent Verifier. */
+export function currentControlledCornellChecks(run: Pick<ControlledSnapshot, 'attempts' | 'checks'>): ControlledCheckReceipt[] {
+  return run.attempts.findLastIndex(item => item.stage === 'verification') >
+    run.attempts.findLastIndex(item => item.stage === 'implementation') ? currentControlledChecks(run) : [];
+}
 const controlledStartSchema = z.strictObject({ requirement: z.string().trim().min(1).max(20000).optional(),
   requirements: z.array(z.string().trim().min(1).max(20000)).min(1).max(32).optional(),
   workflow_id: z.string().min(1).optional(), request_id: z.string().trim().min(1).max(256).optional(), title: z.string().trim().min(1).max(256).optional() });
@@ -573,6 +578,8 @@ class Controller {
       save(this.root, run, 'dispatch', `NeoMind dispatches ${role} for ${stage}.`);
       const binding: ControlledBinding = { workflow_id: id, task_id: stage === 'planning' ? undefined : contract?.task_id,
         stage, role, implementation_paths: contract?.plan.allowed_paths ?? [], verification_paths: contract?.plan.verification_paths ?? [],
+        cornell_starter_allowed: stage === 'synthesis' || !!contract?.plan.cornell_output_dir &&
+          contract.plan.outputs.includes(`${contract.plan.cornell_output_dir}/practice-solution.md`),
         ...(contract?.plan.execution_steps === undefined ? {} : { execution_steps: contract.plan.execution_steps }),
         procedure_bound: !!contract?.plan.reuse,
         ...(stage === 'review' ? { review_purpose: attempt.purpose === 'check-review' ? 'checker-readiness' as const : 'final-product' as const } : {}),
@@ -712,7 +719,10 @@ class Controller {
           if (!directory) throw new ControlledToolError('NO_CORNELL_OUTPUT', 'The immutable plan does not include a Cornell research bundle.');
           const requirement = getRecord(this.root, contract!.requirement_ids[0]!);
           try {
-            const completed = readState(this.root, id), currentChecks = currentControlledChecks(completed);
+            const completed = readState(this.root, id);
+            // Repair workers may inspect old failing evidence, but Cornell
+            // observations must never borrow a Verifier from before this producer.
+            const currentChecks = currentControlledCornellChecks(completed);
             const evidenceIds = currentChecks.filter(check => !check.negative && check.passed)
               .map(check => check.evidence_id).filter((id): id is string => !!id);
             const sourceContext: ControlledCornellSourceContext = { workflow_id: id, epoch_id: completed.epoch_id,
@@ -724,8 +734,8 @@ class Controller {
                 !!binding.approved_inputs?.includes(path) && controlledSkillInputPath(path)) &&
                 (binding.read_paths ?? ['.']).some(scope => scope === '.' || covers(path, [scope])) };
             const sources = normalizeControlledCornellSources(this.root, input.sources, sourceContext);
-            const worked = bindControlledCornellDemonstration(input.worked_example, evidenceIds);
-            const compiled = compileCornellResearch(this.root, { ...input, schema_version: 1, practice: bindControlledCornellPractice(input.practice, directory),
+            const worked = bindControlledCornellDemonstration(input.worked_example, evidenceIds, stage === 'synthesis');
+            const compiled = compileCornellResearch(this.root, { ...input, schema_version: 1, practice: bindControlledCornellPractice(input.practice, directory, binding.cornell_starter_allowed),
               sources: sources.sources, worked_example: worked, requirement_id: requirement.meta.id,
               expected_requirement_revision: requirement.meta.revision, workflow_id: id, task_id: contract!.task_id,
               owner: role, output_dir: directory } as CornellResearchInput, { approved_source_files: sources.approved_source_files });
@@ -737,7 +747,8 @@ class Controller {
             if (!current.cornell_results?.some(result => result.note_id === note.meta.id && result.input_hash === compiled.input_hash))
               current.cornell_results = [...(current.cornell_results ?? []), controlledCornellResult(compiled, note)];
             save(this.root, current, 'cornell-compiled', 'Research note, exercises and separate answers compiled by the existing Cornell formatter.');
-            return { saved: true, artifacts: [`${directory}/note.md`, `${directory}/exercises.md`, `${directory}/answers.md`, ...(solutionCreated ? [solutionPath!] : [])],
+            return { saved: true, observation_policy: stage === 'implementation' ? 'Expected-only primary deliverable; the independent Verifier supplies execution evidence next.' : 'Actual current independent evidence bound by the backend.',
+              artifacts: [`${directory}/note.md`, `${directory}/exercises.md`, `${directory}/answers.md`, ...(solutionCreated ? [solutionPath!] : [])],
               ...(solutionPath ? { learner_solution: { path: solutionPath, created: solutionCreated } } : {}),
               ...(sources.unfetched_sources.length ? { unfetched_source_ids: sources.unfetched_sources,
                 source_limitation: 'External URLs are recorded references; the runtime did not fetch or verify their contents.' } : {}) };
@@ -848,6 +859,7 @@ class Controller {
       recovery.length ? `Earlier backend validation in this same execution, retained across resume. These are diagnostic constraints, not an accepted plan or instructions to replay a request:\n${JSON.stringify(recovery)}` : '',
       contract ? `Immutable plan:\n${JSON.stringify(contract.plan)}` : '',
       contract?.knowledge_directory ? `Managed final knowledge destination: ${contract.knowledge_directory}. Coordinator synthesis must compile a separate evidence-derived research Cornell bundle after checks and before final review.` : '',
+      contract?.plan.cornell_output_dir ? `Primary Cornell deliverable: ${contract.plan.cornell_output_dir}. Implementer compiles it once with an expected worked example; its observed-result field is not part of the producer interface. Verifier independently checks the unchanged delivered files. Proof remains in current check receipts and the final report, so do not rewrite checked files to add future proof identities. Any separately assigned final knowledge synthesis retains its own evidence obligations.` : '',
       contract?.continuation ? `Continuation uses a NEW execution task linked to the unchanged historical task. Required obligations: ${JSON.stringify(contract.continuation.obligations)}. Preservation inputs are backend-fingerprinted. A planned intended-use check is separate from fixture checks; the backend appends --neomind-pilot-root <owned-temp-directory> and --neomind-pilot-nonce <nonce>. The backend supplies fresh owned root/nonce flags to both the intended-use check and each associated negative control; negatives retain their declared failing exit and never create positive pilot proof. That independently authored checker mode must prepare pilot-input.json in that directory: {schema_version:1,kind:"intended-use",nonce,note:"relative/note.md",python:"absolute configured Python",case_classes:[at least ten meaningful classes],solutions:[{language:"c11",source:"relative/program.c",compiler:"absolute configured gcc",local_test:true|false},{language:"cpp17",source:"relative/program.cpp",compiler:"absolute configured g++",local_test:true|false}]}. Generate an explicitly disposable intended-use exercise via the actual adapter, with problem-specific notes and independently authored per-language oracle/harness; do not copy fixture outcomes. The backend independently runs the canonical Cornell validator, fresh strict builds and each executable, retaining actual evidence. Do not remove the owned pilot directory before the backend collects it.` : '',
       original ? `Original saved plan, scope, outputs, criteria and positive checks must be retained. Reuse these exact scope values and argv:\n${JSON.stringify(original.plan)}` : '',
       obligations ? `Required continuation plan additions: ${[

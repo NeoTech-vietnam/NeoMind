@@ -22,42 +22,55 @@ const semanticPractice = z.lazy(() => {
   const starter = runnable.shape.starter.describe('Optional learner starter content requests a backend-owned practice-solution.md inside the fixed Cornell directory. Do not supply a filesystem path.');
   return z.union([runnable.omit({ solution_path: true }).extend({ starter }), manual.omit({ solution_path: true }).extend({ starter })]);
 });
-export const controlledCornellPracticeSchema = z.preprocess(value => {
+function semanticPracticeInput(value: unknown, allowStarter: boolean): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const { solution_path: _untrustedPath, ...semantic } = value as Record<string, unknown>;
-  return semantic;
-}, semanticPractice);
+  if (allowStarter) return semantic;
+  const { starter: _unplannedStarter, ...practice } = semantic;
+  return practice;
+}
+export const controlledCornellPracticeSchema = z.preprocess(value => semanticPracticeInput(value, true), semanticPractice);
+const controlledPracticeWithoutStarter = z.preprocess(value => semanticPracticeInput(value, false), z.lazy(() => {
+  const [runnable, manual] = cornellResearchSchema.shape.practice.options;
+  return z.union([runnable.omit({ solution_path: true, starter: true }), manual.omit({ solution_path: true, starter: true })]);
+}));
 const semanticWorkedExample = z.lazy(() => cornellResearchSchema.shape.worked_example.omit({ evidence_ids: true })
   .extend({ observed: cornellResearchSchema.shape.worked_example.shape.observed.describe('Omit this field until the runtime has current passing independent check evidence. Before execution, provide expected only; do not put "not executed" or a predicted result in observed. Backend supplies evidence identities privately.') }));
-const controlledWorkedExample = z.preprocess(value => {
+function semanticWorkedInput(value: unknown, allowObserved: boolean): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const { evidence_ids: _untrustedEvidence, ...semantic } = value as Record<string, unknown>;
-  return semantic;
-}, semanticWorkedExample);
+  if (allowObserved) return semantic;
+  const { observed: _deferredObservation, ...expected } = semantic;
+  return expected;
+}
+const controlledWorkedExample = z.preprocess(value => semanticWorkedInput(value, true), semanticWorkedExample);
+const controlledExpectedWorkedExample = z.preprocess(value => semanticWorkedInput(value, false),
+  z.lazy(() => cornellResearchSchema.shape.worked_example.omit({ evidence_ids: true, observed: true })));
 // The SDK must receive an actual root object to advertise its fields; resolve
 // this factory only at server creation, after the module graph has initialized.
-export function controlledCornellResearchSchema() {
+export function controlledCornellResearchSchema(allowObserved = true, allowStarter = true) {
   return cornellResearchSchema.omit({ schema_version: true, requirement_id: true, expected_requirement_revision: true,
     workflow_id: true, task_id: true, owner: true, output_dir: true })
     .extend({ schema_version: z.preprocess(() => 1, z.literal(1).default(1))
       .describe('Backend-owned format version; omit this field and the runtime supplies version 1.'),
-      sources: z.array(controlledCornellSourceSchema).min(1).max(64), practice: controlledCornellPracticeSchema,
+      sources: z.array(controlledCornellSourceSchema).min(1).max(64), practice: allowStarter ? controlledCornellPracticeSchema : controlledPracticeWithoutStarter,
       methods: cornellResearchSchema.shape.methods.describe(`${cornellResearchSchema.shape.methods.description} The compiled research narrative must include inline [S1], [S2], etc. citations referring to the source IDs declared in sources. These are source labels, not runtime record identities.`),
-      worked_example: controlledWorkedExample });
+      worked_example: allowObserved ? controlledWorkedExample : controlledExpectedWorkedExample });
 }
 
 /** Starter content requests the worksheet; no model-provided path ever reaches the writer. */
-export function bindControlledCornellPractice(input: unknown, directory: string) {
-  const practice = controlledCornellPracticeSchema.parse(input);
+export function bindControlledCornellPractice(input: unknown, directory: string, allowStarter = true) {
+  const practice = controlledCornellPracticeSchema.parse(semanticPracticeInput(input, allowStarter));
   return { ...practice, ...(practice.starter !== undefined ? { solution_path: `${directory}/practice-solution.md` } : {}) };
 }
 
 /** Observation content remains professional input; evidence identity is exclusively backend-owned. */
-export function bindControlledCornellDemonstration(input: unknown, evidenceIds: readonly string[]) {
-  const worked = controlledWorkedExample.parse(input);
-  if (worked.observed && !evidenceIds.length)
+export function bindControlledCornellDemonstration(input: unknown, evidenceIds: readonly string[], allowObserved = true) {
+  const worked = controlledWorkedExample.parse(semanticWorkedInput(input, allowObserved));
+  const boundEvidence = allowObserved ? [...evidenceIds] : [];
+  if (worked.observed && !boundEvidence.length)
     throw new Error('No current passing independent check is available for an observed demonstration. Omit worked_example.observed and provide expected only until verification runs. The backend supplies evidence identities; never invent or request record IDs.');
-  return { ...worked, evidence_ids: [...evidenceIds] };
+  return { ...worked, evidence_ids: boundEvidence };
 }
 
 export interface ControlledCornellSourceContext {
@@ -165,7 +178,11 @@ export function existingControlledCornellNote(root: string, compiled: CompiledCo
   const saved = context.saved_results?.find(result => result.input_hash === compiled.input_hash && result.compiled_note_hash === hash(JSON.stringify(compiled.note)));
   if (!saved) return undefined; // A copied input_hash on an arbitrary note is never a backend completion receipt.
   const ids = compiled.note.demonstration.evidence_ids ?? [];
-  if (!ids.length || context.evidence.some(item => !ids.includes(item.evidence_id))) return undefined;
+  if (context.evidence.length) {
+    if (!ids.length || context.evidence.some(item => !ids.includes(item.evidence_id))) return undefined;
+  } else if (ids.length || compiled.note.demonstration.observed) return undefined;
+  // Before the Verifier, an exact saved expected-only bundle is replayable;
+  // it still must satisfy every record fingerprint and artifact check below.
   const records = new Map(loadRecords(root).map(record => [record.meta.id, record]));
   if (ids.some(id => {
     const record = records.get(id);

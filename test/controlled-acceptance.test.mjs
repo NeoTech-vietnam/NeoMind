@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -8,13 +8,17 @@ import { spawnSync } from 'node:child_process';
 import { initialize, atomicWrite, createRecord, getRecord, hash, safePath, updateRecord, saveStatus } from '../dist/storage.js';
 import { evidenceRecordFingerprint } from '../dist/evidence-inputs.js';
 import { controlledContractForTask, continuationObligations, prepareControlledCheckEvidence, materializeControlledEvidence,
-  verifyControlledTask, executeControlledPilot } from '../dist/controlled-acceptance.js';
+  verifyControlledTask, executeControlledPilot, controlledPrimaryCornellArtifactPaths } from '../dist/controlled-acceptance.js';
 import { verify } from '../dist/engineering.js';
 import { createCornellNote, validateCornellNote } from '../dist/notes.js';
 import { runCommand } from '../dist/command-runner.js';
 import { cornellFixture } from './cornell-fixture.mjs';
 import { controlledRisk } from '../dist/controlled-workflow.js';
-import { startControlledWorkflow } from '../dist/controlled-workflow.js';
+import { startControlledWorkflow, startControlledHost, controlledStatus } from '../dist/controlled-workflow.js';
+import { ensureRoutingPolicy } from '../dist/routing.js';
+import { enableVSCodeHost } from '../dist/vscode-host.js';
+import { shutdownNative } from '../dist/native.js';
+import { researchFixture } from './cornell-research-fixture.mjs';
 import { beginWorkflow, nativeAutomationPolicy } from '../dist/manager.js';
 import { prepareReportedAssignment } from '../dist/native-assignment.js';
 import { openAssignment } from '../dist/assignment-runtime.js';
@@ -63,6 +67,128 @@ function fixture(t, continuation = false) {
   atomicWrite(statePath, JSON.stringify(run));
   return { root, task: getRecord(root, task.meta.id), workflow, requirement, old, contract, run, check, statePath };
 }
+
+// Actual signed Bridge/MCP and independent Node processes; model responses are
+// deterministic fixtures, not real provider inference evidence.
+async function primaryCornell(t, withStarter = false) {
+  const seed = researchFixture(t).input;
+  const { schema_version, requirement_id, expected_requirement_revision, workflow_id, output_dir, ...research } = seed;
+  research.sources = [{ id: 'S1', title: 'Finite ordered-pair source', uri: 'reference.md' }];
+  research.practice = { ...research.practice }; delete research.practice.solution_path; delete research.practice.starter;
+  if (withStarter) research.practice.starter = '# My ordered-pair worksheet\nRecord the pairs and your own reasoning here.\n';
+  const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-primary-cornell-')));
+  initialize(root, { project_id: 'PRIMARY-CORNELL', platforms: ['copilot'], repair_attempts: 1 });
+  atomicWrite(safePath(root, 'reference.md'), '# Finite ordered pairs\nThree letters and two digits have six ordered pairs.\n');
+  const policy = ensureRoutingPolicy(root);
+  atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([
+    { name: 'fixture-strong', vendor: 'fixture-strong', models: [{ id: policy.strong_model, name: policy.strong_model }] },
+    { name: 'fixture-worker', vendor: 'fixture-worker', models: policy.worker_models.map(id => ({ id, name: id })) },
+  ]));
+  atomicWrite(safePath(root, '.neomind/routing.json'), JSON.stringify({ ...policy, language_models_file: 'catalog.json',
+    strong_provider: 'fixture-strong', worker_provider: 'fixture-worker', vscode_effort_policy: 'allow-unavailable' }));
+  const directory = 'docs/primary', paths = ['note.md', 'exercises.md', 'answers.md'].map(name => `${directory}/${name}`);
+  if (withStarter) paths.push(`${directory}/practice-solution.md`);
+  const plan = { title: 'Primary Cornell documentation', objective: 'Explain and independently check six finite ordered pairs.',
+    rationale: 'The note is a primary product checked after its expected-only preparation.', acceptance_criteria: ['The Cornell bundle explains six pairs and wrong documentation fails.'],
+    allowed_paths: [directory], verification_paths: ['checks'], outputs: paths, documentation_paths: paths,
+    cornell_output_dir: directory, preservation_paths: ['reference.md'], risk: 'high',
+    checks: [{ title: 'Inspect primary Cornell', command: [process.execPath, 'checks/check.cjs', paths[0]],
+      negative_controls: [{ title: 'Reject corrupt documentation', command: [process.execPath, 'checks/check.cjs', 'checks/bad.md'], expected_exit_code: 1 }] }] };
+  const checker = "const assert=require('node:assert/strict'),fs=require('node:fs');assert.match(fs.readFileSync(process.argv[2],'utf8'),/six ordered pairs/);console.log('primary Cornell checked');\n";
+  class Text { constructor(value) { this.value = value; } }
+  class Call { constructor(callId, name, input) { Object.assign(this, { callId, name, input }); } }
+  class Result { constructor(callId, content) { Object.assign(this, { callId, content }); } }
+  class Cancellation { constructor() { this.token = { isCancellationRequested: false }; } cancel() { this.token.isCancellationRequested = true; } dispose() { this.cancel(); } }
+  const conversations = new WeakMap(), errors = [], stages = [], call = (name, input = {}) => ({ name, input });
+  const api = { version: '1.109.0', workspace: { isTrusted: true, workspaceFolders: [{ uri: { scheme: 'file', fsPath: root } }] },
+    LanguageModelTextPart: Text, LanguageModelToolCallPart: Call, LanguageModelToolResultPart: Result, LanguageModelChatToolMode: { Auto: 1 }, CancellationTokenSource: Cancellation,
+    LanguageModelChatMessage: { User: content => ({ role: 1, content }), Assistant: content => ({ role: 2, content }) },
+    lm: { selectChatModels: async selector => [{ ...selector, capabilities: { toolCalling: true }, sendRequest: async messages => {
+      let state = conversations.get(messages);
+      if (!state) {
+        const prompt = messages.filter(message => typeof message.content === 'string').map(message => message.content).join('\n');
+        const stage = /Your stage: (planning|implementation|verification|review)/.exec(prompt)?.[1];
+        assert.ok(stage); stages.push(stage);
+        const report = call('assignment_report', { outcome: 'completed', summary: `Independent ${stage} result retained.`,
+          ...(['verification', 'review'].includes(stage) ? { verdict: 'pass' } : {}) });
+        state = { round: 0, actions: stage === 'planning' ? [call('workflow_plan', plan), report]
+          : stage === 'implementation' ? [call('cornell_research_compile', research), report]
+            : stage === 'verification' ? [call('task_file_write', { path: 'checks/check.cjs', content: checker }),
+              call('task_file_write', { path: 'checks/bad.md', content: '# Wrong product\nThere are 999 pairs.\n' }), call('check_run'), report]
+              : [call('check_evidence'), report] };
+        conversations.set(messages, state);
+      }
+      const previous = messages.at(-1)?.content?.[0];
+      if (previous instanceof Result) { const result = JSON.parse(previous.content[0].value);
+        if (result.isError) { errors.push(result); throw new Error('Primary Cornell fixture received rejected semantic input.'); } }
+      const action = state.actions[state.round++];
+      return { stream: (async function* () { yield action ? new Call(`cornell-${state.round}`, action.name, action.input) : new Text('Typed result saved.'); })() };
+    } }] } };
+  const bridge = await enableVSCodeHost(api, root), owner = await startControlledHost(root);
+  t.after(async () => { await owner.close(); await shutdownNative(root); await bridge.close();
+    assert.equal(dirname(root), parent); rmSync(root, { recursive: true, force: true }); });
+  const initial = await startControlledWorkflow(root, { requirement: 'Deliver independently verified primary Cornell documentation.', request_id: 'primary-cornell' });
+  const deadline = Date.now() + 120000; let run;
+  do { run = controlledStatus(root, initial.workflow_id);
+    if (run.status === 'completed') break;
+    if (['blocked', 'uncertain'].includes(run.status)) assert.fail(JSON.stringify({ blocker: run.blocker, phase: run.phase, stages,
+      checks: run.checks.map(check => ({ negative: check.negative, passed: check.passed, exit_code: check.exit_code })),
+      note_count: run.cornell_note_ids?.length, errors }));
+    await new Promise(resolve => setTimeout(resolve, 100));
+  } while (Date.now() < deadline);
+  assert.equal(run.status, 'completed', JSON.stringify({ phase: run.phase, errors }));
+  assert.deepEqual(errors, []); assert.deepEqual(stages, ['planning', 'implementation', 'verification', 'review']);
+  const contractPath = safePath(root, `.neomind/controlled/workflows/${hash(initial.workflow_id)}.${run.epoch_id}.contract.json`);
+  const contract = JSON.parse(readFileSync(contractPath, 'utf8'));
+  return { root, run, contract, paths, task: getRecord(root, contract.task_id), statePath: safePath(root, `.neomind/controlled/workflows/${hash(initial.workflow_id)}.json`) };
+}
+
+test('primary expected-only Cornell accepts actual current check coverage and rejects stale, foreign, missing or unproved bundles', async t => {
+  const a = await primaryCornell(t), note = getRecord(a.root, a.run.cornell_note_ids[0]);
+  const check = () => verifyControlledTask(a.root, a.task, 'accepted');
+  assert.equal(a.contract.knowledge_directory, undefined); assert.equal(a.contract.plan.cornell_output_dir, 'docs/primary');
+  assert.equal(note.meta.data.demonstration.observed, undefined);
+  assert.deepEqual(note.meta.data.demonstration.evidence_ids, []);
+  assert.equal(check().ok, true); assert.equal(verify(a.root, a.task.meta.id, 'accepted').ok, true);
+  const positives = a.run.checks.filter(item => !item.negative);
+  for (const path of a.paths) assert.ok(positives.some(item => item.baseline[path] === hash(readFileSync(safePath(a.root, path)))));
+  const file = safePath(a.root, a.paths[0]), bytes = readFileSync(file);
+  writeFileSync(file, Buffer.concat([bytes, Buffer.from('\nUnexpected authored modification.\n')])); assert.equal(check().ok, false);
+  writeFileSync(file, bytes); unlinkSync(file); assert.equal(check().ok, false); writeFileSync(file, bytes);
+  const recordPath = safePath(a.root, note.path), recordBytes = readFileSync(recordPath);
+  updateRecord(a.root, note.meta.id, { data: { workflow_id: 'FOREIGN-WORKFLOW' } }); assert.equal(check().ok, false); writeFileSync(recordPath, recordBytes);
+  const stateBytes = readFileSync(a.statePath);
+  for (const mutate of [run => { run.cornell_note_ids = []; }, run => { run.cornell_results = []; },
+    run => { run.cornell_results[0].input_hash = 'f'.repeat(64); },
+    run => { run.checks = run.checks.filter(item => item.negative); },
+    run => { run.checks.find(item => !item.negative).passed = false; },
+    run => { run.checks.find(item => !item.negative).baseline[a.paths[0]] = 'f'.repeat(64); }]) {
+    const changed = JSON.parse(stateBytes.toString('utf8')); mutate(changed); writeFileSync(a.statePath, JSON.stringify(changed));
+    assert.equal(check().ok, false); writeFileSync(a.statePath, stateBytes);
+  }
+  assert.equal(check().ok, true, 'Restoring exact fixture bytes restores acceptance without refreshing any evidence.');
+});
+
+test('primary learner worksheets are authorized only as the fixed explicitly planned output', () => {
+  const directory = 'docs/primary', rendered = ['note.md', 'exercises.md', 'answers.md'].map(name => `${directory}/${name}`);
+  const solution = `${directory}/practice-solution.md`, plan = { cornell_output_dir: directory, outputs: rendered };
+  assert.deepEqual(controlledPrimaryCornellArtifactPaths(plan), { rendered, all: rendered });
+  assert.throws(() => controlledPrimaryCornellArtifactPaths(plan, solution), /fixed declared/);
+  assert.throws(() => controlledPrimaryCornellArtifactPaths({ ...plan, outputs: [...rendered, 'docs/other.md'] }, 'docs/other.md'), /fixed declared/);
+  assert.deepEqual(controlledPrimaryCornellArtifactPaths({ ...plan, outputs: [...rendered, solution] }, solution),
+    { rendered, all: [...rendered, solution] });
+});
+
+test('an explicitly planned fourth primary Cornell worksheet has actual producer and current positive baseline coverage', async t => {
+  const a = await primaryCornell(t, true), note = getRecord(a.root, a.run.cornell_note_ids[0]);
+  const solution = 'docs/primary/practice-solution.md', producer = a.run.attempts.findLast(attempt => attempt.stage === 'implementation');
+  assert.equal(note.meta.data.practice.solution_path, solution);
+  assert.equal(Object.keys(note.meta.data.artifact_hashes).length, 3, 'Rendered bundle hashes intentionally exclude the learner-editable worksheet.');
+  const digest = hash(readFileSync(safePath(a.root, solution)));
+  assert.equal(producer.bound_hashes[solution], digest);
+  assert.ok(a.run.checks.some(check => !check.negative && check.passed && check.baseline[solution] === digest));
+  assert.equal(verifyControlledTask(a.root, a.task, 'accepted').ok, true);
+});
 
 test('accepted metadata cannot replace actual completed signed stage and execution evidence', t => {
   const a = fixture(t);
