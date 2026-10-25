@@ -64,7 +64,8 @@ function scriptFor(name, stage, attempt, options, held) {
       ...(options.holdImplementation && attempt === 1 ? [async ({ token }) => {
         held.entered = true;
         while (!token.isCancellationRequested && !held.release) await delay(10);
-        return new Text('Canceled deterministic model fixture.');
+        return held.release ? new Call('fixture-held-resume', 'project_read', { path: output })
+          : new Text('Canceled deterministic model fixture.');
       }] : []), report({ artifacts: [output] })];
   }
   if (stage === 'verification') {

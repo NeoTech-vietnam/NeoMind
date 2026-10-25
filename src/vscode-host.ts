@@ -41,9 +41,12 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
       conversation.messages.push(vscode.LanguageModelChatMessage.User('Previous host turn interrupted. Reinspect durable MCP state before continuing; previous tools may have persisted changes.'));
     }
   }
-  function check(turn: Turn): void {
+  function check(turn: Turn, validateBinding = true): void {
     if (closed || !enabled() || turn.source.token.isCancellationRequested || turn.state !== 'running')
       throw new Error('Host permission or invocation ended.');
+    // Stream fragments cannot mutate the project. Verify signed binding at request,
+    // stream completion and every tool boundary instead of rehashing it per token.
+    if (!validateBinding) return;
     const receipt = readInvocation(root, turn.invocation);
     if (receipt.host_instance !== instance || receipt.native_turn_id !== turn.id ||
         receipt.native_thread_id !== turn.conversation || receipt.confirmed_model !== turn.model.id ||
@@ -71,7 +74,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
         const parts: any[] = [], calls: any[] = [];
         let dataBytes = 0;
         for await (const part of response.stream) {
-          check(turn);
+          check(turn, false);
           if (parts.length >= 4096) throw new Error('Response part limit reached.');
           if (part instanceof vscode.LanguageModelTextPart) {
             if (turn.output.length + part.value.length > 64000) throw new Error('Output limit reached.');
