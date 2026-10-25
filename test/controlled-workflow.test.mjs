@@ -87,7 +87,12 @@ function scriptFor(name, stage, attempt, options, held) {
 async function setup(t, scenarios) {
   const parent = realpathSync(tmpdir()), root = realpathSync(mkdtempSync(join(parent, 'neomind-controlled-flow-')));
   initialize(root, { project_id: 'CONTROLLED', name: 'Controlled Bridge fixture', platforms: ['codex', 'copilot'], max_workers: 3, repair_attempts: 1 });
-  atomicWrite(safePath(root, '.neomind/routing.json'), JSON.stringify({ ...ensureRoutingPolicy(root),
+  const policy = ensureRoutingPolicy(root);
+  atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([
+    { name: 'fixture-strong', vendor: 'fixture-strong', models: [{ id: policy.strong_model, name: policy.strong_model }] },
+    { name: 'fixture-worker', vendor: 'fixture-worker', models: [...policy.worker_models, 'next-worker'].map(id => ({ id, name: id })) },
+  ]));
+  atomicWrite(safePath(root, '.neomind/routing.json'), JSON.stringify({ ...policy, language_models_file: 'catalog.json',
     strong_provider: 'fixture-strong', worker_provider: 'fixture-worker', vscode_effort_policy: 'allow-unavailable' }));
   const conversations = new WeakMap(), counts = new Map(), observed = [], errors = [], held = { entered: false };
   const api = {
