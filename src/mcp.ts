@@ -107,6 +107,7 @@ import {
 } from './recipes.js';
 import { managedRun, type ManagedRunInput } from './managed.js';
 import { controlledStatus, controlControlledWorkflow, hasControlledWorkflow } from './controlled-workflow.js';
+import { controlledCommandReceipt, isControlledCommandSnapshot } from './controlled-command-receipt.js';
 import { workspaceWrite } from './workspace.js';
 import { checkpointLightweight } from './lightweight.js';
 import { validateEvidenceInputs, type EvidenceInputSnapshot } from './evidence-inputs.js';
@@ -1153,7 +1154,8 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
         .optional(),
     },
     async (i) => {
-      return managedRun(root, intakeArguments<ManagedRunInput>(i), ownerToken);
+      const result = await managedRun(root, intakeArguments<ManagedRunInput>(i), ownerToken);
+      return isControlledCommandSnapshot(result.workflow) ? { workflow: controlledCommandReceipt(result.workflow) } : result;
     },
     false,
   );
@@ -1221,7 +1223,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
   );
   tool('manager_control', 'Pause, resume or cancel one exact controlled workflow through its enabled VS Code owner. Work is independent of this chat connection.', {
     workflow_id: z.string().min(1), action: z.enum(['pause', 'resume', 'cancel']),
-  }, i => controlControlledWorkflow(root, i), false);
+  }, async i => controlledCommandReceipt(await controlControlledWorkflow(root, i)), false);
   tool(
     'lightweight_checkpoint',
     'Save a native-client lightweight report. No signed acceptance, strict task mutation, execution, publication or permission expansion.',
