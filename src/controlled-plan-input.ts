@@ -22,6 +22,10 @@ export function controlledConsultationRole(role: unknown) {
 export function normalizeControlledPlanInput(root: string, input: ControlledPlan,
   committedChecks: readonly { command: string[]; baseline_paths: string[] }[] = []): ControlledPlan {
   const plan = structuredClone(input);
+  // Directory scope notation is equivalent with or without a final separator.
+  // Preserve internal components for path validation; exact file paths stay exact.
+  for (const field of ['allowed_paths', 'verification_paths', 'preservation_paths'] as const)
+    if (plan[field]) plan[field] = plan[field].map(path => path.replace(/\/+$/, ''));
   const titles = new Set<string>();
   const operationOutputs: string[] = [];
   for (const step of plan.execution_steps ?? []) {

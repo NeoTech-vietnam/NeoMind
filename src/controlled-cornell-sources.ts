@@ -27,7 +27,8 @@ export const controlledCornellPracticeSchema = z.preprocess(value => {
   const { solution_path: _untrustedPath, ...semantic } = value as Record<string, unknown>;
   return semantic;
 }, semanticPractice);
-const semanticWorkedExample = z.lazy(() => cornellResearchSchema.shape.worked_example.omit({ evidence_ids: true }));
+const semanticWorkedExample = z.lazy(() => cornellResearchSchema.shape.worked_example.omit({ evidence_ids: true })
+  .extend({ observed: cornellResearchSchema.shape.worked_example.shape.observed.describe('Omit this field until the runtime has current passing independent check evidence. Before execution, provide expected only; do not put "not executed" or a predicted result in observed. Backend supplies evidence identities privately.') }));
 const controlledWorkedExample = z.preprocess(value => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const { evidence_ids: _untrustedEvidence, ...semantic } = value as Record<string, unknown>;
@@ -41,6 +42,7 @@ export function controlledCornellResearchSchema() {
     .extend({ schema_version: z.preprocess(() => 1, z.literal(1).default(1))
       .describe('Backend-owned format version; omit this field and the runtime supplies version 1.'),
       sources: z.array(controlledCornellSourceSchema).min(1).max(64), practice: controlledCornellPracticeSchema,
+      methods: cornellResearchSchema.shape.methods.describe(`${cornellResearchSchema.shape.methods.description} The compiled research narrative must include inline [S1], [S2], etc. citations referring to the source IDs declared in sources. These are source labels, not runtime record identities.`),
       worked_example: controlledWorkedExample });
 }
 
@@ -48,6 +50,14 @@ export function controlledCornellResearchSchema() {
 export function bindControlledCornellPractice(input: unknown, directory: string) {
   const practice = controlledCornellPracticeSchema.parse(input);
   return { ...practice, ...(practice.starter !== undefined ? { solution_path: `${directory}/practice-solution.md` } : {}) };
+}
+
+/** Observation content remains professional input; evidence identity is exclusively backend-owned. */
+export function bindControlledCornellDemonstration(input: unknown, evidenceIds: readonly string[]) {
+  const worked = controlledWorkedExample.parse(input);
+  if (worked.observed && !evidenceIds.length)
+    throw new Error('No current passing independent check is available for an observed demonstration. Omit worked_example.observed and provide expected only until verification runs. The backend supplies evidence identities; never invent or request record IDs.');
+  return { ...worked, evidence_ids: [...evidenceIds] };
 }
 
 export interface ControlledCornellSourceContext {

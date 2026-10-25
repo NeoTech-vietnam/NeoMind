@@ -7,6 +7,12 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createControlledMcpServer, controlledPlanSchema, controlledConsultationRoles } from '../dist/controlled-tools.js';
 import { normalizeControlledPlanInput, controlledConsultationRole } from '../dist/controlled-plan-input.js';
+import { initialize, atomicWrite, loadRecords, hash, safePath } from '../dist/storage.js';
+import { ensureRoutingPolicy } from '../dist/routing.js';
+import { enableVSCodeHost } from '../dist/vscode-host.js';
+import { shutdownNative } from '../dist/native.js';
+import { ownedContext } from '../dist/controlled-context.js';
+import { startControlledHost, startControlledWorkflow, controlledStatus } from '../dist/controlled-workflow.js';
 
 function fixture(t) {
   const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-plan-input-')));
@@ -37,6 +43,58 @@ test('producer execution capability and cross-step output collisions are rejecte
   assert.throws(() => normalizeControlledPlanInput(root, { ...proposed,
     execution_steps: [{ ...step, output_paths: ['checks/generated.md'] }] }), /producer|checker|scope/);
   assert.equal(existsSync(join(root, '.neomind/controlled/workflows')), false);
+});
+
+test('actual owning planner MCP canonicalizes terminal scope separators before checker baselines and frozen-plan validation', async t => {
+  const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-scope-separators-')));
+  initialize(root, { project_id: 'SCOPE-SLASH', platforms: ['copilot'], repair_attempts: 1 });
+  for (const directory of ['src', 'docs', 'checks', 'preserved']) mkdirSync(join(root, directory));
+  writeFileSync(join(root, 'src/value.mjs'), 'export const value=1;\n');
+  writeFileSync(join(root, 'preserved/keep.txt'), 'existing authored content\n');
+  const policy = ensureRoutingPolicy(root);
+  atomicWrite(safePath(root, '.neomind/routing.json'), JSON.stringify({ ...policy, vscode_effort_policy: 'allow-unavailable' }));
+  class Cancellation { constructor() { this.token = { isCancellationRequested: false }; } cancel() { this.token.isCancellationRequested = true; } dispose() { this.cancel(); } }
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const api = { version: '1.109.0', workspace: { isTrusted: true, workspaceFolders: [{ uri: { scheme: 'file', fsPath: root } }] },
+    LanguageModelTextPart: class {}, LanguageModelToolCallPart: class {}, LanguageModelToolResultPart: class {},
+    LanguageModelChatToolMode: { Auto: 1 }, CancellationTokenSource: Cancellation,
+    LanguageModelChatMessage: { User: content => ({ role: 1, content }), Assistant: content => ({ role: 2, content }) },
+    lm: { selectChatModels: async selector => [{ ...selector, capabilities: { toolCalling: true }, sendRequest: async (_messages, _options, token) => ({
+      stream: (async function* () { while (!token.isCancellationRequested) await delay(10); })(),
+    }) }] } };
+  const bridge = await enableVSCodeHost(api, root), owner = await startControlledHost(root);
+  let server, client;
+  t.after(async () => { await client?.close(); await server?.close(); await owner.close(); await shutdownNative(root); await bridge.close();
+    assert.equal(dirname(root), parent); rmSync(root, { recursive: true, force: true }); });
+  const initial = await startControlledWorkflow(root, { requirement: 'Deliver the scalar and documentation with independent verification.', request_id: 'scope-slash' });
+  let context, run;
+  const deadline = Date.now() + 30000;
+  do { run = controlledStatus(root, initial.workflow_id); const attempt = run.attempts.at(-1);
+    if (attempt?.state === 'running' && attempt.invocation_id) context = ownedContext(root, attempt.request_id);
+    if (!context) await delay(10);
+  } while (!context && Date.now() < deadline);
+  assert.ok(context, 'The actual signed owning planner must bind its backend callbacks.');
+  server = createControlledMcpServer(root, { ...context.binding, invocation_id: run.attempts.at(-1).invocation_id }, context.callbacks);
+  client = new Client({ name: 'actual-scope-plan-input', version: '1' });
+  const [a, b] = InMemoryTransport.createLinkedPair(); await server.connect(b); await client.connect(a);
+  const source = { ...plan(), input_paths: [], allowed_paths: ['src/', 'docs/'], verification_paths: ['checks/'], preservation_paths: ['preserved/'] };
+  const submit = input => client.callTool({ name: 'workflow_plan', arguments: input });
+  for (const invalid of [{ allowed_paths: ['../outside/'] }, { verification_paths: ['checks/../outside/'] }, { preservation_paths: ['../outside/'] }]) {
+    const response = await submit({ ...source, ...invalid });
+    assert.equal(response.isError, true); assert.equal(JSON.parse(response.content[0].text).code, 'PLAN_INVALID');
+    assert.equal(loadRecords(root).filter(record => record.meta.type === 'task').length, 0);
+  }
+  assert.throws(() => normalizeControlledPlanInput(root, controlledPlanSchema.parse({ ...source, outputs: ['docs/'] })), /canonical/);
+  const before = JSON.stringify(source), response = await submit(source);
+  assert.equal(response.isError, undefined, JSON.stringify(response)); assert.equal(JSON.stringify(source), before);
+  const frozen = JSON.parse(readFileSync(safePath(root, `.neomind/controlled/workflows/${hash(initial.workflow_id)}.${run.epoch_id}.contract.json`), 'utf8')).plan;
+  assert.deepEqual(frozen.allowed_paths, ['src', 'docs']); assert.deepEqual(frozen.verification_paths, ['checks']);
+  assert.deepEqual(frozen.preservation_paths, ['preserved']); assert.deepEqual(frozen.outputs, source.outputs);
+  assert.deepEqual(frozen.checks[0].command, source.checks[0].command);
+  assert.deepEqual(frozen.acceptance_criteria, source.acceptance_criteria);
+  assert.ok(frozen.checks[0].baseline_paths.includes('checks/check.mjs'));
+  assert.deepEqual(frozen.checks[0].negative_controls[0].baseline_paths, ['checks/check.mjs', 'checks/bad.json']);
+  assert.equal(readFileSync(join(root, 'preserved/keep.txt'), 'utf8'), 'existing authored content\n');
 });
 
 test('actual controlled MCP accepts semantic plans without baseline bookkeeping and backend fills only approved metadata', async t => {

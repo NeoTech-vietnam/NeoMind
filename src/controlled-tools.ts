@@ -29,12 +29,14 @@ const paths = z.array(z.string().min(1).max(1024)).max(128);
 export const controlledPlanSchema = z.strictObject({
   title: text.max(256), objective: text, rationale: text,
   acceptance_criteria: z.array(text).min(1).max(32),
-  allowed_paths: paths.min(1), verification_paths: paths.min(1), outputs: paths.min(1),
+  allowed_paths: paths.min(1).describe('Producer-owned implementation files or directories, disjoint from verification_paths. Use project-relative paths.'),
+  verification_paths: paths.min(1).describe('Verifier-owned checker scripts and negative fixtures, disjoint from producer paths. Directory scopes are allowed. The backend derives checker baselines from actual check argv.'),
+  outputs: paths.min(1).describe('Producer deliverables only, within allowed_paths. Do not include verifier checker scripts or negative fixtures; those belong to verification_paths and are captured by backend check baselines.'),
   documentation_paths: paths.default([]),
   execution_steps: z.array(z.lazy(() => controlledExecutionDeclarationSchema)).max(16).optional().describe('Declare each producer script/version operation needed for this plan. Use exact local argv, readable inputs and producer-owned new outputs. Backend validates executable/tool/scope compatibility before freezing; implementation supplies prepared JSON input to task_run. Independent acceptance remains check_run under Verifier.'),
   checks: z.array(z.strictObject({ title: text.max(256),
     purpose: z.enum(['self-check', 'intended-use']).optional(),
-    command: z.array(z.string().min(1).max(8000)).min(2).max(128),
+    command: z.array(z.string().min(1).max(8000)).min(2).max(128).describe('Exact argument array [executable, verifier-owned-checker-script, ...inputs]. The checker script must be inside verification_paths. Negative controls invoke this same executable and script with deliberately invalid verifier-owned inputs.'),
     baseline_paths: paths.default([]).describe('Optional additional check inputs within write scopes, or exact existing ordinary files under public preservation_paths or approved hidden input_paths. Read-only baselines must name needed files, not directories; never move them into write scopes merely to capture them. The backend adds delivered outputs and actual checker argv paths before freezing a new plan; committed check baselines remain unchanged.'), expected_exit_code: z.number().int().min(0).max(255).optional(),
     timeout_ms: z.number().int().min(1).max(600000).optional(),
     negative_controls: z.array(z.strictObject({ title: text.max(256),
@@ -55,7 +57,7 @@ export const controlledPlanSchema = z.strictObject({
 export type ControlledPlan = z.infer<typeof controlledPlanSchema>;
 export const controlledReportSchema = z.strictObject({
   outcome: z.enum(['completed', 'blocked', 'failed']), summary: text,
-  artifacts: paths.optional(), findings: z.array(text).max(64).optional(),
+  artifacts: paths.optional().describe('Actual delivered files inside this workflow implementation/checker/Cornell output scopes. Preserved inputs and files only read are not deliverables; discuss their preservation in findings instead.'), findings: z.array(text).max(64).optional(),
   failure_kind: z.enum(['implementation', 'checker', 'protocol', 'environment', 'unknown']).optional(),
   verdict: z.enum(['pass', 'fail']).optional(), negative_controls: z.array(text).max(32).optional(),
   limitations: z.array(text).max(32).optional(),

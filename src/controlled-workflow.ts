@@ -18,7 +18,7 @@ import { ControlledToolError, controlledReviewInstructions, controlledPublicRefe
 import { controlledRuntimeGuide, controlledToolchain } from './controlled-runtime-context.js';
 import { controlledExecutionSchema, controlledExecutionDeclarationSchema, ControlledExecutionError,
   prepareControlledExecution, runControlledExecution, rollbackControlledExecutionOutputs, type ControlledExecutionInput } from './controlled-execution.js';
-import { normalizeControlledCornellSources, existingControlledCornellNote, controlledCornellResult, bindControlledCornellPractice, type ControlledCornellSourceContext, type ControlledCornellResult } from './controlled-cornell-sources.js';
+import { normalizeControlledCornellSources, existingControlledCornellNote, controlledCornellResult, bindControlledCornellPractice, bindControlledCornellDemonstration, type ControlledCornellSourceContext, type ControlledCornellResult } from './controlled-cornell-sources.js';
 import { registerProcedure, resolveProcedure, runProcedure } from './procedures.js';
 import { compileCornellResearch, readCornellDestination, type CornellResearchInput } from './cornell-workflow.js';
 import { createCornellNote, validateCornellNote } from './notes.js';
@@ -724,9 +724,9 @@ class Controller {
                 !!binding.approved_inputs?.includes(path) && controlledSkillInputPath(path)) &&
                 (binding.read_paths ?? ['.']).some(scope => scope === '.' || covers(path, [scope])) };
             const sources = normalizeControlledCornellSources(this.root, input.sources, sourceContext);
-            const worked = input.worked_example && typeof input.worked_example === 'object' ? input.worked_example as Record<string, unknown> : {};
+            const worked = bindControlledCornellDemonstration(input.worked_example, evidenceIds);
             const compiled = compileCornellResearch(this.root, { ...input, schema_version: 1, practice: bindControlledCornellPractice(input.practice, directory),
-              sources: sources.sources, worked_example: { ...worked, evidence_ids: evidenceIds }, requirement_id: requirement.meta.id,
+              sources: sources.sources, worked_example: worked, requirement_id: requirement.meta.id,
               expected_requirement_revision: requirement.meta.revision, workflow_id: id, task_id: contract!.task_id,
               owner: role, output_dir: directory } as CornellResearchInput, { approved_source_files: sources.approved_source_files });
             const solutionPath = compiled.note.practice.solution_path;

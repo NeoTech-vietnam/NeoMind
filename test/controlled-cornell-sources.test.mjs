@@ -10,7 +10,16 @@ import { runCheck, reviewRecord } from '../dist/engineering.js';
 import { compileCornellResearch } from '../dist/cornell-workflow.js';
 import { createCornellNote, validateCornellNote } from '../dist/notes.js';
 import { controlledPublicReferencePath, controlledSkillInputPath } from '../dist/controlled-tools.js';
-import { normalizeControlledCornellSources, existingControlledCornellNote, controlledCornellResult, bindControlledCornellPractice } from '../dist/controlled-cornell-sources.js';
+import { normalizeControlledCornellSources, existingControlledCornellNote, controlledCornellResult, bindControlledCornellPractice, bindControlledCornellDemonstration } from '../dist/controlled-cornell-sources.js';
+
+test('unobserved Cornell work needs no record identity, while actual observations bind only backend evidence', () => {
+  const expected = { body: 'Walk the finite input through the algorithm.', expected: 'The expected scalar result is six.' };
+  assert.deepEqual(bindControlledCornellDemonstration(expected, []), { ...expected, evidence_ids: [] });
+  assert.throws(() => bindControlledCornellDemonstration({ ...expected, observed: 'The result was six.', evidence_ids: ['invented-id'] }, []),
+    /Omit worked_example.observed and provide expected only/);
+  assert.deepEqual(bindControlledCornellDemonstration({ ...expected, observed: 'The independent run returned six.', evidence_ids: ['invented-id'] }, ['actual-bound-evidence']),
+    { ...expected, observed: 'The independent run returned six.', evidence_ids: ['actual-bound-evidence'] });
+});
 
 const template = '.agents/skills/leetcode-notes/assets/cornell-note-template.md';
 test('public Cornell and controlled entry modules initialize in fresh processes regardless of import order', () => {

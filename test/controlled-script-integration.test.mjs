@@ -83,7 +83,8 @@ async function fixture(t, mode = 'normal') {
   ]));
   atomicWrite(safePath(root, '.neomind/routing.json'), JSON.stringify({ ...policy, language_models_file: 'catalog.json',
     strong_provider: 'fixture-strong', worker_provider: 'fixture-worker', vscode_effort_policy: 'allow-unavailable' }));
-  const conversations = new WeakMap(), counts = new Map(), captures = {}, errors = [], observed = [];
+  const conversations = new WeakMap(), counts = new Map(), captures = {}, errors = [], observed = [], progress = [];
+  const started = performance.now();
   const api = { version: '1.109.0', workspace: { isTrusted: true, workspaceFolders: [{ uri: { scheme: 'file', fsPath: root } }] },
     LanguageModelTextPart: Text, LanguageModelToolCallPart: Call, LanguageModelToolResultPart: Result,
     LanguageModelChatToolMode: { Auto: 1 }, CancellationTokenSource: Cancellation,
@@ -110,24 +111,47 @@ async function fixture(t, mode = 'normal') {
         if (state.previous?.capture) captures[state.previous.capture] = JSON.parse(response.content[0].text);
       }
       const action = state.actions[state.round++]; state.previous = action;
+      progress.push({ elapsed_ms: Math.round(performance.now() - started), stage: state.stage,
+        round: state.round, tool: action?.name ?? 'final' });
       return { stream: (async function* () { yield action ? new Call(`direct-${state.round}`, action.name, action.input) : new Text('Typed scoped result persisted.'); })() };
     } }] } };
   let bridge = await enableVSCodeHost(api, root), owner = await startControlledHost(root);
   const stop = async () => { await owner.close(); await shutdownNative(root); await bridge.close(); };
   t.after(async () => { await stop(); assert.equal(dirname(root), parent); rmSync(root, { recursive: true, force: true }); });
-  return { root, captures, errors, observed, closeOwner: () => owner.close(), restart: async () => {
+  return { root, captures, errors, observed, progress, started, closeOwner: () => owner.close(), restart: async () => {
     await stop(); bridge = await enableVSCodeHost(api, root); owner = await startControlledHost(root);
   } };
+}
+function diagnosticState(env, id, run = controlledStatus(env.root, id)) {
+  return { elapsed_ms: Math.round(performance.now() - env.started), status: run.status, phase: run.phase,
+    revision: run.revision, repair_budget: run.repair_budget, blocker: run.blocker ? { kind: run.blocker.kind, code: run.blocker.code } : undefined,
+    observed: env.observed, errors: env.errors.map(item => ({ code: item.code, isError: item.isError })),
+    attempts: run.attempts.map(item => {
+      let invocation;
+      try {
+        const native = item.invocation_id ? readInvocation(env.root, item.invocation_id) : undefined;
+        if (native) invocation = { state: native.state, inference_completed: native.inference_completed,
+          created_at: native.created_at, updated_at: native.updated_at, error_present: Boolean(native.error) };
+      } catch { invocation = { readable: false }; }
+      return { stage: item.stage, state: item.state, outcome: item.report?.outcome,
+        failure_kind: item.report?.failure_kind, checked: item.checked, invocation };
+    }),
+    executions: (run.local_executions ?? []).map(item => ({ title: item.title, state: item.state, passed: item.passed })),
+    checks: run.checks.map(item => ({ title: item.title, negative: item.negative, passed: item.passed, exit_code: item.exit_code })),
+    events: run.events.slice(-12).map(item => ({ at: item.at, kind: item.kind, stage: item.stage })),
+    progress: env.progress.slice(-32) };
 }
 async function until(env, id, predicate) {
   const deadline = Date.now() + 90000;
   do {
     const run = controlledStatus(env.root, id);
     if (predicate(run)) return run;
-    if (['blocked', 'uncertain'].includes(run.status)) assert.fail(JSON.stringify({ blocker: run.blocker, phase: run.phase, errors: env.errors }));
-    await delay(20);
+    if (['blocked', 'uncertain'].includes(run.status)) assert.fail(JSON.stringify(diagnosticState(env, id, run)));
+    // Status verifies signed receipts and reads durable files. Polling every
+    // 20ms competes with those same persistence operations on Windows.
+    await delay(200);
   } while (Date.now() < deadline);
-  assert.fail('Controlled direct script did not reach its expected durable state.');
+  assert.fail(`Controlled direct script did not reach its expected durable state: ${JSON.stringify(diagnosticState(env, id))}`);
 }
 const savedResult = (env, entry) => JSON.parse(readFileSync(safePath(env.root, entry.result_path), 'utf8'));
 
@@ -195,6 +219,7 @@ test('missing optional toolchains cannot charge environment repair or block a No
   const initial = await startControlledWorkflow(env.root, {
     requirement: 'Use only Node to generate scalar six and independently verify JSON; no Python or compiler is required.', request_id: 'node-only-optional-tools' });
   const done = await until(env, initial.workflow_id, run => run.status === 'completed');
+  t.diagnostic(`Node-only optional-toolchain stage timings: ${JSON.stringify(env.progress)}`);
   assert.deepEqual(env.errors, []);
   assert.deepEqual(env.observed, ['planning', 'implementation', 'diagnosis', 'implementation', 'verification']);
   const observations = env.captures['optional-context'].toolchain.observations;

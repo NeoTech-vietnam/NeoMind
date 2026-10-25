@@ -132,6 +132,8 @@ test('controlled Cornell practice and demonstrations hide backend paths, evidenc
     assert.ok('starter' in option.properties);
   }
   assert.equal('evidence_ids' in declared.properties.worked_example.properties, false);
+  assert.match(declared.properties.worked_example.properties.observed.description, /Omit this field until.*passing independent check/);
+  assert.match(declared.properties.methods.description, /inline \[S1\]/);
   assert.equal(declared.required.includes('schema_version'), false);
   const { requirement_id, expected_requirement_revision, workflow_id, task_id, owner, output_dir, ...semantic } = input;
   for (const solution_path of ['answers.md', '../outside.md', '.neomind/config.json', 'C:/outside.md']) {
