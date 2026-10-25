@@ -6,6 +6,7 @@ const { activateMonitor } = require('./monitor.cjs');
 const { activatePluginPanel } = require('./plugin-panel.cjs');
 const { activateAutomationPanel } = require('./automation-panel.cjs');
 const { activateNativeValidation } = require('./native-validation.cjs');
+const { activateNativeDispatch } = require('./native-dispatch.cjs');
 let bridge;
 let generation = 0;
 async function disable() {
@@ -32,6 +33,7 @@ function activate(context) {
   activatePluginPanel(vscode, context, loadRuntime);
   activateAutomationPanel(vscode, context, loadRuntime);
   activateNativeValidation(vscode, context, loadRuntime);
+  activateNativeDispatch(vscode, context, loadRuntime);
   context.subscriptions.push(
     vscode.commands.registerCommand('neomind.bridge.enable', async () => {
       if (enabling) return;

@@ -12,6 +12,7 @@ const PROMPT = 'native-copilot-prompt.txt';
 const RESULT = 'native-copilot-validation-result.json';
 const RUNNING = 'native-copilot-validation-running.json';
 const SHA256 = /^[a-f0-9]{64}$/;
+const SESSION_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const hash = value => createHash('sha256').update(value).digest('hex');
 const samePath = (a, b) => typeof a === 'string' && typeof b === 'string' &&
   (process.platform === 'win32' ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b));
@@ -50,7 +51,8 @@ function writeResult(root, value) {
 }
 function validateRequest(value, time = Date.now()) {
   const keys = ['schema_version', 'action', 'nonce', 'created_at', 'expires_at', 'native_idle_observed_at',
-    'project_root', 'runtime_root', 'workflow_id', 'expected_build_fingerprint', 'prompt_sha256', 'profile_sha256'];
+    'project_root', 'runtime_root', 'workflow_id', 'expected_build_fingerprint', 'prompt_sha256', 'profile_sha256',
+    'reuse_current_local_chat', 'expected_local_session_id'];
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !keys.includes(key)) ||
       value.schema_version !== 1 || value.action !== ACTION || !SHA256.test(value.nonce) ||
       !SHA256.test(value.expected_build_fingerprint) || !SHA256.test(value.prompt_sha256) || !SHA256.test(value.profile_sha256) ||
@@ -58,6 +60,9 @@ function validateRequest(value, time = Date.now()) {
       typeof value.runtime_root !== 'string' || !isAbsolute(value.runtime_root) ||
       typeof value.workflow_id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9-]{1,119}-KNW-\d{4,}$/.test(value.workflow_id))
     fail('INVALID_AUTHORIZATION', 'Native validation needs its exact scoped one-time authorization schema.');
+  if ((Object.hasOwn(value, 'reuse_current_local_chat') || Object.hasOwn(value, 'expected_local_session_id')) &&
+      (value.reuse_current_local_chat !== true || typeof value.expected_local_session_id !== 'string' || !SESSION_ID.test(value.expected_local_session_id)))
+    fail('INVALID_AUTHORIZATION', 'Visible Local chat reuse requires both the explicit true flag and its locally observed expected session UUID.');
   const created = Date.parse(value.created_at), expiry = Date.parse(value.expires_at), idle = Date.parse(value.native_idle_observed_at);
   if (![created, expiry, idle].every(Number.isFinite) || created > time + 30_000 || expiry <= time ||
       expiry <= created || expiry - created > 15 * 60_000)
@@ -72,6 +77,10 @@ function stageNativeValidationRequest(storageRoot, input) {
   const root = storagePath(storageRoot), requestPath = join(root, REQUEST), promptPath = join(root, PROMPT);
   if (existsSync(requestPath) || existsSync(join(root, RUNNING)))
     fail('ALREADY_ARMED', 'A native validation request is already armed or running; inspect it before staging another.');
+  const keys = ['project_root', 'runtime_root', 'workflow_id', 'expected_build_fingerprint', 'prompt',
+    'native_idle_observed_at', 'reuse_current_local_chat', 'expected_local_session_id'];
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !keys.includes(key)))
+    fail('INVALID_AUTHORIZATION', 'Stage only the exact scoped native validation fields; chat.open has no supported session selector.');
   if (!input || typeof input.prompt !== 'string' || input.prompt.trim().length < 24 || input.prompt.length > 32_000 ||
       /"(?:token|claim_token)"\s*:\s*"[a-f0-9]{64}"/i.test(input.prompt))
     fail('INVALID_PROMPT', 'Stage a bounded reviewed native validation prompt without assignment credentials.');
@@ -85,7 +94,9 @@ function stageNativeValidationRequest(storageRoot, input) {
     expires_at: new Date(created.getTime() + 15 * 60_000).toISOString(),
     native_idle_observed_at: input.native_idle_observed_at, project_root: project, runtime_root: runtime,
     workflow_id: input.workflow_id, expected_build_fingerprint: input.expected_build_fingerprint,
-    prompt_sha256: hash(prompt), profile_sha256: hash(profile) });
+    prompt_sha256: hash(prompt), profile_sha256: hash(profile),
+    ...(Object.hasOwn(input, 'reuse_current_local_chat') ? { reuse_current_local_chat: input.reuse_current_local_chat } : {}),
+    ...(Object.hasOwn(input, 'expected_local_session_id') ? { expected_local_session_id: input.expected_local_session_id } : {}) });
   if (existsSync(promptPath) && lstatSync(promptPath).isSymbolicLink())
     fail('INVALID_STORAGE', 'Native validation prompt storage must not be a symbolic link.');
   writeFileSync(promptPath, prompt, { mode: 0o600 });
@@ -169,6 +180,8 @@ function createNativeValidationHost({ vscode, context, loadRuntime }) {
       unlinkSync(requestPath);
       snapshot = { schema_version: 1, action: ACTION, run_id: runId, workflow_id: request.workflow_id,
         project_root: project, runtime_root: runtimeRoot, extension_version: context.extension?.packageJSON?.version ?? null,
+        chat_target: { mode: request.reuse_current_local_chat ? 'reuse-current-local-chat' : 'new-local-chat',
+          expected_session_id: request.expected_local_session_id ?? null, host_selected_exact_session: false },
         started_at: new Date().toISOString(), status: 'restarting-neomind-mcp' };
       writeResult(root, snapshot);
       // The installed VS Code command is deliberately restricted to the known User-profile NeoMind definition.
@@ -194,7 +207,10 @@ function createNativeValidationHost({ vscode, context, loadRuntime }) {
         fail('INPUT_CHANGED', 'The authorized prompt, Coordinator profile or trusted runtime changed before native launch.');
       // Generic newChat follows the remembered session provider and can select
       // Agent Host/SDK. This validation specifically requires Local Copilot Chat.
-      await vscode.commands.executeCommand('workbench.action.chat.newLocalChat');
+      // Reuse is a fresh local-administration/UI assertion about the currently
+      // visible Local panel. chat.open cannot select or verify that session UUID;
+      // the administrator must verify the actual target after submission.
+      if (!request.reuse_current_local_chat) await vscode.commands.executeCommand('workbench.action.chat.newLocalChat');
       snapshot.status = 'native-chat-requested'; snapshot.launched_at = new Date().toISOString(); writeResult(root, snapshot);
       const bootstrap = { workflow_id: request.workflow_id, profile_id: 'coordinator', role: 'manager',
         assignment_id: `native-validation-${runId}`,

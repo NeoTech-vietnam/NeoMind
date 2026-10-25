@@ -166,7 +166,8 @@ test('ordinary engineering intent automatically routes to the manager on every n
     assert.match(instructions, /automation\.json/);
     if (path === 'CLAUDE.md') assert.match(instructions, /agent-operated.*CLI.*fallback/);
     else {
-      assert.match(instructions, /Supporting software uses workflow_plan\/workflow_next/);
+      assert.match(instructions, /Supporting software uses workflow_plan and the client workflow driver in \.neomind\/guides\/native-software\.md/);
+      assert.match(instructions, /On manual clients, workflow_next reconciles each real delegate callback/);
       assert.match(instructions, /existing strict increments retain their applicable full gates/);
       assert.match(instructions, /Resume matching work and preserve its execution mode/);
     }
@@ -187,7 +188,8 @@ test('ordinary engineering intent automatically routes to the manager on every n
       assert.doesNotMatch(skill, /Complete the increment through actual core operations and signed native invocations/);
     }
     assert.match(skill, /workflow_plan/);
-    assert.match(skill, /workflow_next/);
+    assert.match(skill, /client workflow driver/);
+    assert.match(skill, /guides\/native-software\.md/);
     assert.match(skill, /independent Verifier and Reviewer/);
     assert.match(skill, prefix === '.claude' ? /Preserve signed Bridge gates/ : /strict Bridge uses its signed lifecycle/);
   }

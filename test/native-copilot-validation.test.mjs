@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync, realpathSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const require = createRequire(import.meta.url);
@@ -10,9 +10,13 @@ const { stageNativeValidationRequest, createNativeValidationHost } = require('..
 const extensionId = 'neomind.neomind-model-bridge';
 const workflowId = 'NM-VALIDATE-KNW-0001';
 const fingerprint = '1'.repeat(64);
+const localSessionId = '6989eb72-9d16-4a15-add7-c7b9f785d79c';
 
 function fixture(t, options = {}) {
-  const base = mkdtempSync(join(tmpdir(), 'neomind-native-validation-'));
+  const created = mkdtempSync(join(tmpdir(), 'neomind-native-validation-'));
+  const inputBase = options.aliasedTemp ? `${created}-alias` : created;
+  if (options.aliasedTemp) symlinkSync(created, inputBase, process.platform === 'win32' ? 'junction' : 'dir');
+  const base = realpathSync.native(inputBase);
   const root = join(base, 'project'), runtimeRoot = join(base, 'runtime'), storageRoot = join(base, 'private-storage');
   mkdirSync(join(root, '.github/agents'), { recursive: true });
   mkdirSync(runtimeRoot); mkdirSync(storageRoot);
@@ -57,11 +61,34 @@ function fixture(t, options = {}) {
     assert.equal(selected, root); return runtime;
   } });
   t.after(() => {
-    assert.equal(dirname(resolve(base)), resolve(tmpdir()));
-    rmSync(base, { recursive: true, force: true });
+    const cleanupBase = realpathSync.native(base), cleanupParent = realpathSync.native(tmpdir());
+    assert.equal(dirname(cleanupBase), cleanupParent);
+    if (options.aliasedTemp) {
+      assert.equal(realpathSync.native(inputBase), cleanupBase);
+      assert.equal(realpathSync.native(dirname(inputBase)), cleanupParent);
+      rmSync(inputBase, { recursive: true, force: true });
+    }
+    rmSync(cleanupBase, { recursive: true, force: true });
   });
-  return { root, runtimeRoot, storageRoot, calls, observed, infos, errors, stage, host, identity, workflow, runtime };
+  return { root, runtimeRoot, storageRoot, inputBase, calls, observed, infos, errors, stage, host, identity, workflow, runtime };
 }
+
+test('aliased temporary fixture paths retain exact canonical runtime and project identity', async t => {
+  // Directory junctions need no Windows symlink privilege and reproduce the
+  // lexical/physical mismatch of runneradmin's RUNNER~1 temporary directory.
+  const app = fixture(t, { aliasedTemp: true });
+  assert.notEqual(app.inputBase, realpathSync.native(app.inputBase));
+  const staged = app.stage({ project_root: join(app.inputBase, 'project'), runtime_root: join(app.inputBase, 'runtime') });
+  const authorization = JSON.parse(readFileSync(staged.request_path, 'utf8'));
+  assert.equal(authorization.project_root, realpathSync.native(app.root));
+  assert.equal(authorization.runtime_root, realpathSync.native(app.runtimeRoot));
+  const result = await app.host.run();
+  assert.equal(result.status, 'chat-returned-workflow-open');
+  assert.equal(result.project_root, app.root);
+  assert.equal(result.runtime_root, app.runtimeRoot);
+  assert.equal(app.observed.length, 1);
+  assert.equal(app.calls.filter(call => call.name === 'workbench.action.chat.open').length, 1);
+});
 
 test('actual-shaped trusted vscode-userdata storage uses its absolute local fsPath', async t => {
   const app = fixture(t, { storageUri: fsPath => ({ scheme: 'vscode-userdata', authority: '',
@@ -73,6 +100,62 @@ test('actual-shaped trusted vscode-userdata storage uses its absolute local fsPa
   assert.equal(app.calls.filter(call => call.name === 'workbench.action.chat.open').length, 1);
   assert.equal(existsSync(staged.request_path), false);
   assert.ok(existsSync(staged.result_path));
+});
+
+test('explicit visible Local chat reuse skips newLocalChat and records only a declared expected session', async t => {
+  const app = fixture(t), staged = app.stage({ reuse_current_local_chat: true, expected_local_session_id: localSessionId });
+  const authorization = JSON.parse(readFileSync(staged.request_path, 'utf8'));
+  assert.equal(authorization.reuse_current_local_chat, true); assert.equal(authorization.expected_local_session_id, localSessionId);
+  const result = await app.host.run();
+  assert.deepEqual(result.chat_target, { mode: 'reuse-current-local-chat', expected_session_id: localSessionId, host_selected_exact_session: false });
+  assert.equal(app.calls.some(call => call.name === 'workbench.action.chat.newLocalChat'), false);
+  const launch = app.calls.find(call => call.name === 'workbench.action.chat.open');
+  assert.deepEqual(Object.keys(launch.args[0]).sort(), ['blockOnResponse', 'mode', 'preserveInput', 'query']);
+  assert.equal(launch.args[0].mode, 'NeoMind Coordinator Agent'); assert.equal(launch.args[0].blockOnResponse, true);
+  assert.equal(launch.args[0].preserveInput, true);
+  assert.equal(Object.hasOwn(launch.args[0], 'sessionResource'), false); assert.equal(Object.hasOwn(launch.args[0], 'modelSelector'), false);
+  assert.deepEqual(app.calls.slice(0, 2).map(call => call.name), ['workbench.mcp.restartServer', 'workbench.mcp.startServer']);
+});
+
+test('reuse authorization rejects partial, invalid or extra selectors before app actions', async t => {
+  for (const input of [
+    { reuse_current_local_chat: true }, { expected_local_session_id: localSessionId },
+    { reuse_current_local_chat: false, expected_local_session_id: localSessionId },
+    { reuse_current_local_chat: 'true', expected_local_session_id: localSessionId },
+    { reuse_current_local_chat: true, expected_local_session_id: 'not-a-session' },
+    { reuse_current_local_chat: true, expected_local_session_id: localSessionId, sessionResource: 'unsupported-selector' },
+  ]) {
+    const app = fixture(t);
+    assert.throws(() => app.stage(input), error => error.code === 'INVALID_AUTHORIZATION');
+    assert.equal(app.calls.length, 0); assert.equal(app.observed.length, 0);
+    assert.equal(existsSync(join(app.storageRoot, 'native-copilot-validation.json')), false);
+  }
+  for (const patch of [{ reuse_current_local_chat: true }, { expected_local_session_id: localSessionId },
+    { reuse_current_local_chat: true, expected_local_session_id: localSessionId, sessionResource: 'unsupported-selector' }]) {
+    const app = fixture(t), staged = app.stage();
+    const authorization = JSON.parse(readFileSync(staged.request_path, 'utf8'));
+    writeFileSync(staged.request_path, JSON.stringify({ ...authorization, ...patch }));
+    await assert.rejects(app.host.run(), error => error.code === 'INVALID_AUTHORIZATION');
+    assert.equal(app.calls.length, 0); assert.equal(app.observed.length, 0);
+  }
+});
+
+test('reusing a visible Local chat retains idle, expiry and workspace Trust checks', async t => {
+  const reuse = { reuse_current_local_chat: true, expected_local_session_id: localSessionId };
+  const idle = fixture(t);
+  assert.throws(() => idle.stage({ ...reuse, native_idle_observed_at: new Date(Date.now() - 5 * 60_000).toISOString() }),
+    error => error.code === 'IDLE_OBSERVATION_REQUIRED');
+  const expired = fixture(t), staged = expired.stage(reuse);
+  const authorization = JSON.parse(readFileSync(staged.request_path, 'utf8')); authorization.expires_at = new Date(Date.now() - 1000).toISOString();
+  writeFileSync(staged.request_path, JSON.stringify(authorization));
+  await assert.rejects(expired.host.run(), error => error.code === 'EXPIRED_AUTHORIZATION');
+  assert.equal(expired.calls.length, 0);
+  const untrusted = fixture(t, { trusted: false }); untrusted.stage(reuse);
+  await assert.rejects(untrusted.host.run(), error => error.code === 'WORKSPACE_TRUST_REQUIRED');
+  assert.equal(untrusted.calls.length, 0);
+  const changed = fixture(t, { beforeIdentityReturn: vscode => { vscode.workspace.isTrusted = false; } }); changed.stage(reuse);
+  await assert.rejects(changed.host.run(), error => error.code === 'WORKSPACE_TRUST_REQUIRED');
+  assert.equal(changed.calls.some(call => call.name === 'workbench.action.chat.open'), false);
 });
 
 test('missing, remote and ambiguous storage URIs refuse before consuming authorization or calling the app', async t => {
@@ -125,6 +208,7 @@ test('authorized native validation restarts only NeoMind, verifies actual servin
   assert.deepEqual(app.observed[0].input, { input: {}, toolInvocationToken: undefined });
   const launch = app.calls.find(call => call.name === 'workbench.action.chat.open');
   assert.equal(app.calls.filter(call => call.name === 'workbench.action.chat.newLocalChat').length, 1);
+  assert.deepEqual(result.chat_target, { mode: 'new-local-chat', expected_session_id: null, host_selected_exact_session: false });
   assert.ok(app.calls.findIndex(call => call.name === 'workbench.action.chat.newLocalChat') < app.calls.indexOf(launch));
   assert.equal(app.calls.some(call => call.name === 'workbench.action.chat.newChat'), false, 'generic newChat can select the remembered Agent Host instead of Local');
   assert.equal(launch.args[0].mode, 'NeoMind Coordinator Agent');

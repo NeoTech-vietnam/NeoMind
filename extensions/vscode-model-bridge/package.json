@@ -2,14 +2,15 @@
   "name": "neomind-model-bridge",
   "displayName": "NeoMind Agent Monitor",
   "publisher": "neomind",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "An agent universe with plug-in and MCP controls, Earth FocusSpace, calendar planning, ambient sound and guarded 9router model controls.",
   "engines": {
     "vscode": "^1.109.0"
   },
   "main": "./extension.cjs",
   "activationEvents": [
-    "onUri"
+    "onUri",
+    "onLanguageModelTool:neomind_advance_workflow"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -43,10 +44,53 @@
     "resources/monitor/plugins.css",
     "automation-panel.cjs",
     "native-validation.cjs",
+    "native-dispatch.cjs",
     "resources/monitor/automation.js",
     "resources/monitor/automation.css"
   ],
   "contributes": {
+    "languageModelTools": [
+      {
+        "name": "neomind_advance_workflow",
+        "toolReferenceName": "neomindAdvanceWorkflow",
+        "displayName": "Advance NeoMind Workflow",
+        "userDescription": "Advance the saved Local Copilot software workflow and run at most one backend-assigned specialist.",
+        "modelDescription": "Coordinator only: advance an existing software-tools workflow using the actual private handle from assignment_open. The host calls NeoMind workflow_next, launches at most one exact saved native specialist, and reconciles its actual return. Never reconstruct agentName, prompt, model or task IDs. Call again for the next saved stage. Supply observation only for an actual prior native callback; omit it otherwise. Final Cornell authoring and manager_finish remain Coordinator actions.",
+        "canBeReferencedInPrompt": true,
+        "tags": ["neomind", "coordinator"],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "reported_assignment": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": { "type": "string", "pattern": "^local-report-[a-f0-9]{40}$" },
+                "token": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              },
+              "required": ["id", "token"]
+            },
+            "observation": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "packet_id": { "anyOf": [{ "type": "string", "pattern": "^(?:local-report-[a-f0-9]{40}|\\s*)$" }, { "type": "null" }] },
+                    "state": { "type": "string", "enum": ["completed", "completed-without-output", "failed", "cancelled", "running", "unknown"] },
+                    "observation_id": { "type": "string", "minLength": 1, "maxLength": 160 }
+                  },
+                  "required": ["state", "observation_id"]
+                },
+                { "type": "null" }
+              ]
+            }
+          },
+          "required": ["reported_assignment"]
+        }
+      }
+    ],
     "commands": [
       {
         "command": "neomind.bridge.enable",

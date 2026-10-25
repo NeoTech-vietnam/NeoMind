@@ -322,7 +322,7 @@ const nativeCommonWorkflow = [
   nativeIdentityInstructions,
   nativeActivityInstructions,
   'Reuse existing scripts and project knowledge first. Coordinator calls work_prepare once for the original request, then inspects applicable existing tools. A new parameterized script can be registered as a candidate with procedure_register; qualification requires real independent review and representative successful runs. Read .neomind/guides/procedures.md for registration or execution.',
-  'Supporting software uses workflow_plan/workflow_next. Embedded/HDL behavior, safety/security changes and existing strict increments retain their applicable full gates; read .neomind/guides/workflow.md for that branch. Applicable tools and environments must actually run before claiming their results. An installed embedded profile does not make every documentation or Node script task a hardware change.',
+  'Supporting software uses workflow_plan and the client workflow driver in .neomind/guides/native-software.md. Embedded/HDL behavior, safety/security changes and existing strict increments retain their applicable full gates; read .neomind/guides/workflow.md for that branch. Applicable tools and environments must actually run before claiming their results. An installed embedded profile does not make every documentation or Node script task a hardware change.',
   'Lightweight uses its saved checkpoint contract and .neomind/guides/lightweight.md. Source inspection and requested models are not runtime attestation. 9router routes come from routing.json and apply to new invocations; native profile permissions inherit the host and do not establish an OS sandbox.',
 ].join('\n\n');
 const copilotWorkflow = nativeCommonWorkflow;
@@ -364,6 +364,11 @@ function copilotRoleBody(body: string): string {
 ;
 }
 const copilotSquad = agentProfiles;
+const copilotNativeAdvanceTool = 'neomind.neomind-model-bridge/neomindAdvanceWorkflow';
+const copilotNativeAdvanceInstructions = `## Software workflow dispatch
+For native supporting software in local VS Code with NeoMind extension 0.9.3 or later, call neomindAdvanceWorkflow with your actual opened Coordinator reported_assignment handle. The host obtains the backend's current stage, launches at most one exact native specialist request, and reconciles its actual callback. Call it again for the returned next stage. The host selects the specialist and preserves the configured model route; your input contains the Coordinator handle and only an actual earlier callback when explicitly reconciling one.
+Wait when the result is running, unknown or awaiting an existing delegate. At ready_for_cornell, use the returned evidence references for the final note, candidate registration where applicable, and manager_finish. A host refusal preserves unfinished work for diagnosis; it does not authorize another launch through a different tool.
+When this host tool is unavailable, use the manual workflow_next/native-call procedure in .neomind/guides/native-software.md. Codex, lightweight and full engineering retain their own saved procedures.`;
 function copilotTools(root: string, profile: AgentProfile): string[] {
   const operations = profile.roles.flatMap(role => roleCapabilities(role).operations)
     .filter(operation => !operation.startsWith('native_') && !operation.startsWith('capability_') &&
@@ -373,7 +378,7 @@ function copilotTools(root: string, profile: AgentProfile): string[] {
   return [...new Set([
     ...profile.nativeTools,
     ...operations.filter(operation => profile.id !== 'explorer' || !explorerWrites.has(operation)).map(operation => `neomind/${operation}`),
-    ...(profile.id === 'coordinator' ? ['neomind/manager_run', 'neomind/lightweight_checkpoint'] : []),
+    ...(profile.id === 'coordinator' ? ['neomind/manager_run', 'neomind/lightweight_checkpoint', copilotNativeAdvanceTool] : []),
     ...nativePluginTools(root, profile.roles, 'copilot-vscode'),
   ])];
 }
@@ -521,7 +526,7 @@ export function adapterOutputs(root: string, config: AdapterConfig): ManagedOutp
       const tools = copilotTools(root, member);
       outputs.push({
         path: `.github/agents/neomind-${member.id}.agent.md`, kind: 'file',
-        content: `---\nname: ${JSON.stringify(member.name)}\ndescription: ${JSON.stringify(member.duty)}\n${model ? `model: ${JSON.stringify(model)}\n` : ''}tools: ${JSON.stringify(tools)}\nagents: ${JSON.stringify(member.id === 'coordinator' ? copilotSquad.filter(candidate => candidate.id !== 'coordinator').map(candidate => candidate.name) : [])}\nuser-invocable: ${member.id === 'coordinator'}\n---\n\n${copilotExecution(member.id === 'coordinator' ? 'manager' : 'specialist')}\n${copilotWorkflow}\n## Assignment\n${member.duty}\nCore record roles: ${member.roles.join(', ')}. Choose the matching core role for each operation; display names never replace persisted role identifiers. Model policy: ${member.modelRole}.\n${member.procedure}\nRead the applicable .neomind/roles/<core-role>.md contract when its gate or operation is needed; use native tools only from this profile's declared tool list. Report operations persist evidence metadata; source read-only profiles do not gain product-edit permission.\n${member.roles.map(id => readRoleUpstreamInstructions(root, id)).filter(Boolean).join('\n')}\n`,
+        content: `---\nname: ${JSON.stringify(member.name)}\ndescription: ${JSON.stringify(member.duty)}\n${model ? `model: ${JSON.stringify(model)}\n` : ''}tools: ${JSON.stringify(tools)}\nagents: ${JSON.stringify(member.id === 'coordinator' ? copilotSquad.filter(candidate => candidate.id !== 'coordinator').map(candidate => candidate.name) : [])}\nuser-invocable: ${member.id === 'coordinator'}\n---\n\n${copilotExecution(member.id === 'coordinator' ? 'manager' : 'specialist')}\n${copilotWorkflow}\n${member.id === 'coordinator' ? `${copilotNativeAdvanceInstructions}\n` : ''}\n## Assignment\n${member.duty}\nCore record roles: ${member.roles.join(', ')}. Choose the matching core role for each operation; display names never replace persisted role identifiers. Model policy: ${member.modelRole}.\n${member.procedure}\nRead the applicable .neomind/roles/<core-role>.md contract when its gate or operation is needed; use native tools only from this profile's declared tool list. Report operations persist evidence metadata; source read-only profiles do not gain product-edit permission.\n${member.roles.map(id => readRoleUpstreamInstructions(root, id)).filter(Boolean).join('\n')}\n`,
       });
     }
   }

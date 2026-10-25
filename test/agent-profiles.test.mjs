@@ -69,8 +69,11 @@ test('installed profiles enforce distinct native tools and ship actionable proce
   const root = project(t);
   for (const [id, , roles, modelRole, nativeTools] of expected) {
     const { metadata, content } = agent(root, id);
-    const native = metadata.tools.filter(tool => !tool.startsWith('neomind/'));
+    const hostAdvance = 'neomind.neomind-model-bridge/neomindAdvanceWorkflow';
+    const native = metadata.tools.filter(tool => !tool.startsWith('neomind/') && tool !== hostAdvance);
     assert.deepEqual(new Set(native), new Set(nativeTools), id);
+    assert.equal(metadata.tools.includes(hostAdvance), id === 'coordinator', 'Only Coordinator can drive native workflow dispatch.');
+    assert.equal(content.includes('## Software workflow dispatch'), id === 'coordinator');
     assert.ok(metadata.tools.includes('neomind/assignment_result'), `${id} can return actual saved evidence`);
     assert.ok(content.includes(`Core record roles: ${roles.join(', ')}.`), id);
     assert.ok(content.includes(`Model policy: ${modelRole}.`), id);
