@@ -49,7 +49,7 @@ const call = (name, input = {}, capture) => ({ name, input, capture });
 const report = (stage, extra = {}) => call('assignment_report', { outcome: 'completed', summary: `Scoped ${stage} result saved.`,
   ...(stage === 'verification' || stage === 'review' ? { verdict: 'pass' } : {}), ...extra });
 function actions(stage, attempt, mode) {
-  if (stage === 'planning') return [call('runtime_context', {}, 'context'), call('workflow_plan', plan()), report(stage)];
+  if (stage === 'planning') return [call('runtime_context', {}, 'context'), call('runtime_context', {}, 'context-replay'), call('workflow_plan', plan()), report(stage)];
   if (stage === 'implementation') {
     if (mode === 'optional-toolchains' && attempt === 1) return [call('runtime_context', { executables: {
       python: join(tmpdir(), 'neomind-nonexistent-context', 'python.exe'),
@@ -163,6 +163,10 @@ test('bound task_run consumes JSON, replays without another effect, and passes i
   assert.equal(context.context, 'backend-owned-worker'); assert.equal(context.transport, 'vscode-lm');
   assert.equal(context.bridge.exact_project_owner, true); assert.equal(context.model.current_owned_tool_request_observed, true);
   assert.equal(context.guide.source, 'trusted-installed-runtime'); assert.equal(context.guide.project_private_file_read, false);
+  assert.equal(context.preflight_complete, true); assert.equal(context.guide.text, undefined);
+  assert.match(context.next_action, /plan/);
+  assert.equal(env.captures['context-replay'].replayed, true);
+  assert.equal(env.captures['context-replay'].observed_at, context.observed_at, 'Repeated facts reuse the original snapshot.');
   const node = context.toolchain.observations.find(item => item.program === 'node');
   assert.equal(node.available, true); assert.equal(node.exit_code, 0); assert.match(node.stdout, /^v\d+\./);
   assert.equal(env.captures['execution-1'].replayed, false); assert.equal(env.captures['execution-1'].passed, true);

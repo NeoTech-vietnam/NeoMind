@@ -10,13 +10,21 @@ export const controlledRuntimeQuerySchema = z.strictObject({
 });
 export type ControlledRuntimeQuery = z.infer<typeof controlledRuntimeQuerySchema>;
 export const controlledGuidePath = '.neomind/guides/controlled-workflows.md';
+function guideMetadata(bytes: Buffer) {
+  return { path: controlledGuidePath, exists: true, source: 'trusted-installed-runtime',
+    project_private_file_read: false, sha256: hash(bytes), size_bytes: bytes.length };
+}
+
+/** Context references the trusted guide without repeating its instructions. */
+export function controlledRuntimeContextGuide() {
+  return guideMetadata(readFileSync(join(resourceRoot, 'guides/controlled-workflows.md')));
+}
 
 /** A logical documentation resource, never a read through the project's private namespace. */
 export function controlledRuntimeGuide(start = 1, maximum = 64000) {
   const bytes = readFileSync(join(resourceRoot, 'guides/controlled-workflows.md'));
   const excerpt = bytes.toString('utf8').split(/\r?\n/).slice(start - 1).join('\n');
-  return { path: controlledGuidePath, exists: true, source: 'trusted-installed-runtime',
-    project_private_file_read: false, sha256: hash(bytes), size_bytes: bytes.length,
+  return { ...guideMetadata(bytes),
     start_line: start, text: excerpt.slice(0, maximum), truncated: excerpt.length > maximum };
 }
 const names = { node: ['node'], python: ['python3', 'python'], c11: ['gcc', 'clang'], cpp17: ['g++', 'clang++'] } as const;

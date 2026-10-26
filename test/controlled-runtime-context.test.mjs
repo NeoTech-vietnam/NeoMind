@@ -3,7 +3,19 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
-import { controlledRuntimeGuide, controlledToolchain } from '../dist/controlled-runtime-context.js';
+import { controlledRuntimeGuide, controlledRuntimeContextGuide, controlledToolchain } from '../dist/controlled-runtime-context.js';
+
+test('runtime context references trusted guide metadata without repeating setup instructions', () => {
+  const metadata = controlledRuntimeContextGuide(), full = controlledRuntimeGuide();
+  assert.deepEqual(Object.keys(metadata).sort(), ['exists', 'path', 'project_private_file_read', 'sha256', 'size_bytes', 'source']);
+  assert.equal(metadata.source, 'trusted-installed-runtime'); assert.equal(metadata.project_private_file_read, false);
+  assert.equal(metadata.path, full.path); assert.equal(metadata.sha256, full.sha256); assert.equal(metadata.size_bytes, full.size_bytes);
+  assert.equal('text' in metadata, false); assert.equal('start_line' in metadata, false); assert.equal('truncated' in metadata, false);
+  assert.match(full.text, /Backend-owned session/);
+  assert.match(full.text, /Successful observations establish the current preflight checkpoint/);
+  assert.equal(full.text.includes('Call `runtime_context` with `{}` first'), false);
+  assert.equal(controlledRuntimeGuide(2, 100).text, full.text.split(/\r?\n/).slice(1).join('\n').slice(0, 100));
+});
 
 function fixture(t, emptyPath = true) {
   const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-runtime-context-')));

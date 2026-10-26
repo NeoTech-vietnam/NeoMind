@@ -15,7 +15,7 @@ import { runCommand } from './command-runner.js';
 import { readNativeSoftwareContract } from './native-software.js';
 import type { ControlledBinding, ControlledCallbacks, ControlledPlan, ControlledReport } from './controlled-tools.js';
 import { ControlledToolError, controlledReviewInstructions, controlledPublicReferencePath, controlledSkillInputPath, controlledToolNames } from './controlled-tools.js';
-import { controlledRuntimeGuide, controlledToolchain } from './controlled-runtime-context.js';
+import { controlledRuntimeContextGuide, controlledToolchain } from './controlled-runtime-context.js';
 import { controlledExecutionSchema, controlledExecutionDeclarationSchema, ControlledExecutionError,
   prepareControlledExecution, runControlledExecution, rollbackControlledExecutionOutputs, type ControlledExecutionInput } from './controlled-execution.js';
 import { normalizeControlledCornellSources, existingControlledCornellNote, controlledCornellResult, bindControlledCornellPractice, bindControlledCornellDemonstration, type ControlledCornellSourceContext, type ControlledCornellResult } from './controlled-cornell-sources.js';
@@ -28,6 +28,7 @@ import { continuationObligations, controlledFingerprints, controlledFingerprints
 import { evidenceRecordFingerprint, type EvidenceInputSnapshot } from './evidence-inputs.js';
 import type { ProjectRecord } from './types.js';
 import { normalizeControlledPlanInput, controlledConsultationRole } from './controlled-plan-input.js';
+import { controlledPlanConflicts, type ControlledPlanConflict } from './controlled-plan-queue.js';
 import { controlledPlanningRecovery } from './controlled-recovery-context.js';
 import { controlledRegistrationEvidence } from './controlled-registration-evidence.js';
 import { assertControlledReadBaseline } from './controlled-read-baselines.js';
@@ -77,6 +78,8 @@ export interface ControlledSnapshot {
   procedure_runs?: { id: string; status: string }[]; procedure_candidate_id?: string; procedure_candidate_version?: string; cornell_note_ids?: string[];
   cornell_results?: ControlledCornellResult[];
   check_reconciliations?: InterruptedCheckReconciliationLink[];
+  pending_plan?: { plan: ControlledPlan; attempt_id: string; parent_fingerprint: string;
+    requirement_fingerprints: Record<string, string>; conflicts: ControlledPlanConflict[] };
   local_executions?: { id: string; attempt_id: string; request_hash: string; title: string; state: 'running' | 'completed';
     pid?: number; intent_path: string; intent_sha256: string; result_path?: string; result_sha256?: string; passed?: boolean }[];
   pending_check_review?: boolean;
@@ -396,7 +399,7 @@ class Controller {
     this.schedule(run.workflow_id);
     return readState(this.root, run.workflow_id);
   }
-  private async plan(run: ControlledSnapshot, proposed: ControlledPlan, signal: AbortSignal, assertActive: () => void): Promise<unknown> {
+  private async plan(run: ControlledSnapshot, proposed: ControlledPlan, signal: AbortSignal, assertActive: () => void, deferred = false): Promise<unknown> {
     const emptyExecutionDefault = !run.contract_hash || readContract(this.root, run).plan.execution_steps?.length === 0;
     const supplied = proposed.execution_steps === undefined && emptyExecutionDefault ? { ...proposed, execution_steps: [] } : proposed;
     const plan = validatePlan(this.root, normalizeControlledPlanInput(this.root, mergeOriginalCriteria(this.root, run, supplied),
@@ -426,6 +429,16 @@ class Controller {
     const requirementIds = [...new Set([...(original?.requirement_ids ?? []), String(parent.meta.data.requirement_id),
       ...(Array.isArray(parent.meta.data.requirement_ids) ? parent.meta.data.requirement_ids.filter((id): id is string => typeof id === 'string') : [])])];
     const parentFingerprint = evidenceRecordFingerprint(parent), requirementFingerprints = Object.fromEntries(requirementIds.map(id => [id, evidenceRecordFingerprint(getRecord(this.root, id))]));
+    const queue = (conflicts: ControlledPlanConflict[]) => {
+      assertActive(); run = readState(this.root, run.workflow_id);
+      run.pending_plan = { plan, attempt_id: run.attempts.at(-1)!.id, parent_fingerprint: parentFingerprint,
+        requirement_fingerprints: requirementFingerprints, conflicts };
+      save(this.root, run, 'plan-waiting', 'Validated plan saved without a task or frozen inputs; runtime waits for active writer scopes.');
+      return { saved: true, contract_frozen: false, waiting_for: conflicts,
+        next: 'Save the completed planning report, then finish this session. The backend waits and freezes fresh inputs automatically; do not poll or resubmit the plan.' };
+    };
+    const conflicts = controlledPlanConflicts(this.root, run.workflow_id, plan);
+    if (conflicts.length) return queue(conflicts);
     const originalTaskFingerprint = original ? hash(JSON.stringify(getRecord(this.root, original.task_id))) : undefined;
     const originalContractPath = `.neomind/native/software-workflows/${hash(run.workflow_id)}.contract.json`;
     const originalContractSha256 = original ? hash(readFileSync(safePath(this.root, originalContractPath))) : undefined;
@@ -441,15 +454,18 @@ class Controller {
     }
     // No records or contract have been written before this yielding, cancellable preflight.
     // Re-read authoritative state after the await; trace/heartbeat events must not be overwritten.
-    return withOperationLock(this.root, `controlled-plan-${hash(run.workflow_id).slice(0, 32)}`, () => {
+    return withOperationLock(this.root, 'controlled-plan-admission', () => withOperationLock(this.root, `controlled-plan-${hash(run.workflow_id).slice(0, 32)}`, () => {
     signal.throwIfAborted(); assertActive();
     run = readState(this.root, run.workflow_id);
-    if (run.epoch_id !== epoch || run.attempts.at(-1)?.id !== attemptId || run.status !== 'running' || run.attempts.at(-1)?.state !== 'running')
+    if (run.epoch_id !== epoch || run.attempts.at(-1)?.id !== attemptId || run.status !== (deferred ? 'waiting' : 'running') ||
+        run.attempts.at(-1)?.state !== (deferred ? 'completed' : 'running'))
       throw new Error('Planning owner changed while preservation inputs were captured.');
     if (run.contract_hash) {
       if (!same(readContract(this.root, run).plan, plan)) throw new Error('Saved contract is immutable.');
       return { saved: true, next: 'Finish the planning report; runtime dispatches the next stage.' };
     }
+    const currentConflicts = controlledPlanConflicts(this.root, run.workflow_id, plan);
+    if (currentConflicts.length) return queue(currentConflicts);
     if (evidenceRecordFingerprint(getRecord(this.root, run.workflow_id)) !== parentFingerprint ||
         Object.entries(requirementFingerprints).some(([id, fingerprint]) => evidenceRecordFingerprint(getRecord(this.root, id)) !== fingerprint) ||
         (original && (hash(JSON.stringify(readNativeSoftwareContract(this.root, run.workflow_id))) !== hash(JSON.stringify(original)) ||
@@ -497,12 +513,13 @@ class Controller {
     if (savedContract && !same(savedContract, contract)) throw new Error('Interrupted plan contract failed exact reconciliation.');
     if (!savedBytes) atomicWrite(savedPath, bytes);
     run.contract_hash = hash(bytes);
+    delete run.pending_plan;
     updateRecord(this.root, task.meta.id, { data: { controlled_contract_hash: run.contract_hash } });
     updateRecord(this.root, run.workflow_id, { data: { controlled_epoch_id: run.epoch_id, controlled_contract_hash: run.contract_hash,
       task_ids: [...new Set([...(Array.isArray(parent.meta.data.task_ids) ? parent.meta.data.task_ids : []), task.meta.id])] } });
     save(this.root, run, 'plan-saved', 'Backend created the bound task and immutable scope/check contract.');
     return { saved: true, reviewer_required: contract.reviewer_required, next: 'Save a compact completed planning report.' };
-    });
+    }));
   }
   private schedule(id: string): void {
     if (this.closed || this.jobs.has(id)) return;
@@ -545,6 +562,44 @@ class Controller {
       if (this.closed || signal.aborted) return;
       let run = readState(this.root, id);
       if (!['queued', 'running', 'waiting', 'interrupted'].includes(run.status)) return;
+      if (run.pending_plan && !run.contract_hash && run.attempts.at(-1)?.stage === 'planning' &&
+          run.attempts.at(-1)?.state === 'completed' && run.attempts.at(-1)?.report?.outcome === 'completed') {
+        const pending = run.pending_plan, planner = run.attempts.at(-1)!;
+        const conflicts = controlledPlanConflicts(this.root, id, pending.plan);
+        if (run.status !== 'waiting' || !same(conflicts, pending.conflicts)) {
+          run.status = 'waiting'; pending.conflicts = conflicts;
+          save(this.root, run, 'scope-wait', 'The saved Coordinator result is retained while another workflow owns required input scope.');
+        }
+        if (conflicts.length) { await new Promise<void>(done => {
+          const finish = () => { clearTimeout(timer); signal.removeEventListener('abort', finish); done(); };
+          const timer = setTimeout(finish, 1000); signal.addEventListener('abort', finish, { once: true });
+          if (signal.aborted) finish();
+        }); continue; }
+        const receipt = planner.invocation_id ? readInvocation(this.root, planner.invocation_id) : undefined;
+        const report = planner.report_id ? getRecord(this.root, planner.report_id) : undefined;
+        if (planner.id !== pending.attempt_id || planner.stage !== 'planning' || planner.role !== 'manager' || planner.report?.outcome !== 'completed' ||
+            receipt?.state !== 'completed' || receipt.issuer !== 'neomind-vscode-lm' || receipt.role !== planner.role ||
+            !receipt.inference_completed || receipt.workflow_id !== id || receipt.request_id !== planner.request_id ||
+            receipt.controlled_execution?.epoch_id !== run.epoch_id || receipt.controlled_execution.stage !== 'planning' ||
+            !report || evidenceRecordFingerprint(report) !== planner.report_fingerprint || report.meta.data.invocation_id !== receipt.id ||
+            report.meta.owner !== planner.role || report.meta.data.workflow_id !== id || report.meta.data.epoch_id !== run.epoch_id ||
+            report.meta.data.attempt_id !== planner.id || report.meta.data.stage !== 'planning' ||
+            routingProblems(this.root, planner.role, receipt.id, { workflow_id: id, require_completed: true }).length ||
+            evidenceRecordFingerprint(getRecord(this.root, id)) !== pending.parent_fingerprint ||
+            Object.entries(pending.requirement_fingerprints).some(([record, fingerprint]) => evidenceRecordFingerprint(getRecord(this.root, record)) !== fingerprint))
+          throw new ControlledToolError('STATE_UNCERTAIN', 'The waiting plan no longer matches its completed Coordinator or immutable requirement observations.');
+        const epoch = run.epoch_id, attemptId = planner.id;
+        const assertPending = () => { const current = readState(this.root, id);
+          if (this.closed || signal.aborted || current.epoch_id !== epoch || current.status !== 'waiting' || current.contract_hash ||
+              current.pending_plan?.attempt_id !== attemptId || current.attempts.at(-1)?.id !== attemptId)
+            throw new ControlledToolError('ACTOR_INACTIVE', 'The waiting plan changed owner or was cancelled before freezing.'); };
+        await this.plan(run, pending.plan, signal, assertPending, true);
+        run = readState(this.root, id);
+        if (!run.contract_hash) continue;
+        run.phase = 'implementation'; run.status = 'queued';
+        save(this.root, run, 'scope-ready', 'Conflicting writer finished; fresh preservation inputs frozen under the original Coordinator result.');
+        continue;
+      }
       if (!this.admitCheckEffects(run)) return;
       if (run.attempts.at(-1)?.state === 'running' || run.attempts.at(-1)?.state === 'starting') {
         run.status = 'uncertain'; run.blocker = { kind: 'protocol', message: 'Previous invocation needs reconciliation before resume.' };
@@ -603,6 +658,18 @@ class Controller {
           const native = readInvocation(this.root, active.invocation_id!);
           if (host.pid !== current.owner_pid || host.instance !== current.owner_instance || native.issuer !== 'neomind-vscode-lm')
             throw new ControlledToolError('ACTOR_INACTIVE', 'This worker is not owned by the current enabled project Bridge.');
+          const nextAction = stage === 'verification' ? 'Read the assigned implementation/checker files, author independent checks, then use check_run and save your verdict.'
+            : stage === 'planning' ? 'Inspect relevant project sources, prepare the bounded plan, then report its result.'
+            : stage === 'implementation' ? 'Finish the assigned product outputs using the scoped tools, then save your substantive report.'
+            : 'Continue the assigned professional review or synthesis using the current evidence.';
+          const contextPath = safePath(this.root, `.neomind/controlled/context/${attempt.id}.${hash(canonicalJson(query))}.json`);
+          if (existsSync(contextPath)) {
+            const saved = JSON.parse(readFileSync(contextPath, 'utf8'));
+            if (saved.context !== 'backend-owned-worker' || saved.role !== role || saved.stage !== stage)
+              throw new Error('Saved runtime context does not match the current owned session.');
+            return { ...saved, replayed: true, next_action: nextAction,
+              snapshot_notice: 'These unchanged session facts are already established. Continue the assigned work instead of repeating this query.' };
+          }
           let toolchain;
           try { toolchain = await controlledToolchain(this.root, query, attemptAbort.signal); }
           catch { throw new ControlledToolError('INVALID_EXECUTION', 'Supply an existing absolute executable of the requested toolchain type; version observations use fixed --version argv.'); }
@@ -612,7 +679,8 @@ class Controller {
             bridge: { enabled: true, exact_project_owner: true, workspace_trust_checked_by_extension: true },
             model: { requested: native.requested_model, observed: native.confirmed_model, vendor: native.model_provider,
               current_owned_tool_request_observed: true, upstream_identity_attested: false },
-            available_tools: controlledToolNames(binding), guide: controlledRuntimeGuide(), toolchain,
+            preflight_complete: true, next_action: nextAction,
+            available_tools: controlledToolNames(binding), guide: controlledRuntimeContextGuide(), toolchain,
             producer_capabilities: { tools: controlledToolNames({ ...binding, stage: 'implementation', role: 'developer', execution_steps: undefined, procedure_bound: false }),
               declaration: 'New plans declare producer script operations in execution_steps. The worker supplies only title and JSON input; backend supplies argv, identity, scope and limits.',
               direct_execution_input_limit_bytes: 1024 * 1024, direct_execution_baseline_limit_files: 512,
@@ -620,7 +688,7 @@ class Controller {
             policy: { network: false, publication: false, scoped_execution_is_os_sandbox: false,
               repair_attempts: readConfig(this.root).repair_attempts },
             reuse: { qualified_automatic_reuse_required: true, direct_local_script_execution: 'task_run under the immutable producer scope; does not qualify a candidate' } };
-          atomicWrite(safePath(this.root, `.neomind/controlled/context/${attempt.id}.${hash(canonicalJson(query))}.json`), JSON.stringify(observation, null, 2) + '\n');
+          atomicWrite(contextPath, JSON.stringify(observation, null, 2) + '\n');
           return observation;
         },
         runTask: input => {
@@ -803,7 +871,10 @@ class Controller {
         }
         if (specialist) { run.status = 'queued'; save(this.root, run, 'consultation-complete', `${role} consultation saved.`); continue; }
         if (stage === 'planning') {
-          if (!run.contract_hash) { this.block(run, 'protocol', 'Planning session returned without saving a semantic plan.'); return; }
+          if (!run.contract_hash) {
+            if (run.pending_plan?.attempt_id === active.id) { run.status = 'waiting'; save(this.root, run, 'scope-wait', 'Completed Coordinator retained; waiting for required scope before freezing.'); continue; }
+            this.block(run, 'protocol', 'Planning session returned without saving a semantic plan.'); return;
+          }
           run.phase = 'implementation';
         } else if (stage === 'implementation') { saveStatus(this.root, contract!.task_id, 'submitted'); run.phase = 'verification'; }
         else if (stage === 'verification') {
@@ -872,7 +943,7 @@ class Controller {
       `Cornell destination default: ${readCornellDestination(this.root).directory}/${run.workflow_id.toLowerCase()}. Only add a Cornell bundle when requested by the user.`,
       run.blocker ? `Repair/diagnosis context:\n${JSON.stringify(run.blocker)}` : '',
       `Prior reports:\n${JSON.stringify(run.attempts.filter(item => item.report).slice(-4).map(item => ({ stage: item.stage, report: item.report })))}`,
-      'For setup or executable observations, first call runtime_context with {}. Its current signed-session observations supersede historical unsupported setup assumptions. Only supply optional executable paths read from actual project configuration; never guess installation locations. Per-tool discovery diagnostics do not invalidate session context or require optional languages absent from the assigned operation. The backend already owns this session; client intake setup instructions do not become worker preconditions. A blocked automatic-reuse candidate does not prohibit a separately scoped direct task_run operation. New plans declare required producer execution_steps before freeze.',
+      'Your current signed-session context establishes the active Bridge and model request. Use runtime_context only for missing execution facts; one completed snapshot suffices. Continue the role work after preflight_complete instead of repeating unchanged context queries. Optional executable paths must come from actual project configuration, never guessed locations. Missing optional languages do not invalidate this session. Client intake setup instructions do not become worker preconditions. A blocked automatic-reuse candidate does not prohibit a separately scoped direct task_run operation. New plans declare required producer execution_steps before freeze.',
       stage === 'synthesis' ? `Current actual evidence: ${JSON.stringify(currentControlledChecks(run).filter(check => !check.negative && check.passed).map(check => ({ title: check.title, evidence_id: check.evidence_id, source_uri: `record:${check.evidence_id}` })))}. Use check_evidence for bounded actual stdout/stderr; private runtime log files are not readable source files. The backend binds evidence and source metadata automatically; cite supplied source_uri or readable project files, and describe only facts supported by these checks.` : '',
       contract?.plan.procedure_candidate && (stage === 'synthesis' || stage === 'review' && reviewPurpose === 'final-product')
         ? `Current backend registry observation: ${JSON.stringify(controlledRegistrationEvidence(this.root, run, contract))}\nUse check_evidence({kind:"registration"}) to refresh this exact bound manifest observation. It is actual registry provenance, not a separate native signed receipt, independent contract review or automatic-reuse qualification.` : '',
