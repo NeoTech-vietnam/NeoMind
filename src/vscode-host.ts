@@ -26,6 +26,29 @@ interface Turn {
   controlled?: OwnedContext; failureLoop?: ControlledFailureLoop;
   progress: ModelCallProgress;
 }
+function errorField(value: unknown, key: string): unknown {
+  if (!value || typeof value !== 'object') return undefined;
+  try { return (value as Record<string, unknown>)[key]; } catch { return undefined; }
+}
+/** Fixed metadata only. Do not serialize provider objects or inspect messages,
+ * stacks, headers or arbitrary nested values to identify transport failures. */
+export function vscodeModelErrorDiagnostic(error: unknown): { error_class: string; cause_class: string | null; transport_code: string | null } {
+  const names = new Set(['Error', 'AbortError', 'TypeError', 'RangeError', 'ReferenceError', 'CancellationError', 'Canceled', 'Cancelled', 'LanguageModelError']);
+  const codes = new Set(['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN', 'ERR_STREAM_PREMATURE_CLOSE',
+    'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_ABORTED', 'UND_ERR_CLOSED', 'UND_ERR_DESTROYED']);
+  const known = (value: unknown, allowed: Set<string>) => typeof value === 'string' && value.length <= 64 && allowed.has(value) ? value : null;
+  const result = { error_class: known(errorField(error, 'name'), names) ?? 'unclassified error', cause_class: null as string | null,
+    transport_code: null as string | null };
+  const seen = new Set<object>();
+  let current = error;
+  for (let depth = 0; depth <= 4 && current && typeof current === 'object' && !seen.has(current); depth++) {
+    seen.add(current);
+    result.transport_code ??= known(errorField(current, 'code'), codes);
+    if (depth > 0) result.cause_class ??= known(errorField(current, 'name'), names);
+    current = errorField(current, 'cause');
+  }
+  return result;
+}
 export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): Promise<{ close(): Promise<void> }> {
   if (!vscode.workspace.isTrusted) throw new Error('VS Code Workspace Trust is required.');
   const root = exactRoot(workspaceRoot);
@@ -166,21 +189,24 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
         Unknown: 'VS Code reported an unspecified language-model error',
         Canceled: 'model request was cancelled', Cancelled: 'model request was cancelled',
       };
-      const diagnostic = error as { code?: unknown; name?: unknown; message?: unknown } | null;
-      const code = typeof diagnostic?.code === 'string' && Object.hasOwn(codes, diagnostic.code) ? diagnostic.code : null;
-      const names = ['TypeError', 'RangeError', 'ReferenceError', 'CancellationError', 'Canceled', 'LanguageModelError'];
-      const name = typeof diagnostic?.name === 'string' && names.includes(diagnostic.name) ? diagnostic.name : 'unclassified error';
+      const metadata = vscodeModelErrorDiagnostic(error), rawCode = errorField(error, 'code');
+      const code = typeof rawCode === 'string' && rawCode.length <= 64 && Object.hasOwn(codes, rawCode) ? rawCode : null;
+      const name = metadata.error_class;
       const hostErrors = [
         'Host permission or invocation ended.', 'Host turn differs from signed invocation.',
         'Invocation policy changed.', 'Conversation limit reached.', 'Response part limit reached.',
         'Response data limit reached.', 'Output limit reached.', 'Model requested an invalid or unscoped tool.',
         'Unsupported model response part.', 'Model did not demonstrate required tool calling.', 'Tool round limit reached.',
       ];
-      const hostError = hostErrors.find(message => message === diagnostic?.message);
+      const rawMessage = errorField(error, 'message');
+      const hostError = hostErrors.find(message => message === rawMessage);
       const provider = vscodeProviderDiagnostic(error);
       const detail = hostError ?? (provider ? `${provider.code}: ${provider.message}` :
         code ? `${code}: ${codes[code]}` : `${name}; inspect VS Code Copilot and extension-host logs`);
-      stop(turn, 'blocked', `VS Code model request blocked during ${phase}: ${detail}. No raw provider error was persisted.`);
+      const fixed = [name === 'unclassified error' ? null : `SDK ${name}`,
+        metadata.cause_class ? `cause ${metadata.cause_class}` : null,
+        metadata.transport_code ? `transport ${metadata.transport_code}` : null].filter(Boolean);
+      stop(turn, 'blocked', `VS Code model request blocked during ${phase}: ${detail}${fixed.length ? ` [${fixed.join('; ')}]` : ''}. No raw provider error was persisted.`);
     }
   }
   const server = await serveHost(root, async (operation, input) => {

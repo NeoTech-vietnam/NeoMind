@@ -244,12 +244,15 @@ test('controlled current markers distinguish actual execution and the latest rec
   assert.equal(first.find(node => node.invocation_id === old.id).state, 'blocked');
   assert.equal(first.find(node => node.invocation_id === interrupted.id).state, 'interrupted');
   assert.ok(first.every(node => typeof node.controlled_current === 'boolean'));
+  assert.ok(first.every(node => node.signed_receipt === true), 'Runtime classification retains each validated receipt provenance marker.');
   const snapshot = readAgentMap(root), legacy = snapshot.nodes.find(node => node.source_id === legacyActivity.id), unrelated = snapshot.nodes.find(node => node.source_id === foreignActivity.id);
   assert.equal(legacy.source, 'native-activity'); assert.equal(legacy.state, 'blocked'); assert.equal(legacy.controlled_superseded, true);
+  assert.equal(legacy.signed_receipt, undefined);
   assert.ok(snapshot.edges.filter(edge => edge.from === legacy.id || edge.to === legacy.id).every(edge => edge.animated === false));
   assert.equal(unrelated.source, 'native-activity'); assert.equal(unrelated.state, 'running'); assert.equal(unrelated.controlled_superseded, undefined);
   const signedOther = snapshot.nodes.find(node => node.invocation_id === foreignSigned.id);
   assert.equal(signedOther.source, 'signed-receipt'); assert.equal(signedOther.state, 'running'); assert.equal(signedOther.controlled_superseded, undefined);
+  assert.equal(signedOther.signed_receipt, true);
   const dispatched = readAgentMap(root).edges.filter(edge => edge.source === 'controlled-runtime' && edge.kind === 'handoff');
   assert.equal(dispatched.length, attempts.length); assert.ok(dispatched.every(edge => edge.from === workflow.meta.id), 'The runtime workflow, not a past Coordinator model, dispatches controlled workers.');
   assert.equal(dispatched.filter(edge => edge.animated).length, 1);
@@ -273,11 +276,12 @@ test('native self-reports retain reported provenance and cannot invent observed 
   const workflow = createRecord(root, { type: 'knowledge', title: 'Native increment', owner: 'manager',
     data: { kind: 'manager-workflow', assurance: 'unsigned-native-report' } });
   createRecord(root, { type: 'knowledge', title: 'Reported agent', owner: 'developer',
-    data: { kind: 'manager-discussion', workflow_id: workflow.meta.id, invocation_id: 'reported-only', confirmed_model: 'FORGED MODEL' } });
+    data: { kind: 'manager-discussion', workflow_id: workflow.meta.id, invocation_id: 'reported-only', confirmed_model: 'FORGED MODEL', signed_receipt: true } });
   const beforeMap = readAgentMap(root), reported = beforeMap.nodes.find(node => node.kind === 'agent');
   assert.equal(reported.source, 'project-record');
   assert.equal(reported.execution_mode, 'unsigned-native-report');
   assert.equal(reported.confirmed_model, null);
+  assert.equal(reported.signed_receipt, undefined, 'A project record cannot manufacture signed receipt provenance.');
   assert.equal(reported.state, 'completed');
   assert.ok(beforeMap.edges.some(edge => edge.kind === 'contribution' && edge.source === 'project-record'));
   const template = createRecord(root, { type: 'task', title: 'Fixture task', data: { workflow_id: workflow.meta.id } });

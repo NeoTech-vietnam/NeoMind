@@ -158,7 +158,7 @@
     const controlledSummary = controlled.length ? `Current NeoMind contexts: ${controlledStates.map(state =>
       `${controlled.filter(node => node.state === state).length} ${state}`).join(', ')}${completed ? `, ${completed} completed attempt${completed === 1 ? '' : 's'}` : ''} · ` : '';
     setText(byId('live-summary'), unavailable ? 'Activity unavailable; displayed assignments are last known reports.' : candidates.length
-      ? `${controlledSummary}${active.filter(node => node.source === 'native-hook').length} running hook observations · ${active.filter(node => node.source === 'native-activity').length} reported active assignments · ${active.filter(node => node.source === 'signed-receipt').length} signed sessions. Sources may describe the same agent; unsigned updates expire after five minutes.`
+      ? `${controlledSummary}${active.filter(node => node.source === 'native-hook').length} running hook observations · ${active.filter(node => node.source === 'native-activity').length} reported active assignments · ${active.filter(node => node.source === 'signed-receipt' || node.signed_receipt === true).length} signed sessions. Sources may describe the same agent; unsigned updates expire after five minutes.`
       : 'No current activity observations. Update integration, enable trusted native hooks and start a new chat. Clients that omit agent identity can still report assignment progress through NeoMind.');
     reconcile(byId('live-agents'), liveRows, candidates.slice(0, 12), node => {
       const root = button('', 'live-agent', () => select(node.id, true));
@@ -301,7 +301,7 @@
   function updateStatus() {
     document.body.classList.toggle('is-stale', unavailable);
     const agents = (map?.nodes ?? []).filter(node => node.kind === 'agent');
-    const signed = agents.filter(node => node.source === 'signed-receipt').length;
+    const signed = agents.filter(node => node.source === 'signed-receipt' || node.signed_receipt === true).length;
     const controlled = agents.filter(node => node.source === 'controlled-runtime' && node.controlled_current === true &&
       !node.expired && (controlledStates.includes(node.state) || node.state === 'completed')).length;
     const reported = agents.filter(node => node.source === 'project-record').length;

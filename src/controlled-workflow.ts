@@ -668,6 +668,9 @@ class Controller {
       save(this.root, run, 'dispatch', `NeoMind dispatches ${role} for ${stage}.`);
       const binding: ControlledBinding = { workflow_id: id, task_id: stage === 'planning' ? undefined : contract?.task_id,
         stage, role, implementation_paths: documentation?.paths ?? contract?.plan.allowed_paths ?? [], verification_paths: contract?.plan.verification_paths ?? [],
+        ...(stage === 'planning' ? { plan_defaults: { title: run.title,
+          objective: run.requirement.length <= 8000 ? run.requirement
+            : 'Implement the complete saved user requirement for this workflow; its scope and acceptance criteria remain authoritative.' } } : {}),
         ...(documentation ? { evidence_documentation: true, evidence_documentation_source_hash: hash(canonicalJson(documentation)) } : {}),
         cornell_bound: !documentation && !!(stage === 'synthesis' ? contract?.knowledge_directory : contract?.plan.cornell_output_dir),
         ...(primarySourcePath ? { cornell_source: { path: primarySourcePath, sha256: primarySourceHash! } } : {}),

@@ -66,7 +66,11 @@ test('planning and assignment-report MCP boundaries consume prepared JSON and re
   const declared = (await c.client.listTools()).tools;
   for (const [name, schema] of [['workflow_plan', controlledPlanSchema], ['assignment_report', controlledReportSchema]]) {
     const actual = declared.find(tool => tool.name === name).inputSchema;
-    assertPayloadBranches(actual, z.toJSONSchema(schema, { io: 'input' }).required ?? [], Object.keys(schema.shape));
+    const hiddenPlanAliases = name === 'workflow_plan'
+      ? ['intent', 'summary', 'implementation_instructions', 'verification_instructions', 'negative_controls'] : [];
+    assertPayloadBranches(actual, z.toJSONSchema(schema, { io: 'input' }).required ?? [], [...Object.keys(schema.shape), ...hiddenPlanAliases]);
+    assert.deepEqual(Object.keys(actual.properties).sort(), [...Object.keys(schema.shape), 'input_path'].sort(),
+      'Known ingress aliases remain excluded from canonical advertised properties; arbitrary fields stay forbidden.');
     assert.equal(actual.properties.summary?.type ?? actual.properties.title?.type, 'string');
   }
   const checkSchema = declared.find(tool => tool.name === 'workflow_plan').inputSchema.properties.checks.items;

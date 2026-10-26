@@ -11,6 +11,7 @@ import { controlledRuntimeGuide, controlledGuidePath, controlledRuntimeQuerySche
 import { controlledExecutionSchema, type ControlledExecutionInput, type ControlledExecutionDeclaration } from './controlled-execution.js';
 import { controlledPayloadSchema, resolveControlledPayload, assertControlledPayloadCurrent, ControlledPayloadError, type ControlledPayloadSource } from './controlled-payload.js';
 import { controlledPlanExecutionStepSubmissionSchema, controlledPlanCheckSubmissionSchema } from './controlled-plan-submission.js';
+import { controlledPlanRequestSchemas, type ControlledPlanRequestDefaults } from './controlled-plan-request.js';
 
 export type ControlledStage = 'planning' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
 export type ControlledReviewPurpose = 'checker-readiness' | 'final-product';
@@ -18,6 +19,8 @@ export const controlledConsultationRoles = ['explorer', 'planner', 'architect', 
 export interface ControlledBinding {
   workflow_id: string; task_id?: string; invocation_id?: string;
   stage: ControlledStage; role: string;
+  /** Saved workflow metadata supplied by its owning backend, never by a worker. */
+  plan_defaults?: ControlledPlanRequestDefaults;
   /** Backend-owned review scope; workers never select or mutate this purpose. */
   review_purpose?: ControlledReviewPurpose;
   implementation_paths: string[]; verification_paths: string[];
@@ -203,6 +206,9 @@ export function controlledInstructions(binding: ControlledBinding): string {
       ? 'This is the normal report handoff after an independent verification checkpoint. Save one completed assignment_report when the promised report files accurately reflect that checkpoint. The backend owns the following fresh verification and review; this assignment cannot create a passing verdict or close the workflow.\n'
       : 'Complete only your implementation outputs. The independent Verifier owns all checker files and negative-control fixtures; missing verifier artifacts are EXPECTED at this handoff. Do not create them or mark your work blocked because a later role has not run. When your own outputs are ready, save outcome completed; the backend advances to Verifier. Report blocked only for a real blocker to your assigned implementation.\n' : '') +
     `You are a NeoMind-owned ${binding.role} session in the ${binding.stage} stage. ${duties[binding.stage]}\n` +
+    (binding.stage === 'planning' && binding.plan_defaults
+      ? 'The backend supplies omitted plan title and objective from the saved user request. Focus on the professional rationale, unchanged acceptance criteria, scoped outputs and independent check design. You may provide an explicit title or objective when useful; never invent workflow identities or repeat metadata to establish ownership.\n'
+      : '') +
     `Available operations: ${[...available].join(', ')}. Their actor, workflow, task, scope and authorization are already bound by the runtime. Supply semantic content and project-relative file paths.\n` +
     'Your bound worker already executes through the enabled Bridge. runtime_context supplies one session snapshot when execution facts are needed; after preflight_complete, continue professional work without repeating unchanged queries. Optional executable paths must come from actual project configuration or documentation; never guess locations. Missing optional toolchains do not invalidate the session. Existing AGENTS/profile setup instructions address the parent intake client; credentials and workflow IDs remain private.\n' +
     (binding.stage === 'planning'
@@ -220,7 +226,11 @@ export function controlledInstructions(binding: ControlledBinding): string {
         : 'Use cornell_research_compile for the requested Cornell bundle with substantive research content; its output folder and provenance are backend-bound. When the semantic research is already saved as scoped JSON, send only {input_path:"project/prepared-research.json"}; the backend reads and parses the current file. Direct research fields are a separate form for new content. Preserve real prose newlines and literal escape sequences in examples rather than copying serialized tool text or rewriting escapes.\n'
       : '') +
     (binding.stage === 'planning' || available.has('procedure_run') ? procedureInputContractHint() : '') +
-    'Before ending, save one compact assignment_report with outcome, summary, artifacts and findings. A blocked or failed report preserves useful work and does not submit a task. Reported prose is distinct from observed execution evidence. Runtime events supply progress and advance the workflow; focus on the assigned work.';
+    'Before ending, save one compact assignment_report with outcome, summary, artifacts and findings. ' +
+    (['verification', 'review'].includes(binding.stage)
+      ? 'For outcome completed, include your explicit verdict pass or fail. Blocked or failed findings may omit verdict and are still retained. '
+      : '') +
+    'A blocked or failed report preserves useful work and does not submit a task. Reported prose is distinct from observed execution evidence. Runtime events supply progress and advance the workflow; focus on the assigned work.';
 }
 
 /** Each server belongs to one actual invocation; no model-provided identity can rebind it. */
@@ -294,9 +304,9 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         recordRead(path, sha256) { state.reads[key(path)] = sha256; saveState(state); },
         parse: value => schema.parse(value),
       }));
-    if (payload.source) await trace({ event: 'payload-resolved', source: payload.source,
+    await trace({ event: 'payload-resolved', source: payload.source ?? null,
       backend_input: controlledModelInput('prepared-payload', payload.input),
-      validation: { rule: 'Prepared source parsed once and validated against the assigned semantic tool schema; identity remains backend-bound.' }, owner: 'runtime' });
+      validation: { rule: 'Semantic content normalized and validated against the assigned tool schema; prepared source is parsed once, and identity remains backend-bound.' }, owner: 'runtime' });
     activeAtCommit();
     if (payload.source) assertControlledPayloadCurrent(root, payload.source);
     return action(payload.input, payload.source);
@@ -446,8 +456,9 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         }));
       });
   if (binding.stage === 'planning') {
-    register('workflow_plan', 'Save one semantic plan or send input_path alone for a prepared JSON plan. Backend parses prepared data, creates and links records and applies the minimum risk policy.', controlledPayloadSchema(controlledPlanSchema),
-      false, args => prepared(controlledPlanSchema, args, (plan, source) => {
+    const submission = controlledPlanRequestSchemas(controlledPlanSchema, binding.plan_defaults);
+    register('workflow_plan', 'Save one semantic plan or send input_path alone for a prepared JSON plan. Backend supplies missing title and objective from this saved workflow when bound, normalizes unambiguous content, creates and links records and applies the minimum risk policy. Supply the professional rationale, scopes, deliverables and independent check design.', controlledPayloadSchema(submission.schema),
+      false, args => prepared(submission.parseSchema, args, (plan, source) => {
         if (!callbacks.submitPlan) throw new ControlledToolError('UNSUPPORTED_STAGE', 'Planning is unavailable in this invocation.');
         return callbacks.submitPlan(plan, source);
       }));
@@ -529,8 +540,22 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       args => prepared(researchSchema, args, compile));
     }
   }
-  register('assignment_report', 'Persist one substantive compact result. Incomplete findings are retained without submitting the task.',
-    controlledPayloadSchema(controlledReportSchema), false, args => prepared(controlledReportSchema, args, (report, source) => {
+  const requiresVerdict = ['verification', 'review'].includes(binding.stage);
+  const reportSchema = requiresVerdict ? controlledReportSchema.superRefine((report, context) => {
+    if (report.outcome === 'completed' && report.verdict === undefined)
+      context.addIssue({ code: 'custom', path: ['verdict'], message: 'A completed verification or review result requires an explicit verdict pass or fail. Blocked or failed findings may omit verdict.' });
+  }) : controlledReportSchema;
+  let reportInput = controlledPayloadSchema(reportSchema);
+  if (requiresVerdict) {
+    const metadata = reportInput.meta() ?? {};
+    reportInput = reportInput.meta({ ...metadata, allOf: [...(Array.isArray(metadata.allOf) ? metadata.allOf : []), {
+      if: { properties: { outcome: { const: 'completed' } }, required: ['outcome'] },
+      then: { required: ['verdict'] },
+    }] });
+  }
+  register('assignment_report', 'Persist one substantive compact result. Incomplete findings are retained without submitting the task.' +
+    (requiresVerdict ? ' A completed verification or review must include an explicit verdict pass or fail; blocked or failed findings may omit it.' : ''),
+    reportInput, false, args => prepared(reportSchema, args, (report, source) => {
       for (const path of report.artifacts ?? []) { publicTarget(root, path, binding.approved_inputs); assertReadable(binding, path); }
       return callbacks.saveReport(report, source);
     }));

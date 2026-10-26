@@ -108,3 +108,21 @@ test('cancel while awaiting SDK handle remains terminal even if an ignored cance
   assert.deepEqual(read(receipt.id), canceled);
   await interruptNative(root, receipt.id);
 });
+
+test('host persists fixed ordinary Error and nested transport classification without raw provider secrets', async t => {
+  const { root, read } = await fixture(t, async () => {
+    const error = new Error('SECRET_RAW_PROVIDER https://secret.invalid/?token=SECRET_HEADER');
+    error.cause = Object.assign(new Error('SECRET_CAUSE_STACK'), { code: 'UND_ERR_SOCKET' });
+    throw error;
+  });
+  const receipt = await startNative(root, { role: 'reviewer', prompt: 'Observe fixed transport diagnostic metadata.' });
+  const done = await ended(root, receipt.id);
+  assert.equal(done.state, 'blocked');
+  assert.match(done.error, /SDK Error/);
+  assert.match(done.error, /transport UND_ERR_SOCKET/);
+  assert.doesNotMatch(done.error, /SECRET|secret\.invalid|https:|token=/);
+  const progress = read(receipt.id);
+  assert.equal(progress.phase, 'error');
+  assert.equal(progress.failure_phase, 'awaiting-sdk-handle');
+  assert.doesNotMatch(JSON.stringify(progress), /SECRET|https:/);
+});

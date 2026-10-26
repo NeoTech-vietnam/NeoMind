@@ -135,6 +135,27 @@ function changeButton(ui, role) {
 function roleOption(ui, role) { return changeButton(ui, role).parentElement.querySelector('.role-option'); }
 const inspectorButton = ui => ui.elements.get('selection').querySelector('.model-change');
 
+test('receipt counters retain signed controlled sessions without promoting unsigned runtime contexts', () => {
+  const ui = controller(), snapshot = createPreviewSnapshot('empty');
+  const node = (id, source, extra = {}) => ({ id, kind: 'agent', label: id, role: 'developer',
+    source, source_id: id, state: 'running', workflow_id: 'workflow:current',
+    updated_at: snapshot.map.observed_at, ...extra });
+  snapshot.map.nodes.push(
+    node('legacy-signed', 'signed-receipt'),
+    node('controlled-signed', 'controlled-runtime', { signed_receipt: true, controlled_current: true }),
+    node('controlled-unsigned', 'controlled-runtime', { controlled_current: true }),
+    node('unsigned-record', 'project-record', { state: 'completed' }));
+  ui.message(snapshot);
+  assert.match(ui.elements.get('status').textContent, /^2 signed receipts/);
+  assert.match(ui.elements.get('status').textContent, /2 current NeoMind contexts/);
+  assert.match(ui.elements.get('live-summary').textContent, /2 signed sessions/);
+  snapshot.map.nodes.push(node('controlled-history', 'controlled-runtime', {
+    signed_receipt: true, controlled_current: false, state: 'completed' }));
+  ui.message(snapshot);
+  assert.match(ui.elements.get('status').textContent, /^3 signed receipts/);
+  assert.match(ui.elements.get('live-summary').textContent, /2 signed sessions/);
+});
+
 test('history is explicit and persisted while the default scene remains current-only', () => {
   const ui = controller(); ui.message(createPreviewSnapshot());
   assert.equal(ui.calls.data.at(-1).showHistory, false);

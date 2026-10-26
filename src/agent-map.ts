@@ -16,6 +16,8 @@ export interface AgentMapNode {
   role: string | null;
   state: AgentMapState;
   source: AgentMapSource;
+  /** Set only after readInvocation validates the receipt; retained across runtime classification. */
+  signed_receipt?: true;
   source_id: string;
   invocation_id: string | null;
   workflow_id: string | null;
@@ -105,7 +107,7 @@ export function readAgentMap(root: string): AgentMapSnapshot {
         receipts.set(id, receipt);
         nodes.set(`agent:${id}`, {
           id: `agent:${id}`, kind: 'agent', label: text(receipt.role) ?? 'Unknown role', role: text(receipt.role),
-          state: receiptState(receipt), source: 'signed-receipt', source_id: id, invocation_id: id,
+          state: receiptState(receipt), source: 'signed-receipt', signed_receipt: true, source_id: id, invocation_id: id,
           workflow_id: text(receipt.workflow_id), task_id: text(receipt.task_id),
           requested_model: text(receipt.requested_model), confirmed_model: text(receipt.confirmed_model),
           provider: text(receipt.model_provider), execution_mode: text(receipt.execution_mode), updated_at: text(receipt.updated_at) ?? '',
