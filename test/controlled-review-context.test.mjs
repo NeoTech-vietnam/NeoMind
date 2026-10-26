@@ -112,8 +112,8 @@ test('latest independent verifier freshness and final record state come from aut
   const { root, run, contract, saveRun } = fixture(t);
   run.attempts = [{ id: 'producer', stage: 'implementation', state: 'completed', report: { outcome: 'completed' } },
     { id: 'verifier', stage: 'verification', state: 'completed', report: { outcome: 'completed' } }];
-  run.checks = [{ id: 'positive', attempt_id: 'verifier', negative: false, passed: true },
-    { id: 'negative', attempt_id: 'verifier', negative: true, passed: true }]; saveRun();
+  run.checks = [{ id: 'positive', attempt_id: 'verifier', title: 'Positive product check', negative: false, passed: true },
+    { id: 'negative', attempt_id: 'verifier', title: 'Reject wrong product', negative: true, passed: true }]; saveRun();
   let evidence = controlledReviewContext(root, run, contract);
   assert.equal(evidence.checks.fresh_after_latest_producer, true); assert.equal(evidence.checks.positive_count, 1);
   assert.equal(evidence.checks.negative_count, 1); assert.equal(evidence.checks.journal_results_all_passed, true);
