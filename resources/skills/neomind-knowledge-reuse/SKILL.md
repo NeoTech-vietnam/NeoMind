@@ -5,6 +5,14 @@ description: Research the workspace, local Cornell notes and verified cache befo
 
 # Research first, reuse deliberately
 
+## Backend-owned session
+
+An explicit NeoMind-owned role/stage packet and bound tools select this branch. Inspect readable existing scripts, templates and sources for applicability to the assigned request. Planning uses advertised `work_prepare` to assess exact procedure eligibility; other roles report reuse findings through their supplied tools. Preserve source/version distinctions and separate historical knowledge from current execution evidence. Save one compact `assignment_report`; the backend handles records, identity and lifecycle. Cornell generation is used only when assigned and advertised. Use the runtime-provided controlled-workflow guide for the current contract.
+
+## Client intake and other saved modes
+
+For controlled client intake without a worker packet, submit through `manager_run` or resume the exact receipt through `manager_control`. The research, persistence and publication sequence below applies only to a matching saved non-controlled execution mode and its existing authorization.
+
 ## 1. Establish the baseline before implementation
 
 Read the current manager workflow, automation policy, safe workspace manifests/configuration/source/tests, and applicable existing Cornell notes. New native policies use `network_policy: local-only` and `automatic_pr: false`; absent `network_policy` preserves legacy remote behavior. Under local-only, make zero remote discovery, publication or archive requests; explicit remote tools reject. Workspace research remains required and research/Cornell artifacts stay inside the project. Record platform constraints, frameworks, declared versions, observed versions, and supporting paths. Mark unknown runtime or compatibility facts explicitly.

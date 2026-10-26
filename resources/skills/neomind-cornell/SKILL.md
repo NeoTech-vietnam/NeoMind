@@ -5,6 +5,14 @@ description: Capture source-backed research and learning as Cornell notes with w
 
 # Cornell evidence notes
 
+## Backend-owned session
+
+An explicit NeoMind-owned role/stage packet and bound tools select this branch. Use the advertised `cornell_research_compile` for the assigned bundle; the backend binds the requirement, output folder and provenance. Pass existing semantic research JSON by `input_path`, or supply newly authored semantic fields. Primary implementation supplies an expected worked result; a separately assigned synthesis uses actual current check evidence. Preserve separate practice and answers and save one compact `assignment_report`. The backend schedules verification and required review. Use the runtime-provided controlled-workflow guide for payload and evidence details.
+
+## Client intake and other saved modes
+
+For controlled client intake without a worker packet, submit through `manager_run` or resume the exact receipt through `manager_control`. The preparation, export and publication sequence below applies only to a matching saved non-controlled execution mode and its existing authorization.
+
 1. Read the saved requirement, its current revision, assignment and existing notes. Reuse the same workflow and current applicable note. Consolidate the explanation into one visible narrative linked from engineering records.
 2. Collect supporting sources with titles, retrieval dates, locators and local file or record fingerprints. Label material claims observed, source-reported, expected or inferred. A retrieved citation supports only what its source establishes.
 3. For structured research, author an abstract, O1-style objectives, methods, explanations, results, discussion, worked example, Q1-style research questions and P1-style practice. Map every objective to an assessment; supply reference answers separately. Use read-only `cornell_research_compile` to inspect the deterministic note envelope, then pass its `recipe_input` to existing `recipe_prepare`. CLI `cornell prepare` provides the equivalent reusable preparation. Supply actual requirement/workflow IDs and revision. Read the installed package's `docs/cornell-workflow.md` for the exact schema when available; these core rules also apply to direct `note_create` inputs.

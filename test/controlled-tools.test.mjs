@@ -38,7 +38,7 @@ test('declared producer execution exposes only a step title and professional JSO
     runTask(input) { executed.push(input); return { passed: true }; },
   });
   const tools = (await c.client.listTools()).tools, operation = tools.find(tool => tool.name === 'task_run');
-  assert.deepEqual(Object.keys(operation.inputSchema.properties).sort(), ['input', 'title']);
+  assert.deepEqual(Object.keys(operation.inputSchema.properties).sort(), ['input', 'input_path', 'title']);
   assert.ok(!tools.some(tool => tool.name === 'procedure_run'));
   await c.call('project_read', { path: 'src/value.mjs' });
   assert.equal((await c.call('task_run', { title: step.title, input: { message: 'prepared content' } })).isError, undefined);
@@ -134,7 +134,7 @@ test('controlled Cornell practice and demonstrations hide backend paths, evidenc
   assert.equal('evidence_ids' in declared.properties.worked_example.properties, false);
   assert.match(declared.properties.worked_example.properties.observed.description, /Omit this field until.*passing independent check/);
   assert.match(declared.properties.methods.description, /inline \[S1\]/);
-  assert.equal(declared.required.includes('schema_version'), false);
+  assert.equal(declared.anyOf.find(option => option.required?.includes('topic')).required.includes('schema_version'), false);
   const { requirement_id, expected_requirement_revision, workflow_id, task_id, owner, output_dir, ...semantic } = input;
   for (const solution_path of ['answers.md', '../outside.md', '.neomind/config.json', 'C:/outside.md']) {
     const response = await c.call('cornell_research_compile', { ...semantic, schema_version: 999,

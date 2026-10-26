@@ -6,6 +6,14 @@ license: MIT
 
 # Define measurable requirements
 
+## Backend-owned session
+
+An explicit NeoMind-owned role/stage packet and bound tools select this branch. Read the supplied user intent, constraints and existing baseline. Describe observable behavior, measurable acceptance criteria, assumptions and checks for the assigned question, then save one compact `assignment_report`. The backend binds records and ownership and retains committed criteria. Use the runtime-provided controlled-workflow guide for the current contract.
+
+## Client intake and other saved modes
+
+For controlled client intake without a worker packet, submit through `manager_run` or resume the exact receipt through `manager_control`. The sequence below applies only to a matching saved non-controlled execution mode and preserves that mode's contract.
+
 1. Read `.neomind/roles/requirements.md` and `.neomind/guides/process.md`. Inspect the current needs, baseline, profile, constraints, and existing requirements.
 2. Write one observable behavior per requirement. Specify conditions, measurable acceptance criterion, source, rationale, assumptions, and verification method using the installed requirement template.
 3. Link derived requirements to their source needs and define corresponding checks. Distinguish intended-use validation from specification verification.

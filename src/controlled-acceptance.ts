@@ -11,6 +11,8 @@ import { runCommand, type CommandResult } from './command-runner.js';
 import type { ControlledContract, ControlledSnapshot, ControlledCheckReceipt } from './controlled-workflow.js';
 import type { Gate, ProjectRecord, Verification } from './types.js';
 import { readCheckReconciliations, unresolvedControlledChecks, assertFreshVerifierAfterReconciliation } from './controlled-check-reconciliation.js';
+import { controlledCornellSelection } from './controlled-cornell-selection.js';
+import { assertCompletedEvidenceDocumentationLineage } from './controlled-report-authority.js';
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const roots = '.neomind/controlled/workflows';
@@ -375,6 +377,13 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
       if (attempt.report_fingerprint !== evidenceRecordFingerprint(report)) throw new Error('The independently saved work result changed.');
       if (!same(attempt.bound_hashes, budget.fingerprints(Object.keys(attempt.bound_hashes ?? {})))) throw new Error('Reported artifacts changed after the result.');
     }
+    const producerContract = readInvocation(root, producer!.invocation_id!).controlled_execution?.tool_contract;
+    const signedDocumentation = producerContract?.version === 3 && producerContract.evidence_documentation;
+    if (producer!.purpose === 'evidence-documentation' || signedDocumentation) {
+      if (producer!.purpose !== 'evidence-documentation' || !signedDocumentation)
+        throw new Error('The latest producer purpose differs from its signed documentation handoff.');
+      assertCompletedEvidenceDocumentationLineage(root, run, contract, producer!.id, budget);
+    }
     if (producer!.invocation_id === verifier!.invocation_id || reviewer?.invocation_id === producer!.invocation_id || reviewer?.invocation_id === verifier!.invocation_id)
       throw new Error('Verification and review must use independent sessions.');
     if (run.attempts.indexOf(verifier!) <= run.attempts.indexOf(producer!)) throw new Error('Independent verification must follow the latest producer result.');
@@ -426,37 +435,49 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
             procedure.script_sha256 !== hash(readFileSync(safePath(root, procedure.script))) || procedure.verification_sha256 !== hash(readFileSync(safePath(root, procedure.verification_script))))
           throw new Error('Registered candidate does not match current producer and independent verifier scripts.');
       }
+      const cornell = controlledCornellSelection(run, contract, recordAt);
+      const assertGenerated = (note: ProjectRecord) => {
+        const generated = run.cornell_results?.findLast(result => result.note_id === note.meta.id);
+        const research = note.meta.data.research as { input_hash?: string } | undefined;
+        if (!generated || generated.input_hash !== research?.input_hash || generated.record_fingerprint !== evidenceRecordFingerprint(note) ||
+            !same(generated.artifact_hashes, note.meta.data.artifact_hashes))
+          throw new Error('Cornell output lacks its current task\'s intact backend generation result.');
+      };
       if (contract.knowledge_directory) {
         const positive = checks.filter(check => !check.negative).map(check => check.evidence_id!);
-        if (!run.cornell_note_ids?.length) throw new Error('Requested evidence-derived Cornell note is missing.');
-        for (const id of run.cornell_note_ids) {
+        if (!cornell.knowledge.length) throw new Error('Requested evidence-derived Cornell note is missing from its separate declared directory.');
+        for (const note of cornell.knowledge) {
           budget.check();
-          const note = recordAt(id), evidence = (note.meta.data.demonstration as { evidence_ids?: string[] })?.evidence_ids ?? [];
-          if (!validateCornellNote(root, id).ok || note.meta.data.workflow_id !== run.workflow_id || !positive.every(id => evidence.includes(id)))
+          const data = note.meta.data, evidence = (data.demonstration as { evidence_ids?: string[] })?.evidence_ids ?? [];
+          const practice = data.practice as { exercise_path?: string; answer_path?: string; solution_path?: string | null } | undefined;
+          const paths = ['note.md', 'exercises.md', 'answers.md'].map(name => `${contract.knowledge_directory}/${name}`);
+          const artifacts = data.artifact_hashes as Record<string, string> | undefined;
+          if (!validateCornellNote(root, note.meta.id).ok || !positive.every(id => evidence.includes(id)) ||
+              practice?.exercise_path !== paths[1] || practice?.answer_path !== paths[2] || !artifacts ||
+              !same(Object.keys(artifacts).sort(), [...paths].sort()) ||
+              !!practice?.solution_path && practice.solution_path !== `${contract.knowledge_directory}/practice-solution.md`)
             throw new Error('Final Cornell output must reference every current passing positive execution.');
+          assertGenerated(note);
         }
-      } else if (contract.plan.cornell_output_dir) {
+      }
+      if (contract.plan.cornell_output_dir) {
         // Primary Cornell deliverables are checked inputs, so inserting those
         // checks' later evidence IDs would invalidate their own baselines.
         // The separate knowledge_directory branch above retains that stronger
         // post-verification evidence requirement without this circularity.
-        if (!run.cornell_note_ids?.length) throw new Error('Requested primary Cornell bundle is missing.');
+        if (!cornell.primary.length) throw new Error('Requested primary Cornell bundle is missing.');
         const positive = checks.filter(check => !check.negative && check.passed);
-        for (const id of run.cornell_note_ids) {
+        for (const note of cornell.primary) {
           budget.check();
-          const note = recordAt(id), data = note.meta.data;
+          const data = note.meta.data;
           const practice = data.practice as { exercise_path?: string; answer_path?: string; solution_path?: string | null } | undefined;
           const paths = controlledPrimaryCornellArtifactPaths(contract.plan, practice?.solution_path);
           const artifacts = data.artifact_hashes as Record<string, string> | undefined;
-          if (!validateCornellNote(root, id).ok || data.workflow_id !== run.workflow_id || data.artifact_path !== paths.rendered[0] ||
+          if (!validateCornellNote(root, note.meta.id).ok || data.workflow_id !== run.workflow_id || data.artifact_path !== paths.rendered[0] ||
               practice?.exercise_path !== paths.rendered[1] || practice?.answer_path !== paths.rendered[2] || !artifacts ||
               !same(Object.keys(artifacts).sort(), [...paths.rendered].sort()))
             throw new Error('Primary Cornell output must be the valid same-workflow bundle declared by this task.');
-          const generated = run.cornell_results?.find(result => result.note_id === id);
-          const research = data.research as { input_hash?: string } | undefined;
-          if (!generated || generated.input_hash !== research?.input_hash || generated.record_fingerprint !== evidenceRecordFingerprint(note) ||
-              !same(generated.artifact_hashes, artifacts))
-            throw new Error('Primary Cornell output lacks its current task\'s intact backend generation result.');
+          assertGenerated(note);
           const current = budget.fingerprints(paths.all);
           if (paths.rendered.some(path => artifacts[path] !== current[path]) ||
               paths.all.some(path => !positive.some(check => check.baseline[path] === current[path])) ||

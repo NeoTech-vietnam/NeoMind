@@ -118,7 +118,7 @@ test('real MCP advertises optional registration kind on the unchanged tool and r
   await server.connect(st); await client.connect(ct); t.after(async () => { await client.close(); await server.close(); });
   const tools = (await client.listTools()).tools, declared = tools.find(tool => tool.name === 'check_evidence');
   assert.deepEqual(tools.map(tool => tool.name).sort(), controlledToolNames(actor).sort());
-  assert.deepEqual(declared.inputSchema.properties.kind.enum, ['execution', 'registration']);
+  assert.deepEqual(declared.inputSchema.properties.kind.enum, ['execution', 'registration', 'workflow']);
   assert.ok(!declared.inputSchema.required?.includes('kind')); assert.equal(declared.inputSchema.additionalProperties, false);
   const value = result => JSON.parse(result.content[0].text);
   const registration = value(await client.callTool({ name: 'check_evidence', arguments: { kind: 'registration' } }));

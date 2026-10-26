@@ -42,6 +42,10 @@ The MCP entrypoint accepts:
 
 The default execution is Coordinator, Implementer and independent Verifier. Additional specialists and Reviewer are selected by task needs, risk and the saved contract. Workers receive role-local semantic tools; they do not enter assignment tokens or reconstruct task/report IDs. Runtime events drive the Workflows panel and Universe. A configured planet is not a running agent.
 
+Instructions follow each invocation's actual tool list. A plan can describe future producer operations, but the current worker receives only its bound execution steps and eligible procedure. Roles return one substantive result; they do not repeatedly post progress or ask the model which lifecycle operation to perform next.
+
+Prepared research JSON can be passed to the controlled Cornell tool by project-relative `input_path`. NeoMind reads and parses the current scoped file directly instead of asking the model to copy serialized JSON into another payload. Direct authored research remains supported as a separate input form. The two forms cannot be combined with overrides. Source-file reads retain their hash checks, and parsing preserves legitimate escape sequences inside examples.
+
 New plan submissions receive backend-generated baseline metadata for delivered outputs, the checker and its declared fixtures. Ordinary source references do not need hidden-file approval. Original continuation check baselines stay exact; previously frozen contracts are not normalized or rewritten. A resumed planner receives bounded, redacted prior validation diagnostics instead of having to rediscover a failed request.
 
 A generic check labelled `intended-use` runs its declared command unchanged. Only an explicitly bound supported continuation adapter adds its own pilot protocol. The LeetCode continuation adapter still requires the separate disposable Cornell/C11/C++17 pilot and actual independent evidence; that contract is not imposed on unrelated Node.js tasks.
@@ -49,6 +53,14 @@ A generic check labelled `intended-use` runs its declared command unchanged. Onl
 For that adapter, the runtime supplies a fresh owned pilot directory and nonce to the intended-use command and its associated negative controls. The saved planned argv remains unchanged. A negative control must produce its expected failing exit code and never supplies positive pilot proof; the positive pilot still requires independent canonical note validation and fresh C11/C++17 builds and execution.
 
 When a committed legacy contract requires review before checks execute, that review assesses checker readiness: the exact oracle, negative controls and safe bounded execution. Results from those unrun checks are not prerequisites for readiness. Passing this review authorizes checks; it does not accept the product. The separate final product review still requires fresh execution evidence and every committed acceptance condition.
+
+Reviewers can read the backend-owned workflow evidence view for the frozen preservation paths, expected/current hashes, current check coverage and report lifecycle. This view establishes only the captured scope. A changed protected input still blocks acceptance; a missing whole-repository snapshot is not a new criterion unless the saved contract requires it.
+
+An authored report file named in the plan is a product deliverable. It must describe the required final outcome before review can pass. The runtime's separate final workflow record is written after accepted verification and review; a report at implementation handoff is not that final record. Reviewers distinguish these responsibilities rather than requiring premature workflow closure or accepting an unfinished requested report.
+
+For a final report that must cite actual independent results, the plan marks its exact `evidence_report_paths` as both producer outputs and documentation paths. NeoMind completes the implementation, obtains an independent verification checkpoint, and then assigns only the promised report files for factual completion from that evidence. It runs fresh independent verification after the report changes and performs the required final review. The report assignment cannot edit code, checkers or Cornell bundles, and its completion does not close the workflow. This planned handoff preserves the acceptance criteria and avoids using a failed review merely to request the results report.
+
+A new plan may mark a check that depends on the completed results report with `after_evidence_reports: true`. At least one product check and its negative controls run before the report handoff. The later fresh Verifier runs all planned checks and negative controls, including those report-dependent checks; only then can final review and acceptance proceed. Existing frozen plans and unflagged checks keep their original conditions. An initial report truthfully labels pending verification, while the report-only assignment records actual checkpoint results without claiming future review or closure.
 
 ## Models, recovery and limits
 

@@ -66,6 +66,16 @@ function planFor(name, options = {}) {
     checks: [{ title: 'Validate scalar', command: [process.execPath, checker, output], baseline_paths: baseline,
       negative_controls: [{ title: 'Reject incorrect scalar', command: [process.execPath, checker, bad], baseline_paths: [checker, bad], expected_exit_code: 1 }] }],
     risk: options.highRisk ? 'high' : 'low' };
+  if (options.evidenceReport) {
+    const path = `${name}/docs/final-report.md`, reportChecker = `${name}/verify/report.cjs`, badReport = `${name}/verify/bad-report.md`;
+    plan.allowed_paths.push(path); plan.outputs.push(path); plan.documentation_paths.push(path);
+    plan.evidence_report_paths = [path];
+    plan.acceptance_criteria.push(`Final report ${path} contains actual product-check commands and exits before independent final verification.`);
+    plan.checks.push({ title: 'Validate final execution report', after_evidence_reports: true,
+      command: [process.execPath, reportChecker, path], baseline_paths: [path, reportChecker],
+      negative_controls: [{ title: 'Reject a report with invented evidence', command: [process.execPath, reportChecker, badReport],
+        baseline_paths: [reportChecker, badReport], expected_exit_code: 1 }] });
+  }
   if (options.registrationEvidence) {
     const script = `${name}/src/generate.cjs`;
     plan.allowed_paths.push(script); plan.outputs.push(script);
@@ -94,8 +104,17 @@ function scriptFor(name, stage, attempt, options, held) {
     findings: [`Independent ${stage} result recorded.`], ...extra });
   if (stage === 'planning') return [call('project_list', { path: '.' }), call('workflow_plan', plan), report()];
   if (stage === 'implementation') {
+    if (options.evidenceReport && attempt > 1) return [call('check_evidence', {}), async ({ messages }) => {
+      const checks = semanticToolValue(messages); held.documentationEvidence = checks;
+      assert.equal(checks.length, 2); assert.ok(checks.every(check => check.passed));
+      return new Call('fixture-read-final-report', 'project_read', { path: plan.evidence_report_paths[0] });
+    }, call('task_file_write', { path: plan.evidence_report_paths[0],
+      content: `# Actual product checkpoint\n\nCommand: ${JSON.stringify(plan.checks[0].command)}\nPositive exit: 0\nNegative exit: 1\nFinal independent verification and review follow this report.\n` }),
+    report({ artifacts: plan.evidence_report_paths })];
     const value = options.precheckProductFailure || options.productFailure && attempt === 1 ? '2\n' : '1\n';
     return [call('project_read', { path: output }), call('task_file_write', { path: output, content: value }),
+      ...(options.evidenceReport ? [call('project_read', { path: plan.evidence_report_paths[0] }),
+        call('task_file_write', { path: plan.evidence_report_paths[0], content: '# Implementation handoff\n\nActual independent product-check results are pending.\n' })] : []),
       ...(options.registrationEvidence ? [call('task_file_write', { path: plan.procedure_candidate.script,
         content: "let input='';process.stdin.on('data',part=>input+=part);process.stdin.on('end',()=>{const packet=JSON.parse(input);require('node:fs').writeFileSync(packet.outputs[0],'1\\n');});\n" })] : []),
       ...(options.holdImplementation && attempt === 1 ? [async ({ token }) => {
@@ -116,6 +135,10 @@ function scriptFor(name, stage, attempt, options, held) {
       : `const assert=require('node:assert/strict'); const fs=require('node:fs'); assert.equal(Number(fs.readFileSync(process.argv[2],'utf8')),${wrongChecker ? 2 : 1}); console.log('scalar validated');\n`;
     const defect = wrongChecker || options.productFailure && attempt === 1;
     return [call('project_read', { path: output }), call('project_read', { path: checker }), call('task_file_write', { path: checker, content }),
+      ...(options.evidenceReport ? [call('project_read', { path: plan.checks[1].command[1] }),
+        call('task_file_write', { path: plan.checks[1].command[1], content: "const assert=require('node:assert/strict');const text=require('node:fs').readFileSync(process.argv[2],'utf8');assert.match(text,/# Actual product checkpoint/);assert.match(text,/Positive exit: 0/);assert.match(text,/Negative exit: 1/);assert.match(text,/Command: /);console.log('actual report checkpoint checked');\n" }),
+        call('project_read', { path: plan.checks[1].negative_controls[0].command[2] }),
+        call('task_file_write', { path: plan.checks[1].negative_controls[0].command[2], content: '# Invented success\nNo actual command or exit evidence is recorded.\n' })] : []),
       call('project_read', { path: bad }), call('task_file_write', { path: bad, content: '2\n' }), call('check_run', {}),
       ...(options.reviewScope && attempt > 1 ? [async ({ token, messages }) => {
         held.postCheckEvidence = semanticToolValue(messages); held.postChecksEntered = true;
@@ -267,6 +290,25 @@ function countRecordReads(root, action) {
 
 test('controlled execution mode is explicit and distinct from unsigned native modes', () => {
   assert.ok(executionModes.includes('neomind-controlled'));
+});
+
+test('backend schedules a report-only post-check pass then fresh full independent verification before acceptance', async t => {
+  const env = await setup(t, { factualreport: { highRisk: true, evidenceReport: true } });
+  const initial = await submit(env.root, 'factualreport');
+  const done = await until(env.root, initial.workflow_id, run => run.status === 'completed',
+    'a deferred final report must use real product evidence without a failed-review repair loop', env.errors);
+  assert.equal(done.attempts.filter(item => item.purpose === 'evidence-documentation').length, 1);
+  assert.equal(done.attempts.filter(item => item.stage === 'verification').length, 2);
+  assert.equal(done.checks.length, 6, 'Two product receipts first, then all four required final receipts.');
+  assert.equal(done.repair_budget?.product ?? 0, 0);
+  assert.ok(done.checks.every(check => check.passed));
+  const documentation = done.attempts.find(item => item.purpose === 'evidence-documentation');
+  assert.ok(documentation.documentation_source);
+  const prompts = env.observed.find(item => item.stage === 'implementation' && item.attempt === 2);
+  assert.ok(prompts.promptLayers.every(text => /evidence-documentation|post-verification documentation purpose/i.test(text)));
+  assert.ok(!prompts.tools.includes('task_run')); assert.ok(!prompts.tools.includes('cornell_research_compile'));
+  const check = verify(env.root, done.task_id, 'accepted');
+  assert.equal(check.ok, true, JSON.stringify(check.findings));
 });
 
 test('both real Bridge prompt layers scope readiness to safe checker execution before any diagnostic evidence exists', async t => {

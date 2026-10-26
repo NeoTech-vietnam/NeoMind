@@ -9,6 +9,7 @@ import { controlledModelInput, controlledValidation, redactControlledValue } fro
 import { controlledCornellResearchSchema } from './controlled-cornell-sources.js';
 import { controlledRuntimeGuide, controlledGuidePath, controlledRuntimeQuerySchema, type ControlledRuntimeQuery } from './controlled-runtime-context.js';
 import { controlledExecutionSchema, controlledExecutionDeclarationSchema, type ControlledExecutionInput, type ControlledExecutionDeclaration } from './controlled-execution.js';
+import { controlledPayloadSchema, resolveControlledPayload, assertControlledPayloadCurrent, ControlledPayloadError, type ControlledPayloadSource } from './controlled-payload.js';
 
 export type ControlledStage = 'planning' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
 export type ControlledReviewPurpose = 'checker-readiness' | 'final-product';
@@ -24,6 +25,9 @@ export interface ControlledBinding {
   execution_steps?: ControlledExecutionDeclaration[];
   procedure_bound?: boolean;
   cornell_starter_allowed?: boolean;
+  cornell_bound?: boolean;
+  evidence_documentation?: boolean;
+  evidence_documentation_source_hash?: string;
 }
 const text = z.string().trim().min(1).max(8000);
 const paths = z.array(z.string().min(1).max(1024)).max(128);
@@ -34,9 +38,11 @@ export const controlledPlanSchema = z.strictObject({
   verification_paths: paths.min(1).describe('Verifier-owned checker scripts and negative fixtures, disjoint from producer paths. Directory scopes are allowed. The backend derives checker baselines from actual check argv.'),
   outputs: paths.min(1).describe('Producer deliverables only, within allowed_paths. Do not include verifier checker scripts or negative fixtures; those belong to verification_paths and are captured by backend check baselines.'),
   documentation_paths: paths.default([]),
+  evidence_report_paths: paths.optional().describe('Final factual execution reports written after independent checks. Exact paths must also be producer outputs and documentation_paths; primary Cornell note/exercises/answers remain their own deliverables. Backend schedules this documentation handoff and fresh verification without a failed-review retry.'),
   execution_steps: z.array(z.lazy(() => controlledExecutionDeclarationSchema)).max(16).optional().describe('Declare each producer script/version operation needed for this plan. Use exact local argv, readable inputs and producer-owned new outputs. Backend validates executable/tool/scope compatibility before freezing; implementation supplies prepared JSON input to task_run. Independent acceptance remains check_run under Verifier.'),
   checks: z.array(z.strictObject({ title: text.max(256),
     purpose: z.enum(['self-check', 'intended-use']).optional(),
+    after_evidence_reports: z.boolean().optional().describe('A check of the final factual report, deferred until actual product-check evidence is available and the report has been written. Declare at least one nondeferred product check first. Final acceptance still requires this check and its negative controls through a fresh Verifier.'),
     command: z.array(z.string().min(1).max(8000)).min(2).max(128).describe('Exact argument array [executable, verifier-owned-checker-script, ...inputs]. The checker script must be inside verification_paths. Negative controls invoke this same executable and script with deliberately invalid verifier-owned inputs.'),
     baseline_paths: paths.default([]).describe('Optional additional check inputs within write scopes, or exact existing ordinary files under public preservation_paths or approved hidden input_paths. Read-only baselines must name needed files, not directories; never move them into write scopes merely to capture them. The backend adds delivered outputs and actual checker argv paths before freezing a new plan; committed check baselines remain unchanged.'), expected_exit_code: z.number().int().min(0).max(255).optional(),
     timeout_ms: z.number().int().min(1).max(600000).optional(),
@@ -67,15 +73,15 @@ export type ControlledReport = z.infer<typeof controlledReportSchema>;
 export interface ControlledCallbacks {
   /** Check authoritative invocation, epoch and current policy; writers recheck synchronously at commit. */
   assertActive(): void | Promise<void>;
-  submitPlan?(plan: ControlledPlan): unknown | Promise<unknown>;
-  saveReport(report: ControlledReport): unknown | Promise<unknown>;
+  submitPlan?(plan: ControlledPlan, source?: ControlledPayloadSource): unknown | Promise<unknown>;
+  saveReport(report: ControlledReport, source?: ControlledPayloadSource): unknown | Promise<unknown>;
   runCheck?(title?: string): unknown | Promise<unknown>;
   prepareWork?(query: { request: string; parameters?: Record<string, unknown> }): unknown | Promise<unknown>;
   runProcedure?(parameters?: Record<string, unknown>): unknown | Promise<unknown>;
   runtimeContext?(query: ControlledRuntimeQuery): unknown | Promise<unknown>;
   runTask?(input: ControlledExecutionInput): unknown | Promise<unknown>;
-  compileResearch?(input: Record<string, unknown>): unknown | Promise<unknown>;
-  readEvidence?(title?: string, kind?: 'execution' | 'registration'): unknown | Promise<unknown>;
+  compileResearch?(input: Record<string, unknown>, source?: ControlledPayloadSource): unknown | Promise<unknown>;
+  readEvidence?(title?: string, kind?: 'execution' | 'registration' | 'workflow'): unknown | Promise<unknown>;
   trace?(event: Record<string, unknown>): void | Promise<void>;
 }
 /** Only explicitly public controller diagnostics cross the model-facing error seam. */
@@ -154,8 +160,8 @@ export function controlledToolNames(binding: ControlledBinding): string[] {
       (binding.stage === 'verification' && ['verifier', 'check-executor'].includes(binding.role)) ? ['task_file_write'] : []),
     ...(binding.stage === 'implementation' && binding.procedure_bound !== false ? ['procedure_run'] : []),
     ...(binding.stage === 'implementation' && (binding.execution_steps === undefined || binding.execution_steps.length) ? ['task_run'] : []),
-    ...(['implementation', 'synthesis'].includes(binding.stage) ? ['cornell_research_compile'] : []),
-    ...(['verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage) ? ['check_evidence'] : []),
+    ...(['implementation', 'synthesis'].includes(binding.stage) && !binding.evidence_documentation && binding.cornell_bound !== false ? ['cornell_research_compile'] : []),
+    ...(['implementation', 'verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage) ? ['check_evidence'] : []),
     ...(binding.stage === 'verification' ? ['check_run'] : [])];
 }
 /** Both Bridge prompt layers use the same scope so precheck cannot inherit final acceptance duties. */
@@ -165,26 +171,46 @@ export function controlledReviewInstructions(purpose: ControlledReviewPurpose): 
     : 'Review purpose: final-product. Independently inspect the delivered artifacts against all unchanged acceptance criteria. Require fresh positive and negative execution evidence, required intended-use pilot receipts and the requested Cornell output. A producer-authored Cornell deliverable is independently checked without rewriting its captured bytes to embed future proof IDs; a separately assigned post-verification knowledge bundle must satisfy its evidence-derived synthesis obligations. Read check_evidence for actual stdout/stderr and intended-use build/run results; absent, stale or failing required evidence cannot support a pass. When registration is required, read check_evidence({kind:"registration"}) for the actual bound registry manifest and current code-hash comparisons; registered candidate is not qualification. Do not infer missing registration from the absence of a separate signed receipt or try private registry files. Private runtime files remain unavailable. Save assignment_report with verdict pass or fail and substantive findings; pre-execution checker readiness is not final product acceptance.';
 }
 export function controlledInstructions(binding: ControlledBinding): string {
+  const available = new Set(controlledToolNames(binding));
+  const documentation = binding.stage === 'implementation' && binding.evidence_documentation === true;
   const writable = binding.stage === 'implementation' && binding.role === 'developer' ? binding.implementation_paths
     : binding.stage === 'verification' && ['verifier', 'check-executor'].includes(binding.role) ? binding.verification_paths : [];
   const ownership = { your_role: binding.role, your_stage: binding.stage, your_writable_paths: writable,
+    ...(documentation ? { assignment_purpose: 'evidence-documentation' } : {}),
     ...(binding.stage === 'review' ? { review_purpose: binding.review_purpose ?? 'final-product' } : {}),
     implementation: { owner: 'developer', paths: binding.implementation_paths }, verification: { owner: 'verifier', paths: binding.verification_paths } };
   const duties: Record<ControlledStage, string> = {
     planning: 'Inspect relevant files and existing reusable tools. Submit one bounded semantic workflow_plan with acceptance criteria, separate implementation/checker paths and actual check commands. Positive and negative baseline_paths may include public dependencies declared in preservation_paths and exact approved hidden input_paths; those inputs remain read-only. Do not move preserved scripts into allowed_paths or verification_paths merely to capture their bytes. Declare negative_controls using the same checker with verifier-owned deliberately invalid fixtures/inputs and their expected nonzero exits; runtime executes them as evidence. Elevate risk or suggest a bounded specialist only when needed. Allowed consultation roles are explorer, planner, architect, researcher, curator and component-owner. Reviewer and Verifier are backend-owned stages; do not add them as consultations or remove their required gates.',
-    implementation: 'Read existing files before editing. Implement only the assigned outputs with task_file_write. Backend handles file versions, operation identity and task lifecycle. Preserve independent checker and acceptance files.',
+    implementation: documentation
+      ? 'Complete only the requested final report files in your writable paths. Read the bound check_evidence and the supplied independent verification checkpoint, then describe the observed commands, results and limitations accurately. Use task_file_write after reading the current report. Implementation code, checker files and Cornell bundles remain read-only. The backend schedules fresh independent verification and required review after this report; the workflow is not yet accepted or closed.'
+      : available.has('task_file_write')
+      ? 'Read existing files before editing. Implement only the assigned outputs with task_file_write. Backend handles file versions, operation identity and task lifecycle. Preserve independent checker and acceptance files.'
+      : 'Inspect the assigned implementation and report your professional findings. This session has no source-write operation; the backend retains implementation ownership.',
     verification: 'Inspect the delivered implementation. Author and repair only the independent checker paths, including deliberately invalid fixtures for the prescribed negative_controls. Run the prescribed checks with check_run; backend executes both positive and negative commands. Report prose alone is not negative-control evidence. Distinguish a product defect from a checker or environment failure.',
     review: controlledReviewInstructions(binding.review_purpose ?? 'final-product'),
     diagnosis: 'Inspect available evidence and identify the root cause. Classify failure_kind as implementation, checker, protocol, environment or unknown and recommend one bounded recovery action.',
     synthesis: 'Derive the final requested Cornell research note from actual artifacts and independent evidence. Use cornell_research_compile to preserve the standard format and separate practice/answers. For a planned reusable candidate, read check_evidence({kind:"registration"}) for actual registry provenance and current code hashes; registration does not establish qualification. Record limitations and actual sources, then assignment_report. Source implementation and checker files are read-only.',
   };
   return `Authoritative role ownership: ${JSON.stringify(ownership)}\n` +
-    (binding.stage === 'implementation' ? 'Complete only your implementation outputs. The independent Verifier owns all checker files and negative-control fixtures; missing verifier artifacts are EXPECTED at this handoff. Do not create them or mark your work blocked because a later role has not run. When your own outputs are ready, save outcome completed; the backend advances to Verifier. Report blocked only for a real blocker to your assigned implementation.\n' : '') +
+    (binding.stage === 'implementation' ? documentation
+      ? 'This is the normal report handoff after an independent verification checkpoint. Save one completed assignment_report when the promised report files accurately reflect that checkpoint. The backend owns the following fresh verification and review; this assignment cannot create a passing verdict or close the workflow.\n'
+      : 'Complete only your implementation outputs. The independent Verifier owns all checker files and negative-control fixtures; missing verifier artifacts are EXPECTED at this handoff. Do not create them or mark your work blocked because a later role has not run. When your own outputs are ready, save outcome completed; the backend advances to Verifier. Report blocked only for a real blocker to your assigned implementation.\n' : '') +
     `You are a NeoMind-owned ${binding.role} session in the ${binding.stage} stage. ${duties[binding.stage]}\n` +
-    'Only the supplied tools are available. Their actor, workflow, task, scope and authorization are already bound by the runtime. Supply semantic content and project-relative file paths.\n' +
-    'Your bound worker already executes through the enabled Bridge. runtime_context supplies one session snapshot when execution facts are needed; after preflight_complete, continue professional work without repeating unchanged queries. Optional executable paths must come from actual project configuration or documentation; never guess locations. Missing optional toolchains do not invalidate the session. Existing AGENTS/profile setup instructions address the parent intake client; credentials and workflow IDs remain private. Include execution_steps in new plans for required producer script operations; use task_run with prepared JSON input for scoped direct local execution. Direct execution is separate from qualified automatic procedure reuse and never qualifies a registry candidate.\n' +
-    'Reuse: planning may bind reuse {procedure_id,version,parameters} after work_prepare reports exact eligibility; implementation calls procedure_run instead of recreating the generator. For newly delivered reusable scripts declare procedure_candidate (manifest without id/version/author); runtime registers it after checked completion without claiming qualification. For requested Cornell notes declare cornell_output_dir and all three note.md/exercises.md/answers.md outputs, then implementation calls cornell_research_compile with substantive research content.\n' +
-    procedureInputContractHint() +
+    `Available operations: ${[...available].join(', ')}. Their actor, workflow, task, scope and authorization are already bound by the runtime. Supply semantic content and project-relative file paths.\n` +
+    'Your bound worker already executes through the enabled Bridge. runtime_context supplies one session snapshot when execution facts are needed; after preflight_complete, continue professional work without repeating unchanged queries. Optional executable paths must come from actual project configuration or documentation; never guess locations. Missing optional toolchains do not invalidate the session. Existing AGENTS/profile setup instructions address the parent intake client; credentials and workflow IDs remain private.\n' +
+    (binding.stage === 'planning'
+      ? 'Declare execution_steps for required producer script operations. Bind reuse {procedure_id,version,parameters} only after work_prepare reports exact eligibility. For newly delivered reusable scripts declare procedure_candidate (manifest without id/version/author); runtime registers it after checked completion without claiming qualification. For requested Cornell notes declare cornell_output_dir and all three note.md/exercises.md/answers.md outputs. When a requested final execution report needs actual independent results, declare its exact evidence_report_paths within both outputs and documentation_paths. The backend schedules report completion after a verification checkpoint and then fresh verification; keep the primary Cornell trio out of these report paths.\n'
+      : '') +
+    (available.has('task_run')
+      ? 'Use task_run for a scoped direct local execution bound to your plan. For prepared JSON data, supply its project-relative input_path with the declared step title; the backend reads and parses it. Use input only for directly authored semantic data. Direct execution is separate from qualified automatic procedure reuse and never qualifies a registry candidate.\n'
+      : '') +
+    (available.has('procedure_run')
+      ? 'Use procedure_run for the saved qualified procedure rather than recreating its generator. The backend binds its identity, execution key and output paths.\n'
+      : '') +
+    (available.has('cornell_research_compile')
+      ? 'Use cornell_research_compile for the requested Cornell bundle with substantive research content; its output folder and provenance are backend-bound. When the semantic research is already saved as scoped JSON, send only {input_path:"project/prepared-research.json"}; the backend reads and parses the current file. Direct research fields are a separate form for new content. Preserve real prose newlines and literal escape sequences in examples rather than copying serialized tool text or rewriting escapes.\n'
+      : '') +
+    (binding.stage === 'planning' || available.has('procedure_run') ? procedureInputContractHint() : '') +
     'Before ending, save one compact assignment_report with outcome, summary, artifacts and findings. A blocked or failed report preserves useful work and does not submit a task. Reported prose is distinct from observed execution evidence. Runtime events supply progress and advance the workflow; focus on the assigned work.';
 }
 
@@ -250,6 +276,22 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       backend_binding: { workflow_id: binding.workflow_id, task_id: binding.task_id ?? null, invocation_id: binding.invocation_id },
       owner: 'runtime' }); } catch { /* advisory */ }
   }
+  async function prepared<T>(schema: z.ZodType<T>, args: any,
+    action: (value: T, source?: ControlledPayloadSource) => unknown | Promise<unknown>): Promise<unknown> {
+    const payload = locked(state => resolveControlledPayload(root,
+      Object.hasOwn(args, 'input_path') ? { input_path: args.input_path } : { input: args }, {
+        sourceAllowed(path) { publicTarget(root, path, binding.approved_inputs); assertReadable(binding, path); return true; },
+        readHash: path => state.reads[key(path)],
+        recordRead(path, sha256) { state.reads[key(path)] = sha256; saveState(state); },
+        parse: value => schema.parse(value),
+      }));
+    if (payload.source) await trace({ event: 'payload-resolved', source: payload.source,
+      backend_input: controlledModelInput('prepared-payload', payload.input),
+      validation: { rule: 'Prepared source parsed once and validated against the assigned semantic tool schema; identity remains backend-bound.' }, owner: 'runtime' });
+    activeAtCommit();
+    if (payload.source) assertControlledPayloadCurrent(root, payload.source);
+    return action(payload.input, payload.source);
+  }
   function register(name: string, description: string, schema: z.ZodType, readOnly: boolean,
     action: (args: any) => unknown | Promise<unknown>): void {
     server.registerTool(name, { description, inputSchema: schema,
@@ -263,8 +305,9 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         await trace({ event: 'tool-result', tool: name, status: 'succeeded' });
         return { content: [{ type: 'text' as const, text: JSON.stringify(result ?? { saved: true }) }] };
       } catch (error) {
-        const validation = controlledValidation(error instanceof ControlledToolError ? error.code : undefined,
-          error instanceof ControlledToolError ? error.message : undefined);
+        const known = error instanceof ControlledToolError || error instanceof ControlledPayloadError;
+        const validation = error instanceof z.ZodError ? controlledValidation('SCHEMA_INVALID', undefined, error.issues)
+          : controlledValidation(known ? error.code : undefined, known ? error.message : undefined);
         const ownership = error instanceof ControlledToolError && error.ownership ? redactControlledValue(error.ownership) as Record<string, unknown> : {};
         await trace({ event: 'tool-result', tool: name, status: 'failed', code: validation.code, validation,
           request_sha256: hash(JSON.stringify(args)), ...ownership });
@@ -394,11 +437,11 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         }));
       });
   if (binding.stage === 'planning') {
-    register('workflow_plan', 'Save one semantic plan. Backend creates and links records and applies the minimum risk policy.', controlledPlanSchema,
-      false, plan => {
+    register('workflow_plan', 'Save one semantic plan or send input_path alone for a prepared JSON plan. Backend parses prepared data, creates and links records and applies the minimum risk policy.', controlledPayloadSchema(controlledPlanSchema),
+      false, args => prepared(controlledPlanSchema, args, (plan, source) => {
         if (!callbacks.submitPlan) throw new ControlledToolError('UNSUPPORTED_STAGE', 'Planning is unavailable in this invocation.');
-        return callbacks.submitPlan(plan);
-      });
+        return callbacks.submitPlan(plan, source);
+      }));
     register('work_prepare', 'Inspect reusable procedure applicability. Matching is advisory; the controller authorizes execution.',
       z.strictObject({ request: text.max(20000), parameters: z.record(z.string(), z.unknown()).optional() }), true, query => {
         if (!callbacks.prepareWork) throw new ControlledToolError('UNSUPPORTED_STAGE', 'Reuse discovery is unavailable in this invocation.');
@@ -413,29 +456,40 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         if (!callbacks.runCheck) throw new ControlledToolError('UNSUPPORTED_STAGE', 'Check execution is unavailable in this invocation.');
         return callbacks.runCheck(args.title);
       });
-  if (['verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage))
-    register('check_evidence', 'Read bound execution evidence (default), or the actual workflow registration manifest and current code-hash comparisons. Registration is not qualification; no private registry access or caller-provided identities.',
-      z.strictObject({ title: text.max(256).optional(), kind: z.enum(['execution', 'registration']).default('execution') }), true, args => {
+  if (['implementation', 'verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage))
+    register('check_evidence', 'Read bound execution evidence (default), kind workflow for authoritative original preservation and report lifecycle, or kind registration for the actual bound manifest. No private registry access or caller-provided identities.',
+      z.strictObject({ title: text.max(256).optional(), kind: z.enum(['execution', 'registration', 'workflow']).default('execution') }), true, args => {
         if (!callbacks.readEvidence) throw new ControlledToolError('NO_CHECK_EVIDENCE', 'No bound check evidence is available in this session.');
         return callbacks.readEvidence(args.title, args.kind);
       });
   if (binding.stage === 'implementation') {
     if (binding.execution_steps === undefined || binding.execution_steps.length) {
-    const schema = binding.execution_steps === undefined ? controlledExecutionSchema.extend({ input: z.record(z.string(), z.unknown()).optional() }) : z.strictObject({
+    const schema = binding.execution_steps === undefined ? controlledExecutionSchema.extend({ input: z.record(z.string(), z.unknown()).optional(), input_path: z.string().min(1).max(1024).optional() }) : z.strictObject({
       title: text.max(256).describe('Choose a declared execution_steps title. Backend supplies its argv, inputs, outputs and limits.'),
-      input: z.record(z.string(), z.unknown()).optional().describe('Prepared JSON input for this script; runtime supplies all internal identity.') });
+      input: z.record(z.string(), z.unknown()).optional().describe('Direct semantic JSON data; runtime supplies all internal identity.'),
+      input_path: z.string().min(1).max(1024).optional().describe('Readable prepared JSON data file declared in this step input_paths. Backend reads and parses it; use instead of input, without recopying serialized tool text.') });
     register('task_run', 'Execute a scoped direct local script or fixed version observation. Backend validates the plan/role, supplies cwd/identity/hashes, retains the actual bounded result and prevents duplicate effects. This is not procedure qualification or independent acceptance evidence.',
-      schema, false, args => {
+      schema, false, async args => {
         if (!callbacks.runTask) throw new ControlledToolError('UNSUPPORTED_STAGE', 'Direct execution is unavailable in this invocation.');
         const step = binding.execution_steps?.find(step => step.title === args.title);
         if (binding.execution_steps !== undefined && !step) throw new ControlledToolError('INVALID_EXECUTION', 'Choose one of the declared execution step titles.');
-        const request = controlledExecutionSchema.parse(step ? { ...step, ...(args.input === undefined ? {} : { input: args.input }) } : args);
+        if (args.input_path !== undefined && args.input !== undefined)
+          throw new ControlledToolError('INVALID_PAYLOAD', 'Use input_path or direct input, never both.');
+        const { input_path: sourcePath, ...direct } = args;
+        if (sourcePath !== undefined && !(step?.input_paths ?? direct.input_paths ?? []).includes(sourcePath))
+          throw new ControlledToolError('INVALID_EXECUTION', 'Declare the prepared JSON source in this execution step input_paths before running it.');
+        let source: ControlledPayloadSource | undefined;
+        let input = args.input;
+        if (sourcePath !== undefined) await prepared(z.record(z.string(), z.unknown()), { input_path: sourcePath }, (value, observed) => { input = value; source = observed; });
+        const request = controlledExecutionSchema.parse(step ? { ...step, ...(input === undefined ? {} : { input }) } : { ...direct, ...(input === undefined ? {} : { input }) });
         const script = request.command.length > 1 && request.command[1] !== '--version' ? request.command[1] : undefined;
         if (script) locked(state => {
           const path = publicTarget(root, script, binding.approved_inputs); assertReadable(binding, script);
           const bytes = readFileSync(path);
           if (state.reads[key(script)] !== hash(bytes)) throw new ControlledToolError('READ_REQUIRED', 'Read the exact current project script before authorizing its local execution.');
         });
+        activeAtCommit();
+        if (source) assertControlledPayloadCurrent(root, source);
         return callbacks.runTask(request);
       });
     }
@@ -447,20 +501,21 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       });
     }
   }
-  if (['implementation', 'synthesis'].includes(binding.stage)) {
+  if (['implementation', 'synthesis'].includes(binding.stage) && !binding.evidence_documentation && binding.cornell_bound !== false) {
+    const researchSchema = controlledCornellResearchSchema(binding.stage === 'synthesis', binding.stage === 'synthesis' || binding.cornell_starter_allowed === true);
     register('cornell_research_compile', binding.stage === 'implementation'
       ? 'Compile the primary research deliverable with an expected worked example and separate questions/answers inside the assigned folder. Independent Verifier runs next. Observed-result fields and evidence identities are backend-owned at this stage; do not submit placeholder observations.'
       : 'Compile post-verification research using actual current independent evidence, with separate questions and answers inside the assigned note folder.',
-      controlledCornellResearchSchema(binding.stage === 'synthesis', binding.stage === 'synthesis' || binding.cornell_starter_allowed === true), false,
-      args => {
+      controlledPayloadSchema(researchSchema), false,
+      args => prepared(researchSchema, args, (input, source) => {
         if (!callbacks.compileResearch) throw new ControlledToolError('NO_CORNELL_OUTPUT', 'The plan does not request Cornell output.');
-        return callbacks.compileResearch(args);
-      });
+        return callbacks.compileResearch(input, source);
+      }));
   }
   register('assignment_report', 'Persist one substantive compact result. Incomplete findings are retained without submitting the task.',
-    controlledReportSchema, false, report => {
+    controlledPayloadSchema(controlledReportSchema), false, args => prepared(controlledReportSchema, args, (report, source) => {
       for (const path of report.artifacts ?? []) { publicTarget(root, path, binding.approved_inputs); assertReadable(binding, path); }
-      return callbacks.saveReport(report);
-    });
+      return callbacks.saveReport(report, source);
+    }));
   return server;
 }

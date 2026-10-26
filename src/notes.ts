@@ -97,6 +97,12 @@ interface CornellRevision {
   expected_revision: number;
   reason: string;
 }
+/** Internal writer boundary; this policy is never a model-supplied note field. */
+export interface CornellWritePolicy {
+  prepare(value: { artifacts: Record<string, string>; data: Record<string, unknown>; body: string; title: string; owner: string }): void;
+  recover_creation?: boolean;
+  recover_artifacts?: Record<string, string>;
+}
 interface CornellHistory {
   revision: number;
   reason: string;
@@ -418,8 +424,8 @@ function linkProblems(
   return errors;
 }
 /** Create visible narrative once; managed knowledge holds references and provenance only. */
-export function createCornellNote(root: string, input: CornellInput): ProjectRecord {
-  return writeCornellNote(root, input);
+export function createCornellNote(root: string, input: CornellInput, policy?: CornellWritePolicy): ProjectRecord {
+  return writeCornellNote(root, input, undefined, policy);
 }
 export function reviseCornellNote(
   root: string,
@@ -427,6 +433,7 @@ export function reviseCornellNote(
   input: CornellInput,
   expectedRevision: number,
   reason: string,
+  policy?: CornellWritePolicy,
 ): ProjectRecord {
   if (
     !Number.isSafeInteger(expectedRevision) ||
@@ -439,12 +446,13 @@ export function reviseCornellNote(
     );
   if (input.workflow_id !== getRecord(root, id).meta.data.workflow_id)
     throw new Error('Cornell revision must preserve workflow ownership.');
-  return writeCornellNote(root, input, { id, expected_revision: expectedRevision, reason });
+  return writeCornellNote(root, input, { id, expected_revision: expectedRevision, reason }, policy);
 }
 function writeCornellNote(
   root: string,
   input: CornellInput,
   revision?: CornellRevision,
+  policy?: CornellWritePolicy,
 ): ProjectRecord {
   readConfig(root);
   if (!cornellKinds.includes(input.kind)) throw new Error('Unsupported Cornell note kind.');
@@ -596,15 +604,12 @@ function writeCornellNote(
   const citationErrors = sourceLinks(body, sources);
   if (citationErrors.length) throw new Error(citationErrors.join(' '));
   return withOperationLock(root, `cornell-${hash(path).slice(0, 32)}`, () => {
-    if (!revision)
-      for (const target of [path, exercisePath, answerPath])
-        if (existsSync(safePath(root, target)))
-          throw new Error(`Preserve existing artifact; choose a new path: ${target}`);
     const proposed = {
       [path]: body,
       [exercisePath]: input.practice.exercise,
       [answerPath]: input.practice.answer,
-      ...(!revision && solutionPath && !existsSync(safePath(root, solutionPath))
+      ...(!revision && solutionPath && (!existsSync(safePath(root, solutionPath)) ||
+          policy?.recover_creation && policy.recover_artifacts?.[solutionPath] === hash(readFileSync(safePath(root, solutionPath))))
         ? {
             [solutionPath]:
               input.practice.starter ??
@@ -612,6 +617,11 @@ function writeCornellNote(
           }
         : {}),
     };
+    if (!revision)
+      for (const target of [path, exercisePath, answerPath])
+        if (existsSync(safePath(root, target)) &&
+            (!policy?.recover_creation || hash(readFileSync(safePath(root, target))) !== hash(proposed[target]!)))
+          throw new Error(`Preserve existing artifact; choose a new path: ${target}`);
     const broken = linkProblems(root, path, body, proposed);
     if (broken.length) throw new Error(broken.join(' '));
     const artifacts: Record<string, string> = {
@@ -644,6 +654,8 @@ function writeCornellNote(
     validateMetadata({ schema_version: 1, id: 'NEOMIND-CORNELL-PREVIEW', type: 'knowledge',
       title: input.topic, owner: input.owner ?? 'curator', status: 'draft', revision: 1,
       created_at: timestamp, updated_at: timestamp, links, data });
+    policy?.prepare({ artifacts: Object.fromEntries(Object.entries(proposed).map(([file, content]) => [file, hash(content)])),
+      data, body: recordBody, title: input.topic, owner: input.owner ?? 'curator' });
     if (revision) {
       const existing = getRecord(root, revision.id);
       const oldPractice = existing.meta.data.practice as Record<string, unknown>;
@@ -790,15 +802,19 @@ function writeCornellNote(
           atomicWrite(safePath(root, file), content);
       });
     }
-    atomicWrite(safePath(root, exercisePath), input.practice.exercise);
-    atomicWrite(safePath(root, answerPath), input.practice.answer);
+    const writeCreated = (file: string, content: string) => {
+      if (policy?.recover_creation && existsSync(safePath(root, file)) && hash(readFileSync(safePath(root, file))) === hash(content)) return;
+      atomicWrite(safePath(root, file), content);
+    };
+    writeCreated(exercisePath, input.practice.exercise);
+    writeCreated(answerPath, input.practice.answer);
     if (solutionPath && !existsSync(safePath(root, solutionPath)))
       atomicWrite(
         safePath(root, solutionPath),
         input.practice.starter ??
           '# My solution\n\nRecord your reasoning and implementation here.\n',
       );
-    atomicWrite(safePath(root, path), body);
+    writeCreated(path, body);
     return createRecord(root, {
       type: 'knowledge',
       title: input.topic,

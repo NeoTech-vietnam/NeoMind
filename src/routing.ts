@@ -76,8 +76,9 @@ const routingPolicySchema = z
   .strict();
 export type RoutingPolicy = z.infer<typeof routingPolicySchema>;
 export interface NativeReceipt {
-  controlled_execution?: { schema_version: 1; epoch_id: string; stage: ControlledStage; routing_policy: RoutingPolicy;
-    tool_contract?: { version: 2; local_execution: boolean; qualified_procedure: boolean } };
+  controlled_execution?: { schema_version: 1; epoch_id: string; stage: ControlledStage; routing_policy: RoutingPolicy; documentation_source_sha256?: string;
+    tool_contract?: { version: 2; local_execution: boolean; qualified_procedure: boolean } |
+      { version: 3; local_execution: boolean; qualified_procedure: boolean; evidence_documentation: boolean; research: boolean } };
   schema_version: 1;
   issuer: 'neomind-codex-app-server' | 'neomind-vscode-lm' |
     'taskforces-codex-app-server' | 'taskforces-vscode-lm' |
@@ -378,15 +379,28 @@ export function routingProblems(
         receipt.effort_support !== 'unavailable' || receipt.confirmed_reasoning_effort !== null)
       errors.push('VS Code reasoning effort is unavailable; explicit allow-unavailable compatibility policy required.');
     const toolContract = receipt.controlled_execution?.tool_contract;
-    if (toolContract && (toolContract.version !== 2 || typeof toolContract.local_execution !== 'boolean' || typeof toolContract.qualified_procedure !== 'boolean'))
+    if (toolContract && ((toolContract.version !== 2 && toolContract.version !== 3) ||
+        typeof toolContract.local_execution !== 'boolean' || typeof toolContract.qualified_procedure !== 'boolean' ||
+        toolContract.version === 3 && (typeof toolContract.evidence_documentation !== 'boolean' || typeof toolContract.research !== 'boolean' ||
+          toolContract.evidence_documentation && !/^[a-f0-9]{64}$/.test(receipt.controlled_execution?.documentation_source_sha256 ?? '') ||
+          !toolContract.evidence_documentation && receipt.controlled_execution?.documentation_source_sha256 !== undefined ||
+          toolContract.research && !['implementation', 'synthesis'].includes(receipt.controlled_execution!.stage) ||
+          (toolContract.local_execution || toolContract.qualified_procedure) && receipt.controlled_execution!.stage !== 'implementation' ||
+          toolContract.evidence_documentation && (receipt.controlled_execution?.stage !== 'implementation' || receipt.role !== 'developer' ||
+            toolContract.local_execution || toolContract.qualified_procedure || toolContract.research))))
       errors.push('Controlled tool contract version is invalid.');
     const controlledOperations = receipt.controlled_execution ? controlledToolNames({ role: receipt.role,
       stage: receipt.controlled_execution.stage, workflow_id: receipt.workflow_id!, implementation_paths: [], verification_paths: [],
+      evidence_documentation: toolContract?.version === 3 && toolContract.evidence_documentation,
+      ...(toolContract?.version === 3 ? { cornell_bound: toolContract.research } : {}),
       ...(toolContract ? { execution_steps: toolContract.local_execution ? undefined : [], procedure_bound: toolContract.qualified_procedure } : {}) }) : [];
-    // Historical signed v1 scopes retain their exact original tool set. A runtime
-    // upgrade never widens or invalidates their recorded gateway authority.
-    const operations = receipt.controlled_execution ? toolContract ? controlledOperations
-      : controlledOperations.filter(name => !['runtime_context', 'task_run'].includes(name)) : roleCapabilities(role).operations;
+    // Version 3 binds report-only purpose and producer evidence access. Earlier
+    // signed scopes keep their exact tool authority; upgrading the runtime
+    // neither invalidates those receipts nor silently grants the new tool.
+    const operations = receipt.controlled_execution ? controlledOperations.filter(name =>
+      (toolContract || !['runtime_context', 'task_run'].includes(name)) &&
+      (toolContract?.version === 3 || receipt.controlled_execution!.stage !== 'implementation' || name !== 'check_evidence'))
+      : roleCapabilities(role).operations;
     if (canonicalJson(receipt.native_tool_scope) !== canonicalJson(operations) ||
         receipt.gateway_policy_sha256 !== hash(canonicalJson(operations)))
       errors.push('VS Code invocation-bound gateway scope is invalid.');

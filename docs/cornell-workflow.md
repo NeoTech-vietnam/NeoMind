@@ -4,7 +4,21 @@ NeoMind turns supplied research into the existing Cornell note format. Each rese
 
 The resulting `note.md`, `exercises.md` and `answers.md` remain ordinary readable project files. Questions use Q1-style IDs, practice uses P1-style IDs, and both map to O1-style objectives. Every objective needs an assessment. Reference answers stay separate so the learner can attempt the exercise first. An optional solution file belongs to the learner and remains untouched.
 
-## Prepare and generate
+## Controlled worker sessions
+
+An explicit NeoMind-owned role/stage packet and its bound tools select this path. The backend supplies the current requirement revision, workflow/task identities, permitted output folder and provenance. The standalone CLI and generic MCP preparation sequence below belongs to authored/manual workflows; it is not a second lifecycle for a controlled worker.
+
+For research already saved as a readable ordinary project JSON file, call the controlled `cornell_research_compile` tool with `{"input_path":"scripts/prepared-research.json"}`. The file contains the current controlled tool's semantic fields rather than the standalone CLI envelope shown below. NeoMind reads and parses that scoped file directly, captures its source hash and validates the research. Direct semantic research fields remain available when authoring new content; use one input form without combining the file reference and overrides. Supply professional material rather than copying a tool result's serialized representation into another JSON string. Actual prose newlines and literal escape sequences inside examples have different meanings and remain distinct.
+
+The controlled tool compiles the bundle into the planned folder through backend-owned operations. The worker then saves one compact `assignment_report`; it does not create another recipe/task or claim an assignment. A primary implementation note provides an expected worked result. Independent checks execute afterward, so observed-result fields and evidence identity are bound by the backend for a separately assigned post-verification synthesis. Preserve the generated note's captured bytes while the Verifier checks them.
+
+The ordinary source, freshness, content, ownership and compare-and-write rules still apply. A compiled bundle is not automatically verified, reviewed or accepted. When the plan also requests a final authored report, that file must satisfy its own criteria; the backend's later final workflow record is separate.
+
+A requested execution report may need results that only exist after independent checks. The plan declares those exact report files as `evidence_report_paths`, also included in `outputs` and `documentation_paths`; the Cornell trio stays outside this list. NeoMind then gives the Implementer a report-only assignment using the actual verification checkpoint and bound evidence. It preserves the Cornell bundle, runs fresh verification after the report is completed, and obtains the required final review before closure. The report describes already observed results without claiming a future review or final workflow acceptance.
+
+In a new plan, only checks requiring that completed report use `after_evidence_reports: true`; at least one product check and its negative controls precede the handoff. The final fresh Verifier still executes all planned checks and negative controls. This sequencing does not waive checks or change existing frozen plans. During the initial handoff, an intermediate report labels verification that has not run as pending; after the checkpoint, the report-only assignment records actual results and their limits.
+
+## Standalone preparation and generation
 
 Start from the saved requirement and its actual revision. Use one input per requirement and an unused visible `output_dir`. All paths inside the research input are relative to the source project. This reduced example illustrates the complete required shape; replace the record IDs and revision with the saved project values before using it:
 

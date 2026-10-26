@@ -6,6 +6,14 @@ license: MIT
 
 # Validate capability and reuse
 
+## Backend-owned session
+
+An explicit NeoMind-owned role/stage packet and bound tools select this branch. Validate the assigned capability using only its supplied tools and scope. Distinguish configuration from actual calls, execution and acceptance; retain concrete missing prerequisites and observations. Planning can use advertised `work_prepare`, while the independent Verifier runs prescribed checks. Save one compact `assignment_report` with findings and limits. The backend manages identity, evidence and recovery. Use the runtime-provided controlled-workflow guide for the current contract.
+
+## Client intake and other saved modes
+
+For controlled client intake without a worker packet, submit through `manager_run` or resume the exact receipt through `manager_control`. The sequence below applies only to a matching saved non-controlled execution mode and preserves that mode's contract.
+
 Run `neomind validate --project PROJECT --json` or `platform_validate` first. Inspect each requested capability separately: configured files, actual observations, and missing prerequisites. Record the test input, command, result and limits. A configured endpoint, scheduled workflow file or agent profile does not prove execution.
 
 For missing agent interactions, compare `activity hooks` with `map`. Native hooks need a new trusted client session and explicit session/agent IDs. Unknown or expired observations remain unknown. Static history is available through Show history. Signed invocations retain their receipt and acceptance gates.

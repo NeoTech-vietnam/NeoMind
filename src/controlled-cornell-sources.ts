@@ -175,7 +175,7 @@ export function normalizeControlledCornellSources(root: string, input: unknown, 
 
 /** Reconcile a fully persisted same-input note only; partial/conflicting artifacts remain untouched. */
 export function existingControlledCornellNote(root: string, compiled: CompiledCornellResearch, context: ControlledCornellSourceContext) {
-  const saved = context.saved_results?.find(result => result.input_hash === compiled.input_hash && result.compiled_note_hash === hash(JSON.stringify(compiled.note)));
+  const saved = context.saved_results?.findLast(result => result.input_hash === compiled.input_hash && result.compiled_note_hash === hash(JSON.stringify(compiled.note)));
   if (!saved) return undefined; // A copied input_hash on an arbitrary note is never a backend completion receipt.
   const ids = compiled.note.demonstration.evidence_ids ?? [];
   if (context.evidence.length) {

@@ -6,6 +6,14 @@ license: MIT
 
 # Implement a bounded assignment
 
+## Backend-owned session
+
+An explicit NeoMind-owned role/stage packet and bound tools select this branch. Read the supplied baseline and implement only the assigned paths with `task_file_write`. Use a declared `task_run` or bound `procedure_run` only when it is advertised; pass prepared JSON by `input_path` rather than copying serialized tool text. A report-only assignment edits only its supplied report paths using actual bound evidence. Save one compact `assignment_report`; the backend schedules independent checks, review and closure. Follow the runtime-provided controlled-workflow guide when payload or evidence details are needed.
+
+## Client intake and other saved modes
+
+For controlled client intake without a worker packet, submit through `manager_run` or resume the exact receipt through `manager_control`. The sequence below applies only to a matching saved non-controlled execution mode and preserves that mode's contract.
+
 1. Read `.neomind/roles/developer.md` and `.neomind/guides/workflow.md`. Inspect `neomind context <task-id>`, the baseline, allowed paths, dependencies, and working tree.
 2. Assess the `ready` gate, then start the task using core operations. Complete the assigned behavior within the agreed contracts and ownership boundary.
 3. Run the applicable executable checks through the `check` command group. Capture actual results and implementation artifacts. Report unavailable checks and failures explicitly.

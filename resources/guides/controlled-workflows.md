@@ -10,6 +10,16 @@ Workspace Trust, model-access consent and client MCP discovery belong to client 
 
 The `runtime_context` result supplies current-session observations and toolchain discovery from the enabled host's PATH. Successful observations establish the current preflight checkpoint; work then proceeds with the assigned implementation, independent verification or review. Optional absolute executable paths come from actual project configuration or documentation. An invalid optional path produces a diagnostic for that tool while authoritative session context and other observations remain available. A toolchain is required only when the assigned operation needs it.
 
+Use the operations advertised for this invocation. Planning describes future execution bindings; an implementation session can execute only the steps and procedure actually supplied to it. A read-only review inspects artifacts and evidence and returns its verdict. Each role saves one compact `assignment_report` when its professional work is ready; runtime events and the saved report drive the next stage.
+
+## Prepared payloads
+
+When research already exists in an ordinary project JSON file, pass its project-relative `input_path` to `cornell_research_compile`. The file contains the semantic fields accepted by the current controlled tool, rather than a standalone CLI recipe envelope. The backend reads, parses and validates the file, captures its source hash and binds the requirement, output folder and provenance. Send either the prepared-file reference or direct semantic research fields. The file form does not merge model-provided overrides into its data.
+
+Preserve the distinction between JSON representation and string content. Authored prose contains actual newlines; JSON examples may legitimately contain literal `\n` sequences. The backend parses the source once. Copying serialized tool text into a second request or globally replacing escape sequences changes the content. Private runtime files, linked paths and paths outside the current read scope remain unavailable.
+
+For a primary Cornell deliverable, the Implementer supplies an expected worked result and the Verifier checks the generated bundle independently. A separately assigned post-verification synthesis uses current observed evidence. An expected example, a stored source file or a successful compiler call does not establish execution or acceptance.
+
 ## Client entrypoint
 
 1. Submit the complete user requirement once through `manager_run` with `execution_mode: neomind-controlled`. Keep the returned workflow receipt. For existing work, select its actual saved workflow ID and use the backend's resume operation.
@@ -30,6 +40,16 @@ Record requested and Bridge-observed vendor/model separately. A 9router alias do
 ## Verification and recovery
 
 Implementation and checker paths remain disjoint. Producers edit implementation; Verifier edits its checker scope. Scope and compare-and-write checks preserve user edits. Checks execute reviewed argument arrays with bounded output, time and cancellation. This mediation is not an OS security sandbox for arbitrary trusted scripts.
+
+Final review uses `check_evidence({"kind":"workflow"})` for the backend's current scoped preservation comparison, check freshness and report lifecycle, and the ordinary check-evidence view for actual bounded execution output. Judge the files and conditions in the frozen plan; the backend observation covers those captured inputs rather than an invented whole-repository historical baseline.
+
+Keep the two report responsibilities separate. A user-requested report file is a producer deliverable and must meet its saved criteria before it can pass review. The backend's final workflow record is created only after required verification and review pass. Its expected absence during review is not missing execution evidence and does not excuse an incomplete producer report.
+
+When the requested final report needs actual independent results, planning declares its exact `evidence_report_paths` within both `outputs` and `documentation_paths`. Primary Cornell `note.md`, `exercises.md` and `answers.md` remain separate deliverables. After an independent verification checkpoint, the backend assigns the Implementer only those final report files. This assignment reads the supplied checkpoint and bound evidence, records factual results and limitations, and saves one compact result. Product code, checkers and Cornell files remain read-only. A fresh Verifier then checks the completed delivery before required final review. This is the normal report handoff; the earlier checkpoint does not accept or close the workflow.
+
+For a new plan, a check that needs the completed evidence report can declare `after_evidence_reports: true`. At least one product check remains before that handoff, and each initial check still runs its required negative controls. The first Verifier establishes only that product checkpoint. After the report is written, a fresh Verifier runs every planned check, including the deferred report checks and their negative controls, before final review. Unflagged checks and existing frozen plans retain their original execution conditions. No check is waived.
+
+During a planned report handoff, the initial report describes implementation status and labels genuinely unrun verification as pending. The report-only assignment replaces that intermediate account with already observed results and remaining limitations. It cannot claim the following verification, review or closure has already succeeded.
 
 Classify failures before repair: product defects go to implementation, checker defects go to independent verification with negative controls, protocol defects go to runtime reconciliation, and missing environment/provider access produces a specific setup condition. Preserve existing worker and repair limits. Repeated identical failures cannot create an unbounded retry loop.
 

@@ -6,6 +6,14 @@ license: MIT
 
 # Design a verifiable increment
 
+## Backend-owned session
+
+An explicit NeoMind-owned role/stage packet and bound tools select this branch. Inspect the supplied requirements and readable project artifacts. Resolve the assigned architecture/interface question with concrete boundaries, failure behavior, tradeoffs and verification implications. Save one compact `assignment_report` with supported findings and unresolved decisions. The backend owns persistence, review and transitions; a consultation does not create another workflow. Use the runtime-provided controlled-workflow guide for the current contract.
+
+## Client intake and other saved modes
+
+For controlled client intake without a worker packet, submit through `manager_run` or resume the exact receipt through `manager_control`. The sequence below applies only to a matching saved non-controlled execution mode and preserves that mode's contract.
+
 1. Read `.neomind/roles/architect.md`. Inspect the task context, approved requirements, constraints, previous design, and research.
 2. Identify boundaries and required/provided contracts. Allocate each requirement to a component or hardware/software responsibility. Record data, power, and control flow where relevant.
 3. Specify failure behavior, operating limits, assumptions, tradeoffs, and applicable verification levels in design records using the installed template.
