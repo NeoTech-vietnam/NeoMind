@@ -1758,7 +1758,12 @@ class Controller {
       save(this.root, run, 'resume', 'Resume the authenticated backend renderer correction through a fresh producer report, independent checks and required review; all original budgets and failed reports remain unchanged.');
       this.schedule(id); return run;
     }
-    if (run.status === 'blocked' && blocker?.code === 'CORNELL_CANONICAL_INVALID' && blocker.owner === 'runtime') return run;
+    if (blocker?.code === 'CORNELL_CANONICAL_INVALID' && blocker.owner === 'runtime') {
+      // Pause/restart changes lifecycle state, not ownership of a known failed compiler generation.
+      // Retain the blocked checkpoint so trusted newer-renderer maintenance remains admissible.
+      if (run.status !== 'blocked') { run.status = 'blocked'; save(this.root, run); }
+      return run;
+    }
     if (run.status === 'blocked' && blocker?.message.startsWith('Product/checker repair budget exhausted.') &&
         (blocker.kind === 'implementation' || blocker.kind === 'checker') && last?.stage === 'verification' &&
         last.state === 'completed' && last.report?.outcome === 'completed' &&
