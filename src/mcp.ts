@@ -106,9 +106,10 @@ import {
   type RecipeInput,
 } from './recipes.js';
 import { managedRun, type ManagedRunInput } from './managed.js';
-import { controlledStatus, controlControlledWorkflow, hasControlledWorkflow } from './controlled-workflow.js';
+import { controlledStatus, controlControlledWorkflow, hasControlledWorkflow, type ControlledSnapshot } from './controlled-workflow.js';
 import { ControlledIntakeDeliveryError } from './controlled-intake-delivery.js';
 import { controlledCommandReceipt, isControlledCommandSnapshot } from './controlled-command-receipt.js';
+import { controlledLegacyStatusList, controlledStatusList, controlledStatusView } from './controlled-status-view.js';
 import { workspaceWrite } from './workspace.js';
 import { checkpointLightweight } from './lightweight.js';
 import { validateEvidenceInputs, type EvidenceInputSnapshot } from './evidence-inputs.js';
@@ -1212,18 +1213,18 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
   );
   tool(
     'manager_status',
-    'Find saved workflows, current gates, changed decisions, and the next executable action.',
-    { workflow_id: z.string().optional() },
-    (i) => i.workflow_id && hasControlledWorkflow(root, i.workflow_id) ? controlledStatus(root, i.workflow_id)
+    'Read compact saved workflow status, acceptance-record states, final report IDs and blockers. Omit workflow_id for bounded discovery; select an exact ID for status. Use view:journal only when the full controlled execution journal is explicitly needed; the default summary stays readable in chat.',
+    { workflow_id: z.string().optional(), view: z.enum(['summary', 'journal']).optional(),
+      request_id: z.string().min(1).max(256).optional().describe('Filter discovery by the exact saved request_id, including a lost-admission receipt older than the recent workflow list. Does not submit or resume work.') },
+    (i) => i.workflow_id && hasControlledWorkflow(root, i.workflow_id) ? i.view === 'journal' ? controlledStatus(root, i.workflow_id)
+      : controlledStatusView(root, controlledStatus(root, i.workflow_id) as ControlledSnapshot)
       : controlledParent && !i.workflow_id ? {
-        execution_mode: 'neomind-controlled', controlled_workflows: controlledStatus(root),
+        execution_mode: 'neomind-controlled', ...controlledStatusList(controlledStatus(root) as ControlledSnapshot[], i.request_id),
         // Discovery is a journal read, not a re-run of every historical gate.
         // Select a legacy ID explicitly to inspect its original acceptance.
-        legacy_workflows: loadRecords(root).filter(record => record.meta.data.kind === 'manager-workflow' &&
-          !hasControlledWorkflow(root, record.meta.id)).map(record => ({ workflow_id: record.meta.id, title: record.meta.title,
-            ...(typeof record.meta.data.request_id === 'string' ? { request_id: record.meta.data.request_id } : {}),
-            execution_mode: record.meta.data.execution_mode, phase: record.meta.data.phase, validation: 'not-evaluated' })),
-      } : Object.assign({}, workflowStatus(root, i.workflow_id), { controlled_workflows: controlledStatus(root) }),
+        ...controlledLegacyStatusList(loadRecords(root).filter(record => record.meta.data.kind === 'manager-workflow' &&
+          !hasControlledWorkflow(root, record.meta.id)), i.request_id),
+      } : Object.assign({}, workflowStatus(root, i.workflow_id), controlledStatusList(controlledStatus(root) as ControlledSnapshot[])),
   );
   tool('manager_control', 'Pause, resume or cancel one exact controlled workflow through its enabled VS Code owner. Work is independent of this chat connection.', {
     workflow_id: z.string().min(1), action: z.enum(['pause', 'resume', 'cancel']),

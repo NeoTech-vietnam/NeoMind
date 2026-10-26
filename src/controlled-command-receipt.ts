@@ -1,6 +1,6 @@
 import type { ControlledSnapshot } from './controlled-workflow.js';
 
-const limits = { invocations: 4, note_ids: 8, identifier: 256, model: 256, diagnostic: 768 } as const;
+const limits = { invocations: 4, note_ids: 8, identifier: 256, model: 96, diagnostic: 256 } as const;
 const states = new Set(['queued', 'running', 'waiting', 'paused', 'interrupted', 'uncertain', 'blocked', 'cancelled', 'completed']);
 
 function identifier(value: unknown): string | undefined {
@@ -9,8 +9,14 @@ function identifier(value: unknown): string | undefined {
 }
 function text(value: unknown, limit: number): string | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined;
-  const clean = value.replace(/[\x00-\x1f\x7f]/g, ' ');
-  return clean.length > limit ? `${clean.slice(0, limit - 1)}…` : clean;
+  let clean = '';
+  for (const character of value.replace(/[\x00-\x1f\x7f]/g, ' ')) {
+    // The public MCP result contains JSON text inside another JSON envelope.
+    // Bound encoded bytes, including Unicode and escaping, rather than UTF-16 length.
+    if (Buffer.byteLength(JSON.stringify(clean + character), 'utf8') > limit - 3) return `${clean}…`;
+    clean += character;
+  }
+  return clean;
 }
 
 /** Identify only the owned runtime result; legacy manager handoffs retain their contract. */
