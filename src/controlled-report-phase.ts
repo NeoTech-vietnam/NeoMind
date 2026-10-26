@@ -1,5 +1,6 @@
 import { canonicalJson } from './routing.js';
 import type { ControlledCheckReceipt } from './controlled-workflow.js';
+import { latestControlledChecks, controlledCheckMatches } from './controlled-current-checks.js';
 
 interface DocumentationPlan {
   documentation_paths: string[]; outputs: string[]; allowed_paths: string[]; verification_paths: string[];
@@ -49,21 +50,23 @@ export function evidenceReportPaths(plan: DocumentationPlan): string[] {
   return [...new Set(promised)];
 }
 
-function checkpointChecks(plan: DocumentationPlan): DocumentationPlan['checks'] {
-  const initial = plan.checks.filter(check => check.after_evidence_reports !== true);
-  if (initial.length !== plan.checks.length && (!initial.length || !evidenceReportPaths(plan).length))
+function checkpointChecks<Check extends DocumentationPlan['checks'][number]>(
+  plan: Omit<DocumentationPlan, 'checks'> & { checks: Check[] }): Check[] {
+  const reports = evidenceReportPaths(plan);
+  const initial = plan.checks.filter(check => !(check.after_evidence_reports ?? check.command.some(arg => reports.includes(arg))));
+  if (initial.length !== plan.checks.length && (!initial.length || !reports.length))
     throw new Error('Deferred evidence-report checks require declared evidence report outputs and at least one product check before documentation.');
   return initial;
 }
 
 function prescribedChecks(run: DocumentationState, plannedChecks: DocumentationPlan['checks'], verifier: DocumentationAttempt): ControlledCheckReceipt[] | null {
-  const checks = run.checks.filter(check => check.attempt_id === verifier.id), selected: ControlledCheckReceipt[] = [];
+  const titles = new Set(plannedChecks.flatMap(check => [check.title, ...(check.negative_controls ?? []).map(check => check.title)]));
+  const checks = latestControlledChecks(run.checks, verifier.id).filter(check => titles.has(check.title)), selected: ControlledCheckReceipt[] = [];
   for (const planned of plannedChecks) {
     if ((planned.expected_exit_code ?? 0) !== 0 || !planned.negative_controls?.length ||
         planned.negative_controls.some(check => check.expected_exit_code === 0)) return null;
     for (const expectation of [{ ...planned, negative: false }, ...planned.negative_controls.map(check => ({ ...check, negative: true }))]) {
-      const check = checks.find(check => check.title === expectation.title && check.negative === expectation.negative &&
-        same(check.planned_command ?? check.command, expectation.command) && check.expected_exit_code === (expectation.expected_exit_code ?? 0));
+      const check = checks.find(check => check.title === expectation.title && controlledCheckMatches(check, expectation));
       if (!check?.passed || check.cancelled || check.exit_code !== check.expected_exit_code || !/^[a-f0-9]{64}$/.test(check.log_sha256)) return null;
       selected.push(check);
     }
@@ -101,7 +104,7 @@ export function controlledChecksForPhase<Check extends DocumentationPlan['checks
   const producer = genuineProducer(run), paths = evidenceReportPaths(contract.plan);
   const documented = !!producer && producer.state === 'completed' && producer.report?.outcome === 'completed' &&
     !!completedDocumentation(run, contract.plan, producer, paths);
-  return structuredClone(contract.plan.checks.filter(check => documented || check.after_evidence_reports !== true));
+  return structuredClone(documented ? contract.plan.checks : initial);
 }
 
 /** A normal post-check report pass is once per actual implementation generation. */

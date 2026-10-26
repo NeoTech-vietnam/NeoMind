@@ -24,7 +24,7 @@ test('current evidence excludes identical-title historical failures before any t
   checks: [...Array.from({ length: 20 }, (_, index) => ({ id: `old-${index}`, attempt_id: 'old', title: 'Identical check title', passed: false })),
     ...Array.from({ length: 10 }, (_, index) => ({ id: `current-${index}`, attempt_id: 'current', title: 'Identical check title', passed: true }))] };
   const before = structuredClone(run), current = currentControlledChecks(run);
-  assert.equal(current.length, 10); assert.ok(current.every(check => check.passed));
+  assert.deepEqual(current.map(check => check.id), ['current-9']); assert.ok(current.every(check => check.passed));
   assert.equal(current.some(check => check.id.startsWith('old-')), false);
   assert.deepEqual(run, before, 'Selecting current results cannot rewrite the thirty saved observations.');
 });

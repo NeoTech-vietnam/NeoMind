@@ -1135,12 +1135,12 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
         .string()
         .nullable()
         .optional()
-        .describe('The full product goal, retaining all acceptance, process, scope, preservation and safety obligations. Use execution_mode for runtime dispatch, manager_status for status and manager_control with workflow_id/action for control; these operations are not product orchestration changes. Preserve actual authentication, storage, execution and orchestration requirements. Retain ambiguous mixed requests completely; opaque input remains conservative. Use null or omit when supplying requirements.'),
+        .describe('The full product goal, retaining all acceptance, process, scope, preservation and safety obligations. Copy the complete new user requirement verbatim; do not append runtime operating instructions, inferred review gates, extra criteria or invented report files. Use execution_mode for runtime dispatch, manager_status for status and manager_control with workflow_id/action for control; these operations are not product orchestration changes. Preserve actual authentication, storage, execution and orchestration requirements. Retain ambiguous mixed requests completely; opaque input remains conservative. Use null or omit when supplying requirements.'),
       requirements: z
         .array(z.string())
         .nullable()
         .optional()
-        .describe('A batch of full product goals, each retaining all acceptance, process, scope, preservation and safety obligations. Client dispatch/status/control use execution_mode, manager_status and manager_control rather than product requirements. Preserve actual sensitive product changes and retain ambiguous mixed requests completely. Use null or omit when supplying requirement.'),
+        .describe('A batch of full product goals, each retaining all acceptance, process, scope, preservation and safety obligations. Copy each complete new user requirement verbatim; do not append runtime operating instructions, inferred review gates, extra criteria or invented report files. Client dispatch/status/control use execution_mode, manager_status and manager_control rather than product requirements. Preserve actual sensitive product changes and retain ambiguous mixed requests completely. Use null or omit when supplying requirement.'),
       workflow_id: z.string().nullable().optional(),
       execution_mode: z.enum(['strict', 'lightweight', 'copilot-native', 'codex-native', 'neomind-controlled']).nullable().optional(),
       native_client: z.enum(['copilot', 'codex']).nullable().optional(),

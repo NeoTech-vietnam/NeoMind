@@ -38,7 +38,9 @@ import { ControlledOperationDrain } from './controlled-operation-drain.js';
 import { assertControlledPayloadCurrent, ControlledPayloadError, type ControlledPayloadSource } from './controlled-payload.js';
 import { persistControlledCornellNote, ControlledCornellWriteError } from './controlled-cornell-write.js';
 import { controlledCornellOwnedOverwriteRecovery } from './controlled-cornell-recovery.js';
+import { restoreControlledCornellOwnedArtifacts } from './controlled-cornell-restore.js';
 import { controlledReviewContext } from './controlled-review-context.js';
+import { latestControlledChecks, controlledCheckMatches } from './controlled-current-checks.js';
 import { evidenceReportPaths, pendingEvidenceDocumentation, controlledChecksForPhase, type EvidenceDocumentationSource } from './controlled-report-phase.js';
 import { controlledCornellDirectories, controlledKnowledgeFreshness } from './controlled-cornell-selection.js';
 import { assertEvidenceDocumentationAuthority } from './controlled-report-authority.js';
@@ -94,7 +96,8 @@ export interface ControlledSnapshot {
   pending_documentation?: EvidenceDocumentationSource;
   /** Backend-authenticated repair of an earlier owned write, never a user-edit override. */
   pending_artifact_repair?: { kind: 'owned-cornell-overwrite'; note_ids: string[]; source_attempt_id: string;
-    record_fingerprints: Record<string, string> };
+    record_fingerprints: Record<string, string>; prepared?: { note_id: string; record_fingerprint: string;
+      mode: 'canonical-restoration' | 'committed-generation' }[] };
   local_executions?: { id: string; attempt_id: string; request_hash: string; title: string; state: 'running' | 'completed';
     pid?: number; intent_path: string; intent_sha256: string; result_path?: string; result_sha256?: string; passed?: boolean }[];
   pending_check_review?: boolean;
@@ -105,7 +108,7 @@ export interface ControlledStartInput { requirement?: string; requirements?: str
 /** Current evidence belongs to the latest Verifier, even before that attempt has produced receipts. */
 export function currentControlledChecks(run: Pick<ControlledSnapshot, 'attempts' | 'checks'>): ControlledCheckReceipt[] {
   const verifier = run.attempts.findLast(attempt => attempt.stage === 'verification');
-  return verifier ? run.checks.filter(check => check.attempt_id === verifier.id) : [];
+  return verifier ? latestControlledChecks(run.checks, verifier.id) : [];
 }
 /** Repair diagnostics retain old checks; new knowledge may cite only a later independent Verifier. */
 export function currentControlledCornellChecks(run: Pick<ControlledSnapshot, 'attempts' | 'checks'>): ControlledCheckReceipt[] {
@@ -559,9 +562,9 @@ class Controller {
             event: 'runtime-failure', workflow_id: id, epoch_id: run.epoch_id, stage: run.phase,
             attempt_id: run.attempts.at(-1)?.id, at: now(), ...failure,
           }, null, 2) + '\n');
-          run.status = 'blocked'; run.blocker = { kind: failure.kind, message: failure.message,
+          run.status = ['STATE_UNCERTAIN', 'INPUT_CHANGED'].includes(failure.code) ? 'uncertain' : 'blocked'; run.blocker = { kind: failure.kind, message: failure.message,
             code: failure.code, trace_id: traceId, owner: failure.owner, next_action: failure.next_action };
-          save(this.root, run, 'blocked', run.blocker.message);
+          save(this.root, run, run.status, run.blocker.message);
         }
       }).finally(() => this.jobs.delete(id));
     this.jobs.set(id, { promise, abort });
@@ -636,6 +639,39 @@ class Controller {
         save(this.root, run, 'reuse-inspected', run.reuse.decision);
       }
       const contract = run.contract_hash ? readContract(this.root, run) : undefined;
+      if (contract && run.phase === 'implementation' && run.pending_artifact_repair && !run.pending_artifact_repair.prepared) {
+        const pending = run.pending_artifact_repair, prepared: NonNullable<typeof pending.prepared> = [];
+        for (const noteId of pending.note_ids) {
+          if (this.closed || signal.aborted) return;
+          const generated = run.cornell_results?.findLast(result => result.note_id === noteId);
+          if (!generated) throw new ControlledToolError('STATE_UNCERTAIN', 'The owned Cornell repair lost its saved compiler generation.');
+          const note = getRecord(this.root, noteId), fingerprint = evidenceRecordFingerprint(note);
+          if (generated.record_fingerprint !== pending.record_fingerprints[noteId]) {
+            const paths = ['note.md', 'exercises.md', 'answers.md'].map(name => `${contract.plan.cornell_output_dir}/${name}`);
+            if (generated.record_fingerprint !== fingerprint || note.meta.type !== 'knowledge' || note.meta.status !== 'draft' ||
+                note.meta.data.format !== 'cornell-v1' || note.meta.data.workflow_id !== id || note.meta.data.artifact_path !== paths[0] ||
+                !same(Object.keys(generated.artifact_hashes).sort(), [...paths].sort()) ||
+                (note.meta.data.research as { input_hash?: string } | undefined)?.input_hash !== generated.input_hash ||
+                !validateCornellNote(this.root, noteId).ok || !same(generated.artifact_hashes, note.meta.data.artifact_hashes))
+              throw new ControlledToolError('STATE_UNCERTAIN', 'A newer Cornell generation no longer matches its durable backend result. Current edits are preserved.');
+            if (generated.payload_source) assertControlledPayloadCurrent(this.root, generated.payload_source);
+            prepared.push({ note_id: noteId, record_fingerprint: fingerprint, mode: 'committed-generation' });
+          } else {
+            const restored = restoreControlledCornellOwnedArtifacts(this.root, id, contract.task_id, generated, {
+              assertActive: () => { const current = readState(this.root, id);
+                if (this.closed || signal.aborted || current.epoch_id !== run.epoch_id ||
+                    current.owner_instance !== run.owner_instance || !['queued', 'running'].includes(current.status) ||
+                    current.phase !== 'implementation' || current.pending_artifact_repair?.source_attempt_id !== pending.source_attempt_id)
+                  throw new ControlledToolError('ACTOR_INACTIVE', 'Managed Cornell restoration lost its owning backend repair checkpoint.'); },
+            });
+            run.cornell_results = [...(run.cornell_results ?? []), restored.result];
+            prepared.push({ note_id: noteId, record_fingerprint: restored.result.record_fingerprint, mode: 'canonical-restoration' });
+          }
+        }
+        pending.prepared = prepared;
+        run.blocker = { kind: 'implementation', message: 'Backend reconciled the managed Cornell artifacts. Inspect the current restored or durably committed generation and implementation, then save a fresh professional producer report. Do not recreate the research payload. Independent verification and required review still follow.' };
+        save(this.root, run, 'managed-artifacts-reconciled', 'Exact canonical artifacts or an already committed generation reconciled before dispatch; no model-owned payload reconstruction or historical gate waiver.');
+      }
       // Final reports describe an actual completed check checkpoint. Their
       // bounded authoring pass precedes fresh verification and final review.
       // This also resumes old frozen promises without rewriting the contract.
@@ -680,7 +716,7 @@ class Controller {
           objective: run.requirement.length <= 8000 ? run.requirement
             : 'Implement the complete saved user requirement for this workflow; its scope and acceptance criteria remain authoritative.' } } : {}),
         ...(documentation ? { evidence_documentation: true, evidence_documentation_source_hash: hash(canonicalJson(documentation)) } : {}),
-        cornell_bound: !documentation && !!(stage === 'synthesis' ? contract?.knowledge_directory : contract?.plan.cornell_output_dir),
+        cornell_bound: !documentation && !run.pending_artifact_repair?.prepared && !!(stage === 'synthesis' ? contract?.knowledge_directory : contract?.plan.cornell_output_dir),
         generated_artifact_paths: [contract?.plan.cornell_output_dir, contract?.knowledge_directory]
           .filter((directory): directory is string => !!directory)
           .flatMap(directory => ['note.md', 'exercises.md', 'answers.md'].map(name => `${directory}/${name}`)),
@@ -951,7 +987,8 @@ class Controller {
         save(this.root, run, 'returned', `${role} session returned ${receipt.state}.`);
         if (receipt.state !== 'completed' || !active.report) {
           const observationLoop = receipt.error?.startsWith('CONTROLLED_OBSERVATION_LOOP:') === true;
-          const kind = receipt.state === 'completed' || observationLoop ? 'protocol' : 'environment';
+          const deliveryProtocol = receipt.error?.startsWith('MCP_DELIVERY_PROTOCOL:') === true;
+          const kind = receipt.state === 'completed' || observationLoop || deliveryProtocol ? 'protocol' : 'environment';
           const message = receipt.state === 'completed' ? 'Session ended without its required typed result. Saved work is retained; inspect current artifacts then save the missing compact result.'
             : receipt.error ?? 'Model session did not complete.';
           const hardFailure = !observationLoop && /CONTROLLED_TOOL_LOOP|MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED|CONTEXT_LIMIT_EXCEEDED|TOOL_CALLING_UNSUPPORTED|NoPermissions|NotFound|access denied|permission|policy|configuration changed|cancelled|canceled/i.test(message);
@@ -993,8 +1030,12 @@ class Controller {
           await this.checks(id, attempt.id, signal);
           if (signal.aborted) return;
           run = readState(this.root, id);
-          const evidence = run.checks.filter(check => check.attempt_id === attempt.id);
-          if (!evidence.length || evidence.some(check => !check.passed) || active.report.verdict !== 'pass') {
+          const prescribed = controlledChecksForPhase(run, contract!).flatMap(check => [{ ...check, negative: false },
+            ...(check.negative_controls ?? []).map(check => ({ ...check, negative: true }))]);
+          const titles = new Set(prescribed.map(check => check.title));
+          const evidence = latestControlledChecks(run.checks, attempt.id).filter(check => titles.has(check.title));
+          if (!evidence.length || evidence.some(check => !check.passed) || prescribed.some(expected =>
+              !evidence.some(check => check.title === expected.title && controlledCheckMatches(check, expected))) || active.report.verdict !== 'pass') {
             if (!this.repair(run, active.report.failure_kind ?? 'unknown', active.report.summary)) return;
             continue;
           }
@@ -1062,7 +1103,9 @@ class Controller {
       `Cornell destination default: ${readCornellDestination(this.root).directory}/${run.workflow_id.toLowerCase()}. Only add a Cornell bundle when requested by the user.`,
       run.blocker ? `Repair/diagnosis context:\n${JSON.stringify(run.blocker)}` : '',
       stage === 'implementation' && run.pending_artifact_repair
-        ? 'An earlier authenticated producer overwrote a compiler-owned Cornell rendering. Recompile the professional research content with cornell_research_compile; do not write note.md/exercises.md/answers.md directly. The backend authorizes only the proven owned overwrite, preserves both prior versions, then requires a new producer report, fresh independent verification and required final review.' : '',
+        ? run.pending_artifact_repair.prepared
+          ? 'The backend has already reconciled the Cornell generation from its exact durable provenance. Read the three managed artifacts and relevant implementation. Do not recreate research fields or rewrite the managed renderings. Save a fresh producer report about the current artifacts; no independent result or final acceptance is implied. The backend dispatches fresh Verifier and required Reviewer next.'
+          : 'An earlier authenticated producer overwrote a compiler-owned Cornell rendering. Preserve it for backend reconciliation; do not reconstruct its payload or write its renderings directly.' : '',
       `Prior reports:\n${JSON.stringify(run.attempts.filter(item => item.report).slice(-4).map(item => ({ stage: item.stage, report: item.report })))}`,
       'Your current signed-session context establishes the active Bridge and model request. Use runtime_context only for missing execution facts; one completed snapshot suffices. Continue the role work after preflight_complete instead of repeating unchanged context queries. Optional executable paths must come from actual project configuration, never guessed locations. Missing optional languages do not invalidate the session. Client intake setup instructions do not become worker preconditions.',
       stage === 'planning' ? 'Declare required producer execution_steps before freeze. For requested post-check factual reports, declare evidence_report_paths as exact outputs also listed in documentation_paths. Preserve all promised output and independent check criteria.' : '',
@@ -1240,8 +1283,9 @@ class Controller {
     for (const check of selected) {
       run = readState(this.root, id);
       const baseline = fingerprints(this.root, check.baseline_paths);
-      const prior = run.checks.find(item => item.attempt_id === attemptId && item.title === check.title && same(item.baseline, baseline));
-      if (prior) continue;
+      const prior = latestControlledChecks(run.checks, attemptId).find(item => item.title === check.title);
+      if (prior && !controlledCheckMatches(prior, check)) throw new Error('The latest check receipt differs from its immutable prescribed identity.');
+      if (prior && same(prior.baseline, baseline)) continue;
       const checkId = randomUUID(), logPath = `.neomind/controlled/checks/${checkId}.log`;
       const purpose = !check.negative && 'purpose' in check && check.purpose === 'intended-use' ? 'intended-use' as const : 'self-check' as const;
       // A generic check's purpose describes its evidence, not its task family.
@@ -1282,7 +1326,9 @@ class Controller {
       if (signal.aborted) break;
     }
     run = readState(this.root, id);
-    return { checks: run.checks.filter(item => item.attempt_id === attemptId).map(item => ({ title: item.title, passed: item.passed, exit_code: item.exit_code, evidence: item.log_path })) };
+    const phaseTitles = new Set(controlledChecksForPhase(run, contract).flatMap(check => [check.title, ...(check.negative_controls ?? []).map(check => check.title)]));
+    return { checks: latestControlledChecks(run.checks, attemptId).filter(item => phaseTitles.has(item.title))
+      .map(item => ({ title: item.title, passed: item.passed, exit_code: item.exit_code, evidence: item.log_path })) };
   }
   private repair(run: ControlledSnapshot, kind: FailureKind, message: string, diagnosed = false): boolean {
     this.reconcileRepairBudget(run);
@@ -1413,7 +1459,7 @@ class Controller {
       save(this.root, run, 'acceptance-incomplete', run.blocker.message);
       return true;
     }
-    const checks = run.checks.filter(check => check.attempt_id === verifier!.id);
+    const checks = latestControlledChecks(run.checks, verifier!.id);
     const output = fingerprints(this.root, contract.plan.outputs);
     const existingReport = run.finalizing_report_id ? getRecord(this.root, run.finalizing_report_id)
       : loadRecords(this.root).find(record => record.meta.data.kind === 'controlled-final-report' && record.meta.data.workflow_id === run.workflow_id && record.meta.data.epoch_id === run.epoch_id);

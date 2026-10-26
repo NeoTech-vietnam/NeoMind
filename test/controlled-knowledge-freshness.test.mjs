@@ -49,6 +49,19 @@ test('current knowledge routes ready only with its unchanged generation and comp
   assert.deepEqual({ run: a.run, knowledge: a.knowledge }, before, 'Routing must not rewrite notes, evidence, proof or lifecycle.');
 });
 
+test('current knowledge selects the latest same-attempt evidence and a later failure cannot reveal an earlier pass', () => {
+  const a = fixture(), positive = a.run.checks[0];
+  a.run.checks.unshift({ ...positive, id: 'old-failed', passed: false, exit_code: 1, evidence_id: 'OLD-FAILED-EVIDENCE' });
+  assert.equal(a.inspect().ready, true);
+  const history = structuredClone(a.run.checks);
+  a.run.checks.push({ ...positive, id: 'new-failed', passed: false, exit_code: 1 });
+  assert.equal(a.inspect().reason, 'incomplete-verification');
+  assert.deepEqual(a.run.checks.slice(0, -1), history);
+  a.run.checks.at(-1).passed = true;
+  a.run.checks.at(-1).negative = true;
+  assert.equal(a.inspect().reason, 'incomplete-verification', 'Malformed latest receipt cannot expose its old positive counterpart.');
+});
+
 test('a rejected review followed by product repair requires new synthesis after the new verifier', () => {
   const a = fixture();
   a.run.attempts.push({ id: 'failed-review', stage: 'review', role: 'reviewer', state: 'completed', report: { outcome: 'completed', verdict: 'fail' } });

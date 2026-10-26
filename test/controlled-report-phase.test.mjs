@@ -60,6 +60,18 @@ test('post-check documentation source binds one completed producer and actual su
   assert.deepEqual({ run, contract }, before, 'Selecting a normal next stage cannot mutate contract, reports, counters or history.');
 });
 
+test('documentation checkpoint uses latest same-attempt receipt and never falls through a later failed or mismatched execution', () => {
+  const state = fixture(), first = state.run.checks[0];
+  state.run.checks.unshift({ ...first, id: 'old-failed-check', passed: false, exit_code: 1, log_sha256: 'c'.repeat(64) });
+  const before = structuredClone(state.run.checks);
+  assert.equal(pendingEvidenceDocumentation(state.run, state.contract).checks[0].id, first.id);
+  assert.deepEqual(state.run.checks, before, 'Old failures remain immutable history.');
+  for (const patch of [{ passed: false }, { negative: true }, { command: ['node', 'checks/other.cjs'] }, { expected_exit_code: 1 }]) {
+    const changed = { ...state.run, checks: [...state.run.checks, { ...first, id: 'latest-invalid', ...patch }] };
+    assert.equal(pendingEvidenceDocumentation(changed, state.contract), null);
+  }
+});
+
 test('unfinished, stale, cancelled, mismatched and failing checks never authorize evidence documentation', () => {
   for (const mutate of [
     ({ run }) => { run.attempts[0].state = 'running'; },
@@ -112,6 +124,36 @@ function withDeferredReport() {
     negative_controls: [{ title: 'Reject report with fabricated results', command: ['node', 'checks/report.cjs', 'checks/wrong-report.md'], expected_exit_code: 1 }] });
   return state;
 }
+
+test('an omitted phase flag infers only exact declared report argv dependencies and retains every final obligation', () => {
+  const { run, contract } = withDeferredReport(); delete contract.plan.checks[1].after_evidence_reports;
+  const frozen = structuredClone(contract);
+  const report = contract.plan.checks[1];
+  run.checks.push({ id: 'earlier-report-failure', attempt_id: 'verifier-1', title: report.title, command: report.command,
+    negative: false, passed: false, exit_code: 1, expected_exit_code: 0, cancelled: false, log_sha256: 'd'.repeat(64) });
+  assert.deepEqual(controlledChecksForPhase(run, contract).map(check => check.title), ['Positive']);
+  const source = pendingEvidenceDocumentation(run, contract);
+  assert.deepEqual(source.checks.map(check => check.id), ['check-positive', 'check-negative']);
+  run.attempts.push({ id: 'docs-inferred', stage: 'implementation', purpose: 'evidence-documentation', state: 'completed',
+    report: { outcome: 'completed' }, documentation_source: source });
+  assert.deepEqual(controlledChecksForPhase(run, contract), contract.plan.checks);
+  assert.deepEqual(contract, frozen, 'Inference schedules the exact frozen check group without adding flags or waiving final checks.');
+});
+
+test('explicit phase flags win and report names, titles, baselines or argv substrings do not invent dependencies', () => {
+  const explicit = withDeferredReport(); explicit.contract.plan.checks[1].after_evidence_reports = false;
+  assert.equal(controlledChecksForPhase(explicit.run, explicit.contract).length, 2);
+  assert.equal(pendingEvidenceDocumentation(explicit.run, explicit.contract), null, 'Explicit initial report verification still needs its actual proof.');
+  for (const command of [['node', 'checks/report.cjs'], ['node', 'checks/report.cjs', 'docs/report.md.backup'],
+    ['node', 'checks/report.cjs', '--input=docs/report.md']]) {
+    const state = withDeferredReport(); delete state.contract.plan.checks[1].after_evidence_reports;
+    state.contract.plan.checks[1].command = command;
+    assert.equal(controlledChecksForPhase(state.run, state.contract).length, 2);
+  }
+  const noProduct = withDeferredReport(); delete noProduct.contract.plan.checks[1].after_evidence_reports;
+  noProduct.contract.plan.checks.shift();
+  assert.throws(() => controlledChecksForPhase(noProduct.run, noProduct.contract), /at least one product check/);
+});
 
 test('product checkpoint precedes factual report writing and all original checks return for final verification', () => {
   const { run, contract } = withDeferredReport(), frozen = structuredClone(contract);

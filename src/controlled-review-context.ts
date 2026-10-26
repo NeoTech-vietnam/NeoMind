@@ -3,6 +3,7 @@ import { getRecord, now } from './storage.js';
 import { controlledContractForTask, controlledFingerprints } from './controlled-acceptance.js';
 import { controlledPublicReferencePath, controlledSkillInputPath, type ControlledReviewPurpose } from './controlled-tools.js';
 import type { ControlledContract, ControlledSnapshot } from './controlled-workflow.js';
+import { latestControlledChecks } from './controlled-current-checks.js';
 
 /** Current backend facts, not an agent verdict or a new historical baseline. */
 export function controlledReviewContext(root: string, supplied: ControlledSnapshot, expected?: ControlledContract,
@@ -28,7 +29,7 @@ export function controlledReviewContext(root: string, supplied: ControlledSnapsh
   const ordered = [...visible.filter(path => changes.includes(path)), ...visible.filter(path => !changes.includes(path))];
   const latest = (stage: string) => run.attempts.findLast(attempt => attempt.stage === stage && attempt.purpose !== 'specialist' && attempt.purpose !== 'check-review');
   const producer = latest('implementation'), verifier = latest('verification');
-  const currentChecks = verifier ? run.checks.filter(check => check.attempt_id === verifier.id) : [];
+  const currentChecks = verifier ? latestControlledChecks(run.checks, verifier.id) : [];
   const fresh = !!verifier && !!producer && run.attempts.indexOf(verifier) > run.attempts.indexOf(producer);
   // A public report.md named in plan.outputs remains a producer deliverable.
   // It is never confused with the backend final record created after review.

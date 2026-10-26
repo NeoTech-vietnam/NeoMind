@@ -14,6 +14,7 @@ import { readCheckReconciliations, unresolvedControlledChecks, assertFreshVerifi
 import { controlledCornellSelection } from './controlled-cornell-selection.js';
 import { assertCompletedEvidenceDocumentationLineage } from './controlled-report-authority.js';
 import { verifyControlledExecutions } from './controlled-execution-evidence.js';
+import { latestControlledChecks, controlledCheckMatches } from './controlled-current-checks.js';
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const roots = '.neomind/controlled/workflows';
@@ -372,12 +373,12 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
       throw new Error('Verification and review must use independent sessions.');
     if (run.attempts.indexOf(verifier!) <= run.attempts.indexOf(producer!)) throw new Error('Independent verification must follow the latest producer result.');
     if (verifier!.report?.verdict !== 'pass' || gate === 'accepted' && contract.reviewer_required && reviewer?.report?.verdict !== 'pass') throw new Error('Independent verification or required review did not pass.');
-    const checks = run.checks.filter(item => item.attempt_id === verifier!.id);
-    assertFreshVerifierAfterReconciliation(run, reconciliations, verifier!.id, checks);
+    const attemptChecks = run.checks.filter(item => item.attempt_id === verifier!.id);
+    assertFreshVerifierAfterReconciliation(run, reconciliations, verifier!.id, attemptChecks);
+    const checks = latestControlledChecks(attemptChecks, verifier!.id);
     for (const planned of contract.plan.checks) for (const selected of [{ ...planned, negative: false }, ...(planned.negative_controls ?? []).map(value => ({ ...value, negative: true }))]) {
       budget.check();
-      const result = checks.find(item => item.title === selected.title && item.negative === selected.negative &&
-        same(item.planned_command ?? item.command, selected.command) && item.expected_exit_code === (selected.expected_exit_code ?? 0));
+      const result = checks.find(item => item.title === selected.title && controlledCheckMatches(item, selected));
       if (!result || result.invocation_id !== verifier!.invocation_id) throw new Error('Actual prescribed positive/negative execution evidence is missing.');
       evidenceProblems(root, run, contract, result, budget, recordAt);
     }

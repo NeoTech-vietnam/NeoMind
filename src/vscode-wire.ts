@@ -13,6 +13,27 @@ type HostOperation = 'open' | 'run' | 'poll' | 'result' | 'cancel';
 export interface BridgeTimeoutOptions {
   connect_timeout_ms?: number;
   operation_timeouts_ms?: Partial<Record<HostOperation, number>>;
+  /** Trusted caller optimization only; never read from an RPC request body. */
+  prefer_local_dispatch?: boolean;
+  /** Best-effort trusted diagnostics after a successful authorized request. */
+  on_dispatch?: (transport: 'in-process' | 'http') => void;
+}
+interface LocalHost { descriptor: HostDescriptor; dispatch(operation: string, input: unknown): Promise<unknown>; options: BridgeTimeoutOptions }
+const localHosts = new Map<string, LocalHost>();
+function observeDispatch(options: BridgeTimeoutOptions, transport: 'in-process' | 'http'): void {
+  const callback = options.on_dispatch;
+  if (callback) setImmediate(() => { try { callback(transport); } catch { /* Diagnostic callbacks never alter dispatch. */ } });
+}
+function bridgeError(code: string, message: string, status?: number): Error {
+  return Object.assign(new Error(message), { code, ...(status === undefined ? {} : { status_code: status }) });
+}
+function requestTimeout(operation: string, phase: 'connection' | 'response'): Error {
+  return bridgeError(phase === 'connection' ? 'BRIDGE_CONNECTION_TIMEOUT' : 'BRIDGE_RESPONSE_TIMEOUT', phase === 'connection'
+    ? 'VS Code bridge connection timed out; the host may be busy or unavailable.'
+    : `VS Code bridge request timed out during ${Object.hasOwn(operationTimeouts, operation) ? operation : 'control operation'}; inspect host load before retrying. No operation was automatically retried.`);
+}
+function refused(status?: number): Error {
+  return bridgeError('BRIDGE_REFUSED', 'VS Code bridge refused request. Re-enable bridge or resolve host blocker.', status);
 }
 const operationTimeouts: Record<HostOperation, number> = {
   // Selection and signed result validation include bounded filesystem/model-discovery work.
@@ -104,16 +125,45 @@ export function readHost(root: string): HostDescriptor {
 export async function hostRequest(host: HostDescriptor, operation: string, input: unknown, signal?: AbortSignal, options: BridgeTimeoutOptions = {}): Promise<any> {
   const text = bounded(input);
   const connectBudget = checkedTimeout(options.connect_timeout_ms ?? 5000), responseBudget = operationTimeout(operation, options);
+  const local = options.prefer_local_dispatch === true && host.pid === process.pid ? localHosts.get(host.root) : undefined;
+  if (local && local.descriptor.protocol === host.protocol && local.descriptor.pid === host.pid && local.descriptor.port === host.port &&
+      local.descriptor.root === host.root && local.descriptor.instance === host.instance && typeof host.token === 'string' &&
+      host.token.length === local.descriptor.token.length && timingSafeEqual(Buffer.from(host.token), Buffer.from(local.descriptor.token))) {
+    // The exact registered live capability still enters the same host dispatch.
+    // JSON cloning and both configured response ceilings match the wire boundary;
+    // no TCP socket or handshake can wait on this very process's blocked loop.
+    const budget = Math.min(responseBudget, operationTimeout(operation, local.options));
+    return new Promise((fulfill, reject) => {
+      let settled = false;
+      const deadline = Date.now() + budget;
+      const done = (error?: Error, value?: unknown) => {
+        if (settled) return; settled = true; clearTimeout(timer); signal?.removeEventListener('abort', cancelled);
+        if (error) reject(error); else { fulfill(value); observeDispatch(options, 'in-process'); }
+      };
+      const cancelled = () => done(bridgeError('BRIDGE_CANCELLED', 'VS Code bridge request cancelled.'));
+      const timer = setTimeout(() => done(requestTimeout(operation, 'response')), budget);
+      signal?.addEventListener('abort', cancelled, { once: true });
+      if (signal?.aborted) { cancelled(); return; }
+      void Promise.resolve().then(() => {
+        if (settled) return undefined;
+        if (localHosts.get(host.root) !== local) throw refused();
+        return local.dispatch(operation, JSON.parse(text));
+      }).then(value => {
+        if (settled) return;
+        if (localHosts.get(host.root) !== local) { done(refused()); return; }
+        if (Date.now() >= deadline) { done(requestTimeout(operation, 'response')); return; }
+        try { done(undefined, JSON.parse(bounded(value))); } catch { done(refused()); }
+      }, () => done(refused()));
+    });
+  }
   return new Promise((fulfill, reject) => {
     let settled = false, timeoutPhase: 'connection' | 'response' | undefined;
     let timer: NodeJS.Timeout | undefined;
     const done = (error?: Error, value?: unknown) => {
       if (settled) return; settled = true; clearTimeout(timer);
-      if (error) reject(error); else fulfill(value);
+      if (error) reject(error); else { fulfill(value); observeDispatch(options, 'http'); }
     };
-    const timedOut = () => new Error(timeoutPhase === 'connection'
-      ? 'VS Code bridge connection timed out; the host may be busy or unavailable.'
-      : `VS Code bridge request timed out during ${Object.hasOwn(operationTimeouts, operation) ? operation : 'control operation'}; inspect host load before retrying. No operation was automatically retried.`);
+    const timedOut = () => requestTimeout(operation, timeoutPhase === 'connection' ? 'connection' : 'response');
     // Control IPC can follow synchronous local hashing/review work. A pooled idle
     // socket may expire while that work blocks the event loop; never replay a
     // mutation after ECONNRESET or reuse a possibly expired connection.
@@ -121,9 +171,9 @@ export async function hostRequest(host: HostDescriptor, operation: string, input
       headers: { authorization: `Bearer ${host.token}`, 'x-neomind-host': host.instance,
         'content-type': 'application/json', 'content-length': Buffer.byteLength(text) }, signal }, async (res) => {
       try {
+        if (res.statusCode === 408) { res.resume(); timeoutPhase = 'response'; throw timedOut(); }
         const result = await body(res);
-        if (res.statusCode === 408 && result?.error === 'response-timeout') { timeoutPhase = 'response'; throw timedOut(); }
-        if (res.statusCode !== 200) throw new Error('VS Code bridge refused request. Re-enable bridge or resolve host blocker.');
+        if (res.statusCode !== 200) throw refused(res.statusCode);
         done(undefined, result);
       } catch (error) { done(error instanceof Error ? error : new Error('VS Code bridge returned invalid bounded state.')); }
     });
@@ -135,7 +185,7 @@ export async function hostRequest(host: HostDescriptor, operation: string, input
       };
       if (socket.connecting) socket.once('connect', connected); else connected();
     });
-    req.on('error', () => done(timeoutPhase ? timedOut() : new Error(signal?.aborted
+    req.on('error', () => done(timeoutPhase ? timedOut() : bridgeError(signal?.aborted ? 'BRIDGE_CANCELLED' : 'BRIDGE_CONNECTION_FAILED', signal?.aborted
       ? 'VS Code bridge request cancelled.'
       : 'VS Code bridge connection failed or descriptor is stale. Re-enable bridge.')));
     req.end(text);
@@ -153,6 +203,7 @@ export async function serveHost(root: string, dispatch: (operation: string, inpu
     rmSync(path, { force: true });
   }
   const token = randomBytes(32).toString('hex'), instance = randomBytes(32).toString('hex');
+  const dispatchResult = async (operation: string, input: unknown) => JSON.parse(bounded(await dispatch(operation, input)));
   const server = createServer(async (req, res) => {
     let responseTimer: NodeJS.Timeout | undefined;
     let expired = false;
@@ -169,7 +220,7 @@ export async function serveHost(root: string, dispatch: (operation: string, inpu
         expired = true;
         if (!res.destroyed) res.writeHead(408, { 'content-type': 'application/json' }).end('{"error":"response-timeout"}');
       }, operationTimeout(operation, options));
-      const value = await dispatch(operation, input);
+      const value = await dispatchResult(operation, input);
       if (!expired && !res.destroyed) res.writeHead(200, { 'content-type': 'application/json' }).end(bounded(value));
     } catch {
       // Never echo transport inputs, tokens, provider error messages, or credentials.
@@ -183,10 +234,15 @@ export async function serveHost(root: string, dispatch: (operation: string, inpu
   await new Promise<void>((done, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', done); });
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('VS Code loopback binding failed.');
+  const descriptor: HostDescriptor = { protocol: bridgeProtocol, root, port: address.port, token, instance, pid: process.pid };
   try {
-    writeFileSync(path, JSON.stringify({ protocol: bridgeProtocol, root, port: address.port, token, instance, pid: process.pid }), { mode: 0o600, flag: 'wx' });
+    writeFileSync(path, JSON.stringify(descriptor), { mode: 0o600, flag: 'wx' });
   } catch (error) { server.close(); throw error; }
+  const local: LocalHost = { descriptor, dispatch: dispatchResult, options: { ...options,
+    operation_timeouts_ms: { ...options.operation_timeouts_ms } } };
+  localHosts.set(root, local);
   return { instance, close: async () => {
+    if (localHosts.get(root) === local) localHosts.delete(root);
     try {
       if (readHost(root).instance === instance) rmSync(path);
     } catch { /* Missing or replaced descriptor must not prevent shutdown. */ }

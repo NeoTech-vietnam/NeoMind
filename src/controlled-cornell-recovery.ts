@@ -1,9 +1,10 @@
 import { lstatSync, readFileSync } from 'node:fs';
+import { parse } from 'yaml';
 import { canonicalJson, observeInvocation } from './routing.js';
 import { controlledAcceptanceBudget, controlledContractForTask, controlledRecordView } from './controlled-acceptance.js';
 import { evidenceRecordFingerprint } from './evidence-inputs.js';
 import { assertControlledPayloadCurrent } from './controlled-payload.js';
-import { hash, safePath } from './storage.js';
+import { hash, safePath, validateMetadata } from './storage.js';
 import type { ControlledCornellResult } from './controlled-cornell-sources.js';
 import type { CornellOwnedArtifactRecovery } from './notes.js';
 
@@ -31,11 +32,25 @@ export function controlledCornellOwnedOverwriteRecovery(root: string, workflowId
 }
 
 function authenticate(root: string, workflowId: string, taskId: string, saved: ControlledCornellResult,
-  expected?: ControlledCornellOwnedOverwriteRecovery, resumed?: Record<string, string>): ControlledCornellOwnedOverwriteRecovery | undefined {
+  expected?: ControlledCornellOwnedOverwriteRecovery, resumed?: Record<string, string>, historical?: { operation: string }): ControlledCornellOwnedOverwriteRecovery | undefined {
   const budget = controlledAcceptanceBudget(root), recordAt = controlledRecordView(root, budget.check);
   const { run, contract } = controlledContractForTask(root, recordAt(taskId), budget.check, recordAt);
-  const latest = run.cornell_results?.findLast(result => result.note_id === saved.note_id);
-  const note = recordAt(saved.note_id), data = note.meta.data;
+  const latest = historical ? run.cornell_results?.find(result => same(result, saved)) : run.cornell_results?.findLast(result => result.note_id === saved.note_id);
+  let note = recordAt(saved.note_id);
+  if (historical) {
+    const marker = note.meta.data.backend_artifact_restoration as { operation?: string; previous_revision?: number } | undefined;
+    const history = note.meta.data.revision_history as { revision: number; request_hash: string; record_path: string; record_hash: string }[] | undefined;
+    const entry = history?.at(-1), base = entry && `.neomind/evidence/cornell-history/${saved.note_id}/${entry.revision}-${entry.record_hash}`;
+    if (!/^[a-f0-9]{64}$/.test(historical.operation) || marker?.operation !== historical.operation || !entry ||
+        entry.request_hash !== historical.operation || entry.revision !== marker.previous_revision || note.meta.revision !== entry.revision + 1 ||
+        entry.record_path !== `${base}/record.md`)
+      throw new Error('Completed Cornell restoration lacks its exact immutable source-record lineage.');
+    const recordBytes = bytes(root, entry.record_path), match = /^---\n([\s\S]*?)\n---(?:\n|$)([\s\S]*)$/.exec(recordBytes.toString('utf8').replace(/\r\n/g, '\n'));
+    if (hash(recordBytes) !== entry.record_hash || !match) throw new Error('Completed Cornell restoration source record changed.');
+    note = { meta: validateMetadata(parse(match[1]!)), body: match[2]!, path: note.path };
+    if (note.meta.revision !== entry.revision) throw new Error('Completed Cornell restoration source revision changed.');
+  }
+  const data = note.meta.data;
   const practice = data.practice as { exercise_path?: string; answer_path?: string } | undefined;
   const directory = typeof data.artifact_path === 'string' ? data.artifact_path.replace(/\/note\.md$/, '') : '';
   const paths = ['note.md', 'exercises.md', 'answers.md'].map(name => `${directory}/${name}`);
@@ -109,8 +124,8 @@ function authenticate(root: string, workflowId: string, taskId: string, saved: C
 
 /** Called again under the notes revision lock. Prepared rendering hashes are only supplied by the immutable writer checkpoint. */
 export function authenticateControlledCornellOwnedOverwrite(root: string, saved: ControlledCornellResult,
-  proof: ControlledCornellOwnedOverwriteRecovery, resumed?: Record<string, string>): CornellOwnedArtifactRecovery {
-  const verified = authenticate(root, proof.workflow_id, proof.task_id, saved, proof, resumed);
+  proof: ControlledCornellOwnedOverwriteRecovery, resumed?: Record<string, string>, historical?: { operation: string }): CornellOwnedArtifactRecovery {
+  const verified = authenticate(root, proof.workflow_id, proof.task_id, saved, proof, resumed, historical);
   if (!verified) throw new Error('Cornell recovery lost its exact owned overwrite proof.');
   return { proof: verified, artifacts: Object.fromEntries(Object.entries(verified.artifacts).map(([path, item]) => [path, {
     original: bytes(root, item.canonical_path), overwritten: bytes(root, item.overwritten_path),

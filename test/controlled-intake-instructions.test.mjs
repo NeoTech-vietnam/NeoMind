@@ -35,6 +35,10 @@ test('generated Copilot and Codex intake preserve product obligations and separa
     expected ??= guidance;
     assert.equal(guidance, expected, surface.path);
     assert.match(guidance, /full product goal.*all acceptance, process, scope, preservation and safety obligations/, surface.path);
+    const verbatim = instructions.split(/\r?\n/).find(line => line.startsWith('For a new intake,'));
+    assert.ok(verbatim, surface.path);
+    assert.match(verbatim, /copy the complete user requirement verbatim/, surface.path);
+    assert.match(verbatim, /Do not append runtime operating instructions, inferred review gates, extra acceptance criteria or invented report files/, surface.path);
     assert.match(guidance, /execution_mode.*manager_status.*manager_control.*workflow_id and action/, surface.path);
     assert.match(guidance, /Preserve actual authentication, storage, execution or orchestration product requirements/, surface.path);
     assert.match(guidance, /cannot be separated unambiguously, retain the complete request.*opaque input conservatively/, surface.path);
@@ -51,6 +55,7 @@ test('actual manager_run MCP descriptions preserve complete obligations and keep
   assert.ok(manager);
   const { requirement, requirements } = manager.inputSchema.properties;
   for (const input of [requirement, requirements]) {
+    assert.match(input.description, /user requirement verbatim.*do not append runtime operating instructions, inferred review gates, extra criteria or invented report files/);
     assert.match(input.description, /acceptance, process, scope, preservation and safety obligations/);
     assert.match(input.description, /execution_mode.*manager_status.*manager_control/);
     assert.match(input.description, /(?:authentication, storage, execution and orchestration requirements|actual sensitive product changes)/);

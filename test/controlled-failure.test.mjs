@@ -23,3 +23,12 @@ test('signing and filesystem failures have actionable safe classifications', () 
   assert.equal(controlledFailure(Object.assign(new Error(), { code: 'Bearer PRIVATE' })).code, 'UNEXPECTED_RUNTIME_FAILURE');
   assert.equal(controlledFailure(Object.assign(new Error(), { code: 'PRIVATE_PROVIDER_TOKEN' })).code, 'UNEXPECTED_RUNTIME_FAILURE');
 });
+
+test('typed backend reconciliation failures retain their state code without copying untrusted exception content', () => {
+  for (const code of ['STATE_UNCERTAIN', 'INPUT_CHANGED', 'ACTOR_INACTIVE', 'ACCEPTANCE_INCOMPLETE']) {
+    const result = controlledFailure(Object.assign(new Error('Bearer PRIVATE_TOKEN D:/private/artifact'), { code }));
+    assert.equal(result.code, code); assert.equal(result.kind, 'protocol');
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_TOKEN|D:\/private/);
+    assert.ok(result.next_action.length > 20);
+  }
+});

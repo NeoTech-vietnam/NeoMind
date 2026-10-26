@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, relative } from 'node:path';
+import { replaceWorkspaceFile } from './workspace.js';
 import {
   atomicWrite,
   createRecord,
@@ -225,6 +226,123 @@ function revisionSafety(root: string, note: ProjectRecord, paths: string[]): voi
     }
   }
 }
+/** Shared immutable history format for semantic revisions and exact backend restorations.
+ * Caller holds the note operation lock and the engineering-record commit lock. */
+function archiveCornellRevision(root: string, current: ProjectRecord, artifacts: Record<string, string>,
+  requestHash: string, reason: string, authorizeRecovery?: CornellWritePolicy['recover_owned_artifacts']): Record<string, unknown> {
+  const raw = readFileSync(safePath(root, current.path));
+  const base = `.neomind/evidence/cornell-history/${current.meta.id}/${current.meta.revision}-${hash(raw)}`;
+  const intentPath = `${base}/intent.json`;
+  const oldHashes = current.meta.data.artifact_hashes as Record<string, string>;
+  if (
+    !oldHashes ||
+    Object.keys(oldHashes).length !== 3 ||
+    Object.keys(artifacts).some((file) => typeof oldHashes[file] !== 'string')
+  )
+    throw new Error('Draft Cornell revision requires all three recorded artifact hashes.');
+  const recovery = authorizeRecovery?.(current);
+  if (recovery && (!Object.keys(recovery.artifacts).length || Object.entries(recovery.artifacts).some(([file, value]) =>
+    !Object.hasOwn(oldHashes, file) || !Buffer.isBuffer(value.original) || !Buffer.isBuffer(value.overwritten) ||
+    hash(value.original) !== oldHashes[file] || hash(value.overwritten) === oldHashes[file])))
+    throw new Error('Owned Cornell recovery must retain exact canonical and overwritten artifact bytes.');
+  const recoveryProof = recovery ? JSON.stringify({ schema_version: 1, kind: 'owned-cornell-overwrite-recovery',
+    proof: recovery.proof, canonical_hashes: Object.fromEntries(Object.entries(recovery.artifacts).map(([file, value]) => [file, hash(value.original)])),
+    overwritten_hashes: Object.fromEntries(Object.entries(recovery.artifacts).map(([file, value]) => [file, hash(value.overwritten)])) }, null, 2) + '\n' : undefined;
+  const intent =
+    JSON.stringify(
+      {
+        schema_version: 1,
+        note_id: current.meta.id,
+        expected_revision: current.meta.revision,
+        record_hash: hash(raw),
+        request_hash: requestHash,
+        old_hashes: oldHashes,
+        new_hashes: artifacts,
+        ...(recoveryProof ? { owned_artifact_recovery_sha256: hash(recoveryProof) } : {}),
+      },
+      null,
+      2,
+    ) + '\n';
+  const resume = existsSync(safePath(root, intentPath));
+  if (resume && readFileSync(safePath(root, intentPath), 'utf8') !== intent)
+    throw new Error('A conflicting Cornell revision intent already owns these files.');
+  for (const [file, oldHash] of Object.entries(oldHashes)) {
+    if (!existsSync(safePath(root, file)))
+      throw new Error(`Preserve missing Cornell artifact: ${file}`);
+    const currentHash = hash(readFileSync(safePath(root, file)));
+    if (currentHash !== oldHash && !(resume && currentHash === artifacts[file]) &&
+        !(recovery?.artifacts[file] && currentHash === hash(recovery.artifacts[file].overwritten)))
+      throw new Error(`Preserve user-edited or missing Cornell artifact: ${file}`);
+  }
+  const historyArtifacts: CornellHistory['artifacts'] = {};
+  const saveHistory = (file: string, bytes: string | Buffer) => {
+    if (existsSync(safePath(root, file))) {
+      if (hash(readFileSync(safePath(root, file))) !== hash(bytes))
+        throw new Error('Immutable Cornell history was changed.');
+    } else atomicWrite(safePath(root, file), bytes);
+  };
+  saveHistory(`${base}/record.md`, raw);
+  for (const [file, checksum] of Object.entries(oldHashes)) {
+    const historyPath = `${base}/artifacts/${file}`;
+    const bytes = resume
+      ? readFileSync(safePath(root, historyPath))
+      : recovery?.artifacts[file]?.original ?? readFileSync(safePath(root, file));
+    if (hash(bytes) !== checksum)
+      throw new Error('Cornell original artifact history differs from its recorded hash.');
+    saveHistory(historyPath, bytes);
+    historyArtifacts[file] = { history_path: historyPath, sha256: checksum };
+  }
+  let ownedArtifactRecovery: CornellHistory['owned_artifact_recovery'];
+  if (recovery && recoveryProof) {
+    const proofPath = `${base}/owned-overwrite/proof.json`, overwritten: NonNullable<CornellHistory['owned_artifact_recovery']>['artifacts'] = {};
+    saveHistory(proofPath, recoveryProof);
+    for (const [file, value] of Object.entries(recovery.artifacts)) {
+      const historyPath = `${base}/owned-overwrite/artifacts/${file}`;
+      saveHistory(historyPath, value.overwritten);
+      overwritten[file] = { history_path: historyPath, sha256: hash(value.overwritten) };
+    }
+    ownedArtifactRecovery = { proof_path: proofPath, proof_hash: hash(recoveryProof), artifacts: overwritten };
+  }
+  saveHistory(intentPath, intent);
+  const entry: CornellHistory = {
+    revision: current.meta.revision,
+    reason: reason,
+    request_hash: requestHash,
+    record_path: `${base}/record.md`,
+    record_hash: hash(raw),
+    intent_path: intentPath,
+    intent_hash: hash(intent),
+    artifacts: historyArtifacts,
+    ...(ownedArtifactRecovery ? { owned_artifact_recovery: ownedArtifactRecovery } : {}),
+  };
+  return {
+    revision_history: [
+      ...((current.meta.data.revision_history as CornellHistory[]) ?? []),
+      entry,
+    ],
+    output_paths: [
+      ...new Set([
+        ...(Array.isArray(current.meta.data.output_paths)
+          ? (current.meta.data.output_paths as string[])
+          : []),
+        entry.record_path,
+        intentPath,
+        ...Object.values(historyArtifacts).map((artifact) => artifact.history_path),
+        ...(ownedArtifactRecovery ? [ownedArtifactRecovery.proof_path, ...Object.values(ownedArtifactRecovery.artifacts).map(artifact => artifact.history_path)] : []),
+      ]),
+    ],
+    prior_invocation_ids: [
+      ...new Set([
+        ...(Array.isArray(current.meta.data.prior_invocation_ids)
+          ? (current.meta.data.prior_invocation_ids as string[])
+          : []),
+        ...(typeof current.meta.data.invocation_id === 'string'
+          ? [current.meta.data.invocation_id]
+          : []),
+      ]),
+    ],
+  };
+}
 function text(value: unknown, label: string): asserts value is string {
   if (
     typeof value !== 'string' ||
@@ -447,6 +565,40 @@ function linkProblems(
 /** Create visible narrative once; managed knowledge holds references and provenance only. */
 export function createCornellNote(root: string, input: CornellInput, policy?: CornellWritePolicy): ProjectRecord {
   return writeCornellNote(root, input, undefined, policy);
+}
+/** Backend-only restoration of retained compiler bytes. No new prose, sources or artifact hashes are inferred. */
+export function restoreCornellOwnedDraft(root: string, id: string, expectedRevision: number, operation: string,
+  reason: string, policy: { recover_owned_artifacts: NonNullable<CornellWritePolicy['recover_owned_artifacts']>; assertActive(): void }): ProjectRecord {
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1 || !/^[a-f0-9]{64}$/.test(operation) || reason.trim().length < 24)
+    throw new Error('Owned Cornell restoration needs a valid backend operation and expected draft revision.');
+  const original = getRecord(root, id), path = String(original.meta.data.artifact_path);
+  return withOperationLock(root, `cornell-${hash(path).slice(0, 32)}`, () => {
+    const patch: Parameters<typeof updateRecord>[2] = {};
+    return updateRecord(root, id, patch, undefined, current => {
+      policy.assertActive();
+      if (current.meta.revision !== expectedRevision) throw new Error('Owned Cornell restoration is stale; preserve the current generation.');
+      const artifacts = current.meta.data.artifact_hashes as Record<string, string>;
+      revisionSafety(root, current, Object.keys(artifacts ?? {}));
+      // The shared archival boundary authenticates the exact original/current
+      // bytes again while this engineering record is locked.
+      const history = archiveCornellRevision(root, current, artifacts, operation, reason, policy.recover_owned_artifacts);
+      const recovery = policy.recover_owned_artifacts(current);
+      for (const [file, value] of Object.entries(recovery.artifacts)) {
+        const content = value.original.toString('utf8');
+        if (!Buffer.from(content, 'utf8').equals(value.original)) throw new Error('Owned Cornell restoration requires exact retained UTF-8 compiler bytes.');
+        const currentHash = hash(readFileSync(safePath(root, file)));
+        if (currentHash === artifacts[file]) continue; // Exact interrupted restore; never a second revision.
+        replaceWorkspaceFile(root, { path: file, content, expected_hash: currentHash, authorize: () => {
+          policy.assertActive(); policy.recover_owned_artifacts(current);
+        } });
+      }
+      policy.assertActive();
+      if (Object.entries(artifacts).some(([file, digest]) => hash(readFileSync(safePath(root, file))) !== digest))
+        throw new Error('Cornell restoration cannot commit over concurrent artifact changes.');
+      patch.data = { ...current.meta.data, ...history,
+        backend_artifact_restoration: { schema_version: 1, kind: 'owned-cornell-overwrite', operation, previous_revision: expectedRevision } };
+    });
+  });
 }
 export function reviseCornellNote(
   root: string,
@@ -733,119 +885,7 @@ function writeCornellNote(
         if (current.meta.revision !== revision.expected_revision)
           throw new Error('Cornell revision is stale; read the current note before repair.');
         revisionSafety(root, current, Object.keys(artifacts));
-        const raw = readFileSync(safePath(root, current.path));
-        const base = `.neomind/evidence/cornell-history/${current.meta.id}/${current.meta.revision}-${hash(raw)}`;
-        const intentPath = `${base}/intent.json`;
-        const oldHashes = current.meta.data.artifact_hashes as Record<string, string>;
-        if (
-          !oldHashes ||
-          Object.keys(oldHashes).length !== 3 ||
-          Object.keys(artifacts).some((file) => typeof oldHashes[file] !== 'string')
-        )
-          throw new Error('Draft Cornell revision requires all three recorded artifact hashes.');
-        const recovery = policy?.recover_owned_artifacts?.(current);
-        if (recovery && (!Object.keys(recovery.artifacts).length || Object.entries(recovery.artifacts).some(([file, value]) =>
-          !Object.hasOwn(oldHashes, file) || !Buffer.isBuffer(value.original) || !Buffer.isBuffer(value.overwritten) ||
-          hash(value.original) !== oldHashes[file] || hash(value.overwritten) === oldHashes[file])))
-          throw new Error('Owned Cornell recovery must retain exact canonical and overwritten artifact bytes.');
-        const recoveryProof = recovery ? JSON.stringify({ schema_version: 1, kind: 'owned-cornell-overwrite-recovery',
-          proof: recovery.proof, canonical_hashes: Object.fromEntries(Object.entries(recovery.artifacts).map(([file, value]) => [file, hash(value.original)])),
-          overwritten_hashes: Object.fromEntries(Object.entries(recovery.artifacts).map(([file, value]) => [file, hash(value.overwritten)])) }, null, 2) + '\n' : undefined;
-        const intent =
-          JSON.stringify(
-            {
-              schema_version: 1,
-              note_id: current.meta.id,
-              expected_revision: current.meta.revision,
-              record_hash: hash(raw),
-              request_hash: requestHash,
-              old_hashes: oldHashes,
-              new_hashes: artifacts,
-              ...(recoveryProof ? { owned_artifact_recovery_sha256: hash(recoveryProof) } : {}),
-            },
-            null,
-            2,
-          ) + '\n';
-        const resume = existsSync(safePath(root, intentPath));
-        if (resume && readFileSync(safePath(root, intentPath), 'utf8') !== intent)
-          throw new Error('A conflicting Cornell revision intent already owns these files.');
-        for (const [file, oldHash] of Object.entries(oldHashes)) {
-          if (!existsSync(safePath(root, file)))
-            throw new Error(`Preserve missing Cornell artifact: ${file}`);
-          const currentHash = hash(readFileSync(safePath(root, file)));
-          if (currentHash !== oldHash && !(resume && currentHash === artifacts[file]) &&
-              !(recovery?.artifacts[file] && currentHash === hash(recovery.artifacts[file].overwritten)))
-            throw new Error(`Preserve user-edited or missing Cornell artifact: ${file}`);
-        }
-        const historyArtifacts: CornellHistory['artifacts'] = {};
-        const saveHistory = (file: string, bytes: string | Buffer) => {
-          if (existsSync(safePath(root, file))) {
-            if (hash(readFileSync(safePath(root, file))) !== hash(bytes))
-              throw new Error('Immutable Cornell history was changed.');
-          } else atomicWrite(safePath(root, file), bytes);
-        };
-        saveHistory(`${base}/record.md`, raw);
-        for (const [file, checksum] of Object.entries(oldHashes)) {
-          const historyPath = `${base}/artifacts/${file}`;
-          const bytes = resume
-            ? readFileSync(safePath(root, historyPath))
-            : recovery?.artifacts[file]?.original ?? readFileSync(safePath(root, file));
-          if (hash(bytes) !== checksum)
-            throw new Error('Cornell original artifact history differs from its recorded hash.');
-          saveHistory(historyPath, bytes);
-          historyArtifacts[file] = { history_path: historyPath, sha256: checksum };
-        }
-        let ownedArtifactRecovery: CornellHistory['owned_artifact_recovery'];
-        if (recovery && recoveryProof) {
-          const proofPath = `${base}/owned-overwrite/proof.json`, overwritten: NonNullable<CornellHistory['owned_artifact_recovery']>['artifacts'] = {};
-          saveHistory(proofPath, recoveryProof);
-          for (const [file, value] of Object.entries(recovery.artifacts)) {
-            const historyPath = `${base}/owned-overwrite/artifacts/${file}`;
-            saveHistory(historyPath, value.overwritten);
-            overwritten[file] = { history_path: historyPath, sha256: hash(value.overwritten) };
-          }
-          ownedArtifactRecovery = { proof_path: proofPath, proof_hash: hash(recoveryProof), artifacts: overwritten };
-        }
-        saveHistory(intentPath, intent);
-        const entry: CornellHistory = {
-          revision: current.meta.revision,
-          reason: revision.reason,
-          request_hash: requestHash,
-          record_path: `${base}/record.md`,
-          record_hash: hash(raw),
-          intent_path: intentPath,
-          intent_hash: hash(intent),
-          artifacts: historyArtifacts,
-          ...(ownedArtifactRecovery ? { owned_artifact_recovery: ownedArtifactRecovery } : {}),
-        };
-        patch.data = {
-          ...patch.data,
-          revision_history: [
-            ...((current.meta.data.revision_history as CornellHistory[]) ?? []),
-            entry,
-          ],
-          output_paths: [
-            ...new Set([
-              ...(Array.isArray(current.meta.data.output_paths)
-                ? (current.meta.data.output_paths as string[])
-                : []),
-              entry.record_path,
-              intentPath,
-              ...Object.values(historyArtifacts).map((artifact) => artifact.history_path),
-              ...(ownedArtifactRecovery ? [ownedArtifactRecovery.proof_path, ...Object.values(ownedArtifactRecovery.artifacts).map(artifact => artifact.history_path)] : []),
-            ]),
-          ],
-          prior_invocation_ids: [
-            ...new Set([
-              ...(Array.isArray(current.meta.data.prior_invocation_ids)
-                ? (current.meta.data.prior_invocation_ids as string[])
-                : []),
-              ...(typeof current.meta.data.invocation_id === 'string'
-                ? [current.meta.data.invocation_id]
-                : []),
-            ]),
-          ],
-        };
+        patch.data = { ...patch.data, ...archiveCornellRevision(root, current, artifacts, requestHash, revision.reason, policy?.recover_owned_artifacts) };
         for (const [file, content] of Object.entries(proposed))
           atomicWrite(safePath(root, file), content);
       });

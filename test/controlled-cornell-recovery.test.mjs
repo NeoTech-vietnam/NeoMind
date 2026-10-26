@@ -157,3 +157,81 @@ test('a changed file after owned recovery eligibility is rechecked under the act
   assert.equal(injected, true); assert.match(readFileSync(safePath(a.root, a.path), 'utf8'), /Concurrent user edit/);
   assert.equal(getRecord(a.root, a.note.meta.id).meta.revision, a.note.meta.revision);
 });
+
+test('backend canonical restoration preserves semantic provenance and creates one managed revision without a model payload', async t => {
+  const { restoreControlledCornellOwnedArtifacts: restore } = await import('../dist/controlled-cornell-restore.js');
+  const a = fixture(t), original = getRecord(a.root, a.note.meta.id), first = restore(a.root, a.context.workflow_id, a.context.task_id, a.saved);
+  assert.equal(first.replayed, false); assert.equal(first.note.meta.revision, original.meta.revision + 1);
+  assert.equal(first.result.input_hash, a.saved.input_hash); assert.equal(first.result.compiled_note_hash, a.saved.compiled_note_hash);
+  assert.deepEqual(first.result.artifact_hashes, a.saved.artifact_hashes);
+  assert.equal(first.note.body, original.body); assert.deepEqual(first.note.meta.data.research, original.meta.data.research);
+  assert.deepEqual(first.note.meta.data.sources, original.meta.data.sources); assert.deepEqual(first.note.meta.data.demonstration, original.meta.data.demonstration);
+  assert.equal(validateCornellNote(a.root, first.note.meta.id).ok, true);
+  const history = first.note.meta.data.revision_history.at(-1);
+  assert.deepEqual(readFileSync(safePath(a.root, history.artifacts[a.path].history_path)), a.canonical);
+  assert.deepEqual(readFileSync(safePath(a.root, history.owned_artifact_recovery.artifacts[a.path].history_path)), a.overwritten);
+  const again = restore(a.root, a.context.workflow_id, a.context.task_id, a.saved);
+  assert.equal(again.replayed, true); assert.equal(again.note.meta.revision, first.note.meta.revision); assert.deepEqual(again.result, first.result);
+  assert.equal(a.run.status, 'running'); assert.equal(a.run.repairs, 1); assert.equal(a.run.cornell_results.length, 1);
+});
+
+test('canonical restoration reconciles exact partially restored files and a committed revision with lost result', async t => {
+  const { restoreControlledCornellOwnedArtifacts: restore } = await import('../dist/controlled-cornell-restore.js');
+  for (const mode of ['partial-file', 'lost-result']) {
+    const a = fixture(t), originalWrite = fs.writeFileSync, originalRename = fs.renameSync; let injected = false;
+    fs.writeFileSync = function(file, ...args) {
+      if (mode === 'lost-result' && !injected && typeof file === 'string' && /\/controlled\/cornell-restorations\/[^/]+\/result\.json\./.test(file.replaceAll('\\','/'))) {
+        injected = true; throw Object.assign(new Error('Injected lost restoration result.'), { code: 'EIO' });
+      }
+      return Reflect.apply(originalWrite, this, [file, ...args]);
+    };
+    fs.renameSync = function(source, target) {
+      const result = Reflect.apply(originalRename, this, [source, target]);
+      if (mode === 'partial-file' && !injected && target === safePath(a.root, a.path)) {
+        injected = true; throw Object.assign(new Error('Injected response loss after exact canonical file replacement.'), { code: 'EIO' });
+      }
+      return result;
+    }; syncBuiltinESMExports();
+    try { assert.throws(() => restore(a.root, a.context.workflow_id, a.context.task_id, a.saved), error => error.code === 'STATE_UNCERTAIN'); }
+    finally { fs.writeFileSync = originalWrite; fs.renameSync = originalRename; syncBuiltinESMExports(); }
+    assert.equal(injected, true);
+    const recovered = restore(a.root, a.context.workflow_id, a.context.task_id, a.saved);
+    assert.equal(recovered.note.meta.revision, a.note.meta.revision + 1); assert.equal(recovered.note.meta.data.revision_history.length, 1);
+    assert.equal(validateCornellNote(a.root, recovered.note.meta.id).ok, true);
+    assert.equal(restore(a.root, a.context.workflow_id, a.context.task_id, a.saved).note.meta.revision, recovered.note.meta.revision);
+  }
+});
+
+test('canonical restoration refuses concurrent edits at CAS commit and reauthenticates source history on replay', async t => {
+  const { restoreControlledCornellOwnedArtifacts: restore } = await import('../dist/controlled-cornell-restore.js');
+  const a = fixture(t), originalWrite = fs.writeFileSync; let injected = false;
+  fs.writeFileSync = function(file, ...args) {
+    const result = Reflect.apply(originalWrite, this, [file, ...args]);
+    if (!injected && typeof file === 'string' && file.startsWith(safePath(a.root, a.path) + '.')) {
+      injected = true; originalWrite(safePath(a.root, a.path), '# Concurrent user edit while a canonical restoration is prepared.\n');
+    }
+    return result;
+  }; syncBuiltinESMExports();
+  try { assert.throws(() => restore(a.root, a.context.workflow_id, a.context.task_id, a.saved), error => error.code === 'STATE_UNCERTAIN'); }
+  finally { fs.writeFileSync = originalWrite; syncBuiltinESMExports(); }
+  assert.equal(injected, true); assert.match(readFileSync(safePath(a.root, a.path), 'utf8'), /Concurrent user edit/);
+  assert.equal(getRecord(a.root, a.note.meta.id).meta.revision, a.note.meta.revision);
+  assert.throws(() => restore(a.root, a.context.workflow_id, a.context.task_id, a.saved));
+  const b = fixture(t), restored = restore(b.root, b.context.workflow_id, b.context.task_id, b.saved), snapshot = readFileSync(safePath(b.root, b.path));
+  writeFileSync(safePath(b.root, `${b.folder}/completion.json`), '{}');
+  assert.throws(() => restore(b.root, b.context.workflow_id, b.context.task_id, b.saved));
+  assert.deepEqual(readFileSync(safePath(b.root, b.path)), snapshot); assert.equal(getRecord(b.root, b.note.meta.id).meta.revision, restored.note.meta.revision);
+});
+
+test('canonical restoration cannot replace a newer committed semantic compiler generation or bypass its owner guard', async t => {
+  const { restoreControlledCornellOwnedArtifacts: restore } = await import('../dist/controlled-cornell-restore.js');
+  const a = fixture(t), revised = compileCornellResearch(a.root, { ...a.input, discussion: `${a.input.discussion}\n\n[expected] A newer independently reviewable research conclusion remains authoritative [S1].` });
+  const newer = persistControlledCornellNote(a.root, revised, a.context, { recover_owned_overwrite: true });
+  a.run.cornell_results.push(controlledCornellResult(revised, newer)); a.save();
+  const current = readFileSync(safePath(a.root, a.path));
+  assert.throws(() => restore(a.root, a.context.workflow_id, a.context.task_id, a.saved));
+  assert.deepEqual(readFileSync(safePath(a.root, a.path)), current); assert.equal(getRecord(a.root, a.note.meta.id).meta.revision, newer.meta.revision);
+  const b = fixture(t); let guarded = 0;
+  assert.throws(() => restore(b.root, b.context.workflow_id, b.context.task_id, b.saved, { assertActive() { guarded++; throw new Error('Stopped owner.'); } }));
+  assert.equal(guarded, 1); assert.deepEqual(readFileSync(safePath(b.root, b.path)), b.overwritten);
+});

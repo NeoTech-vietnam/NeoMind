@@ -2,6 +2,7 @@ import { posix } from 'node:path';
 import type { ControlledContract, ControlledSnapshot } from './controlled-workflow.js';
 import type { ProjectRecord } from './types.js';
 import { evidenceRecordFingerprint } from './evidence-inputs.js';
+import { latestControlledChecks, controlledCheckMatches } from './controlled-current-checks.js';
 
 const key = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
 function directory(value: string): string {
@@ -63,14 +64,12 @@ export function controlledKnowledgeFreshness(run: Pick<ControlledSnapshot,
   const verifier = run.attempts[verifierIndex]!;
   if (verifier.state !== 'completed' || verifier.report?.outcome !== 'completed' || verifier.report.verdict !== 'pass')
     return result('incomplete-verification');
-  const checks = run.checks.filter(check => check.attempt_id === verifier.id);
+  const checks = latestControlledChecks(run.checks, verifier.id);
   const currentPositive: string[] = [];
   for (const planned of contract.plan.checks) {
     const expectations = [{ ...planned, negative: false }, ...(planned.negative_controls ?? []).map(check => ({ ...check, negative: true }))];
     for (const expected of expectations) {
-      const check = checks.find(check => check.title === expected.title && check.negative === expected.negative &&
-        JSON.stringify(check.planned_command ?? check.command) === JSON.stringify(expected.command) &&
-        check.expected_exit_code === (expected.expected_exit_code ?? 0));
+      const check = checks.find(check => check.title === expected.title && controlledCheckMatches(check, expected));
       if (!check?.passed || check.cancelled || check.exit_code !== check.expected_exit_code || !check.evidence_id)
         return result('incomplete-verification');
       if (!check.negative) currentPositive.push(check.evidence_id);

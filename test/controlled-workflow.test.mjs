@@ -84,7 +84,7 @@ function planFor(name, options = {}) {
     plan.allowed_paths.push(path); plan.outputs.push(path); plan.documentation_paths.push(path);
     plan.evidence_report_paths = [path];
     plan.acceptance_criteria.push(`Final report ${path} contains actual product-check commands and exits before independent final verification.`);
-    plan.checks.push({ title: 'Validate final execution report', after_evidence_reports: true,
+    plan.checks.push({ title: 'Validate final execution report', ...(options.inferReportDependency ? {} : { after_evidence_reports: true }),
       command: [process.execPath, reportChecker, path], baseline_paths: [path, reportChecker],
       negative_controls: [{ title: 'Reject a report with invented evidence', command: [process.execPath, reportChecker, badReport],
         baseline_paths: [reportChecker, badReport], expected_exit_code: 1 }] });
@@ -156,7 +156,7 @@ function scriptFor(name, stage, attempt, options, held) {
       : options.readOnlyBaseline ? "const run=require('node:child_process').spawnSync(process.execPath,['scripts/verify-leetcode-exercise.mjs',process.argv[2]],{encoding:'utf8'});process.stdout.write(run.stdout??'');process.stderr.write(run.stderr??'');process.exit(run.status??2);\n"
       : options.unsafeChecker ? "require('node:fs').writeFileSync(require('node:path').join(__dirname,'../../escape.txt'),'outside assigned scope');\n"
       : options.exitZeroChecker ? 'process.exit(0);\n'
-      : `const assert=require('node:assert/strict'); const fs=require('node:fs'); assert.equal(Number(fs.readFileSync(process.argv[2],'utf8')),${wrongChecker ? 2 : 1}); console.log('scalar validated');\n`;
+      : `const assert=require('node:assert/strict'); const fs=require('node:fs'); assert.equal(Number(fs.readFileSync(process.argv[2],'utf8')),${wrongChecker || options.sameAttemptCheckerRepair ? 2 : 1}); console.log('scalar validated');\n`;
     const defect = wrongChecker || options.productFailure && attempt === 1;
     return [call('project_read', { path: output }), call('project_read', { path: checker }), call('task_file_write', { path: checker, content }),
       ...(options.evidenceReport ? [call('project_read', { path: plan.checks[1].command[1] }),
@@ -164,6 +164,12 @@ function scriptFor(name, stage, attempt, options, held) {
         call('project_read', { path: plan.checks[1].negative_controls[0].command[2] }),
         call('task_file_write', { path: plan.checks[1].negative_controls[0].command[2], content: '# Invented success\nNo actual command or exit evidence is recorded.\n' })] : []),
       call('project_read', { path: bad }), call('task_file_write', { path: bad, content: '2\n' }), call('check_run', {}),
+      ...(options.sameAttemptCheckerRepair ? [call('task_file_write', { path: checker,
+        content: "const assert=require('node:assert/strict'); const fs=require('node:fs'); assert.equal(Number(fs.readFileSync(process.argv[2],'utf8')),1); console.log('repaired scalar checker validated');\n" }),
+        call('check_run', {}), async ({ messages }) => {
+          held.currentCheckProjection = semanticToolValue(messages);
+          return new Call('fixture-repaired-check-current-evidence', 'project_read', { path: output });
+        }] : []),
       ...(options.reviewScope && attempt > 1 ? [async ({ token, messages }) => {
         held.postCheckEvidence = semanticToolValue(messages); held.postChecksEntered = true;
         while (!token.isCancellationRequested && !held.postChecksRelease) await delay(10);
@@ -410,8 +416,8 @@ test('bound native Cornell plan consumes its exact prepared source through empty
   assert.equal(verifyControlledTask(env.root, getRecord(env.root, task.meta.id), 'accepted').ok, true);
 });
 
-test('backend schedules a report-only post-check pass then fresh full independent verification before acceptance', async t => {
-  const env = await setup(t, { factualreport: { highRisk: true, evidenceReport: true } });
+test('backend infers an exact report argv dependency, then runs a report-only pass and all original final checks', async t => {
+  const env = await setup(t, { factualreport: { highRisk: true, evidenceReport: true, inferReportDependency: true } });
   const initial = await submit(env.root, 'factualreport');
   const done = await until(env.root, initial.workflow_id, run => run.status === 'completed',
     'a deferred final report must use real product evidence without a failed-review repair loop', env.errors);
@@ -419,6 +425,9 @@ test('backend schedules a report-only post-check pass then fresh full independen
   assert.equal(done.attempts.filter(item => item.stage === 'verification').length, 2);
   assert.equal(done.checks.length, 6, 'Two product receipts first, then all four required final receipts.');
   assert.equal(done.repair_budget?.product ?? 0, 0);
+  const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.epoch_id === done.epoch_id);
+  const frozen = controlledContractForTask(env.root, task).contract;
+  assert.equal(Object.hasOwn(frozen.plan.checks[1], 'after_evidence_reports'), false, 'Backend sequencing cannot rewrite the frozen plan.');
   assert.ok(done.checks.every(check => check.passed));
   const documentation = done.attempts.find(item => item.purpose === 'evidence-documentation');
   assert.ok(documentation.documentation_source);
@@ -657,6 +666,35 @@ test('repeated successful observation loops cannot reset or exceed the existing 
   const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.epoch_id === stopped.epoch_id);
   assert.equal(verify(env.root, task.meta.id, 'accepted').ok, false, 'Repeated reads never substitute for the required review.');
   assert.equal(env.errors.length, 0);
+});
+
+test('same Verifier can fix its checker and close on fresh current receipts while retaining failed histories', async t => {
+  const env = await setup(t, { iterative: { highRisk: true, sameAttemptCheckerRepair: true } });
+  const initial = await submit(env.root, 'iterative');
+  const done = await until(env.root, initial.workflow_id, run => run.status === 'completed',
+    'fresh passing checker B must replace checker A only in current evidence, not in history', env.errors);
+  assert.deepEqual(done.attempts.map(attempt => attempt.stage), ['planning', 'implementation', 'verification', 'review']);
+  assert.equal(done.repairs, 0); assert.equal(done.checks.length, 4);
+  const verifier = done.attempts.find(attempt => attempt.stage === 'verification');
+  assert.ok(done.checks.every(check => check.attempt_id === verifier.id));
+  assert.deepEqual(done.checks.map(check => check.passed), [false, false, true, true]);
+  const checker = 'iterative/verify/check.cjs';
+  assert.notEqual(done.checks[0].baseline[checker], done.checks[2].baseline[checker]);
+  assert.equal(done.checks[2].baseline[checker], hash(readFileSync(safePath(env.root, checker))));
+  assert.equal(env.held.currentCheckProjection.checks.length, 2);
+  assert.ok(env.held.currentCheckProjection.checks.every(check => check.passed));
+  const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.epoch_id === done.epoch_id);
+  assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true);
+  const final = getRecord(env.root, done.final_report_id);
+  assert.deepEqual(final.meta.data.evidence, done.checks.slice(-2).map(check => check.log_path));
+  for (const check of done.checks) assert.equal(hash(readFileSync(safePath(env.root, check.log_path))), check.log_sha256);
+  const raw = readFileSync(safePath(env.root, checker));
+  try {
+    atomicWrite(safePath(env.root, checker), Buffer.concat([raw, Buffer.from('// User changed the checker after fresh verification.\n')]));
+    assert.equal(verify(env.root, task.meta.id, 'accepted').ok, false, 'Current evidence cannot authorize a changed, unverified baseline.');
+  } finally { atomicWrite(safePath(env.root, checker), raw); }
+  assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true);
+  assert.equal(done.checks.length, 4); assert.equal(env.errors.length, 0);
 });
 
 test('product and checker defects route repairs to the correct bounded stage', async t => {
