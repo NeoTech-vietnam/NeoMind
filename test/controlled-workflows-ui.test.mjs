@@ -172,6 +172,158 @@ test('panel mutations require enabled owner, while journal reads remain availabl
   assert.equal(a.calls.length, 1);
 });
 
+test('panel Pause is retained while a status snapshot is pending', async t => {
+  const a = app(t);
+  let releaseStatus;
+  const pendingStatus = new Promise(resolve => { releaseStatus = resolve; });
+  let reads = 0;
+  a.runtime.controlledStatus = async () => {
+    a.calls.push(['status', a.root]);
+    if (++reads === 1) await pendingStatus;
+    return [a.workflow];
+  };
+  const polling = a.host.handle({ type: 'controlled-action', action: 'status' });
+  await new Promise(resolve => setImmediate(resolve));
+  const pause = a.host.handle({ type: 'controlled-action', action: 'pause', workflow_id: workflowId });
+  releaseStatus();
+  await Promise.all([polling, pause]);
+  assert.deepEqual(a.calls.filter(call => call[0] === 'control'), [['control', a.root, { workflow_id: workflowId, action: 'pause' }]]);
+  assert.equal(a.sent.filter(value => value.type === 'controlled-receipt' && value.action === 'pause').length, 1);
+});
+
+test('panel coalesces polling and serializes snapshots with ordered Pause and Resume controls', async t => {
+  const a = app(t);
+  let releaseStatus, releasePause, reads = 0;
+  const firstRead = new Promise(resolve => { releaseStatus = resolve; });
+  const firstControl = new Promise(resolve => { releasePause = resolve; });
+  a.runtime.controlledStatus = async () => {
+    reads++;
+    const captured = structuredClone(a.workflow);
+    if (reads === 1) await firstRead;
+    return [captured];
+  };
+  a.runtime.controlControlledWorkflow = async (root, input) => {
+    a.calls.push(['control', root, input]);
+    if (input.action === 'pause') await firstControl;
+    a.workflow.status = input.action === 'pause' ? 'paused' : 'running';
+    return a.workflow;
+  };
+  const poll = a.host.handle({ type: 'controlled-action', action: 'status' });
+  const timer = a.host.snapshot(), duplicate = a.host.handle({ type: 'controlled-action', action: 'status' });
+  const pause = a.host.handle({ type: 'controlled-action', action: 'pause', workflow_id: workflowId });
+  const resume = a.host.handle({ type: 'controlled-action', action: 'resume', workflow_id: workflowId });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reads, 1);
+  assert.deepEqual(a.calls, [], 'An existing snapshot finishes before queued mutations change its receipt state.');
+  releaseStatus();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(a.calls.map(call => call[2].action), ['pause']);
+  assert.equal(a.sent.some(value => value.type === 'controlled-busy' && !value.busy), false);
+  releasePause();
+  await Promise.all([poll, timer, duplicate, pause, resume]);
+  assert.deepEqual(a.calls.map(call => call[2].action), ['pause', 'resume']);
+  assert.equal(reads, 2, 'Coalesced polling is followed by one fresh post-control read.');
+  assert.deepEqual(a.sent.filter(value => value.type === 'controlled-receipt').map(value => value.action), ['pause', 'resume']);
+  assert.equal(a.sent.filter(value => value.type === 'controlled-snapshot').at(-1).workflows[0].status, 'running');
+  assert.equal(a.sent.at(-1).type, 'controlled-busy'); assert.equal(a.sent.at(-1).busy, false);
+});
+
+test('a failed panel control does not drop its queued successor and queued controls recheck Bridge access', async t => {
+  for (const disable of [false, true]) {
+    const a = app(t);
+    let releasePause;
+    const first = new Promise(resolve => { releasePause = resolve; });
+    a.runtime.controlControlledWorkflow = async (root, input) => {
+      a.calls.push(['control', root, input]);
+      if (input.action === 'pause') { await first; throw new Error('PRIVATE_CONTROL_FAILURE'); }
+      return a.workflow;
+    };
+    const pause = a.host.handle({ type: 'controlled-action', action: 'pause', workflow_id: workflowId });
+    const resume = a.host.handle({ type: 'controlled-action', action: 'resume', workflow_id: workflowId });
+    await new Promise(resolve => setImmediate(resolve));
+    if (disable) a.enabled(false);
+    releasePause();
+    await Promise.all([pause, resume]);
+    assert.deepEqual(a.calls.filter(call => call[0] === 'control').map(call => call[2].action), disable ? ['pause'] : ['pause', 'resume']);
+    assert.equal(a.sent.some(value => value.type === 'controlled-receipt' && value.action === 'resume'), !disable);
+    if (disable) assert.equal(a.sent.some(value => value.type === 'controlled-error' && value.code === 'BRIDGE_DISABLED'), true);
+    assert.equal(JSON.stringify(a.sent).includes('PRIVATE'), false);
+  }
+});
+
+test('panel submission redelivery retains its durable receipt when queued behind the first submission', async t => {
+  const a = app(t);
+  let releaseSubmit;
+  const pending = new Promise(resolve => { releaseSubmit = resolve; });
+  a.runtime.startControlledWorkflow = async (root, input) => {
+    a.calls.push(['submit', root, input]); await pending;
+    Object.assign(a.workflow, { request_id: input.request_id, requirement: input.requirement }); return a.workflow;
+  };
+  const input = { type: 'controlled-action', action: 'submit', requirement: 'Deliver one durable workflow.' };
+  const first = a.host.handle(input), repeated = a.host.handle({ ...input });
+  await new Promise(resolve => setImmediate(resolve)); releaseSubmit();
+  await Promise.all([first, repeated]);
+  assert.equal(a.calls.filter(call => call[0] === 'submit').length, 1);
+  const receipts = a.sent.filter(value => value.type === 'controlled-receipt' && !value.replay);
+  assert.equal(receipts.length, 2); assert.equal(receipts[0].intake.request_id, receipts[1].intake.request_id);
+  assert.equal(receipts[0].intake.generation, receipts[1].intake.generation);
+});
+
+test('an older empty panel snapshot completes before submission without invalidating its accepted receipt', async t => {
+  const a = app(t);
+  let releaseRead, reads = 0;
+  const first = new Promise(resolve => { releaseRead = resolve; });
+  a.runtime.controlledStatus = async () => {
+    if (++reads === 1) { await first; return []; }
+    return [a.workflow];
+  };
+  const polling = a.host.handle({ type: 'controlled-action', action: 'status' });
+  const submit = a.host.handle({ type: 'controlled-action', action: 'submit', requirement: 'One accepted task after an earlier poll.' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(a.calls.filter(call => call[0] === 'submit').length, 0);
+  releaseRead(); await Promise.all([polling, submit]);
+  assert.equal(a.calls.filter(call => call[0] === 'submit').length, 1);
+  assert.deepEqual(a.sent.filter(value => value.type === 'controlled-error'), []);
+  assert.equal(a.sent.filter(value => value.type === 'controlled-snapshot').at(-1).workflows[0].workflow_id, workflowId);
+});
+
+test('panel disposal while its busy notification is pending prevents an undispatched mutation', async t => {
+  const a = app(t);
+  let alive = true, releaseBusy;
+  const busy = new Promise(resolve => { releaseBusy = resolve; });
+  const host = createControlledPanelHost({ runtime: a.runtime, root: a.root, alive: () => alive, enabled: () => true,
+    post: async value => { a.sent.push(value); if (value.type === 'controlled-busy' && value.busy) await busy; } });
+  const pause = host.handle({ type: 'controlled-action', action: 'pause', workflow_id: workflowId });
+  await new Promise(resolve => setImmediate(resolve));
+  alive = false; releaseBusy(); await pause;
+  assert.deepEqual(a.calls, []);
+  assert.equal(a.sent.some(value => value.type === 'controlled-receipt'), false);
+});
+
+test('panel disposal during receipt recovery prevents admission of a new workflow', async t => {
+  const a = app(t);
+  a.runtime.controlledStatus = async () => { a.active(false); return []; };
+  await a.host.handle({ type: 'controlled-action', action: 'submit', requirement: 'Do not submit after panel disposal.' });
+  assert.equal(a.calls.filter(call => call[0] === 'submit').length, 0);
+  assert.equal(a.sent.some(value => value.type === 'controlled-receipt'), false);
+});
+
+test('closing the panel after backend acceptance preserves the workflow and replays its receipt', async t => {
+  const a = app(t);
+  a.runtime.startControlledWorkflow = async (root, input) => {
+    a.calls.push(['submit', root, input]);
+    Object.assign(a.workflow, { request_id: input.request_id, requirement: input.requirement });
+    a.active(false); return a.workflow;
+  };
+  await a.host.handle({ type: 'controlled-action', action: 'submit', requirement: 'Keep accepted work after panel closure.' });
+  assert.equal(a.calls.filter(call => call[0] === 'submit').length, 1);
+  assert.equal(a.calls.some(call => call[0] === 'control'), false);
+  a.active(true);
+  await a.host.handle({ type: 'controlled-action', action: 'status' });
+  assert.equal(a.sent.some(value => value.type === 'controlled-receipt' && value.replay && value.workflows[0].workflow_id === workflowId), true);
+  assert.equal(a.calls.filter(call => call[0] === 'submit').length, 1);
+});
+
 test('chat tool binds the exact open workspace and never invokes a native subagent', async t => {
   const a = app(t);
   const response = await a.invoke({ action: 'submit', workspace_folder: a.root, requirement: 'Implement a task.' });

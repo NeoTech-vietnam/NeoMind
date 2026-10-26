@@ -90,38 +90,68 @@ async function perform({ runtime, root, enabled, input, entries, generation, con
   entries?.acknowledgeWorkflow(input.workflow_id);
   return publicStatus(result);
 }
-function createControlledPanelHost({ runtime, root, post, alive = () => true, enabled = () => false }) {
-  let busy = false, entries;
+function createControlledPanelHost({ runtime, root, post, alive = () => true, enabled = () => false, beforeDispatch }) {
+  let entries, snapshotPending, operationQueue = Promise.resolve(), pendingMutations = 0;
   const receiptStore = () => entries ??= createControlledEntryReceipts({ runtime, root, surface: 'panel' });
-  async function snapshot() {
-    if (!alive()) return;
-    const workflows = await runtime.controlledStatus(root), state = publicStatus(workflows);
-    const pending = await receiptStore().recover(workflows);
-    if (alive()) {
-      await post({ type: 'controlled-snapshot', workspace_folder: root, enabled: enabled(), ...state, intake: pending.intake });
-      if (pending.workflow && pending.intake?.state === 'accepted')
-        await post({ type: 'controlled-receipt', action: 'submit', ...publicStatus(pending.workflow), intake: pending.intake, replay: true });
-    }
+  const enqueue = operation => {
+    const queued = operationQueue.then(operation);
+    operationQueue = queued.catch(() => {});
+    return queued;
+  };
+  function snapshot() {
+    if (!alive()) return Promise.resolve();
+    if (snapshotPending) return snapshotPending;
+    snapshotPending = enqueue(async () => {
+      if (!alive()) return;
+      const workflows = await runtime.controlledStatus(root), state = publicStatus(workflows);
+      const pending = await receiptStore().recover(workflows);
+      if (alive()) {
+        await post({ type: 'controlled-snapshot', workspace_folder: root, enabled: enabled(), ...state, intake: pending.intake });
+        if (pending.workflow && pending.intake?.state === 'accepted')
+          await post({ type: 'controlled-receipt', action: 'submit', ...publicStatus(pending.workflow), intake: pending.intake, replay: true });
+      }
+    }).finally(() => { snapshotPending = undefined; });
+    return snapshotPending;
   }
   async function handle(message) {
     if (alive() && message?.type === 'controlled-receipt-ack') {
-      if (receiptStore().acknowledge(message.generation, message.workflow_id)) await snapshot();
+      try {
+        const acknowledged = await enqueue(() => alive() && receiptStore().acknowledge(message.generation, message.workflow_id));
+        if (acknowledged) await snapshot();
+      } catch (error) { if (alive()) await post({ type: 'controlled-error', ...publicError(error) }); }
       return;
     }
-    if (!alive() || busy || message?.type !== 'controlled-action') return;
-    busy = true;
+    if (!alive() || message?.type !== 'controlled-action') return;
+    let input;
     try {
-      const input = inputValue({ action: message.action, ...(message.requirement !== undefined ? { requirement: message.requirement } : {}),
+      input = inputValue({ action: message.action, ...(message.requirement !== undefined ? { requirement: message.requirement } : {}),
         ...(message.workflow_id !== undefined ? { workflow_id: message.workflow_id } : {}) });
-      if (input.action === 'status') await snapshot();
-      else {
-        await post({ type: 'controlled-busy', busy: true });
-        const receipt = await perform({ runtime, root, enabled, input, entries: receiptStore(), generation: message.generation, surface: 'panel' });
-        if (alive()) await post({ type: 'controlled-receipt', action: input.action, source_generation: message.generation, ...receipt });
-        await snapshot();
-      }
+    } catch (error) { if (alive()) await post({ type: 'controlled-error', ...publicError(error) }); return; }
+    if (input.action === 'status') {
+      try { await snapshot(); }
+      catch (error) { if (alive()) await post({ type: 'controlled-error', ...publicError(error) }); }
+      return;
+    }
+    // Read snapshots and mutations share one lane so receipt recovery cannot
+    // combine an older workflow list with a newly accepted intake.
+    pendingMutations++;
+    const operation = enqueue(async () => {
+      if (!alive()) return;
+      await post({ type: 'controlled-busy', busy: true });
+      if (!alive()) return;
+      const receipt = await perform({ runtime, root, enabled, input, entries: receiptStore(), generation: message.generation, surface: 'panel',
+        beforeDispatch: () => {
+          if (!alive()) fail('REQUEST_CANCELLED', 'The panel closed before this request was submitted.');
+          if (!enabled()) fail('BRIDGE_DISABLED', 'Enable the NeoMind Model Bridge for this workspace before submitting or controlling work.');
+          beforeDispatch?.();
+        } });
+      if (alive()) await post({ type: 'controlled-receipt', action: input.action, source_generation: message.generation, ...receipt });
+    });
+    try {
+      await operation;
+      await snapshot();
     } catch (error) { if (alive()) await post({ type: 'controlled-error', ...publicError(error) }); }
-    finally { busy = false; if (alive()) await post({ type: 'controlled-busy', busy: false }); }
+    finally { pendingMutations--; if (alive() && !pendingMutations) await post({ type: 'controlled-busy', busy: false }); }
   }
   return { handle, snapshot };
 }
@@ -194,7 +224,8 @@ function activateControlledWorkflows(vscode, context, loadRuntime, { enabled = (
       const asset = name => current.webview.asWebviewUri(vscode.Uri.file(join(resources.fsPath, name)));
       current.webview.html = renderControlledPanel({ cspSource: current.webview.cspSource, script: asset('controlled.js'), style: asset('controlled.css'), nonce: randomBytes(24).toString('hex') });
       const alive = () => panel === current && token === generation && vscode.workspace.isTrusted;
-      const host = createControlledPanelHost({ runtime, root, post: message => current.webview.postMessage(message), alive, enabled: () => enabled(root) });
+      const host = createControlledPanelHost({ runtime, root, post: message => current.webview.postMessage(message), alive, enabled: () => enabled(root),
+        beforeDispatch: () => openRoot(vscode, root) });
       const messages = current.webview.onDidReceiveMessage(async message => {
         if (!alive()) return;
         if (message?.type === 'controlled-enable') { await vscode.commands.executeCommand('neomind.bridge.enable', root); await host.handle({ type: 'controlled-action', action: 'status' }); }
