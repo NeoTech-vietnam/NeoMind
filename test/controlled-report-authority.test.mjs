@@ -12,6 +12,8 @@ import { controlledFingerprints, prepareControlledCheckEvidence, materializeCont
 import { runCommand } from '../dist/command-runner.js';
 import { pendingEvidenceDocumentation } from '../dist/controlled-report-phase.js';
 import { assertEvidenceDocumentationAuthority } from '../dist/controlled-report-authority.js';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 
 // Signed structural actor fixtures plus real positive/negative Node processes.
 // They test authority boundaries, not live provider inference or client acceptance.
@@ -105,6 +107,28 @@ async function fixture(t) {
     .map(entry => { const path = join(entry.parentPath, entry.name); return [path, hash(readFileSync(path))]; }).sort(([a], [b]) => a.localeCompare(b)));
   return { root, run, contract, source, producer, verifier, save, snapshot };
 }
+
+test('one authority evaluation reads each engineering record once and the next evaluation sees edits', async t => {
+  const state = await fixture(t), originalRead = fs.readFileSync, counts = new Map();
+  const records = safePath(state.root, '.neomind/records').replaceAll('\\', '/').toLowerCase() + '/';
+  let guard;
+  try {
+    fs.readFileSync = function(path, ...args) {
+      if (typeof path === 'string') {
+        const normalized = path.replaceAll('\\', '/').toLowerCase();
+        if (normalized.startsWith(records) && normalized.endsWith('.md')) counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+      }
+      return Reflect.apply(originalRead, this, [path, ...args]);
+    };
+    syncBuiltinESMExports();
+    guard = assertEvidenceDocumentationAuthority(state.root, state.run, state.contract, state.source);
+  } finally { fs.readFileSync = originalRead; syncBuiltinESMExports(); }
+  assert.equal(guard['src/value.txt'], hash('1\n')); assert.ok(counts.size >= 7);
+  assert.equal(Math.max(...counts.values()), 1, 'One per-evaluation record view must replace repeated full repository record loads.');
+  const record = getRecord(state.root, state.producer.report_id);
+  updateRecord(state.root, record.meta.id, {}, record.body + '\nA later user edit must not inherit a cached verdict.\n');
+  assert.throws(() => assertEvidenceDocumentationAuthority(state.root, state.run, state.contract, state.source), /saved typed report/);
+});
 
 test('authenticated real check checkpoint authorizes only report changes and returns intact non-report guards', async t => {
   const state = await fixture(t), { root, run, contract, source, snapshot } = state, before = snapshot();

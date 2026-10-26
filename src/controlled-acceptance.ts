@@ -174,8 +174,10 @@ export async function controlledFingerprintsAsync(root: string, paths: string[],
   budget.check(); return result;
 }
 
-type RecordAt = (id: string) => ProjectRecord;
-function freshRecords(root: string, checkBudget: () => void): RecordAt {
+export type ControlledRecordAt = (id: string) => ProjectRecord;
+type RecordAt = ControlledRecordAt;
+/** Fresh only for this synchronous evaluation; callers receive defensive clones. */
+export function controlledRecordView(root: string, checkBudget: () => void = () => {}): ControlledRecordAt {
   checkBudget();
   const records = new Map(loadRecords(root).map(record => [record.meta.id, record]));
   checkBudget();
@@ -191,8 +193,8 @@ function currentTask(task: ProjectRecord, recordAt: RecordAt): ProjectRecord {
   if (evidenceRecordFingerprint(current) !== evidenceRecordFingerprint(task)) throw new Error('Controlled task changed after it was supplied for verification.');
   return current;
 }
-export function controlledContractForTask(root: string, task: ProjectRecord, checkBudget: () => void = () => {}): { run: ControlledSnapshot; contract: ControlledContract } {
-  const recordAt = freshRecords(root, checkBudget);
+export function controlledContractForTask(root: string, task: ProjectRecord, checkBudget: () => void = () => {},
+  recordAt: ControlledRecordAt = controlledRecordView(root, checkBudget)): { run: ControlledSnapshot; contract: ControlledContract } {
   return contractForTask(root, currentTask(task, recordAt), recordAt, checkBudget);
 }
 /** Primary note artifacts remain producer outputs, including an explicitly planned worksheet. */
@@ -328,7 +330,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
   const add = (code: string, message: string) => findings.push({ code, record: task.meta.id, message });
   const budget = controlledAcceptanceBudget(root);
   try {
-    const recordAt = freshRecords(root, budget.check);
+    const recordAt = controlledRecordView(root, budget.check);
     task = currentTask(task, recordAt);
     const { run, contract } = contractForTask(root, task, recordAt, budget.check);
     if (['cancelled', 'uncertain', 'interrupted'].includes(run.status)) throw new Error('Controlled effects require reconciliation before acceptance.');
@@ -393,7 +395,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
     if (producer!.purpose === 'evidence-documentation' || signedDocumentation) {
       if (producer!.purpose !== 'evidence-documentation' || !signedDocumentation)
         throw new Error('The latest producer purpose differs from its signed documentation handoff.');
-      assertCompletedEvidenceDocumentationLineage(root, run, contract, producer!.id, budget);
+      assertCompletedEvidenceDocumentationLineage(root, run, contract, producer!.id, budget, recordAt);
     }
     if (producer!.invocation_id === verifier!.invocation_id || reviewer?.invocation_id === producer!.invocation_id || reviewer?.invocation_id === verifier!.invocation_id)
       throw new Error('Verification and review must use independent sessions.');

@@ -1,8 +1,8 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import { canonicalJson, readInvocation, routingProblems } from './routing.js';
-import { getRecord, hash, safePath } from './storage.js';
+import { hash, safePath } from './storage.js';
 import { evidenceRecordFingerprint, validateEvidenceInputs } from './evidence-inputs.js';
-import { controlledAcceptanceBudget, controlledContractForTask } from './controlled-acceptance.js';
+import { controlledAcceptanceBudget, controlledContractForTask, controlledRecordView, type ControlledRecordAt } from './controlled-acceptance.js';
 import { pendingEvidenceDocumentation, type EvidenceDocumentationSource } from './controlled-report-phase.js';
 import { ControlledToolError } from './controlled-tools.js';
 import type { ControlledContract, ControlledSnapshot, ControlledCheckReceipt } from './controlled-workflow.js';
@@ -22,10 +22,11 @@ export function assertEvidenceDocumentationAuthority(root: string, supplied: Con
 }
 
 function evidenceDocumentationAuthority(root: string, supplied: ControlledSnapshot, expected: ControlledContract,
-  source: EvidenceDocumentationSource, history?: { completed_attempt_id: string; budget: AuthorityBudget }): Record<string, string> {
+  source: EvidenceDocumentationSource, history?: { completed_attempt_id: string; budget: AuthorityBudget; recordAt?: ControlledRecordAt }): Record<string, string> {
   const budget = history?.budget ?? controlledAcceptanceBudget(root);
+  const recordAt = history?.recordAt ?? controlledRecordView(root, budget.check);
   const { run, contract } = history ? { run: supplied, contract: expected }
-    : controlledContractForTask(root, getRecord(root, expected.task_id), budget.check);
+    : controlledContractForTask(root, recordAt(expected.task_id), budget.check, recordAt);
   if (history) {
     budget.check();
     const sealed = readFileSync(safePath(root, `.neomind/controlled/workflows/${hash(run.workflow_id)}.${run.epoch_id}.contract.json`));
@@ -52,7 +53,7 @@ function evidenceDocumentationAuthority(root: string, supplied: ControlledSnapsh
     if (attempt.state !== 'completed' || attempt.report?.outcome !== 'completed' || !attempt.invocation_id ||
         !attempt.report_id || !attempt.report_fingerprint || !attempt.bound_hashes)
       throw new ControlledToolError('STATE_UNCERTAIN', 'The source stage lacks its completed signed result and artifact binding.');
-    const receipt = readInvocation(root, attempt.invocation_id), report = getRecord(root, attempt.report_id);
+    const receipt = readInvocation(root, attempt.invocation_id), report = recordAt(attempt.report_id);
     if (routingProblems(root, attempt.role, receipt.id, { workflow_id: run.workflow_id, task_id: contract.task_id, require_completed: true }).length ||
         receipt.issuer !== 'neomind-vscode-lm' || receipt.state !== 'completed' || !receipt.inference_completed ||
         receipt.workflow_id !== run.workflow_id || receipt.task_id !== contract.task_id || receipt.role !== attempt.role ||
@@ -119,7 +120,7 @@ function evidenceDocumentationAuthority(root: string, supplied: ControlledSnapsh
         !same(log.baseline, check.baseline) || log.result?.exit_code !== check.exit_code ||
         log.result?.cancelled || log.result?.timed_out || log.result?.output_limited || log.result?.error || log.pilot_error)
       throw new ControlledToolError('STATE_UNCERTAIN', 'The source check outcome differs from the actual backend process result.');
-    authenticateCheckEvidence(root, run, contract, check);
+    authenticateCheckEvidence(root, run, contract, check, recordAt);
     if (!history) {
       add(check.baseline);
       const currentInputs = budget.fingerprints(planned.baseline_paths);
@@ -136,33 +137,34 @@ function evidenceDocumentationAuthority(root: string, supplied: ControlledSnapsh
 
 /** Final acceptance re-authenticates the retained first checkpoint and signed handoff. */
 export function assertCompletedEvidenceDocumentationLineage(root: string, run: ControlledSnapshot, contract: ControlledContract,
-  completedAttemptId: string, budget: AuthorityBudget = controlledAcceptanceBudget(root)): Record<string, string> {
+  completedAttemptId: string, budget: AuthorityBudget = controlledAcceptanceBudget(root), recordAt?: ControlledRecordAt): Record<string, string> {
   const attempt = run.attempts.find(attempt => attempt.id === completedAttemptId);
   if (!attempt?.documentation_source)
     throw new ControlledToolError('STATE_UNCERTAIN', 'The completed documentation result lost its original source checkpoint binding.');
   try {
     return evidenceDocumentationAuthority(root, run, contract, attempt.documentation_source,
-      { completed_attempt_id: completedAttemptId, budget });
+      { completed_attempt_id: completedAttemptId, budget, recordAt });
   } catch (error) {
     if (error instanceof ControlledToolError) throw error;
     throw new ControlledToolError('STATE_UNCERTAIN', 'The completed documentation history could not be authenticated. Preserve original signed results, check logs and captured input snapshots; fresh final checks cannot replace missing source history.');
   }
 }
 
-function authenticateCheckEvidence(root: string, run: ControlledSnapshot, contract: ControlledContract, check: ControlledCheckReceipt): void {
+function authenticateCheckEvidence(root: string, run: ControlledSnapshot, contract: ControlledContract, check: ControlledCheckReceipt,
+  recordAt: ControlledRecordAt): void {
   const input = check.evidence_input;
   if (!input || !check.evidence_id) throw new ControlledToolError('STATE_UNCERTAIN', 'The source check lacks its materialized independent evidence.');
-  const record = getRecord(root, check.evidence_id), data = record.meta.data;
+  const record = recordAt(check.evidence_id), data = record.meta.data;
   if (record.meta.type !== 'evidence' || data.controlled_check_id !== check.id || data.controlled_epoch_id !== run.epoch_id ||
       data.controlled_contract_hash !== run.contract_hash || data.task_id !== contract.task_id || data.workflow_id !== run.workflow_id ||
       data.result !== 'pass' || data.execution_invocation_id !== check.invocation_id || !same(data.file_baseline, check.baseline) ||
       !same(data.command, check.command) || data.log_hash !== check.log_sha256 || data.log_path !== check.log_path ||
-      data.check_fingerprint !== evidenceRecordFingerprint(getRecord(root, input.check_id)))
+      data.check_fingerprint !== evidenceRecordFingerprint(recordAt(input.check_id)))
     throw new ControlledToolError('STATE_UNCERTAIN', 'The source typed check evidence differs from its command receipt.');
   validateEvidenceInputs(root, input.input_snapshot, { files: check.baseline, record_fingerprints: input.record_baseline,
     check_id: input.check_id, check_fingerprint: input.check_fingerprint });
   for (const [id, digest] of Object.entries(input.record_baseline))
-    if (evidenceRecordFingerprint(getRecord(root, id)) !== digest) throw new ControlledToolError('STATE_UNCERTAIN', 'The source check record baseline changed.');
+    if (evidenceRecordFingerprint(recordAt(id)) !== digest) throw new ControlledToolError('STATE_UNCERTAIN', 'The source check record baseline changed.');
   if (data.receipt_path !== `.neomind/controlled/checks/${check.id}.receipt.json`)
     throw new ControlledToolError('STATE_UNCERTAIN', 'The source materialized evidence receipt path differs from its backend identity.');
   const saved = JSON.parse(readFileSync(safePath(root, data.receipt_path), 'utf8'));
