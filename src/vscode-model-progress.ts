@@ -13,12 +13,20 @@ const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const alias = (value: string): string | null => /^[-\w./+]{1,128}$/.test(value) ? value : null;
 const terminal = (phase: Phase) => ['completed', 'error', 'cancelled'].includes(phase);
 const interval = 5000;
+const transientIO = new Set(['EBUSY', 'EAGAIN', 'EINTR', 'EPERM', 'EACCES', 'ENFILE', 'EMFILE', 'ENOSPC', 'EDQUOT', 'EROFS', 'EIO', 'ETXTBSY']);
+function retryableIO(error: unknown): boolean {
+  try { return !!error && typeof error === 'object' && transientIO.has((error as NodeJS.ErrnoException).code ?? ''); }
+  catch { return false; }
+}
 
 /** Best-effort private timing diagnostics. Never used for receipt authenticity, workflow completion, or acceptance. */
 export class ModelCallProgress {
   private readonly path: string;
+  private readonly directory: string;
+  private readonly parent: string;
   private timer?: NodeJS.Timeout;
-  private written = 0;
+  private lastAttempt = 0;
+  private temporary?: string;
   private dirty = false;
   private disabled = false;
   private value: {
@@ -31,7 +39,8 @@ export class ModelCallProgress {
   };
   constructor(root: string, invocation: string, model: string, vendor: string) {
     if (!uuid.test(invocation)) throw new Error('Invalid diagnostic invocation.');
-    const directory = join(hostPrivateDirectory(root), 'progress');
+    this.parent = hostPrivateDirectory(root);
+    const directory = this.directory = join(this.parent, 'progress');
     this.path = join(directory, `${invocation}.json`);
     const at = new Date().toISOString();
     this.value = { schema_version: 1, trust: 'diagnostic-only', invocation_id: invocation, model_id: alias(model), vendor: alias(vendor),
@@ -65,27 +74,52 @@ export class ModelCallProgress {
     if (!stat.isDirectory() || stat.isSymbolicLink() || (process.platform !== 'win32' &&
       (stat.uid !== process.getuid!() || (stat.mode & 0o077)))) throw new Error('Diagnostic directory is not private.');
   }
+  private schedule(): void {
+    if (this.disabled || !this.dirty || this.timer) return;
+    this.timer = setTimeout(() => { this.timer = undefined; this.flush(); }, Math.max(1, interval - (Date.now() - this.lastAttempt)));
+    this.timer.unref();
+  }
+  private cleanupTemporary(): void {
+    if (!this.temporary) return;
+    let stat;
+    try { stat = lstatSync(this.temporary); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') { this.temporary = undefined; return; } throw error; }
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 8192 ||
+      process.platform !== 'win32' && (stat.uid !== process.getuid!() || (stat.mode & 0o077)))
+      throw new Error('Diagnostic temporary file is not private and writer-owned.');
+    rmSync(this.temporary); this.temporary = undefined;
+  }
   private flush(force = false): void {
     if (this.disabled || (!this.dirty && !force)) return;
-    const remaining = interval - (Date.now() - this.written);
+    const remaining = interval - (Date.now() - this.lastAttempt);
     if (!force && remaining > 0) {
-      if (!this.timer) { this.timer = setTimeout(() => { this.timer = undefined; this.flush(); }, remaining); this.timer.unref(); }
-      return;
+      this.schedule(); return;
     }
     clearTimeout(this.timer); this.timer = undefined;
-    let temporary: string | undefined;
+    this.lastAttempt = Date.now();
+    let failed: unknown, createdTemporary = false;
     try {
-      this.privateDirectory(join(this.path, '..'));
-      if (existsSync(this.path)) { const stat = lstatSync(this.path); if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(); }
+      this.privateDirectory(this.parent); this.privateDirectory(this.directory);
+      // A failed cleanup retains one exact owned path; do not create another
+      // temporary file until that path has been safely removed.
+      this.cleanupTemporary();
+      if (existsSync(this.path)) { const stat = lstatSync(this.path); if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error(); }
       const text = JSON.stringify(this.value) + '\n';
       if (Buffer.byteLength(text) > 8192) throw new Error();
-      temporary = `${this.path}.${randomUUID()}.tmp`;
+      const temporary = `${this.path}.${randomUUID()}.tmp`;
       const fd = openSync(temporary, 'wx', 0o600);
+      this.temporary = temporary; createdTemporary = true;
       try { writeFileSync(fd, text); fsyncSync(fd); } finally { closeSync(fd); }
-      renameSync(temporary, this.path); temporary = undefined;
-      this.written = Date.now(); this.dirty = false;
-    } catch { this.disabled = true; }
-    finally { if (temporary) try { rmSync(temporary); } catch { /* Diagnostic failure cannot affect a model request. */ } }
+      renameSync(temporary, this.path); this.temporary = undefined;
+    } catch (error) { failed = error; }
+    finally {
+      if (createdTemporary && this.temporary) try { this.cleanupTemporary(); }
+      catch (error) { if (!failed || !retryableIO(error)) failed = error; }
+    }
+    if (failed) {
+      if (retryableIO(failed)) { this.dirty = true; this.schedule(); }
+      else { this.disabled = true; clearTimeout(this.timer); this.timer = undefined; }
+    } else this.dirty = false;
   }
   private update(phase: Phase): boolean {
     if (terminal(this.value.phase)) return false;
@@ -128,6 +162,8 @@ export class ModelCallProgress {
     if (!this.update(phase)) return;
     this.value.ended_at = this.value.updated_at; this.value.terminal_reason = reason;
     this.value.failure_phase = phase === 'completed' ? null : previous;
-    this.flush(true); clearTimeout(this.timer); this.timer = undefined;
+    // A terminal snapshot also gets the same best-effort I/O retry. This timer
+    // is unref'ed and cannot keep VS Code/model execution alive or replay work.
+    this.flush(true);
   }
 }

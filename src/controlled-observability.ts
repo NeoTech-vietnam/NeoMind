@@ -155,7 +155,11 @@ export function controlledLoopState(root: string, binding: { workflow_id: string
     if (existsSync(path)) {
       const run = JSON.parse(readFileSync(path, 'utf8'));
       state.push({ epoch: run.epoch_id, phase: run.phase, status: run.status, contract: run.contract_hash,
-        attempts: run.attempts?.map((attempt: any) => ({ id: attempt.id, state: attempt.state, report_id: attempt.report_id })) });
+        attempts: run.attempts?.map((attempt: any) => ({ id: attempt.id, state: attempt.state, report_id: attempt.report_id })),
+        checks: run.checks?.map((check: any) => ({ id: check.id, attempt_id: check.attempt_id, log_sha256: check.log_sha256,
+          passed: check.passed, exit_code: check.exit_code, expected_exit_code: check.expected_exit_code })),
+        local_executions: run.local_executions?.map((operation: any) => ({ id: operation.id, attempt_id: operation.attempt_id,
+          state: operation.state, passed: operation.passed, intent_sha256: operation.intent_sha256, result_sha256: operation.result_sha256 })) });
     }
     if (binding.invocation_id) {
       const path = safePath(root, `.neomind/controlled-tools/${hash(binding.invocation_id)}/state.json`);

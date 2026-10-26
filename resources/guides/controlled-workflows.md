@@ -39,6 +39,8 @@ For a primary Cornell deliverable, the Implementer supplies an expected worked r
 
 The client entrypoint supplies user intent. The runtime binds role, workflow, task, invocation, credentials, report targets and operation identity. Worker tools receive semantic content and scoped paths; their actor context remains private. Ordinary progress is produced from runtime events rather than model bookkeeping.
 
+Supply the full product goal in `requirement` or `requirements`, retaining every acceptance, process, scope, preservation and safety obligation. Runtime dispatch belongs in `execution_mode`; status uses `manager_status`, and pause/resume/cancel uses `manager_control` with the exact `workflow_id` and `action`. These client operations do not request changes to product orchestration. Actual authentication, storage, execution and orchestration changes remain product requirements subject to the backend minimum risk policy. When product and operating instructions cannot be separated unambiguously, retain the complete request. Opaque input remains conservative; this guidance neither strips keywords nor changes a saved contract or its required review.
+
 ## Model access and lifetime
 
 Before client submission, the trusted project must be open in VS Code with its NeoMind Model Bridge enabled. The user grants Workspace Trust and model-access consent through VS Code. Even when Codex submits the request, workers use the VS Code LM Bridge and the project's role/model policy. The parent Codex provider stays independent.

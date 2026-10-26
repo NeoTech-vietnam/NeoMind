@@ -24,7 +24,8 @@ import { compileCornellResearch, readCornellDestination, type CornellResearchInp
 import { createCornellNote, validateCornellNote } from './notes.js';
 import { controlledFailure } from './controlled-failure.js';
 import { continuationObligations, controlledFingerprints, controlledFingerprintsAsync, executeControlledPilot, materializeControlledEvidence,
-  prepareControlledCheckEvidence, verifyControlledTask, controlledContractForTask, type ContinuationObligations } from './controlled-acceptance.js';
+  prepareControlledCheckEvidence, verifyControlledTask, controlledContractForTask, controlledAcceptanceBudget, type ContinuationObligations } from './controlled-acceptance.js';
+import { controlledProducerExecutionEvidence } from './controlled-execution-evidence.js';
 import { evidenceRecordFingerprint, type EvidenceInputSnapshot } from './evidence-inputs.js';
 import type { ProjectRecord } from './types.js';
 import { normalizeControlledPlanInput, controlledConsultationRole } from './controlled-plan-input.js';
@@ -247,7 +248,8 @@ export function controlledRisk(plan: ControlledPlan, originalRequirement = ''): 
   if (/\b(?:authentication|authorization|credentials|secrets|permissions|database migration|schema migration|orchestration|login|access control|token|xac thuc|phan quyen|quyen truy cap|mat khau|dieu phoi|luu tru)\b/i.test(intent))
     reasons.push('The plan declares sensitive behavior.');
   if (plan.risk === 'high' || plan.risk === 'elevated') reasons.push('Coordinator elevated the risk.');
-  if (plan.risk === undefined) reasons.push('Risk has not been explicitly assessed.');
+  // The backend assesses the minimum from scope and declared behavior. An
+  // omitted optional Coordinator elevation is not another workflow gate.
   return { reviewer_required: reasons.length > 0, reasons };
 }
 function validatePlan(root: string, value: ControlledPlan): ControlledPlan {
@@ -800,9 +802,20 @@ class Controller {
           if (kind === 'workflow') return controlledReviewContext(this.root, current, contract,
             binding.review_purpose ?? 'final-product');
           if (kind === 'registration') return controlledRegistrationEvidence(this.root, current, contract);
-          return currentControlledChecks(current).filter(check => title === undefined || check.title === title).slice(-16).map(check => {
+          const producerTitles = [...new Set([
+            ...(contract?.plan.execution_steps?.map(step => step.title) ?? []),
+            ...(current.local_executions?.map(operation => operation.title) ?? []),
+          ])];
+          const availableTitles = [...new Set([
+            ...(contract ? controlledChecksForPhase(current, contract).map(check => check.title) : []),
+            ...currentControlledChecks(current).map(check => check.title),
+            ...producerTitles,
+          ])];
+          if (title !== undefined && !availableTitles.includes(title))
+            throw new ControlledToolError('INVALID_CHECK', `Choose an actual assigned evidence title or omit title for all bound evidence. Available titles: ${JSON.stringify(availableTitles)}.`);
+          const checks = currentControlledChecks(current).filter(check => title === undefined || check.title === title).slice(-16).map(check => {
             const log = JSON.parse(readFileSync(safePath(this.root, check.log_path), 'utf8'));
-            return { title: check.title, purpose: check.purpose ?? 'self-check', negative: check.negative, passed: check.passed,
+            return { evidence_kind: 'independent-check' as const, title: check.title, purpose: check.purpose ?? 'self-check', negative: check.negative, passed: check.passed,
               command: check.command, exit_code: check.exit_code, expected_exit_code: check.expected_exit_code,
               stdout: typeof log.result?.stdout === 'string' ? log.result.stdout.slice(-8000) : '',
               stderr: typeof log.result?.stderr === 'string' ? log.result.stderr.slice(-8000) : '',
@@ -815,6 +828,10 @@ class Controller {
                   solutions: proof.solutions.map((solution: any) => ({ language: solution.language, compile: command(solution.compile), run: command(solution.run) })) };
               })() } : {}) };
           });
+          const budget = controlledAcceptanceBudget(this.root);
+          const producer = contract && (title === undefined || producerTitles.includes(title)) ? controlledProducerExecutionEvidence(this.root, current, contract, title,
+            { fingerprints: budget.fingerprints, checkBudget: budget.check }) : [];
+          return [...checks, ...producer];
         },
         runProcedure: parameters => {
           assertActive();
@@ -916,10 +933,11 @@ class Controller {
         active.invocation_id = receipt.id; active.state = 'completed'; run.active_invocations = [];
         save(this.root, run, 'returned', `${role} session returned ${receipt.state}.`);
         if (receipt.state !== 'completed' || !active.report) {
-          const kind = receipt.state === 'completed' ? 'protocol' : 'environment';
+          const observationLoop = receipt.error?.startsWith('CONTROLLED_OBSERVATION_LOOP:') === true;
+          const kind = receipt.state === 'completed' || observationLoop ? 'protocol' : 'environment';
           const message = receipt.state === 'completed' ? 'Session ended without its required typed result. Saved work is retained; inspect current artifacts then save the missing compact result.'
             : receipt.error ?? 'Model session did not complete.';
-          const hardFailure = /CONTROLLED_TOOL_LOOP|MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED|CONTEXT_LIMIT_EXCEEDED|TOOL_CALLING_UNSUPPORTED|NoPermissions|NotFound|access denied|permission|policy|configuration changed|cancelled|canceled/i.test(message);
+          const hardFailure = !observationLoop && /CONTROLLED_TOOL_LOOP|MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED|CONTEXT_LIMIT_EXCEEDED|TOOL_CALLING_UNSUPPORTED|NoPermissions|NotFound|access denied|permission|policy|configuration changed|cancelled|canceled/i.test(message);
           if (!hardFailure && this.repair(run, kind, message)) continue;
           this.block(run, kind, message); return;
         }

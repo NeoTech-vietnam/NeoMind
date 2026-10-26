@@ -76,7 +76,7 @@ function planFor(name, options = {}) {
     rationale: 'A bounded test artifact demonstrates actual workflow transitions and execution evidence.',
     acceptance_criteria: ['The delivered scalar is one.', 'The independent checker rejects a scalar equal to two.'],
     allowed_paths: [output], verification_paths: [`${name}/verify`], outputs: [output], documentation_paths: [],
-    checks: [{ title: 'Validate scalar', command: [process.execPath, checker, output], baseline_paths: baseline,
+    checks: [{ title: options.observationLoop ? 'Validate scalar policy observation' : 'Validate scalar', command: [process.execPath, checker, output], baseline_paths: baseline,
       negative_controls: [{ title: 'Reject incorrect scalar', command: [process.execPath, checker, bad], baseline_paths: [checker, bad], expected_exit_code: 1 }] }],
     risk: options.highRisk ? 'high' : 'low' };
   if (options.evidenceReport) {
@@ -174,6 +174,14 @@ function scriptFor(name, stage, attempt, options, held) {
         ...(defect ? { failure_kind: wrongChecker ? 'checker' : 'implementation' } : {}) })];
   }
   if (stage === 'review') {
+    if (options.observationLoop && (attempt === 1 || options.repeatObservationLoop)) return [
+      call('project_read', { path: output }), call('project_read', { path: checker }),
+      report({ outcome: 'blocked', summary: 'Review evidence inspection is incomplete; the final independent verdict is pending.',
+        findings: ['A partial professional result is retained before the repeated evidence reads.'] }),
+      call('check_evidence', { title: plan.checks[0].title }), call('check_evidence', { title: 'Reject incorrect scalar' }),
+      call('check_evidence', { title: plan.checks[0].title }), call('check_evidence', { title: 'Reject incorrect scalar' }),
+      call('check_evidence', { title: plan.checks[0].title }),
+    ];
     const scopeReview = options.reviewScope || options.unsafeChecker;
     const result = report({ verdict: options.unsafeChecker || options.orphanHistory && attempt === 1 ? 'fail' : 'pass', artifacts: [output, checker, bad],
       ...(options.orphanHistory && attempt === 1 ? { failure_kind: 'checker', findings: ['A separate current verification attempt is required before final acceptance.'] } : {}),
@@ -576,6 +584,54 @@ test('real signed Bridge/MCP drives normal and risk-based workflows with actual 
     const repeated = await submit(env.root, name);
     assert.equal(repeated.workflow_id, done.workflow_id); assert.equal(repeated.attempts.length, done.attempts.length);
   }
+  assert.equal(env.errors.length, 0);
+});
+
+test('a successful observation loop reconciles once through a fresh real Reviewer without waiving its gate', async t => {
+  const env = await setup(t, { 'observation-recovery': { highRisk: true, observationLoop: true } });
+  const initial = await submit(env.root, 'observation-recovery');
+  const done = await until(env.root, initial.workflow_id, run => run.status === 'completed',
+    'the existing one-shot protocol recovery must allow a fresh independent Reviewer to finish', env.errors);
+  assert.deepEqual(done.attempts.map(attempt => attempt.stage), ['planning', 'implementation', 'verification', 'review', 'review']);
+  assert.deepEqual(done.repair_budget, { schema_version: 1, product: 0, protocol: 1, environment: 0 });
+  assert.equal(done.repairs, 0);
+  const reviews = done.attempts.filter(attempt => attempt.stage === 'review');
+  assert.notEqual(reviews[0].invocation_id, reviews[1].invocation_id);
+  assert.equal(reviews[0].report.outcome, 'blocked'); assert.equal(reviews[0].report.verdict, undefined);
+  assert.match(getRecord(env.root, reviews[0].report_id).body, /partial professional result/i);
+  const interrupted = readInvocation(env.root, reviews[0].invocation_id), completed = readInvocation(env.root, reviews[1].invocation_id);
+  assert.equal(interrupted.issuer, 'neomind-vscode-lm'); assert.equal(interrupted.inference_completed, false);
+  assert.match(interrupted.error, /^CONTROLLED_OBSERVATION_LOOP:/);
+  assert.match(interrupted.error, /Validate scalar policy observation/, 'Professional selector text cannot convert trusted protocol recovery into a hard policy failure.');
+  assert.equal(completed.issuer, 'neomind-vscode-lm'); assert.equal(completed.inference_completed, true);
+  assert.equal(reviews[1].report.verdict, 'pass');
+  const repair = done.events.filter(event => event.kind === 'repair');
+  assert.equal(repair.length, 1); assert.equal(repair[0].summary, 'Backend routes protocol to review.');
+  const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.epoch_id === done.epoch_id);
+  const authority = controlledContractForTask(env.root, task);
+  assert.equal(authority.contract.reviewer_required, true);
+  assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true);
+  assert.equal(readFileSync(safePath(env.root, 'observation-recovery/src/value.txt'), 'utf8'), '1\n');
+  assert.equal(env.errors.length, 0);
+});
+
+test('repeated successful observation loops cannot reset or exceed the existing protocol recovery allowance', async t => {
+  const env = await setup(t, { 'observation-exhaustion': { highRisk: true, observationLoop: true, repeatObservationLoop: true } });
+  const initial = await submit(env.root, 'observation-exhaustion');
+  const stopped = await until(env.root, initial.workflow_id, run => run.status === 'blocked',
+    'a second refused professional result must stop within the unchanged recovery allowance', env.errors);
+  assert.equal(stopped.phase, 'review'); assert.equal(stopped.blocker.kind, 'protocol');
+  assert.match(stopped.blocker.message, /^Protocol reconciliation budget exhausted\./);
+  assert.deepEqual(stopped.repair_budget, { schema_version: 1, product: 0, protocol: 1, environment: 0 });
+  assert.equal(stopped.repairs, 0); assert.equal(stopped.final_report_id, undefined);
+  const reviews = stopped.attempts.filter(attempt => attempt.stage === 'review');
+  assert.equal(reviews.length, 2); assert.notEqual(reviews[0].invocation_id, reviews[1].invocation_id);
+  assert.ok(reviews.every(attempt => attempt.report.outcome === 'blocked' && attempt.report.verdict === undefined));
+  assert.ok(reviews.every(attempt => readInvocation(env.root, attempt.invocation_id).error.startsWith('CONTROLLED_OBSERVATION_LOOP:')));
+  assert.equal(stopped.events.filter(event => event.kind === 'repair').length, 1);
+  assert.equal(readFileSync(safePath(env.root, 'observation-exhaustion/src/value.txt'), 'utf8'), '1\n');
+  const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.epoch_id === stopped.epoch_id);
+  assert.equal(verify(env.root, task.meta.id, 'accepted').ok, false, 'Repeated reads never substitute for the required review.');
   assert.equal(env.errors.length, 0);
 });
 

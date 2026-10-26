@@ -13,6 +13,7 @@ import { invocationPolicy, invocationConfigurationHashes } from './routing.js';
 import { vscodeProviderDiagnostic } from './vscode-provider-diagnostic.js';
 import { controlledModelInput, controlledResultFailure, controlledLoopState, ControlledFailureLoop } from './controlled-observability.js';
 import { ModelCallProgress, type ModelCallTerminalReason } from './vscode-model-progress.js';
+import { ControlledObservationLoop } from './controlled-observation-loop.js';
 
 // VS Code is supplied by extension host, not imported into CLI or added as dependency.
 type VSCode = any;
@@ -23,7 +24,7 @@ interface Turn {
   output: string; error: string | null; tools: any[]; events: any[];
   waiting: Map<string, { resolve(value: any): void; reject(error: Error): void }>;
   timer?: NodeJS.Timeout; lastSeen: number; configuration: string; checkpoint: number; observedTool: boolean;
-  controlled?: OwnedContext; failureLoop?: ControlledFailureLoop;
+  controlled?: OwnedContext; failureLoop?: ControlledFailureLoop; observationLoop?: ControlledObservationLoop;
   progress: ModelCallProgress;
 }
 function errorField(value: unknown, key: string): unknown {
@@ -158,7 +159,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
             }
             await traceControlled(turn, { event: 'model-tool-request', tool: call.name, model_input: controlledModelInput(call.name, call.input) });
           }
-          const result = await new Promise<any>((resolve, reject) => {
+          let result = await new Promise<any>((resolve, reject) => {
             turn.waiting.set(call.callId, { resolve, reject });
             turn.events.push({ call_id: call.callId, name: call.name, input: call.input });
           });
@@ -170,6 +171,18 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
               controlledLoopState(root, { ...turn.controlled.binding, invocation_id: turn.invocation }));
             await traceControlled(turn, { event: 'model-tool-result', tool: call.name, status: validation ? 'failed' : 'succeeded',
               ...(validation ? { code: validation.code, validation } : {}) });
+            const observation = turn.observationLoop!.observe(call.name, call.input, result,
+              controlledLoopState(root, { ...turn.controlled.binding, invocation_id: turn.invocation }), round + 1);
+            if (observation) {
+              await traceControlled(turn, { event: observation.kind === 'notice' ? 'observation-repeat-notice' : 'observation-loop-stopped',
+                tool: call.name, code: observation.code, observation });
+              if (observation.kind === 'reconcile') {
+                stop(turn, 'blocked', `CONTROLLED_OBSERVATION_LOOP: ${JSON.stringify(observation)}`, 'loop-stopped');
+                return;
+              }
+              result = { ...result, content: [...result.content,
+                { type: 'text', text: JSON.stringify({ backend_observation: observation }) }] };
+            }
           }
           results.push(new vscode.LanguageModelToolResultPart(call.callId,
             [new vscode.LanguageModelTextPart(bounded(result))]));
@@ -276,7 +289,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
         source: new vscode.CancellationTokenSource(), state: 'prepared', output: '', error: null, tools, events: [], waiting: new Map(),
         configuration: canonicalJson(receipt.configuration_hashes), lastSeen: Date.now(), checkpoint: conversation.messages.length, observedTool: false,
         progress: new ModelCallProgress(root, receipt.id, models[0].id, models[0].vendor),
-        ...(controlled ? { controlled, failureLoop: new ControlledFailureLoop() } : {}) };
+        ...(controlled ? { controlled, failureLoop: new ControlledFailureLoop(), observationLoop: new ControlledObservationLoop() } : {}) };
       turns.set(id, turn);
       return { protocol: bridgeProtocol, host_instance: instance, vendor: models[0].vendor, model: models[0].id,
         conversation_id: conversationId, turn_id: id, reasoning_effort: null, sandbox: null, version: vscode.version };

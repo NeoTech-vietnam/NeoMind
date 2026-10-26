@@ -13,6 +13,7 @@ import type { Gate, ProjectRecord, Verification } from './types.js';
 import { readCheckReconciliations, unresolvedControlledChecks, assertFreshVerifierAfterReconciliation } from './controlled-check-reconciliation.js';
 import { controlledCornellSelection } from './controlled-cornell-selection.js';
 import { assertCompletedEvidenceDocumentationLineage } from './controlled-report-authority.js';
+import { verifyControlledExecutions } from './controlled-execution-evidence.js';
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const roots = '.neomind/controlled/workflows';
@@ -339,37 +340,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
     if (run.attempts.some(attempt => ['starting', 'running'].includes(attempt.state)) || unresolvedControlledChecks(run, reconciliations).length ||
         run.local_executions?.some(operation => operation.state !== 'completed'))
       throw new Error('An active replacement session or unresolved check effect still needs reconciliation.');
-    for (const operation of run.local_executions ?? []) {
-      budget.check();
-      const intentBytes = readFileSync(safePath(root, operation.intent_path));
-      if (!operation.result_path || !operation.result_sha256 || hash(intentBytes) !== operation.intent_sha256)
-        throw new Error('A local execution has no intact backend authorization and result.');
-      const resultBytes = readFileSync(safePath(root, operation.result_path));
-      if (hash(resultBytes) !== operation.result_sha256) throw new Error('The local execution result changed.');
-      const intent = JSON.parse(intentBytes.toString('utf8')), result = JSON.parse(resultBytes.toString('utf8'));
-      if (intent.payload_source || result.payload_source) {
-        const source = intent.payload_source;
-        if (!source || !same(source, result.payload_source) || typeof source.path !== 'string' ||
-            !/^[a-f0-9]{64}$/.test(source.sha256) || !Number.isSafeInteger(source.size_bytes) || source.size_bytes < 0 ||
-            intent.baseline?.[source.path] !== source.sha256 ||
-            result.execution && result.execution.baseline?.[source.path] !== source.sha256)
-          throw new Error('Prepared JSON source differs from its backend-owned execution baseline.');
-        const currentOperation = run.local_executions?.findLast(item => item.title === operation.title && item.passed);
-        if (operation.passed && currentOperation?.id === operation.id && budget.fingerprints([source.path])[source.path] !== source.sha256)
-          throw new Error('The current prepared JSON source changed after its successful producer execution.');
-      }
-      const attempt = run.attempts.find(item => item.id === operation.attempt_id);
-      const receipt = attempt?.invocation_id ? readInvocation(root, attempt.invocation_id) : undefined;
-      for (const proof of [intent, result]) if (proof.id !== operation.id || proof.request_hash !== operation.request_hash ||
-          proof.workflow_id !== run.workflow_id || proof.epoch_id !== run.epoch_id || proof.contract_hash !== run.contract_hash ||
-          proof.task_id !== contract.task_id || proof.attempt_id !== operation.attempt_id || proof.invocation_id !== attempt?.invocation_id)
-        throw new Error('A local operation belongs to another actor, task or immutable execution.');
-      if (attempt?.role !== 'developer' || attempt.stage !== 'implementation' || receipt?.issuer !== 'neomind-vscode-lm' ||
-          receipt.role !== 'developer' || receipt.task_id !== contract.task_id || receipt.workflow_id !== run.workflow_id ||
-          receipt.controlled_execution?.epoch_id !== run.epoch_id || receipt.controlled_execution.stage !== 'implementation' ||
-          (result.execution?.passed ?? false) !== operation.passed)
-        throw new Error('Local operation provenance differs from its signed producer.');
-    }
+    verifyControlledExecutions(root, run, contract, { checkBudget: budget.check, fingerprints: budget.fingerprints });
     if (contract.plan.execution_steps?.some(step => !run.local_executions?.some(operation =>
         operation.title === step.title && operation.state === 'completed' && operation.passed)))
       throw new Error('A declared producer operation lacks its actual successful execution result.');

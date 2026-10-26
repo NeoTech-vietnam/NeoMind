@@ -477,8 +477,8 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         return callbacks.runCheck(args.title);
       });
   if (['implementation', 'verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage))
-    register('check_evidence', 'Read bound execution evidence (default), kind workflow for authoritative original preservation and report lifecycle, or kind registration for the actual bound manifest. No private registry access or caller-provided identities.',
-      z.strictObject({ title: text.max(256).optional(), kind: z.enum(['execution', 'registration', 'workflow']).default('execution') }), true, args => {
+    register('check_evidence', 'Read actual bound independent-check and producer-execution evidence (default execution kind). Omit title for all assigned evidence, or select an exact frozen check or producer execution_steps title. Entries identify their distinct provenance; a successful producer operation is not independent verification. Use kind workflow for original preservation and report lifecycle, or kind registration for the bound manifest. No private registry access or caller-provided identities.',
+      z.strictObject({ title: text.max(256).optional().describe('Exact assigned check or producer operation title. Omit to inspect all bound execution evidence; unknown selectors return available canonical titles.'), kind: z.enum(['execution', 'registration', 'workflow']).default('execution') }), true, args => {
         if (!callbacks.readEvidence) throw new ControlledToolError('NO_CHECK_EVIDENCE', 'No bound check evidence is available in this session.');
         return callbacks.readEvidence(args.title, args.kind);
       });

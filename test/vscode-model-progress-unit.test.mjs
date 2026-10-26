@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -83,4 +85,75 @@ test('Windows diagnostic child rejects explicit foreign ACL grants through the d
   const p = new ModelCallProgress(f.root, f.id, 'top-models', 'customendpoint');
   p.beginRound(1); p.request();
   assert.equal(existsSync(f.path), false, 'Do not expose even diagnostic metadata through an explicitly shared child directory.');
+});
+
+test('one transient atomic-rename failure does not permanently freeze diagnostics and retries after five seconds', async t => {
+  const f = await fixture(t), p = new ModelCallProgress(f.root, f.id, 'top-models', 'customendpoint');
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 200000 });
+  const original = fs.renameSync;
+  let failures = 1;
+  fs.renameSync = (from, to) => {
+    if (to === f.path && failures-- > 0) throw Object.assign(new Error('SECRET_TRANSIENT_FAILURE'), { code: 'EBUSY' });
+    return original(from, to);
+  };
+  syncBuiltinESMExports();
+  t.after(() => { fs.renameSync = original; syncBuiltinESMExports(); });
+  p.beginRound(1);
+  assert.equal(f.read().phase, 'prepared');
+  t.mock.timers.tick(4999);
+  assert.equal(f.read().phase, 'prepared');
+  t.mock.timers.tick(1);
+  assert.equal(f.read().phase, 'preflight', 'Recover without another model call or a diagnostic constructor.');
+  p.request(); p.handleReceived(); p.part('tool-call'); p.finish('cancelled', 'owner-cancel');
+  assert.equal(f.read().phase, 'cancelled');
+  assert.equal(f.read().totals.tool_calls, 1);
+  assert.doesNotMatch(readFileSync(f.path, 'utf8'), /SECRET/);
+  t.mock.timers.reset();
+});
+
+test('temporary cleanup failures cannot create orphan sprawl and later phase writes recover a terminal snapshot', async t => {
+  const f = await fixture(t), p = new ModelCallProgress(f.root, f.id, 'top-models', 'customendpoint');
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 300000 });
+  const rename = fs.renameSync, remove = fs.rmSync;
+  let blocked = true;
+  fs.renameSync = (from, to) => {
+    if (blocked && to === f.path) throw Object.assign(new Error('SECRET_RENAME_LOCK'), { code: 'EPERM' });
+    return rename(from, to);
+  };
+  fs.rmSync = (path, ...rest) => {
+    if (blocked && String(path).startsWith(f.path + '.') && String(path).endsWith('.tmp'))
+      throw Object.assign(new Error('SECRET_CLEANUP_LOCK'), { code: 'EBUSY' });
+    return remove(path, ...rest);
+  };
+  syncBuiltinESMExports();
+  t.after(() => { fs.renameSync = rename; fs.rmSync = remove; syncBuiltinESMExports(); });
+  p.beginRound(1); p.request(); p.finish('cancelled', 'owner-cancel');
+  for (let i = 0; i < 4; i++) {
+    t.mock.timers.tick(5000);
+    assert.equal(readdirSync(join(f.directory, 'progress')).filter(name => name.endsWith('.tmp')).length, 1,
+      'Retain at most one owned pending temporary file while cleanup is blocked.');
+  }
+  blocked = false;
+  t.mock.timers.tick(5000);
+  assert.equal(f.read().phase, 'cancelled', 'Terminal metadata also retries after a transient filesystem lock.');
+  assert.equal(readdirSync(join(f.directory, 'progress')).filter(name => name.endsWith('.tmp')).length, 0);
+  assert.doesNotMatch(readFileSync(f.path, 'utf8'), /SECRET/);
+  t.mock.timers.reset();
+});
+
+test('a private-directory validation failure remains fatal even if the directory later appears usable', async t => {
+  const f = await fixture(t), p = new ModelCallProgress(f.root, f.id, 'top-models', 'customendpoint');
+  const original = fs.lstatSync, directory = join(f.directory, 'progress');
+  let replaced = true;
+  fs.lstatSync = (path, ...args) => {
+    const stat = original(path, ...args);
+    return path === directory && replaced ? Object.assign(Object.create(stat), { isSymbolicLink: () => true }) : stat;
+  };
+  syncBuiltinESMExports();
+  t.after(() => { fs.lstatSync = original; syncBuiltinESMExports(); });
+  p.beginRound(1);
+  replaced = false;
+  p.request(); p.handleReceived(); p.part('text', 9); p.finish('completed');
+  assert.equal(f.read().phase, 'prepared', 'Privacy failures must not be treated as transient write locks.');
+  assert.equal(readdirSync(directory).filter(name => name.endsWith('.tmp')).length, 0);
 });

@@ -323,6 +323,16 @@ test('minimum review risk retains the original English and Vietnamese user inten
     assert.equal(controlledRisk(plan, request).reviewer_required, true, request);
 });
 
+test('backend minimum risk does not turn omitted optional elevation into a new review gate', t => {
+  const a = fixture(t), plan = structuredClone(a.contract.plan);
+  delete plan.risk;
+  assert.deepEqual(controlledRisk(plan), { reviewer_required: false, reasons: [] });
+  for (const risk of ['elevated', 'high']) assert.equal(controlledRisk({ ...plan, risk }).reviewer_required, true);
+  assert.equal(controlledRisk({ ...plan, allowed_paths: ['src/auth.ts'] }).reviewer_required, true);
+  assert.equal(controlledRisk(plan, 'Change authentication, storage and orchestration behavior.').reviewer_required, true);
+  assert.equal(a.contract.reviewer_required, false, 'Assessing new plans never mutates a saved contract.');
+});
+
 test('public continuation preflight preserves an actionable unsupported-family error before host lookup or model dispatch', async t => {
   const a = fixture(t);
   atomicWrite(safePath(a.root, '.neomind/automation.json'), JSON.stringify(nativeAutomationPolicy()));

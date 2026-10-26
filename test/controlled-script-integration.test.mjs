@@ -9,6 +9,8 @@ import { enableVSCodeHost } from '../dist/vscode-host.js';
 import { shutdownNative } from '../dist/native.js';
 import { startControlledHost, startControlledWorkflow, controlControlledWorkflow, controlledStatus } from '../dist/controlled-workflow.js';
 import { verify } from '../dist/engineering.js';
+import { controlledProducerExecutionEvidence } from '../dist/controlled-execution-evidence.js';
+import { controlledAcceptanceBudget } from '../dist/controlled-acceptance.js';
 
 // The Bridge, signatures, MCP tools, files and child processes are real. The
 // model/editor responses below are deterministic fixtures, not account inference.
@@ -52,7 +54,8 @@ const call = (name, input = {}, capture, expectedError) => ({ name, input, captu
 const report = (stage, extra = {}) => call('assignment_report', { outcome: 'completed', summary: `Scoped ${stage} result saved.`,
   ...(stage === 'verification' || stage === 'review' ? { verdict: 'pass' } : {}), ...extra });
 function actions(stage, attempt, mode) {
-  if (stage === 'planning') return [call('runtime_context', {}, 'context'), call('runtime_context', {}, 'context-replay'), call('workflow_plan', plan()), report(stage)];
+  if (stage === 'planning') return [call('runtime_context', {}, 'context'), call('runtime_context', {}, 'context-replay'),
+    call('workflow_plan', { ...plan(), ...(mode === 'producer-evidence' ? { risk: 'elevated' } : {}) }), report(stage)];
   if (stage === 'implementation') {
     if (mode === 'optional-toolchains' && attempt === 1) return [call('runtime_context', { executables: {
       python: join(tmpdir(), 'neomind-nonexistent-context', 'python.exe'),
@@ -65,15 +68,22 @@ function actions(stage, attempt, mode) {
     const input = { values: failed ? [100, 2] : [1, 2, 3], ...(failed ? { fail: true } : {}),
       ...(mode === 'close' && attempt === 1 ? { slow: true } : {}) };
     const taskInput = mode === 'prepared-input' ? { title, input_path: preparedSource } : { title, input };
-    return [call('project_read', { path: script }), call('task_file_write', { path: script, content: producer }),
-      call('project_read', { path: script }), call('task_run', taskInput, `execution-${attempt}`),
+    const producerContent = mode === 'producer-evidence' ? `${producer}\nconsole.log('api_key="fixture-credential-123" .neomind/controlled/private.json');\n` : producer;
+    return [call('project_read', { path: script }), call('task_file_write', { path: script, content: producerContent }),
+      call('project_read', { path: script }),
+      ...(mode === 'producer-evidence' ? [call('check_evidence', { title }, 'producer-proof-pending')] : []),
+      call('task_run', taskInput, `execution-${attempt}`),
       call('task_run', taskInput, `replay-${attempt}`),
       ...(mode === 'prepared-input' ? [call('task_run', { title, input_path: alternatePreparedSource }, 'different-source-replay', 'OUTPUT_EXISTS')] : []),
       report(stage, failed ? { outcome: 'failed', failure_kind: 'implementation', findings: ['The real producer exited seven after creating its output.'] } : {})];
   }
-  if (stage === 'verification') return [call('project_read', { path: checker }), call('task_file_write', { path: checker, content: oracle }),
+  if (stage === 'verification') return [...(mode === 'producer-evidence' ? [
+    call('check_evidence', { title }, 'producer-proof-verifier'),
+    call('check_evidence', { title: 'Not a canonical evidence selector' }, 'unknown-producer-selector', 'INVALID_CHECK'),
+  ] : []), call('project_read', { path: checker }), call('task_file_write', { path: checker, content: oracle }),
     call('project_read', { path: wrong }), call('task_file_write', { path: wrong, content: '{"value":7}\n' }), call('check_run'), report(stage)];
-  if (stage === 'review') return [call('check_evidence'), report(stage)];
+  if (stage === 'review') return mode === 'producer-evidence' ? [call('check_evidence', { title }, 'producer-proof-reviewer'),
+    call('check_evidence', {}, 'producer-proof-all'), report(stage)] : [call('check_evidence'), report(stage)];
   if (stage === 'diagnosis' && mode === 'optional-toolchains') return [report(stage, { failure_kind: 'implementation',
     findings: ['The frozen producer and checks require only Node. Complete that assignment without inventing optional language prerequisites.'] })];
   throw new Error(`Unexpected integration fixture stage: ${stage}`);
@@ -167,6 +177,57 @@ async function until(env, id, predicate) {
   assert.fail(`Controlled direct script did not reach its expected durable state: ${JSON.stringify(diagnosticState(env, id))}`);
 }
 const savedResult = (env, entry) => JSON.parse(readFileSync(safePath(env.root, entry.result_path), 'utf8'));
+const savedContract = (env, run) => JSON.parse(readFileSync(safePath(env.root,
+  `.neomind/controlled/workflows/${hash(run.workflow_id)}.${run.epoch_id}.contract.json`), 'utf8'));
+function producerEvidence(env, run, selected = title) {
+  const budget = controlledAcceptanceBudget(env.root);
+  return controlledProducerExecutionEvidence(env.root, run, savedContract(env, run), selected,
+    { fingerprints: budget.fingerprints, checkBudget: budget.check });
+}
+
+test('Verifier and Reviewer read an exact producer operation through real MCP instead of receiving an empty check list', async t => {
+  const env = await fixture(t, 'producer-evidence'), initial = await startControlledWorkflow(env.root, {
+    requirement: 'Generate scalar six, independently check it and explicitly review the actual bounded producer execution.', request_id: 'direct-producer-evidence' });
+  const done = await until(env, initial.workflow_id, run => run.status === 'completed');
+  assert.deepEqual(env.errors, []); assert.deepEqual(env.observed, ['planning', 'implementation', 'verification', 'review']);
+  const pending = env.captures['producer-proof-pending'];
+  assert.equal(pending.length, 1); assert.equal(pending[0].evidence_kind, 'producer-execution');
+  assert.equal(pending[0].state, 'pending'); assert.equal(pending[0].passed, false);
+  const operation = done.local_executions[0];
+  for (const key of ['producer-proof-verifier', 'producer-proof-reviewer']) {
+    const observations = env.captures[key]; assert.equal(observations.length, 1, key);
+    const proof = observations[0]; assert.equal(proof.evidence_kind, 'producer-execution'); assert.equal(proof.title, title);
+    assert.equal(proof.state, 'completed'); assert.equal(proof.operation_id, operation.id);
+    assert.equal(proof.passed, true); assert.equal(proof.current_baseline, true); assert.equal(proof.observed_passed, true);
+    assert.equal(proof.exit_code, 0); assert.match(proof.stdout, /actual producer/);
+    assert.equal(proof.stdout.includes('fixture-credential-123'), false);
+    assert.equal(proof.stdout.includes('.neomind/'), false);
+    assert.deepEqual(proof.command, plan().execution_steps[0].command);
+    assert.equal(proof.output_hashes[product], hash(readFileSync(join(env.root, product))));
+    for (const field of ['intent_path', 'result_path', 'stdin', 'input', 'guarded_before', 'guarded_after'])
+      assert.equal(Object.hasOwn(proof, field), false, `Private durable material is not model input: ${field}`);
+  }
+  assert.ok(env.captures['producer-proof-all'].some(item => item.evidence_kind === 'producer-execution'));
+  assert.ok(env.captures['producer-proof-all'].some(item => item.evidence_kind === 'independent-check'));
+  const unknown = env.captures['unknown-producer-selector']; assert.equal(unknown.code, 'INVALID_CHECK');
+  assert.ok(JSON.stringify(unknown).includes(title), 'An unknown selector tells the caller the actual available operation.');
+  const contract = savedContract(env, done); assert.equal(verify(env.root, contract.task_id, 'accepted').ok, true);
+  const original = readFileSync(join(env.root, product));
+  try {
+    atomicWrite(safePath(env.root, product), '{"value":999}\n');
+    const stale = producerEvidence(env, done)[0];
+    assert.equal(stale.passed, false); assert.equal(stale.current_baseline, false); assert.equal(stale.observed_passed, true);
+    assert.equal(verify(env.root, contract.task_id, 'accepted').ok, false);
+  } finally { atomicWrite(safePath(env.root, product), original); }
+  assert.equal(producerEvidence(env, done)[0].passed, true); assert.equal(verify(env.root, contract.task_id, 'accepted').ok, true);
+  const originalResult = readFileSync(safePath(env.root, operation.result_path));
+  try {
+    atomicWrite(safePath(env.root, operation.result_path), Buffer.concat([originalResult, Buffer.from(' ')]));
+    assert.throws(() => producerEvidence(env, done), /local execution result changed/);
+    assert.equal(verify(env.root, contract.task_id, 'accepted').ok, false);
+  } finally { atomicWrite(safePath(env.root, operation.result_path), originalResult); }
+  assert.equal(producerEvidence(env, done)[0].passed, true);
+});
 
 test('bound task_run consumes JSON, replays without another effect, and passes independent positive/negative checks', async t => {
   const env = await fixture(t), initial = await startControlledWorkflow(env.root, { requirement: 'Generate JSON scalar six through the existing Node runtime and independently verify it.', request_id: 'direct-json' });
@@ -255,8 +316,11 @@ test('backend derives a prepared JSON read baseline without requiring planner bo
       const stale = verify(env.root, contract.task_id, 'accepted');
       assert.equal(stale.ok, false, 'A completed execution must not silently accept edited or deleted current prepared data.');
       assert.ok(stale.findings.some(finding => /current prepared JSON source changed/.test(finding.message)));
+      const observation = producerEvidence(env, done)[0];
+      assert.equal(observation.passed, false); assert.equal(observation.current_baseline, false); assert.equal(observation.observed_passed, true);
     } finally { atomicWrite(safePath(env.root, preparedSource), sourceBefore); }
     assert.equal(verify(env.root, contract.task_id, 'accepted').ok, true);
+    assert.equal(producerEvidence(env, done)[0].passed, true);
   }
 });
 
@@ -273,6 +337,10 @@ test('a partial-output failure is retained and corrected structured input succee
   assert.equal(hash(readFileSync(safePath(env.root, done.local_executions[0].result_path))), done.local_executions[0].result_sha256);
   assert.deepEqual(JSON.parse(readFileSync(join(env.root, product), 'utf8')), { value: 6 });
   assert.ok(done.checks.every(item => item.passed));
+  const observation = producerEvidence(env, done)[0];
+  assert.equal(observation.operation_id, done.local_executions[1].id); assert.equal(observation.passed, true);
+  assert.equal(hash(readFileSync(safePath(env.root, done.local_executions[0].result_path))), done.local_executions[0].result_sha256,
+    'Historical failed execution remains unchanged and validated while the latest successful result is shown.');
 });
 
 test('owner close waits for cancelled direct-process persistence and the same workflow resumes with fresh execution', async t => {

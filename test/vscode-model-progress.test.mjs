@@ -126,3 +126,22 @@ test('host persists fixed ordinary Error and nested transport classification wit
   assert.equal(progress.failure_phase, 'awaiting-sdk-handle');
   assert.doesNotMatch(JSON.stringify(progress), /SECRET|https:/);
 });
+
+test('host classifies observed router upstream connection lost response without changing failure lifecycle or leaking content', async t => {
+  const { root, read } = await fixture(t, async () => ({ stream: (async function* () {
+    throw new Error('upstream connection lost SECRET_RAW_PROVIDER https://secret.invalid/?token=SECRET');
+  })() }));
+  const receipt = await startNative(root, { role: 'reviewer', prompt: 'Observe the fixed router response error.' });
+  const done = await ended(root, receipt.id);
+  assert.equal(done.state, 'blocked');
+  assert.equal(done.inference_completed, false);
+  assert.match(done.error, /blocked during response-stream: PROVIDER_UNAVAILABLE:/);
+  assert.doesNotMatch(done.error, /SECRET|secret\.invalid|https:|token=/);
+  const progress = read(receipt.id);
+  assert.equal(progress.phase, 'error');
+  assert.equal(progress.failure_phase, 'response-stream');
+  assert.ok(progress.sdk_handle_received_at);
+  assert.equal(progress.first_stream_chunk_at, null);
+  assert.equal(progress.round_counts.parts, 0);
+  assert.equal(progress.terminal_reason, 'model-or-host-error');
+});
