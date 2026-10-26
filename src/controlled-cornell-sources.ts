@@ -7,6 +7,7 @@ import { atomicWrite, hash, loadRecords, now, safePath, withOperationLock } from
 import type { ProjectRecord } from './types.js';
 import { evidenceRecordFingerprint } from './evidence-inputs.js';
 import type { ControlledPayloadSource } from './controlled-payload.js';
+import { withCornellRecordView } from './cornell-record-view.js';
 
 // Public modules can reach this helper through the engineering/controller graph
 // while Cornell's module is still initializing. Resolve its authoritative schema
@@ -185,7 +186,8 @@ export function existingControlledCornellNote(root: string, compiled: CompiledCo
   } else if (ids.length || compiled.note.demonstration.observed) return undefined;
   // Before the Verifier, an exact saved expected-only bundle is replayable;
   // it still must satisfy every record fingerprint and artifact check below.
-  const records = new Map(loadRecords(root).map(record => [record.meta.id, record]));
+  return withCornellRecordView(root, view => {
+  const records = new Map(view.all().map(record => [record.meta.id, record]));
   if (ids.some(id => {
     const record = records.get(id);
     return record?.meta.type !== 'evidence' || record.meta.data.workflow_id !== context.workflow_id || record.meta.data.task_id !== context.task_id;
@@ -205,5 +207,6 @@ export function existingControlledCornellNote(root: string, compiled: CompiledCo
   });
   if (candidates.length > 1) throw new Error('Multiple same-input Cornell records require runtime reconciliation.');
   const candidate = candidates[0];
-  return candidate && validateCornellNote(root, candidate.meta.id).ok ? candidate : undefined;
+  return candidate && validateCornellNote(root, candidate.meta.id, view).ok ? candidate : undefined;
+  });
 }

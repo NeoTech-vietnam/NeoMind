@@ -23,6 +23,7 @@ import {
   withOperationLock,
 } from './storage.js';
 import type { ProjectRecord } from './types.js';
+import { assertCornellRecordView, withCornellRecordView, type CornellRecordView } from './cornell-record-view.js';
 
 // Identify the generator functions this process actually loaded, even across a package rebuild.
 const loadedGeneratorImplementation = readFileSync(new URL('./recipes.js', import.meta.url));
@@ -619,7 +620,10 @@ export function normalizeCornellOwnership(
   root: string,
   note: CornellInput,
   context: { workflow_id?: string; requirement_ids?: string[]; task_id?: string; revision_id?: string } = {},
+  view?: CornellRecordView,
 ): { note: CornellInput; workflow_id?: string } {
+  if (!view) return withCornellRecordView(root, current => normalizeCornellOwnership(root, note, context, current));
+  assertCornellRecordView(root, view);
   if (!note || typeof note !== 'object' || Array.isArray(note))
     throw new Error('Cornell parameters need a note object.');
   const ids: string[] = [];
@@ -655,7 +659,7 @@ export function normalizeCornellOwnership(
     }
   }
   const references = [...new Set(ids)].map((id) => {
-    const record = getRecord(root, id);
+    const record = view.get(id);
     const owners = record.meta.data.kind === 'manager-workflow'
       ? [record.meta.id]
       : [record.meta.data.workflow_id, record.meta.data.intake_workflow_id]
@@ -668,7 +672,7 @@ export function normalizeCornellOwnership(
     throw new Error(`Cornell workflow ownership mismatch: ${owners.join(', ')}. Use one workflow and same-workflow references.`);
   const workflow_id = owners[0];
   if (!workflow_id) return { note };
-  const workflow = getRecord(root, workflow_id);
+  const workflow = view.get(workflow_id);
   if (workflow.meta.type !== 'knowledge' || workflow.meta.data.kind !== 'manager-workflow')
     throw new Error(`Cornell workflow_id must identify an existing manager workflow: ${workflow_id}.`);
   const unowned = references.filter((reference) => !reference.owners.length);

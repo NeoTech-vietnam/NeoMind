@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { serveHost, exactRoot, bounded, bridgeProtocol } from './vscode-wire.js';
-import { readInvocation, routingProblems, canonicalJson, routingConfigurationHashes, requireRoutingPolicy } from './routing.js';
+import { readInvocation, observeInvocation, canonicalJson, routingConfigurationHashes, requireRoutingPolicy } from './routing.js';
 import { roleCapabilities } from './tools.js';
 import { vscodeSelection } from './vscode-policy.js';
 import { resourceRoot, safePath } from './storage.js';
@@ -84,13 +84,14 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
     // Stream fragments cannot mutate the project. Verify signed binding at request,
     // stream completion and every tool boundary instead of rehashing it per token.
     if (!validateBinding) return;
-    const receipt = readInvocation(root, turn.invocation);
-    if (receipt.host_instance !== instance || receipt.native_turn_id !== turn.id ||
+    const role = conversations.get(turn.conversation)?.role;
+    if (!role) throw new Error('Host turn differs from signed invocation.');
+    const observed = observeInvocation(root, role, turn.invocation, { require_completed: false }), receipt = observed.receipt;
+    if (!receipt || receipt.role !== role || receipt.host_instance !== instance || receipt.native_turn_id !== turn.id ||
         receipt.native_thread_id !== turn.conversation || receipt.confirmed_model !== turn.model.id ||
         receipt.model_provider !== turn.model.vendor)
       throw new Error('Host turn differs from signed invocation.');
-    if (turn.configuration !== canonicalJson(invocationConfigurationHashes(root, receipt)) ||
-        routingProblems(root, receipt.role, turn.invocation, { require_completed: false }).length)
+    if (turn.configuration !== canonicalJson(observed.current_configuration_hashes) || observed.problems.length)
       throw new Error('Invocation policy changed.');
   }
   async function generate(turn: Turn): Promise<void> {

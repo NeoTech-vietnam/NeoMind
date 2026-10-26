@@ -339,20 +339,29 @@ export function routingBindingProblems(
   }
   return problems;
 }
-export function routingProblems(
+export interface InvocationObservation {
+  receipt: NativeReceipt | null;
+  current_configuration_hashes: Record<string, string> | null;
+  problems: string[];
+}
+/** One fresh authoritative routing evaluation. No caller-provided receipt,
+ * configuration snapshot, or cross-evaluation cache can skip verification. */
+export function observeInvocation(
   root: string,
   role: string,
   invocationId: string | undefined,
   binding: RoutingBinding = {},
-): string[] {
-  if (!readRoutingPolicy(root)) return [];
+): InvocationObservation {
+  if (!readRoutingPolicy(root)) return { receipt: null, current_configuration_hashes: null, problems: [] };
   const errors: string[] = [];
-  if (!invocationId) return ['Strict routing requires a bridge-issued native invocation receipt.'];
+  if (!invocationId) return { receipt: null, current_configuration_hashes: null,
+    problems: ['Strict routing requires a bridge-issued native invocation receipt.'] };
   let receipt: NativeReceipt;
   try {
     receipt = readInvocation(root, invocationId);
   } catch (error) {
-    return [`Native routing receipt cannot be verified: ${String(error)}.`];
+    return { receipt: null, current_configuration_hashes: null,
+      problems: [`Native routing receipt cannot be verified: ${String(error)}.`] };
   }
   const frozenPolicy = invocationPolicy(root, receipt);
   const policy = roleModelPolicy(root, role, frozenPolicy);
@@ -485,7 +494,15 @@ export function routingProblems(
     errors.push(`Native invocation is ${receipt.state}; work is blocked.`);
   if (invocationIsActive(receipt) && !ownerIsAlive(receipt.owner_pid))
     errors.push('Native invocation owner is absent; reconcile its transport before resuming.');
-  return errors;
+  return { receipt, current_configuration_hashes: currentHashes, problems: errors };
+}
+export function routingProblems(
+  root: string,
+  role: string,
+  invocationId: string | undefined,
+  binding: RoutingBinding = {},
+): string[] {
+  return observeInvocation(root, role, invocationId, binding).problems;
 }
 export function assertRouting(
   root: string,
@@ -494,7 +511,7 @@ export function assertRouting(
   binding: RoutingBinding = {},
 ): NativeReceipt | null {
   requireRoutingPolicy(root);
-  const errors = routingProblems(root, role, invocationId, binding);
-  if (errors.length) throw new Error(errors.join(' '));
-  return invocationId && readRoutingPolicy(root) ? readInvocation(root, invocationId) : null;
+  const observed = observeInvocation(root, role, invocationId, binding);
+  if (observed.problems.length) throw new Error(observed.problems.join(' '));
+  return observed.receipt;
 }

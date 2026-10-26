@@ -18,6 +18,7 @@ import {
 import type { ProjectRecord } from './types.js';
 import { evidenceRecordFingerprint } from './evidence-inputs.js';
 import { hasUnfinishedCornellProse } from './cornell-content.js';
+import { assertCornellRecordView, withCornellRecordView, type CornellRecordView } from './cornell-record-view.js';
 
 export const cornellQuote =
   '<p align="center"><strong><em>"DO NOT JUST TALK ABOUT IT — SHOW IT"</em></strong></p>';
@@ -333,6 +334,7 @@ function demonstrationEvidenceProblems(root: string, evidence: ProjectRecord,
 function normalizeSource(
   root: string,
   source: CornellSource,
+  resolveRecord: (id: string) => ProjectRecord = id => getRecord(root, id),
 ): CornellSource & { baseline?: string } {
   if (!/^S[1-9][0-9]*$/.test(source.id)) throw new Error('Source IDs must use S1, S2, and so on.');
   text(source.title, `Source ${source.id} title`);
@@ -342,7 +344,7 @@ function normalizeSource(
   )
     throw new Error(`Source ${source.id} needs an ISO retrieval timestamp.`);
   if (source.record_id) {
-    const record = getRecord(root, source.record_id);
+    const record = resolveRecord(source.record_id);
     return { ...source, baseline: fingerprint(record) };
   }
   if (/^https?:\/\//.test(source.uri)) {
@@ -474,7 +476,9 @@ function writeCornellNote(
     new Set(input.sources.map((source) => source.id)).size !== input.sources.length
   )
     throw new Error('Notes need a non-empty source ledger with unique source IDs.');
-  const sources = input.sources.map((source) => normalizeSource(root, source));
+  const { sources, researchHeader, evidenceIds, links } = withCornellRecordView(root, view => {
+  const resolveRecord = (id: string) => view.get(id);
+  const sources = input.sources.map((source) => normalizeSource(root, source, resolveRecord));
   if (!/\[S[1-9][0-9]*\]/.test(input.main_notes))
     throw new Error('Main notes must cite the source ledger using [S1] references.');
   text(input.demonstration.body, 'Demonstration');
@@ -498,7 +502,7 @@ function writeCornellNote(
     if (research.schema_version !== 1 || !/^[a-f0-9]{64}$/.test(research.input_hash) ||
       !/^[a-f0-9]{64}$/.test(research.requirement_fingerprint) || !research.learning_objectives?.length)
       throw new Error('Research metadata needs a supported schema, input/requirement hashes and objectives.');
-    const requirement = getRecord(root, research.requirement_id);
+    const requirement = resolveRecord(research.requirement_id);
     if (requirement.meta.type !== 'requirement' || requirement.meta.revision !== research.requirement_revision ||
       evidenceRecordFingerprint(requirement) !== research.requirement_fingerprint ||
       !input.requirement_ids?.includes(requirement.meta.id))
@@ -517,8 +521,8 @@ function writeCornellNote(
   if (input.demonstration.observed && !evidenceIds.length)
     throw new Error('An observed demonstration requires evidence record IDs.');
   evidenceIds.forEach((id) => {
-    const evidence = getRecord(root, id);
-    const problems = demonstrationEvidenceProblems(root, evidence);
+    const evidence = resolveRecord(id);
+    const problems = demonstrationEvidenceProblems(root, evidence, resolveRecord);
     if (problems.length)
       throw new Error(
         `Observed demonstration requires current passing evidence: ${id}: ${problems.join('; ')}`,
@@ -526,12 +530,12 @@ function writeCornellNote(
   });
   const proposedLinks = [
     ...(input.requirement_ids ?? []).map((id) => {
-      if (getRecord(root, id).meta.type !== 'requirement')
+      if (resolveRecord(id).meta.type !== 'requirement')
         throw new Error(`Expected requirement: ${id}`);
       return { type: 'documents' as const, target: id };
     }),
     ...(input.problem_ids ?? []).map((id) => {
-      if (getRecord(root, id).meta.type !== 'problem') throw new Error(`Expected problem: ${id}`);
+      if (resolveRecord(id).meta.type !== 'problem') throw new Error(`Expected problem: ${id}`);
       return { type: 'documents' as const, target: id };
     }),
     ...evidenceIds.map((id) => ({ type: 'references' as const, target: id })),
@@ -542,6 +546,8 @@ function writeCornellNote(
   // Evidence may support both the demonstration and a source-ledger entry.
   // Preserve both narrative uses while storing one engineering link per pair.
   const links = [...new Map(proposedLinks.map(link => [`${link.type}:${link.target}`, link])).values()];
+  return { sources, researchHeader, evidenceIds, links };
+  }); // The read-only snapshot expires before policy callbacks or any writes.
   const path = contentPath(
     root,
     input.path ??
@@ -829,16 +835,11 @@ function writeCornellNote(
 export function validateCornellNote(
   root: string,
   id: string,
+  view?: CornellRecordView,
 ): { ok: boolean; problems: string[]; checked_at: string } {
-  // One fresh synchronous authority inventory belongs to this validation only.
-  // loadRecords still reads current bytes and rejects duplicate/malformed IDs;
-  // cloned lookups cannot mutate another check's view or outlive this call.
-  const records = new Map(loadRecords(root).map(record => [record.meta.id, record]));
-  const resolveRecord = (id: string): ProjectRecord => {
-    const record = records.get(id);
-    if (!record) throw new Error(`Record not found: ${id}`);
-    return structuredClone(record);
-  };
+  if (!view) return withCornellRecordView(root, current => validateCornellNote(root, id, current));
+  assertCornellRecordView(root, view);
+  const resolveRecord = (id: string): ProjectRecord => view.get(id);
   const record = resolveRecord(id);
   const problems: string[] = [];
   if (record.meta.type !== 'knowledge' || record.meta.data.format !== 'cornell-v1')
@@ -936,8 +937,11 @@ export function noteFreshnessProblems(
   root: string,
   recordOrTask?: ProjectRecord | string,
 ): string[] {
-  const records = loadRecords(root);
-  const target = typeof recordOrTask === 'string' ? getRecord(root, recordOrTask) : recordOrTask;
+  return withCornellRecordView(root, view => noteFreshnessWithRecords(root, recordOrTask, view));
+}
+function noteFreshnessWithRecords(root: string, recordOrTask: ProjectRecord | string | undefined, view: CornellRecordView): string[] {
+  const records = view.all();
+  const target = typeof recordOrTask === 'string' ? view.get(recordOrTask) : recordOrTask;
   const applicable = new Set(
     target
       ? [
@@ -982,7 +986,7 @@ export function noteFreshnessProblems(
           target.meta.data.knowledge_ids.includes(record.meta.id))),
   );
   return notes.flatMap((record) =>
-    validateCornellNote(root, record.meta.id).problems.map(
+    validateCornellNote(root, record.meta.id, view).problems.map(
       (problem) => `${record.meta.id}: ${problem}`,
     ),
   );

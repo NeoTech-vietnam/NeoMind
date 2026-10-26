@@ -7,6 +7,7 @@ import { validateCornellNote, type CornellInput } from './notes.js';
 import { atomicWrite, getRecord, hash, loadRecords, now, readConfig, safePath, withOperationLock } from './storage.js';
 import type { ProjectRecord } from './types.js';
 import { hasUnfinishedCornellProse, renderCornellClaimLabels } from './cornell-content.js';
+import { withCornellRecordView, type CornellRecordView } from './cornell-record-view.js';
 
 const prose = z.string().trim().min(8).max(32_000).refine(value => !hasUnfinishedCornellProse(value), 'Complete substantive prose is required.')
   .describe('Complete substantive prose. Discussion of TODO or placeholder validation is allowed; unfinished markers, filler and unexpanded template tokens are not.');
@@ -84,9 +85,13 @@ function researchSourcePath(root: string, value: string, policy?: CornellSourceP
 
 /** Compile supplied research, never synthesize facts or execute its commands. */
 export function compileCornellResearch(root: string, value: CornellResearchInput, sourcePolicy?: CornellSourcePolicy): CompiledCornellResearch {
+  return withCornellRecordView(root, view => compileCornellResearchWithRecords(root, value, sourcePolicy, view));
+}
+function compileCornellResearchWithRecords(root: string, value: CornellResearchInput, sourcePolicy: CornellSourcePolicy | undefined,
+  view: CornellRecordView): CompiledCornellResearch {
   if (Buffer.byteLength(JSON.stringify(value)) > 512 * 1024) throw new Error('Research input exceeds 512 KiB.');
   const input = cornellResearchSchema.parse(value);
-  const requirement = getRecord(root, input.requirement_id);
+  const requirement = view.get(input.requirement_id);
   if (requirement.meta.type !== 'requirement' || requirement.meta.revision !== input.expected_requirement_revision)
     throw new Error('Research requires the exact current requirement revision.');
   if (new Date(input.date).toISOString().slice(0, 10) !== input.date) throw new Error('Research date must be a valid explicit calendar date.');
@@ -115,7 +120,7 @@ export function compileCornellResearch(root: string, value: CornellResearchInput
       if (item.sha256 && item.sha256 !== digest) throw new Error('Research source hash changed.');
       item.sha256 = digest;
     } else if (item.record_id) {
-      const sourceRecord = getRecord(root, item.record_id);
+      const sourceRecord = view.get(item.record_id);
       if (sourceRecord.meta.status === 'superseded') throw new Error('Superseded records are historical context, not current research sources.');
     }
   }
@@ -140,7 +145,7 @@ export function compileCornellResearch(root: string, value: CornellResearchInput
       requirement_revision: requirement.meta.revision, requirement_fingerprint: fingerprint,
       abstract: input.abstract, learning_objectives: input.learning_objectives },
   };
-  const ownership = normalizeCornellOwnership(root, compiled, { workflow_id: input.workflow_id, task_id: input.task_id, requirement_ids: [requirement.meta.id] });
+  const ownership = normalizeCornellOwnership(root, compiled, { workflow_id: input.workflow_id, task_id: input.task_id, requirement_ids: [requirement.meta.id] }, view);
   if (!ownership.workflow_id) throw new Error('Research preparation requires an existing explicitly bound manager workflow.');
   const note = ownership.note;
   const recipe_input: RecipeInput = { recipe_id: 'cornell-evidence-note', parameters: { note }, requirement_ids: [requirement.meta.id],
