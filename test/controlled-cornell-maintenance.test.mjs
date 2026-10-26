@@ -3,9 +3,35 @@ import assert from 'node:assert/strict';
 import fs, { readFileSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { getRecord, updateRecord, hash, safePath, atomicWrite } from '../dist/storage.js';
 import { reconcileControlledCornellRenderer, controlledStatus } from '../dist/controlled-workflow.js';
 import { cornellMaintenanceFixture as fixture } from './cornell-maintenance-fixture.mjs';
+
+test('maintenance fixture captures physical paths even when the OS temp directory is an alias', t => {
+  const owned = fs.mkdtempSync(join(fs.realpathSync.native(tmpdir()), 'neomind-maintenance-root-alias-'));
+  const physical = join(owned, 'physical'), alias = join(owned, 'alias');
+  fs.mkdirSync(physical); fs.symlinkSync(physical, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const variables = process.platform === 'win32' ? ['TEMP', 'TMP'] : ['TMPDIR'];
+  const original = Object.fromEntries(variables.map(key => [key, process.env[key]]));
+  let a;
+  try {
+    for (const key of variables) process.env[key] = alias;
+    a = fixture(t);
+  } finally {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    // This exact mkdtemp directory and its alias both belong to this disposable test.
+    t.after(() => {
+      assert.equal(fs.realpathSync.native(owned), owned, 'Cleanup remains inside the exact physical temporary directory created above.');
+      fs.rmSync(owned, { recursive: true, force: true });
+    });
+  }
+  assert.equal(a.root, fs.realpathSync.native(a.root));
+  assert.equal(a.statePath, safePath(fs.realpathSync.native(a.root), `.neomind/controlled/workflows/${hash(a.run.workflow_id)}.json`));
+});
 test('trusted renderer maintenance archives the exact old generation once, preserves exhausted budgets and awaits fresh independent work', async t => {
   const a = fixture(t), before = readFileSync(safePath(a.root, a.note.meta.data.artifact_path));
   const receipt = await reconcileControlledCornellRenderer(a.root, a.input), run = controlledStatus(a.root, a.run.workflow_id);

@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,9 @@ import { createRecord, updateRecord, hash, safePath, atomicWrite } from '../dist
 import { evidenceRecordFingerprint } from '../dist/evidence-inputs.js';
 import { normalizeControlledCornellSources, controlledCornellResult, bindControlledCornellPractice } from '../dist/controlled-cornell-sources.js';
 export function cornellMaintenanceFixture(t, options = {}) {
-  const a = researchFixture(t), epoch = randomUUID(), directory = 'docs/research/product',
+  const created = researchFixture(t), a = { ...created, root: realpathSync.native(created.root) };
+  // Runtime ownership resolves short Windows TEMP paths and directory aliases before capturing mutation targets.
+  const epoch = randomUUID(), directory = 'docs/research/product',
     sourcePath = options.unbound ? `${directory}/research.json` : 'prepared/research.json';
   const assetRoot = fileURLToPath(new URL('./fixtures/cornell-format-assets/', import.meta.url));
   const template = '.agents/skills/layout/assets/layout.md', validator = '.agents/skills/layout/scripts/check.py';
