@@ -84,11 +84,12 @@ function planFor(name, options = {}) {
     plan.allowed_paths.push(path); plan.outputs.push(path); plan.documentation_paths.push(path);
     plan.evidence_report_paths = [path];
     plan.acceptance_criteria.push(`Final report ${path} contains actual product-check commands and exits before independent final verification.`);
-    plan.checks.push({ title: 'Validate final execution report', ...(options.inferReportDependency ? {} : { after_evidence_reports: true }),
+    if (!options.noReportCheck) plan.checks.push({ title: 'Validate final execution report', ...(options.inferReportDependency ? {} : { after_evidence_reports: true }),
       command: [process.execPath, reportChecker, path], baseline_paths: [path, reportChecker],
       negative_controls: [{ title: 'Reject a report with invented evidence', command: [process.execPath, reportChecker, badReport],
         baseline_paths: [reportChecker, badReport], expected_exit_code: 1 }] });
   }
+  if (options.reportSemanticDefect) plan.acceptance_criteria.push('The delivered scalar file is exactly the bytes one followed by one LF newline.');
   if (options.registrationEvidence) {
     const script = `${name}/src/generate.cjs`;
     plan.allowed_paths.push(script); plan.outputs.push(script);
@@ -128,14 +129,29 @@ function scriptFor(name, stage, attempt, options, held) {
   }
   if (stage === 'planning') return [call('project_list', { path: '.' }), call('workflow_plan', plan), report()];
   if (stage === 'implementation') {
+    if (options.reportSemanticDefect && attempt > 2) return [async ({ token }) => {
+      held.defectRepairEntered = true;
+      while (!token.isCancellationRequested) await delay(10);
+      return new Text('The genuine product repair remains pending; no acceptance is claimed.');
+    }];
     if (options.evidenceReport && attempt > 1) return [call('check_evidence', {}), async ({ messages }) => {
       const checks = semanticToolValue(messages); held.documentationEvidence = checks;
       assert.equal(checks.length, 2); assert.ok(checks.every(check => check.passed));
+      if (options.pendingReportVerdict) {
+        const run = controlledStatus(held.root).find(run => run.requirement.startsWith(`Scenario: ${name}\n`));
+        const checkpoint = run.attempts.find(item => item.stage === 'verification' && item.report_id);
+        held.firstCheckpointRecord = getRecord(held.root, checkpoint.report_id);
+        held.firstCheckpointReceipt = readInvocation(held.root, checkpoint.invocation_id);
+      }
+      if (options.probeReportScope) return new Call('fixture-read-protected-product', 'project_read', { path: output });
       return new Call('fixture-read-final-report', 'project_read', { path: plan.evidence_report_paths[0] });
-    }, call('task_file_write', { path: plan.evidence_report_paths[0],
+    }, ...(options.probeReportScope ? [call('task_file_write', { path: output, content: '99\n' }),
+      call('project_read', { path: checker }), call('task_file_write', { path: checker, content: 'process.exit(0);\n' }),
+      call('project_read', { path: plan.evidence_report_paths[0] })] : []),
+    call('task_file_write', { path: plan.evidence_report_paths[0],
       content: `# Actual product checkpoint\n\nCommand: ${JSON.stringify(plan.checks[0].command)}\nPositive exit: 0\nNegative exit: 1\nFinal independent verification and review follow this report.\n` }),
     report({ artifacts: plan.evidence_report_paths })];
-    const value = options.precheckProductFailure || options.productFailure && attempt === 1 ? '2\n' : '1\n';
+    const value = options.reportSemanticDefect ? '1' : options.precheckProductFailure || options.productFailure && attempt === 1 ? '2\n' : '1\n';
     return [call('project_read', { path: output }), call('task_file_write', { path: output, content: value }),
       ...(options.evidenceReport ? [call('project_read', { path: plan.evidence_report_paths[0] }),
         call('task_file_write', { path: plan.evidence_report_paths[0], content: '# Implementation handoff\n\nActual independent product-check results are pending.\n' })] : []),
@@ -169,7 +185,7 @@ function scriptFor(name, stage, attempt, options, held) {
       : `const assert=require('node:assert/strict'); const fs=require('node:fs'); assert.equal(Number(fs.readFileSync(process.argv[2],'utf8')),${wrongChecker || options.sameAttemptCheckerRepair ? 2 : 1}); console.log('scalar validated');\n`;
     const defect = wrongChecker || options.productFailure && attempt === 1;
     return [call('project_read', { path: output }), call('project_read', { path: checker }), call('task_file_write', { path: checker, content }),
-      ...(options.evidenceReport ? [call('project_read', { path: plan.checks[1].command[1] }),
+      ...(options.evidenceReport && !options.noReportCheck ? [call('project_read', { path: plan.checks[1].command[1] }),
         call('task_file_write', { path: plan.checks[1].command[1], content: "const assert=require('node:assert/strict');const text=require('node:fs').readFileSync(process.argv[2],'utf8');assert.match(text,/# Actual product checkpoint/);assert.match(text,/Positive exit: 0/);assert.match(text,/Negative exit: 1/);assert.match(text,/Command: /);console.log('actual report checkpoint checked');\n" }),
         call('project_read', { path: plan.checks[1].negative_controls[0].command[2] }),
         call('task_file_write', { path: plan.checks[1].negative_controls[0].command[2], content: '# Invented success\nNo actual command or exit evidence is recorded.\n' })] : []),
@@ -187,7 +203,14 @@ function scriptFor(name, stage, attempt, options, held) {
       }] : []),
       report({ outcome: defect ? 'failed' : 'completed', verdict: defect ? 'fail' : 'pass', artifacts: [output, checker, bad],
         negative_controls: ['The prescribed incorrect scalar fixture must exit one.'],
-        ...(defect ? { failure_kind: options.legacyDiagnosis ? 'unknown' : wrongChecker ? 'checker' : 'implementation' } : {}) })];
+        ...(defect ? { failure_kind: options.legacyDiagnosis ? 'unknown' : wrongChecker ? 'checker' : 'implementation' } : {}),
+        ...(options.pendingReportVerdict && attempt === 1 ? { outcome: 'completed', verdict: 'fail',
+          summary: 'All prescribed positive and negative commands passed. The promised factual execution report is still the pending implementation handoff, so this is not final acceptance.',
+          findings: ['The promised final report has not yet incorporated the actual independent command results.',
+            ...(options.reportSemanticDefect ? ['The product additionally lacks the required final LF newline; numeric checks alone do not validate this semantic obligation.'] : [])] } : {}),
+        ...(options.reportSemanticDefect && attempt > 1 ? { outcome: 'completed', verdict: 'fail', failure_kind: 'implementation',
+          summary: 'The factual report is now present and the prescribed numeric commands pass, but the delivered product still lacks its mandatory LF newline.',
+          findings: ['The exact-byte acceptance criterion remains violated independently of successful numeric command receipts.'] } : {}) })];
   }
   if (stage === 'review') {
     if (options.observationLoop && (attempt === 1 || options.repeatObservationLoop)) return [
@@ -288,8 +311,13 @@ async function setup(t, scenarios, existingRoot) {
       }
       const prior = lastToolResult(messages);
       if (prior?.isError) {
-        errors.push({ name: conversation.name, stage: conversation.stage, round: conversation.round, result: prior });
-        throw new Error('Deterministic fixture encountered a failed semantic MCP call.');
+        const expectedScopeProbe = scenarios[conversation.name]?.probeReportScope && conversation.stage === 'implementation' && conversation.attempt === 2 &&
+          JSON.parse(prior.content[0].text).code === 'SCOPE_DENIED';
+        if (expectedScopeProbe) (held.documentationScopeDenials ??= []).push(prior);
+        else {
+          errors.push({ name: conversation.name, stage: conversation.stage, round: conversation.round, result: prior });
+          throw new Error('Deterministic fixture encountered a failed semantic MCP call.');
+        }
       }
       const action = conversation.actions[conversation.round++];
       let part = action ? typeof action === 'function' ? await action({ token, messages })
@@ -463,6 +491,61 @@ test('backend infers an exact report argv dependency, then runs a report-only pa
   assert.ok(!prompts.tools.includes('task_run')); assert.ok(!prompts.tools.includes('cornell_research_compile'));
   const check = verify(env.root, done.task_id, 'accepted');
   assert.equal(check.ok, true, JSON.stringify(check.findings));
+});
+
+test('a signed failed final verdict about a pending promised report schedules report-only work before fresh full verification without a repair charge', async t => {
+  const name = 'pending-verdict-report';
+  const env = await setup(t, { [name]: { highRisk: true, evidenceReport: true, noReportCheck: true,
+    pendingReportVerdict: true, probeReportScope: true } });
+  const initial = await submit(env.root, name);
+  const done = await until(env.root, initial.workflow_id, run => run.status === 'completed',
+    'passing prescribed product commands and a truthful pending-report verdict must lead to one report-only stage, fresh Verifier and required Reviewer', env.errors);
+  assert.deepEqual(env.errors, []);
+  assert.deepEqual(done.repair_budget, { schema_version: 1, product: 0, protocol: 0, environment: 0 });
+  const docs = done.attempts.filter(item => item.purpose === 'evidence-documentation');
+  assert.equal(docs.length, 1); assert.ok(docs[0].documentation_source);
+  const verifiers = done.attempts.filter(item => item.stage === 'verification');
+  assert.equal(verifiers.length, 2); assert.equal(verifiers[0].report.outcome, 'completed');
+  assert.equal(verifiers[0].report.verdict, 'fail'); assert.equal(verifiers[1].report.verdict, 'pass');
+  assert.notEqual(verifiers[0].invocation_id, verifiers[1].invocation_id);
+  assert.deepEqual(getRecord(env.root, verifiers[0].report_id), env.held.firstCheckpointRecord,
+    'The authentic initial fail remains an unchanged historical professional result.');
+  assert.deepEqual(readInvocation(env.root, verifiers[0].invocation_id), env.held.firstCheckpointReceipt,
+    'The backend must not rewrite the signed failed checkpoint into a pass.');
+  assert.equal(env.held.documentationScopeDenials.length, 2, 'Report-only scope rejects both product and checker writes.');
+  assert.equal(readFileSync(safePath(env.root, `${name}/src/value.txt`), 'utf8'), '1\n');
+  assert.match(readFileSync(safePath(env.root, `${name}/docs/final-report.md`), 'utf8'), /Positive exit: 0/);
+  assert.ok(done.attempts.some(item => item.stage === 'review' && item.report?.verdict === 'pass'));
+  assert.equal(done.checks.length, 4); assert.ok(done.checks.every(item => item.passed));
+  for (const check of done.checks) assert.equal(hash(readFileSync(safePath(env.root, check.log_path))), check.log_sha256);
+  const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.epoch_id === done.epoch_id);
+  const contract = controlledContractForTask(env.root, task).contract;
+  assert.equal(contract.plan.checks.length, 1, 'No report argv or new check is added to the frozen product-only contract.');
+  assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true);
+});
+
+test('report-only ordering retains a genuine semantic defect despite passing numeric commands and refuses final acceptance', async t => {
+  const name = 'pending-report-semantic-defect';
+  const env = await setup(t, { [name]: { highRisk: true, evidenceReport: true, noReportCheck: true,
+    pendingReportVerdict: true, reportSemanticDefect: true } });
+  const initial = await submit(env.root, name);
+  const stopped = await until(env.root, initial.workflow_id, () => env.held.defectRepairEntered,
+    'the final independent semantic failure must survive report creation and route a genuine product repair instead of accepting', env.errors);
+  assert.deepEqual(env.errors, []); assert.notEqual(stopped.status, 'completed'); assert.equal(stopped.final_report_id, undefined);
+  assert.equal(stopped.attempts.filter(item => item.purpose === 'evidence-documentation').length, 1);
+  const verifiers = stopped.attempts.filter(item => item.stage === 'verification');
+  assert.equal(verifiers.length, 2); assert.ok(verifiers.every(item => item.report.verdict === 'fail'));
+  assert.equal(verifiers[1].report.failure_kind, 'implementation');
+  assert.match(verifiers[1].report.summary, /mandatory LF newline/);
+  assert.deepEqual(getRecord(env.root, verifiers[0].report_id), env.held.firstCheckpointRecord);
+  assert.deepEqual(readInvocation(env.root, verifiers[0].invocation_id), env.held.firstCheckpointReceipt);
+  assert.equal(readFileSync(safePath(env.root, `${name}/src/value.txt`), 'utf8'), '1', 'The concrete missing LF defect remains observable.');
+  assert.match(readFileSync(safePath(env.root, `${name}/docs/final-report.md`), 'utf8'), /Actual product checkpoint/);
+  assert.equal(stopped.checks.length, 4); assert.ok(stopped.checks.every(item => item.passed),
+    'A deliberately weak numeric checker cannot override the independent professional exact-byte finding.');
+  const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.epoch_id === stopped.epoch_id);
+  assert.equal(verify(env.root, task.meta.id, 'accepted').ok, false);
+  assert.notEqual(getRecord(env.root, initial.workflow_id).meta.status, 'accepted');
 });
 
 test('both real Bridge prompt layers scope readiness to safe checker execution before any diagnostic evidence exists', async t => {

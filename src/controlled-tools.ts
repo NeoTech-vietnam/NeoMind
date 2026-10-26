@@ -26,6 +26,8 @@ export interface ControlledBinding {
   plan_defaults?: ControlledPlanRequestDefaults;
   /** Backend-owned review scope; workers never select or mutate this purpose. */
   review_purpose?: ControlledReviewPurpose;
+  /** Backend-owned verification scope; selected command count does not define final acceptance. */
+  verification_purpose?: 'product-checkpoint' | 'final-contract';
   implementation_paths: string[]; verification_paths: string[];
   read_paths?: string[]; protected_paths?: string[]; check_titles?: string[];
   approved_inputs?: string[];
@@ -196,6 +198,7 @@ export function controlledInstructions(binding: ControlledBinding): string {
   const ownership = { your_role: binding.role, your_stage: binding.stage, your_writable_paths: writable,
     ...(documentation ? { assignment_purpose: 'evidence-documentation' } : {}),
     ...(binding.stage === 'review' ? { review_purpose: binding.review_purpose ?? 'final-product' } : {}),
+    ...(binding.stage === 'verification' ? { verification_purpose: binding.verification_purpose ?? 'final-contract' } : {}),
     implementation: { owner: 'developer', paths: binding.implementation_paths }, verification: { owner: 'verifier', paths: binding.verification_paths } };
   const duties: Record<ControlledStage, string> = {
     planning: 'Inspect relevant files and existing reusable tools. Submit one bounded semantic workflow_plan with acceptance criteria, separate implementation/checker paths and actual check commands. Positive and negative baseline_paths may include public dependencies declared in preservation_paths and exact approved hidden input_paths; those inputs remain read-only. Do not move preserved scripts into allowed_paths or verification_paths merely to capture their bytes. Declare negative_controls using the same checker with verifier-owned deliberately invalid fixtures/inputs and their expected nonzero exits; runtime executes them as evidence. Elevate risk or suggest a bounded specialist only when needed. Allowed consultation roles are explorer, planner, architect, researcher, curator and component-owner. Reviewer and Verifier are backend-owned stages; do not add them as consultations or remove their required gates.',
@@ -204,7 +207,10 @@ export function controlledInstructions(binding: ControlledBinding): string {
       : available.has('task_file_write')
       ? 'Read existing files before editing. Write only ordinary assigned source and report files with task_file_write. Backend handles file versions, operation identity and task lifecycle. Preserve independent checker and acceptance files.'
       : 'Inspect the assigned implementation and report your professional findings. This session has no source-write operation; the backend retains implementation ownership.',
-    verification: 'Inspect the delivered implementation. Author and repair only the independent checker paths, including deliberately invalid fixtures for the prescribed negative_controls. Run the prescribed checks with check_run; backend executes both positive and negative commands. Report prose alone is not negative-control evidence. Distinguish a product defect from a checker or environment failure.',
+    verification: 'Inspect the delivered implementation. Author and repair only the independent checker paths, including deliberately invalid fixtures for the prescribed negative_controls. Run the prescribed checks with check_run; backend executes both positive and negative commands. Report prose alone is not negative-control evidence. Distinguish a product defect from a checker or environment failure. ' +
+      (binding.verification_purpose === 'product-checkpoint'
+        ? 'Your verdict covers the product checkpoint before the promised factual execution report. Judge all current product/checker obligations honestly. The producer report is an expected handoff until these executions exist; its missing future execution results alone are not a product-checkpoint defect. Record that final-report obligation as pending, not satisfied. A checkpoint pass is not a final-contract pass; backend authorizes only the report handoff, then a fresh full Verifier and required Reviewer still judge every unchanged criterion.'
+        : 'This is full final-contract verification. Assess every unchanged criterion, including the promised factual report and every earlier professional finding. Report authoring alone does not resolve a non-report defect or turn an earlier fail into pass.'),
     review: controlledReviewInstructions(binding.review_purpose ?? 'final-product'),
     diagnosis: 'Inspect available evidence and identify the root cause. Classify failure_kind as implementation, checker, protocol, environment or unknown and recommend one bounded recovery action.',
     synthesis: 'Derive the final requested Cornell research note from actual artifacts and independent evidence. Use cornell_research_compile to preserve the standard format and separate practice/answers. For a planned reusable candidate, read check_evidence({kind:"registration"}) for actual registry provenance and current code hashes; registration does not establish qualification. Record limitations and actual sources, then assignment_report. Source implementation and checker files are read-only.',

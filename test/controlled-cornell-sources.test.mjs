@@ -42,6 +42,22 @@ test('producer Cornell interface hides observations and defers only cached obser
     { ...professional, observed: 'An actual run succeeded.', evidence_ids: ['current-evidence'] });
 });
 
+test('advertised Cornell authoring schema names canonical source paths and an explicit truthful claim citation without inventing either', () => {
+  const advertised = z.toJSONSchema(controlledCornellResearchSchema(false, false), { io: 'output' });
+  const source = advertised.properties.sources.items.properties;
+  assert.match(source.uri.description, /exact canonical project-relative path returned by project_read/);
+  for (const rejectedForm of ['file:', 'drive prefix', 'leading ./', 'backslashes', '#line fragment'])
+    assert.ok(source.uri.description.includes(rejectedForm), rejectedForm);
+  assert.match(source.uri.description, /line references in locator/);
+  assert.equal('record_id' in source, false); assert.equal('sha256' in source, false);
+  assert.ok(advertised.properties.methods.description.includes('[source-reported] The inspected implementation rejects unsafe integers [S1].'));
+  assert.match(advertised.properties.methods.description, /Select the truthful claim basis yourself; the backend never invents it/);
+  const arms = advertised.properties.practice.anyOf ?? advertised.properties.practice.oneOf;
+  assert.equal(arms.length, 2);
+  assert.ok(arms.some(arm => arm.required?.includes('command')));
+  assert.ok(arms.some(arm => arm.required?.includes('procedure')));
+});
+
 test('unplanned starter policy hides only starter and cached paths while preserving both practice modes', () => {
   const practice = { questions: [{ id: 'P1', prompt: 'Enumerate the finite ordered pairs independently.', objective_ids: ['O1'],
     answer: 'Each first-set element pairs with every second-set element.' }], command: ['node', 'practice-check.mjs'],

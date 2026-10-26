@@ -12,12 +12,13 @@ import { controlledFingerprints, prepareControlledCheckEvidence, materializeCont
 import { runCommand } from '../dist/command-runner.js';
 import { pendingEvidenceDocumentation } from '../dist/controlled-report-phase.js';
 import { assertEvidenceDocumentationAuthority } from '../dist/controlled-report-authority.js';
+import { captureControlledCheckerScope } from '../dist/controlled-checker-scope.js';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 
 // Signed structural actor fixtures plus real positive/negative Node processes.
 // They test authority boundaries, not live provider inference or client acceptance.
-async function fixture(t) {
+async function fixture(t, verdict = 'pass') {
   const parentPath = resolve(tmpdir()), root = mkdtempSync(join(parentPath, 'neomind-report-authority-'));
   t.after(() => { assert.equal(dirname(resolve(root)), parentPath); rmSync(root, { recursive: true, force: true }); });
   initialize(root, { project_id: 'REPORT-AUTHORITY' });
@@ -77,7 +78,8 @@ async function fixture(t) {
     status: 'queued', phase: 'implementation', revision: 10, attempts: [producer, verifier], checks: [], events: [], repairs: 0 };
   const report = (attempt, boundPaths) => {
     attempt.bound_hashes = controlledFingerprints(root, boundPaths);
-    attempt.report = { outcome: 'completed', summary: 'Actual bounded work result.', ...(attempt.stage === 'verification' ? { verdict: 'pass' } : {}) };
+    attempt.report = { outcome: 'completed', summary: 'Actual bounded work result.', ...(attempt.stage === 'verification' ? { verdict,
+      ...(verdict === 'fail' ? { findings: ['The factual report is still pending.', 'An additional semantic finding must remain visible.'] } : {}) } : {}) };
     const record = createRecord(root, { type: 'knowledge', title: `${attempt.role}: result`, owner: attempt.role,
       data: { kind: 'controlled-work-record', workflow_id: run.workflow_id, task_id: task.meta.id, epoch_id,
         attempt_id: attempt.id, invocation_id: attempt.invocation_id, stage: attempt.stage, outcome: 'completed',
@@ -91,12 +93,13 @@ async function fixture(t) {
     const result = await runCommand({ command: selected.command, cwd: root, timeout_ms: 5000 });
     assert.equal(result.exit_code, selected.expected_exit_code);
     const id = randomUUID(), logPath = `.neomind/controlled/checks/${id}.log`;
-    const log = JSON.stringify({ command: selected.command, planned_command: selected.command, purpose: 'self-check', baseline, result });
+    const checkerScope = captureControlledCheckerScope(plan.verification_paths, paths => controlledFingerprints(root, paths));
+    const log = JSON.stringify({ command: selected.command, planned_command: selected.command, purpose: 'self-check', baseline, result, checker_scope: checkerScope });
     atomicWrite(safePath(root, logPath), log);
     const check = { id, attempt_id: verifier.id, invocation_id: verifier.invocation_id, title: selected.title,
       command: selected.command, planned_command: selected.command, purpose: 'self-check', baseline, log_path: logPath, log_sha256: hash(log),
       exit_code: result.exit_code, expected_exit_code: selected.expected_exit_code, negative: selected.negative, passed: true,
-      cancelled: false, at: new Date().toISOString(), evidence_input: evidenceInput };
+      cancelled: false, at: new Date().toISOString(), evidence_input: evidenceInput, checker_scope: checkerScope };
     check.evidence_id = materializeControlledEvidence(root, run, contract, check); run.checks.push(check);
   }
   report(verifier, ['checks/check.cjs', 'checks/bad.txt']);
@@ -141,6 +144,32 @@ test('authenticated real check checkpoint authorizes only report changes and ret
   atomicWrite(safePath(root, 'docs/report.md'), '# Final report\nThe product check exited zero; wrong value exited one.\n');
   assert.deepEqual(assertEvidenceDocumentationAuthority(root, run, contract, source), guard,
     'A legitimate report commit does not invalidate its earlier immutable evidence snapshot.');
+});
+
+test('completed signed fail remains unchanged while sealed successful executions authorize only the planned report handoff', async t => {
+  const state = await fixture(t, 'fail'), { root, run, contract, source, snapshot } = state;
+  const original = structuredClone(state.verifier.report), record = getRecord(root, state.verifier.report_id), before = snapshot();
+  const guard = assertEvidenceDocumentationAuthority(root, run, contract, source);
+  assert.equal(guard['src/value.txt'], hash('1\n')); assert.equal('docs/report.md' in guard, false);
+  assert.deepEqual(state.verifier.report, original); assert.equal(state.verifier.report.verdict, 'fail');
+  assert.deepEqual(getRecord(root, state.verifier.report_id), record); assert.equal(snapshot(), before);
+  run.status = 'blocked'; state.save(); const blockedBefore = snapshot();
+  assert.throws(() => assertEvidenceDocumentationAuthority(root, run, contract, source), /assignment differs/);
+  assert.deepEqual(assertEvidenceDocumentationAuthority(root, run, contract, source, { allow_blocked: true }), guard,
+    'Explicit backend resume can reauthenticate a blocked checkpoint without writing files or refunding a repair.');
+  assert.equal(snapshot(), blockedBefore); assert.deepEqual(state.verifier.report, original);
+  const helper = safePath(root, 'checks/new-helper.cjs'); atomicWrite(helper, '// An outside checker edit\n');
+  assert.throws(() => assertEvidenceDocumentationAuthority(root, run, contract, source, { allow_blocked: true }), /checker scope changed outside/,
+    'Passing old exits cannot authorize a handoff after the approved checker scope changes.');
+});
+
+test('missing or changed source checker seals cannot authorize a new report handoff', async t => {
+  const state = await fixture(t);
+  const original = structuredClone(state.run.checks[0].checker_scope);
+  delete state.run.checks[0].checker_scope; state.save();
+  assert.throws(() => assertEvidenceDocumentationAuthority(state.root, state.run, state.contract, state.source), /execution-time seal/);
+  state.run.checks[0].checker_scope = { ...original, sha256: 'f'.repeat(64) }; state.save();
+  assert.throws(() => assertEvidenceDocumentationAuthority(state.root, state.run, state.contract, state.source), /checker scope changed outside/);
 });
 
 test('user product/checker/preserved edits after the checkpoint cannot be adopted by the report-only actor', async t => {

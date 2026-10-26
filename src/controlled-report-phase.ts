@@ -14,7 +14,8 @@ export interface EvidenceDocumentationSource {
 }
 interface DocumentationAttempt {
   id: string; stage: string; state: string; purpose?: string;
-  report?: { outcome?: string; verdict?: string };
+  report?: { outcome?: string; verdict?: string; summary?: string; findings?: string[]; limitations?: string[];
+    failure_kind?: string; artifacts?: string[]; negative_controls?: string[] };
   documentation_source?: EvidenceDocumentationSource;
 }
 interface DocumentationState { attempts: DocumentationAttempt[]; checks: ControlledCheckReceipt[] }
@@ -89,7 +90,7 @@ function completedDocumentation(run: DocumentationState, plan: DocumentationPlan
   const sourceVerifier = run.attempts.find(attempt => attempt.id === source.verifier_attempt_id);
   const sourceChecks = sourceVerifier ? prescribedChecks(run, checkpointChecks(plan), sourceVerifier) : null;
   if (!same(source.paths, paths) || sourceVerifier?.stage !== 'verification' ||
-      sourceVerifier.state !== 'completed' || sourceVerifier.report?.outcome !== 'completed' || sourceVerifier.report.verdict !== 'pass' ||
+      sourceVerifier.state !== 'completed' || sourceVerifier.report?.outcome !== 'completed' || !['pass', 'fail'].includes(sourceVerifier.report.verdict ?? '') ||
       run.attempts.indexOf(sourceVerifier) <= run.attempts.indexOf(producer) || run.attempts.indexOf(sourceVerifier) >= run.attempts.indexOf(previous) ||
       !sourceChecks || !same(source.checks, checkReferences(sourceChecks)))
     throw new Error('The completed evidence-documentation source binding changed; retain its history for backend reconciliation.');
@@ -107,6 +108,31 @@ export function controlledChecksForPhase<Check extends DocumentationPlan['checks
   return structuredClone(documented ? contract.plan.checks : initial);
 }
 
+/** Verification scope is independent of argv selection: all commands may be
+ * product checks while a promised factual report still requires those results. */
+export function controlledVerificationPurpose(run: DocumentationState, contract: { plan: DocumentationPlan }): 'product-checkpoint' | 'final-contract' {
+  const paths = evidenceReportPaths(contract.plan);
+  if (!paths.length) return 'final-contract';
+  const producer = genuineProducer(run);
+  return producer && completedDocumentation(run, contract.plan, producer, paths) ? 'final-contract' : 'product-checkpoint';
+}
+
+/** Preserve the original professional assessment, including a fail verdict and
+ * every finding. Report authoring never resolves or replaces that assessment. */
+export function evidenceDocumentationProfessionalContext(run: DocumentationState, contract: { plan: DocumentationPlan },
+  selected?: EvidenceDocumentationSource) {
+  const producer = genuineProducer(run), paths = evidenceReportPaths(contract.plan);
+  const completed = !selected && producer ? completedDocumentation(run, contract.plan, producer, paths) : undefined;
+  const source = selected ?? completed?.documentation_source;
+  if (!source) return null;
+  const verifier = run.attempts.find(attempt => attempt.id === source.verifier_attempt_id);
+  if (!verifier || verifier.stage !== 'verification' || verifier.state !== 'completed' || verifier.report?.outcome !== 'completed' ||
+      !['pass', 'fail'].includes(verifier.report.verdict ?? ''))
+    throw new Error('The documentation checkpoint lost its completed professional assessment.');
+  return { verifier_attempt_id: verifier.id, report: structuredClone(verifier.report),
+    authority: 'Original professional result preserved unchanged. A documentation handoff does not turn fail into pass or establish acceptance.' as const };
+}
+
 /** A normal post-check report pass is once per actual implementation generation. */
 export function pendingEvidenceDocumentation(run: DocumentationState, contract: { plan: DocumentationPlan }): EvidenceDocumentationSource | null {
   const initial = checkpointChecks(contract.plan);
@@ -116,7 +142,7 @@ export function pendingEvidenceDocumentation(run: DocumentationState, contract: 
   if (!producer || producer.state !== 'completed' || producer.report?.outcome !== 'completed') return null;
   if (completedDocumentation(run, contract.plan, producer, paths)) return null;
   const verifier = run.attempts.findLast(attempt => attempt.stage === 'verification' && attempt.purpose !== 'specialist');
-  if (!verifier || verifier.state !== 'completed' || verifier.report?.outcome !== 'completed' || verifier.report.verdict !== 'pass' ||
+  if (!verifier || verifier.state !== 'completed' || verifier.report?.outcome !== 'completed' || !['pass', 'fail'].includes(verifier.report.verdict ?? '') ||
       run.attempts.indexOf(verifier) <= run.attempts.indexOf(producer)) return null;
   const selected = prescribedChecks(run, initial, verifier);
   if (!selected) return null;

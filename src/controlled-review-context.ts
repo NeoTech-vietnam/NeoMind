@@ -5,6 +5,7 @@ import { controlledPublicReferencePath, controlledSkillInputPath, type Controlle
 import type { ControlledContract, ControlledSnapshot } from './controlled-workflow.js';
 import { latestControlledChecks } from './controlled-current-checks.js';
 import { captureControlledCheckerScope, projectControlledCheckerScope } from './controlled-checker-scope.js';
+import { controlledVerificationPurpose, evidenceReportPaths, evidenceDocumentationProfessionalContext } from './controlled-report-phase.js';
 
 /** Current backend facts, not an agent verdict or a new historical baseline. */
 export function controlledReviewContext(root: string, supplied: ControlledSnapshot, expected?: ControlledContract,
@@ -39,6 +40,7 @@ export function controlledReviewContext(root: string, supplied: ControlledSnapsh
   // It is never confused with the backend final record created after review.
   const documents = contract.plan.documentation_paths.map(path => ({ path, owner: 'developer' as const,
     declared_output: contract.plan.outputs.includes(path), final_criteria_still_apply: true }));
+  const verificationPurpose = controlledVerificationPurpose(run, contract);
   let finalRecord = 'not-created' as 'not-created' | 'pending-acceptance' | 'completed' | 'invalid';
   const reportId = run.final_report_id ?? run.finalizing_report_id;
   if (reportId) {
@@ -80,11 +82,16 @@ export function controlledReviewContext(root: string, supplied: ControlledSnapsh
       authority: 'Read bound execution evidence for actual commands, diagnostics and negative-control meaning. These counts alone do not establish acceptance.' as const,
     },
     finalization: {
+      verification_purpose: verificationPurpose,
+      factual_report_paths: evidenceReportPaths(contract.plan),
+      original_checkpoint_assessment: evidenceDocumentationProfessionalContext(run, contract, run.pending_documentation),
       backend_final_report: finalRecord,
       final_report_pending: finalRecord !== 'completed',
       backend_final_report_created_after_required_review: true,
       producer_documents: documents,
-      duties: 'Judge producer deliverables against their unchanged criteria and actual bound evidence. A missing backend final record is expected before acceptance. A requested final-report artifact remains an output requirement; handoff prose cannot replace promised post-verification findings. Do not rewrite checked artifacts in a read-only review.' as const,
+      duties: verificationPurpose === 'product-checkpoint'
+        ? 'Independently judge current product/checker obligations. The promised factual report is an expected producer handoff until current executions exist; record it as pending, not satisfied. Backend authorizes a bounded report-only stage, then fresh full verification and required review judge every unchanged final criterion. A missing backend final record is expected before acceptance.'
+        : 'Judge producer deliverables against every unchanged criterion and actual bound evidence, including every preserved earlier finding. A missing backend final record is expected before acceptance. Handoff prose cannot replace promised post-verification findings. Do not rewrite checked artifacts in a read-only review.',
     },
   };
 }

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evidenceReportPaths, pendingEvidenceDocumentation, controlledChecksForPhase } from '../dist/controlled-report-phase.js';
+import { evidenceReportPaths, pendingEvidenceDocumentation, controlledChecksForPhase, controlledVerificationPurpose,
+  evidenceDocumentationProfessionalContext } from '../dist/controlled-report-phase.js';
 
 function fixture() {
   const plan = { allowed_paths: ['src', 'docs'], verification_paths: ['checks'],
@@ -77,7 +78,7 @@ test('unfinished, stale, cancelled, mismatched and failing checks never authoriz
     ({ run }) => { run.attempts[0].state = 'running'; },
     ({ run }) => { run.attempts[0].report.outcome = 'blocked'; },
     ({ run }) => { run.attempts[1].state = 'running'; },
-    ({ run }) => { run.attempts[1].report.verdict = 'fail'; },
+    ({ run }) => { delete run.attempts[1].report.verdict; },
     ({ run }) => { run.attempts.reverse(); },
     ({ run }) => { run.checks.pop(); },
     ({ run }) => { run.checks[1].cancelled = true; },
@@ -88,6 +89,32 @@ test('unfinished, stale, cancelled, mismatched and failing checks never authoriz
   ]) {
     const state = fixture(); mutate(state); assert.equal(pendingEvidenceDocumentation(state.run, state.contract), null);
   }
+});
+
+test('verification purpose stays a product checkpoint when all argv are product checks and the factual report is pending', () => {
+  const {run,contract}=fixture();
+  const failed={outcome:'completed',verdict:'fail',summary:'Final factual report pending; every actual command passed.',
+    failure_kind:'implementation',findings:['The report still contains an honest handoff.','Keep this unrelated professional finding for full final verification.'],
+    limitations:['Actual observations do not prove every semantic criterion.']};
+  run.attempts[1].report=failed;
+  const before=structuredClone({run,contract}),source=pendingEvidenceDocumentation(run,contract);
+  assert.ok(source,'Successful actual executions authorize a bounded report handoff, not a changed verdict.');
+  assert.deepEqual(controlledChecksForPhase(run,contract),contract.plan.checks);
+  assert.equal(controlledVerificationPurpose(run,contract),'product-checkpoint','Selecting every command is not final-report readiness.');
+  assert.deepEqual(evidenceDocumentationProfessionalContext(run,contract,source).report,failed);
+  assert.deepEqual({run,contract},before,'Neither source findings nor the frozen contract may be rewritten.');
+  run.attempts.push({id:'docs-after-fail',stage:'implementation',purpose:'evidence-documentation',state:'completed',
+    report:{outcome:'completed'},documentation_source:source});
+  assert.equal(controlledVerificationPurpose(run,contract),'final-contract');
+  const carried=evidenceDocumentationProfessionalContext(run,contract);
+  assert.deepEqual(carried.report,failed,'The fresh final Verifier receives the complete original fail and findings.');
+  carried.report.findings[0]='Caller mutation';
+  assert.deepEqual(run.attempts[1].report,failed);
+  assert.equal(pendingEvidenceDocumentation(run,contract),null,'Report authoring is once per genuine producer, not a repeated failure waiver.');
+  run.attempts.push({id:'fresh-final',stage:'verification',state:'running'});
+  assert.equal(controlledVerificationPurpose(run,contract),'final-contract');
+  const noReport=fixture();noReport.contract.plan.evidence_report_paths=[];
+  assert.equal(controlledVerificationPurpose(noReport.run,noReport.contract),'final-contract');
 });
 
 test('completed documentation followed by fresh verification does not create a documentation/verification loop', () => {

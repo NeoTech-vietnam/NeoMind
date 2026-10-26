@@ -6,6 +6,7 @@ import { controlledAcceptanceBudget, controlledContractForTask, controlledRecord
 import { pendingEvidenceDocumentation, type EvidenceDocumentationSource } from './controlled-report-phase.js';
 import { ControlledToolError } from './controlled-tools.js';
 import { ControlledEvidenceScanTimeout } from './controlled-evidence-error.js';
+import { captureControlledCheckerScope, controlledCheckerScopeCurrent } from './controlled-checker-scope.js';
 import type { ControlledContract, ControlledSnapshot, ControlledCheckReceipt } from './controlled-workflow.js';
 
 const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
@@ -14,8 +15,8 @@ type AuthorityBudget = ReturnType<typeof controlledAcceptanceBudget>;
 
 /** Authenticate a report-only handoff without changing earlier records or evidence. */
 export function assertEvidenceDocumentationAuthority(root: string, supplied: ControlledSnapshot, expected: ControlledContract,
-  source: EvidenceDocumentationSource): Record<string, string> {
-  try { return evidenceDocumentationAuthority(root, supplied, expected, source); }
+  source: EvidenceDocumentationSource, admission?: { allow_blocked: boolean }): Record<string, string> {
+  try { return evidenceDocumentationAuthority(root, supplied, expected, source, undefined, admission); }
   catch (error) {
     if (error instanceof ControlledToolError || error instanceof ControlledEvidenceScanTimeout) throw error;
     throw new ControlledToolError('STATE_UNCERTAIN', 'The backend could not authenticate the original documentation checkpoint. Preserve its signed reports, execution logs and input snapshots for runtime reconciliation; do not construct replacement IDs or credentials.');
@@ -23,7 +24,8 @@ export function assertEvidenceDocumentationAuthority(root: string, supplied: Con
 }
 
 function evidenceDocumentationAuthority(root: string, supplied: ControlledSnapshot, expected: ControlledContract,
-  source: EvidenceDocumentationSource, history?: { completed_attempt_id: string; budget: AuthorityBudget; recordAt?: ControlledRecordAt }): Record<string, string> {
+  source: EvidenceDocumentationSource, history?: { completed_attempt_id: string; budget: AuthorityBudget; recordAt?: ControlledRecordAt },
+  admission?: { allow_blocked: boolean }): Record<string, string> {
   const budget = history?.budget ?? controlledAcceptanceBudget(root);
   const recordAt = history?.recordAt ?? controlledRecordView(root, budget.check);
   const { run, contract } = history ? { run: supplied, contract: expected }
@@ -37,7 +39,7 @@ function evidenceDocumentationAuthority(root: string, supplied: ControlledSnapsh
   const documentation = history ? run.attempts.find(attempt => attempt.id === history.completed_attempt_id) : undefined;
   const beforeDocumentation = documentation ? { ...run, attempts: run.attempts.slice(0, run.attempts.indexOf(documentation)) } : run;
   if (run.workflow_id !== supplied.workflow_id || run.epoch_id !== supplied.epoch_id || run.contract_hash !== supplied.contract_hash ||
-      !same(contract, expected) || (!history && !['queued', 'running'].includes(run.status)) ||
+      !same(contract, expected) || (!history && !['queued', 'running'].includes(run.status) && !(admission?.allow_blocked && run.status === 'blocked')) ||
       history && (!documentation || documentation.purpose !== 'evidence-documentation' || documentation.stage !== 'implementation' ||
         documentation.role !== 'developer' || documentation.state !== 'completed' || documentation.report?.outcome !== 'completed' ||
         !same(documentation.documentation_source, source)) ||
@@ -47,7 +49,7 @@ function evidenceDocumentationAuthority(root: string, supplied: ControlledSnapsh
   const verifier = run.attempts.find(attempt => attempt.id === source.verifier_attempt_id);
   if (!producer || !verifier || producer.purpose === 'evidence-documentation' ||
       producer.stage !== 'implementation' || producer.role !== 'developer' || verifier.stage !== 'verification' || verifier.role !== 'verifier' ||
-      run.attempts.indexOf(producer) >= run.attempts.indexOf(verifier) || verifier.report?.verdict !== 'pass')
+      run.attempts.indexOf(producer) >= run.attempts.indexOf(verifier) || !['pass', 'fail'].includes(verifier.report?.verdict ?? ''))
     throw new ControlledToolError('STATE_UNCERTAIN', 'Evidence documentation requires independent producer and Verifier stages in their original order.');
   const authenticate = (attempt: Attempt) => {
     budget.check();
@@ -63,6 +65,7 @@ function evidenceDocumentationAuthority(root: string, supplied: ControlledSnapsh
         report.meta.data.kind !== 'controlled-work-record' || report.meta.data.workflow_id !== run.workflow_id ||
         report.meta.data.task_id !== contract.task_id || report.meta.data.epoch_id !== run.epoch_id ||
         report.meta.data.attempt_id !== attempt.id || report.meta.data.invocation_id !== receipt.id || report.meta.data.stage !== attempt.stage ||
+        attempt.verification_purpose !== undefined && report.meta.data.verification_purpose !== attempt.verification_purpose ||
         report.meta.data.outcome !== attempt.report.outcome || report.meta.data.report_payload_hash !== hash(canonicalJson(attempt.report)) ||
         !same(report.meta.data.artifact_hashes, attempt.bound_hashes) || evidenceRecordFingerprint(report) !== attempt.report_fingerprint)
       throw new ControlledToolError('STATE_UNCERTAIN', 'The source stage differs from its signed task, epoch, request or saved typed report.');
@@ -98,6 +101,8 @@ function evidenceDocumentationAuthority(root: string, supplied: ControlledSnapsh
   add(history ? Object.fromEntries(contract.plan.outputs.map(path => [path, producer.bound_hashes![path]!])) : producer.bound_hashes!);
   if (!history) add(verifier.bound_hashes!);
   add(contract.preserved_hashes, true);
+  const currentCheckerScope = !history
+    ? captureControlledCheckerScope(contract.plan.verification_paths, budget.fingerprints) : undefined;
   for (const ref of source.checks) {
     budget.check();
     const check = run.checks.find(check => check.id === ref.id);
@@ -106,6 +111,8 @@ function evidenceDocumentationAuthority(root: string, supplied: ControlledSnapsh
         !check.passed || check.cancelled || check.exit_code !== check.expected_exit_code ||
         !/^\.neomind\/controlled\/checks\/[a-f0-9-]{36}\.log$/.test(check.log_path))
       throw new ControlledToolError('STATE_UNCERTAIN', 'The report checkpoint does not match its actual independent check receipt.');
+    if (currentCheckerScope && !controlledCheckerScopeCurrent(check.checker_scope, currentCheckerScope))
+      throw new ControlledToolError('STATE_UNCERTAIN', 'The source checker scope changed outside the authorized report paths or lacks its execution-time seal.');
     const planned = contract.plan.checks.flatMap(positive => [{ ...positive, negative: false },
       ...(positive.negative_controls ?? []).map(negative => ({ ...negative, negative: true }))])
       .find(planned => planned.title === check.title && planned.negative === check.negative &&
@@ -118,7 +125,7 @@ function evidenceDocumentationAuthority(root: string, supplied: ControlledSnapsh
     if (hash(bytes) !== check.log_sha256) throw new ControlledToolError('STATE_UNCERTAIN', 'The original source check log changed.');
     const log = JSON.parse(bytes.toString('utf8'));
     if (!same(log.command, check.command) || !same(log.planned_command ?? log.command, check.planned_command ?? check.command) ||
-        !same(log.baseline, check.baseline) || log.result?.exit_code !== check.exit_code ||
+        !same(log.baseline, check.baseline) || !same(log.checker_scope, check.checker_scope) || log.result?.exit_code !== check.exit_code ||
         log.result?.cancelled || log.result?.timed_out || log.result?.output_limited || log.result?.error || log.pilot_error)
       throw new ControlledToolError('STATE_UNCERTAIN', 'The source check outcome differs from the actual backend process result.');
     authenticateCheckEvidence(root, run, contract, check, recordAt);
@@ -130,6 +137,7 @@ function evidenceDocumentationAuthority(root: string, supplied: ControlledSnapsh
         throw new ControlledToolError('STATE_UNCERTAIN', 'A source check input changed outside the authorized report paths.');
     }
   }
+  if (currentCheckerScope) add(currentCheckerScope.files, true);
   if (!same(guarded, budget.fingerprints(Object.keys(guarded))))
     throw new ControlledToolError('STATE_UNCERTAIN', 'Implementation, checker or preserved inputs changed outside the authorized report paths.');
   budget.check();
@@ -159,7 +167,7 @@ function authenticateCheckEvidence(root: string, run: ControlledSnapshot, contra
   if (record.meta.type !== 'evidence' || data.controlled_check_id !== check.id || data.controlled_epoch_id !== run.epoch_id ||
       data.controlled_contract_hash !== run.contract_hash || data.task_id !== contract.task_id || data.workflow_id !== run.workflow_id ||
       data.result !== 'pass' || data.execution_invocation_id !== check.invocation_id || !same(data.file_baseline, check.baseline) ||
-      !same(data.command, check.command) || data.log_hash !== check.log_sha256 || data.log_path !== check.log_path ||
+      !same(data.command, check.command) || !same(data.checker_scope, check.checker_scope) || data.log_hash !== check.log_sha256 || data.log_path !== check.log_path ||
       data.check_fingerprint !== evidenceRecordFingerprint(recordAt(input.check_id)))
     throw new ControlledToolError('STATE_UNCERTAIN', 'The source typed check evidence differs from its command receipt.');
   validateEvidenceInputs(root, input.input_snapshot, { files: check.baseline, record_fingerprints: input.record_baseline,
@@ -170,6 +178,6 @@ function authenticateCheckEvidence(root: string, run: ControlledSnapshot, contra
     throw new ControlledToolError('STATE_UNCERTAIN', 'The source materialized evidence receipt path differs from its backend identity.');
   const saved = JSON.parse(readFileSync(safePath(root, data.receipt_path), 'utf8'));
   if (!same(saved.file_baseline, data.file_baseline) || saved.result !== data.result || saved.log_hash !== data.log_hash ||
-      saved.execution_invocation_id !== data.execution_invocation_id || saved.controlled_check_id !== check.id)
+      saved.execution_invocation_id !== data.execution_invocation_id || saved.controlled_check_id !== check.id || !same(saved.checker_scope, check.checker_scope))
     throw new ControlledToolError('STATE_UNCERTAIN', 'The source materialized execution receipt changed.');
 }

@@ -18,6 +18,7 @@ import { ControlledEvidenceScanTimeout } from './controlled-evidence-error.js';
 export { ControlledEvidenceScanTimeout } from './controlled-evidence-error.js';
 import { latestControlledChecks, controlledCheckMatches } from './controlled-current-checks.js';
 import { captureControlledCheckerScope, controlledCheckerScopeCurrent, type ControlledCheckerScope } from './controlled-checker-scope.js';
+import { controlledVerificationPurpose } from './controlled-report-phase.js';
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const roots = '.neomind/controlled/workflows';
@@ -381,6 +382,8 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
     if (producer!.invocation_id === verifier!.invocation_id || reviewer?.invocation_id === producer!.invocation_id || reviewer?.invocation_id === verifier!.invocation_id)
       throw new Error('Verification and review must use independent sessions.');
     if (run.attempts.indexOf(verifier!) <= run.attempts.indexOf(producer!)) throw new Error('Independent verification must follow the latest producer result.');
+    if (gate === 'accepted' && controlledVerificationPurpose(run, contract) !== 'final-contract')
+      throw new Error('The promised factual report still needs its bounded handoff and fresh full final-contract verification.');
     if (verifier!.report?.verdict !== 'pass' || gate === 'accepted' && contract.reviewer_required && reviewer?.report?.verdict !== 'pass') throw new Error('Independent verification or required review did not pass.');
     const attemptChecks = run.checks.filter(item => item.attempt_id === verifier!.id);
     assertFreshVerifierAfterReconciliation(run, reconciliations, verifier!.id, attemptChecks);

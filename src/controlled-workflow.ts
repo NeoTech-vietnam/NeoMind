@@ -48,7 +48,8 @@ import { restoreControlledCornellOwnedArtifacts } from './controlled-cornell-res
 import { controlledReviewContext } from './controlled-review-context.js';
 import { latestControlledChecks, controlledCheckMatches } from './controlled-current-checks.js';
 import { captureControlledCheckerScope, controlledCheckerScopeCurrent, projectControlledCheckerScope, type ControlledCheckerScope } from './controlled-checker-scope.js';
-import { evidenceReportPaths, pendingEvidenceDocumentation, controlledChecksForPhase, type EvidenceDocumentationSource } from './controlled-report-phase.js';
+import { evidenceReportPaths, pendingEvidenceDocumentation, controlledChecksForPhase, controlledVerificationPurpose,
+  evidenceDocumentationProfessionalContext, type EvidenceDocumentationSource } from './controlled-report-phase.js';
 import { controlledCornellDirectories, controlledKnowledgeFreshness } from './controlled-cornell-selection.js';
 import { assertEvidenceDocumentationAuthority } from './controlled-report-authority.js';
 import { readCheckReconciliations, unresolvedControlledChecks, recheckBeforeReconciledResume, normalizedMaintenanceInput,
@@ -63,6 +64,7 @@ interface Attempt {
   id: string; request_id: string; stage: Stage; role: NativeRole; invocation_id?: string;
   state: 'starting' | 'running' | 'completed' | 'interrupted'; purpose?: 'specialist' | 'diagnosis' | 'check-review' | 'evidence-documentation'; specialist_index?: number;
   documentation_source?: EvidenceDocumentationSource;
+  verification_purpose?: 'product-checkpoint' | 'final-contract';
   report?: ControlledReport; report_id?: string; report_fingerprint?: string; bound_hashes?: Record<string, string>; checked?: boolean;
 }
 export interface ControlledCheckReceipt {
@@ -738,11 +740,7 @@ class Controller {
       // bounded authoring pass precedes fresh verification and final review.
       // This also resumes old frozen promises without rewriting the contract.
       if (contract && ['review', 'completed'].includes(run.phase) && !run.pending_check_review) {
-        const documentation = pendingEvidenceDocumentation(run, contract);
-        if (documentation) {
-          run.pending_documentation = documentation; run.phase = 'implementation'; run.status = 'queued';
-          save(this.root, run, 'evidence-documentation-needed', 'Actual checks are available; the backend schedules only the promised final report outputs before fresh independent verification.');
-        }
+        if (this.scheduleEvidenceDocumentation(run, contract)) continue;
       }
       const specialistIndex = run.phase === 'implementation' ? (contract?.plan.specialists ?? []).findIndex((_, index) =>
         !run.attempts.some(attempt => attempt.purpose === 'specialist' && attempt.specialist_index === index && attempt.state === 'completed' && attempt.report?.outcome === 'completed')) : -1;
@@ -766,6 +764,7 @@ class Controller {
         save(this.root, run, 'blocked', run.blocker.message); return;
       }
       const attempt: Attempt = { id: randomUUID(), request_id: randomUUID(), stage, role, state: 'starting',
+        ...(stage === 'verification' && contract ? { verification_purpose: controlledVerificationPurpose(run, contract) } : {}),
         ...(specialist ? { purpose: 'specialist', specialist_index: specialistIndex } : {}),
         ...(stage === 'review' && run.pending_check_review ? { purpose: 'check-review' } : {}),
         ...(documentation ? { purpose: 'evidence-documentation' as const, documentation_source: documentation } : {}) };
@@ -774,6 +773,7 @@ class Controller {
       save(this.root, run, 'dispatch', `NeoMind dispatches ${role} for ${stage}.`);
       const binding: ControlledBinding = { workflow_id: id, task_id: stage === 'planning' ? undefined : contract?.task_id,
         stage, role, implementation_paths: documentation?.paths ?? contract?.plan.allowed_paths ?? [], verification_paths: contract?.plan.verification_paths ?? [],
+        ...(attempt.verification_purpose ? { verification_purpose: attempt.verification_purpose } : {}),
         ...(stage === 'planning' ? { plan_defaults: { title: run.title,
           objective: run.requirement.length <= 8000 ? run.requirement
             : 'Implement the complete saved user requirement for this workflow; its scope and acceptance criteria remain authoritative.' } } : {}),
@@ -904,7 +904,9 @@ class Controller {
             throw new ControlledToolError('INPUT_CHANGED', 'Artifacts changed after the durable report; do not refresh an old result against new bytes.');
           const record = priorReport ?? createRecord(this.root, { type: stage === 'review' ? 'review' : 'knowledge', title: `${role}: ${current.title}`.slice(0, 256), owner: role,
             data: { kind: 'controlled-work-record', workflow_id: id, task_id: contract?.task_id, invocation_id: active.invocation_id,
-              epoch_id: current.epoch_id, attempt_id: active.id, stage, report_payload_hash: payloadHash, outcome: report.outcome, artifact_hashes: active.bound_hashes },
+              epoch_id: current.epoch_id, attempt_id: active.id, stage,
+              ...(active.verification_purpose ? { verification_purpose: active.verification_purpose } : {}),
+              report_payload_hash: payloadHash, outcome: report.outcome, artifact_hashes: active.bound_hashes },
             body: `# Result\n${report.summary}\n\n# Findings\n${(report.findings ?? []).join('\n')}\n\n# Limitations\n${(report.limitations ?? []).join('\n')}\n` });
           active.report_id = record.meta.id;
           active.report_fingerprint = evidenceRecordFingerprint(record);
@@ -1113,8 +1115,10 @@ class Controller {
             ...(check.negative_controls ?? []).map(check => ({ ...check, negative: true }))]);
           const titles = new Set(prescribed.map(check => check.title));
           const evidence = this.currentChecks(run, contract!).filter(check => titles.has(check.title));
-          if (!evidence.length || evidence.some(check => !check.passed) || prescribed.some(expected =>
-              !evidence.some(check => check.title === expected.title && controlledCheckMatches(check, expected))) || active.report.verdict !== 'pass') {
+          const executionsPassed = !!evidence.length && evidence.every(check => check.passed) && prescribed.every(expected =>
+            evidence.some(check => check.title === expected.title && controlledCheckMatches(check, expected)));
+          if (executionsPassed && this.scheduleEvidenceDocumentation(run, contract!)) continue;
+          if (!executionsPassed || active.report.verdict !== 'pass') {
             if (!this.repair(run, active.report.failure_kind ?? 'unknown', active.report.summary)) return;
             continue;
           }
@@ -1130,11 +1134,7 @@ class Controller {
               save(this.root, run, 'procedure-registered', 'Actual scripts registered as a reusable candidate before independent final review; fixture runs do not qualify it.');
             }
           }
-          const documentation = pendingEvidenceDocumentation(run, contract!);
-          if (documentation) {
-            run.pending_documentation = documentation; run.phase = 'implementation';
-            save(this.root, run, 'evidence-documentation-needed', 'Passed independent checks are now available for the promised final execution report; fresh verification follows.');
-          } else run.phase = contract?.knowledge_directory && !controlledKnowledgeFreshness(run, contract, id => getRecord(this.root, id)).ready
+          run.phase = contract?.knowledge_directory && !controlledKnowledgeFreshness(run, contract, id => getRecord(this.root, id)).ready
             ? 'synthesis' : readContract(this.root, run).reviewer_required ? 'review' : 'completed';
         } else if (stage === 'review') {
           if (active.report.verdict !== 'pass') { if (!this.repair(run, active.report.failure_kind ?? 'unknown', active.report.summary)) return; continue; }
@@ -1162,6 +1162,8 @@ class Controller {
     const documentation = stage === 'implementation' ? run.pending_documentation : undefined;
     const operations = binding ? new Set(controlledToolNames(binding)) : new Set<string>();
     const reportPaths = contract ? evidenceReportPaths(contract.plan) : [];
+    const professionalCheckpoint = contract && (documentation || stage === 'verification' || stage === 'review')
+      ? evidenceDocumentationProfessionalContext(run, contract, documentation) : null;
     const formatContext = (stage === 'diagnosis' || stage === 'implementation' && operations.has('cornell_research_compile')) && contract && !documentation
       ? controlledCornellFormatContext(this.root, contract, run.cornell_results ?? [], { sourceAllowed: path =>
         (controlledPublicReferencePath(path) || !!binding?.approved_inputs?.includes(path) && controlledSkillInputPath(path)) &&
@@ -1191,6 +1193,7 @@ class Controller {
           : 'An earlier authenticated producer overwrote a compiler-owned Cornell rendering. Preserve it for backend reconciliation; do not reconstruct its payload or write its renderings directly.' : '',
       `Prior reports:\n${JSON.stringify(run.attempts.filter(item => item.report).slice(-4).map(item => ({ stage: item.stage, report: item.report })))}`,
       formatContext,
+      professionalCheckpoint ? `Original independent checkpoint assessment, preserved unchanged:\n${JSON.stringify(professionalCheckpoint)}\nCarry every original finding and limitation forward. Report-only authoring does not resolve a product/checker defect, change that verdict, or establish acceptance. The fresh final Verifier must judge every unchanged criterion and explain which findings the actual final artifacts resolve; the required Reviewer remains independent.` : '',
       'Your current signed-session context establishes the active Bridge and model request. Use runtime_context only for missing execution facts; one completed snapshot suffices. Continue the role work after preflight_complete instead of repeating unchanged context queries. Optional executable paths must come from actual project configuration, never guessed locations. Missing optional languages do not invalidate the session. Client intake setup instructions do not become worker preconditions.',
       stage === 'planning' ? 'Declare required producer execution_steps before freeze. For requested post-check factual reports, declare evidence_report_paths as exact outputs also listed in documentation_paths. Preserve all promised output and independent check criteria.' : '',
       operations.has('task_run') ? 'Use the available task_run only for its bound producer operations. A blocked automatic-reuse candidate does not prohibit a separately scoped direct operation. Pass readable prepared JSON data by input_path without recopying serialized tool text; the backend captures its input baseline without changing the frozen command or output scope.' : '',
@@ -1201,7 +1204,7 @@ class Controller {
       contract?.plan.procedure_candidate && (stage === 'synthesis' || stage === 'review' && reviewPurpose === 'final-product')
         ? `Current backend registry observation: ${JSON.stringify(controlledRegistrationEvidence(this.root, run, contract))}\nUse check_evidence({kind:"registration"}) to refresh this exact bound manifest observation. It is actual registry provenance, not a separate native signed receipt, independent contract review or automatic-reuse qualification.` : '',
       stage === 'verification' ? 'Independently inspect implementation, author only checker files, execute check_run, and report pass/fail. Include negative controls that prove bad output fails. Distinguish product defects from checker defects.' : '',
-      stage === 'verification' && contract ? `Current check phase: ${controlledChecksForPhase(run, contract).length === contract.plan.checks.length ? 'full final independent verification' : 'product checkpoint before the factual report is written'}. Available check titles: ${JSON.stringify(controlledChecksForPhase(run, contract).map(check => check.title))}. A checkpoint pass is not final acceptance. The backend retains every deferred report check and runs the complete contract after documentation.` : '',
+      stage === 'verification' && contract ? `Current verification purpose: ${controlledVerificationPurpose(run, contract)}. Available check titles: ${JSON.stringify(controlledChecksForPhase(run, contract).map(check => check.title))}. Command count does not define final acceptance. At a product-checkpoint, independently judge product/checker obligations and record the factual report as pending; its required future results alone do not fail this checkpoint. All final-report criteria remain required after the normal report handoff. A fresh final-contract Verifier and required Reviewer must then judge the complete unchanged contract, even when exactly the same commands run in both phases.` : '',
       stage === 'verification' && run.check_reconciliations?.length ? 'Historical interruption context: an earlier checker has outcome UNKNOWN under an explicit unsigned local maintenance effect assessment. Its original intent and interrupted session remain unchanged. No command was automatically replayed and no passing/cancelled execution result was invented. Inspect the current bound implementation/checker inputs and obtain fresh prescribed positive/negative evidence through this new Verifier session before reporting a verdict.' : '',
       stage === 'review' ? controlledReviewInstructions(reviewPurpose) : '',
       stage === 'diagnosis' ? 'Diagnose existing evidence without modifying files. Report failure_kind implementation/checker/protocol/environment, concrete findings, and bounded repair direction.' : '',
@@ -1350,6 +1353,19 @@ class Controller {
     return 'unknown';
   }
 
+  private scheduleEvidenceDocumentation(run: ControlledSnapshot, contract: Contract, allowBlocked = false): boolean {
+    const source = pendingEvidenceDocumentation(run, contract);
+    if (!source) return false;
+    const current = this.currentChecks(run, contract);
+    if (!source.checks.every(ref => current.some(check => check.id === ref.id && check.passed && check.checker_scope_current))) return false;
+    // Admission is read-only until the original signed stages, actual process
+    // evidence, current sealed scope and non-report artifacts authenticate.
+    assertEvidenceDocumentationAuthority(this.root, run, contract, source, { allow_blocked: allowBlocked });
+    run.pending_documentation = source; run.phase = 'implementation'; run.status = 'queued';
+    run.owner_pid = process.pid; run.owner_instance = readHost(this.root).instance; delete run.blocker;
+    save(this.root, run, 'evidence-documentation-needed', 'Actual current sealed executions authorize only the already promised factual-report handoff. The original professional verdict and every finding remain unchanged; fresh full verification and required review still decide acceptance. No repair allowance was charged or refunded.');
+    return true;
+  }
   private currentChecks(run: ControlledSnapshot, contract: Contract) {
     const checks = currentControlledChecks(run);
     if (!checks.length) return [];
@@ -1674,6 +1690,12 @@ class Controller {
     if (!this.admitCheckEffects(run)) return run;
     this.reconcileRepairBudget(run);
     const last = run.attempts.at(-1), blocker = run.blocker;
+    if (run.status === 'blocked' && blocker?.message.startsWith('Product/checker repair budget exhausted.') &&
+        (blocker.kind === 'implementation' || blocker.kind === 'checker') && last?.stage === 'verification' &&
+        last.state === 'completed' && last.report?.outcome === 'completed' &&
+        this.scheduleEvidenceDocumentation(run, readContract(this.root, run), true)) {
+      this.schedule(id); return run;
+    }
     const diagnosticResume = run.status === 'blocked' && blocker?.kind === 'unknown' &&
       (blocker.message.startsWith('Diagnostic reconciliation exhausted.') ||
         blocker.message.startsWith('Diagnostic reconciliation stopped.'));
