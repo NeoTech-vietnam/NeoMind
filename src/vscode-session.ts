@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { hostRequest, readHost, bounded, bridgeProtocol, type HostDescriptor } from './vscode-wire.js';
-import { canonicalJson, routingConfigurationHashes, readInvocation, roleModelPolicy, requireRoutingPolicy, type NativeReceipt } from './routing.js';
+import { canonicalJson, routingConfigurationHashes, observeInvocation, roleModelPolicy, requireRoutingPolicy, type NativeReceipt } from './routing.js';
 import { roleCapabilities } from './tools.js';
 import { vscodeSelection } from './vscode-policy.js';
 import { ownedContext } from './controlled-context.js';
@@ -20,6 +20,7 @@ export class VSCodeSession {
   private polling: Promise<void> | null = null;
   private jobs = new Set<Promise<void>>();
   private closing: Promise<void> | null = null;
+  private activity = 0;
   constructor(readonly root: string, readonly receipt: NativeReceipt,
     readonly update: (patch: Partial<NativeReceipt>) => void,
     readonly complete: (state: 'completed' | 'blocked' | 'interrupted', error: string | null) => Promise<void>) {}
@@ -71,6 +72,7 @@ export class VSCodeSession {
   }
   private input(): Record<string, unknown> { return { invocation_id: this.receipt.id, turn_id: this.receipt.native_turn_id }; }
   private async poll(): Promise<void> {
+    let emptyDelay = 50, previousState = this.receipt.state, observedActivity = this.activity;
     try {
       while (!this.stopped) {
         if (canonicalJson(this.receipt.configuration_hashes) !== canonicalJson(invocationConfigurationHashes(this.root, this.receipt)))
@@ -79,7 +81,10 @@ export class VSCodeSession {
         if (!['prepared', 'running', 'completed', 'blocked', 'interrupted'].includes(value.state) ||
             !Array.isArray(value.events) || value.events.length > 32 || typeof value.output !== 'string' || value.output.length > 64000)
           throw new Error('VS Code host returned invalid bounded state.');
-        if (value.output !== this.receipt.output) this.update({ output: value.output });
+        const outputChanged = value.output !== this.receipt.output;
+        const active = value.events.length > 0 || value.state !== previousState || outputChanged || observedActivity !== this.activity;
+        previousState = value.state; observedActivity = this.activity;
+        if (outputChanged) this.update({ output: value.output });
         for (const event of value.events) {
           // Do not block polling while native_wait or native_dispatch waits on another host turn.
           const job = this.tool(event).catch(() => {
@@ -95,9 +100,12 @@ export class VSCodeSession {
           if (!this.stopped) await this.complete(value.state, value.error ? String(value.error).slice(0, 1000) : null);
           return;
         }
+        if (this.stopped) return;
+        const delay = active ? 50 : emptyDelay;
+        emptyDelay = active ? 50 : Math.min(250, emptyDelay * 2);
         await new Promise<void>((resolve) => {
           this.releaseDelay = resolve;
-          this.timer = setTimeout(resolve, 50);
+          this.timer = setTimeout(() => this.wakeDelay(), delay);
         });
         this.releaseDelay = undefined;
       }
@@ -110,19 +118,45 @@ export class VSCodeSession {
         !this.receipt.native_tool_scope.includes(event.name) || ['manager_run', 'manager_begin'].includes(event.name))
       throw new Error('Host tool escapes invocation scope.');
     bounded(event.input);
-    const current = readInvocation(this.root, this.receipt.id);
-    if (current.state !== 'running') throw new Error('Invocation no longer running.');
+    this.assertCurrentInvocation();
     // The owned host already records a redacted semantic request before MCP
     // schema validation. Do not duplicate it here with raw path/key metadata.
     const result = await this.client.callTool({ name: event.name, arguments: event.input }, undefined,
       { timeout: this.receipt.controlled_execution ? 660000 : 75000, signal: this.controller.signal });
     bounded(result);
-    if (!this.stopped) await hostRequest(this.host, 'result', { ...this.input(), call_id: event.call_id, result }, this.controller.signal);
+    if (!this.stopped) {
+      this.assertCurrentInvocation();
+      await hostRequest(this.host, 'result', { ...this.input(), call_id: event.call_id, result }, this.controller.signal);
+      this.activity++; this.wakeDelay();
+    }
+  }
+  private assertCurrentInvocation(): void {
+    const observed = observeInvocation(this.root, this.receipt.role, this.receipt.id, {
+      ...(this.receipt.workflow_id ? { workflow_id: this.receipt.workflow_id } : {}),
+      ...(this.receipt.task_id ? { task_id: this.receipt.task_id } : {}), require_completed: false });
+    const current = observed.receipt;
+    if (!current || current.state !== 'running') throw new Error('Invocation no longer running.');
+    if (canonicalJson(this.receipt.configuration_hashes) !== canonicalJson(observed.current_configuration_hashes))
+      throw new Error('Native configuration changed during VS Code inference.');
+    if (observed.problems.length) throw new Error('Invocation-bound routing changed during VS Code inference.');
+    if (current.host_instance !== this.host.instance || current.native_thread_id !== this.receipt.native_thread_id ||
+        current.native_turn_id !== this.receipt.native_turn_id || current.owner_pid !== this.receipt.owner_pid ||
+        current.key_id !== this.receipt.key_id || current.workflow_id !== this.receipt.workflow_id || current.task_id !== this.receipt.task_id ||
+        current.requested_model !== this.receipt.requested_model || current.confirmed_model !== this.receipt.confirmed_model ||
+        current.model_provider !== this.receipt.model_provider ||
+        current.controlled_execution?.epoch_id !== this.receipt.controlled_execution?.epoch_id ||
+        current.controlled_execution?.stage !== this.receipt.controlled_execution?.stage ||
+        canonicalJson(current.native_tool_scope) !== canonicalJson(this.receipt.native_tool_scope))
+      throw new Error('Invocation-bound host identity changed during VS Code inference.');
+  }
+  private wakeDelay(): void {
+    clearTimeout(this.timer); this.timer = undefined;
+    const release = this.releaseDelay; this.releaseDelay = undefined; release?.();
   }
   close(): Promise<void> {
     if (this.closing) return this.closing;
     this.closing = (async () => {
-      this.stopped = true; this.controller.abort(); clearTimeout(this.timer); this.releaseDelay?.();
+      this.stopped = true; this.controller.abort(); this.wakeDelay();
       if (this.host && this.receipt.native_turn_id)
         await hostRequest(this.host, 'cancel', this.input()).catch(() => {});
       await this.client.close(); await this.server?.close();
