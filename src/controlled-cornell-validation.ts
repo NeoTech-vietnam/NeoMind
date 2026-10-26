@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { hash, now, safePath } from './storage.js';
 import { runCommand } from './command-runner.js';
 import { controlledPythonExecutable } from './controlled-runtime-context.js';
-import { assertCornellFormatProfile, cornellFormatRendererRevision } from './cornell-format-profile.js';
+import { assertCornellFormatProfile, cornellFormatRendererRevision, cornellExplanationHeading } from './cornell-format-profile.js';
 import { previewCornellArtifacts } from './notes.js';
 import type { CompiledCornellResearch } from './cornell-workflow.js';
 import { renderCornellClaimLabels } from './cornell-content.js';
@@ -78,20 +78,52 @@ export async function validateControlledCornell(root: string, compiled: Compiled
         if (!letter || /^Strategy [A-Z] (?:Flow|Worked Example Flow)$/.test(heading)) return [];
         return [`Strategy ${letter} Flow`, `Strategy ${letter} Worked Example Flow`].filter(required => !headings.has(required));
       });
-      const diagnostics = result.stdout.split(/\r?\n/).filter(line => /^  - /.test(line)).map(line => line.slice(4, 504)).slice(0, 24);
+      const rawDiagnostics = result.stdout.split(/\r?\n/).filter(line => /^  - /.test(line));
+      const attributionComplete = rawDiagnostics.length <= 128 && rawDiagnostics.every(line => line.length <= 504);
+      const allDiagnostics = rawDiagnostics.slice(0, 128).map(line => line.slice(4, 504));
+      const diagnostics = allDiagnostics.slice(0, 24); // Stored/public projection, never the ownership decision boundary.
+      const findings = allDiagnostics.flatMap(diagnostic => {
+        const group = /^((?:strategies missing (?:worked-example )?Mermaid flows|(?:worked-example )?flows without matching strategies): )([A-Z](?:, [A-Z])*)$/.exec(diagnostic);
+        return group ? group[2]!.split(', ').map(letter => `${group[1]}${letter}`) : [diagnostic];
+      });
+      const observedMissing = missing.filter(heading => {
+        const match = /^Strategy ([A-Z]) (Flow|Worked Example Flow)$/.exec(heading);
+        return !!match && findings.includes(`strategies missing ${match[2] === 'Flow' ? '' : 'worked-example '}Mermaid flows: ${match[1]}`);
+      });
       // Attribute an actual validator finding to a professional field only when its exact supplied bytes survived rendering.
       // These checks do not decide validity: a successful canonical validator result above remains the only pass authority.
-      const sourceFields: string[] = [];
+      const sourceFields: string[] = [], attributed = new Set<string>();
+      const attribute = (path: string, predicate: (finding: string) => boolean) => {
+        for (const finding of findings) if (predicate(finding)) { attributed.add(finding); sourceFields.push(path); }
+      };
       const renderedBody = current.contents[compiled.note.path!]!;
-      if (diagnostics.includes('missing or invalid Topic heading') && options.semantic_input?.topic === compiled.note.topic)
-        sourceFields.push('topic');
+      const semanticMains = new Set([...headings].flatMap(heading => {
+        const match = /^Strategy ([A-Z])(?:\b|:)/.exec(heading);
+        return match && !/^Strategy [A-Z] (?:Flow|Worked Example Flow)$/.test(heading) ? [match[1]!] : [];
+      }));
+      const mappingChanged = options.semantic_input?.explanations?.some(item =>
+        !compiled.note.main_notes.includes(`${cornellExplanationHeading(compiled.note.format_profile, item.heading)}\n\n${renderCornellClaimLabels(item.body)}`)) === true;
+      const suppliedTopic = options.semantic_input?.topic;
+      if (suppliedTopic !== undefined && suppliedTopic === compiled.note.topic &&
+          renderedBody.includes(`## Topic: ${suppliedTopic}\n`) &&
+          !/^## Topic: Leetcode - \d+ - .+$/m.test(`## Topic: ${suppliedTopic}`))
+        attribute('topic', finding => finding === 'missing or invalid Topic heading');
+      for (const letter of semanticMains) {
+        if (!headings.has(`Strategy ${letter} Flow`))
+          attribute('explanations', finding => finding === `strategies missing Mermaid flows: ${letter}`);
+        if (!headings.has(`Strategy ${letter} Worked Example Flow`))
+          attribute('explanations', finding => finding === `strategies missing worked-example Mermaid flows: ${letter}`);
+      }
       for (const [index, explanation] of (options.semantic_input?.explanations ?? []).entries()) {
+        attribute(`explanations[${index}].heading`, finding => {
+          const duplicate = /^expected exactly one `([^`]+)`, found (\d+)$/.exec(finding);
+          return !!duplicate && Number(duplicate[2]) > 1 && duplicate[1] === cornellExplanationHeading(compiled.note.format_profile, explanation.heading);
+        });
         if (!renderedBody.includes(explanation.body) && !renderedBody.includes(renderCornellClaimLabels(explanation.body))) continue;
         const flow = /^Strategy ([A-Z]) (Flow|Worked Example Flow)$/.exec(explanation.heading);
         if (flow) {
           const prefix = `Strategy ${flow[1]} ${flow[2] === 'Flow' ? 'flow' : 'worked-example flow'}`;
-          if (diagnostics.some(diagnostic => diagnostic === `${prefix} must contain one Mermaid fence only` || diagnostic === `${prefix} lacks Mermaid classDef styling`))
-            sourceFields.push(`explanations[${index}].body`);
+          attribute(`explanations[${index}].body`, finding => finding === `${prefix} must contain one Mermaid fence only` || finding === `${prefix} lacks Mermaid classDef styling`);
         }
       }
       // The validator also scans literal Markdown inside fences. Preserve it, and attribute its observed rejection to its source field.
@@ -99,23 +131,34 @@ export async function validateControlledCornell(root: string, compiled: Compiled
         if (depth > 6) return;
         if (typeof value === 'string') {
           if (!renderedBody.includes(value) && !renderedBody.includes(renderCornellClaimLabels(value))) return;
-          if (diagnostics.includes('raw HTML style block found; use Mermaid classDef') && /<style\b/i.test(value) ||
-              diagnostics.includes('unbalanced Markdown code fences') && hasUnclosedSourceFence(value))
-            sourceFields.push(path);
-          if ([...value.matchAll(/^## Strategy ([A-Z])(?:\b|:)/gm)].some(match => diagnostics.some(diagnostic =>
-              /^strategies missing (?:worked-example )?Mermaid flows: /.test(diagnostic) && diagnostic.split(': ')[1]?.split(', ').includes(match[1]!))))
-            sourceFields.push(path);
+          if (/<style(?:\s|>)/i.test(value)) attribute(path, finding => finding === 'raw HTML style block found; use Mermaid classDef');
+          if (hasUnclosedSourceFence(value)) attribute(path, finding => finding === 'unbalanced Markdown code fences');
+          const lines = value.split(/\r?\n/);
+          attribute(path, finding => {
+            const duplicate = /^expected exactly one `([^`]+)`, found (\d+)$/.exec(finding);
+            return !!duplicate && Number(duplicate[2]) > 1 && lines.includes(duplicate[1]!);
+          });
+          for (const match of value.matchAll(/^## Strategy ([A-Z])(?:\b|:)/gm))
+            attribute(path, finding => finding === `strategies missing Mermaid flows: ${match[1]}` || finding === `strategies missing worked-example Mermaid flows: ${match[1]}`);
           const orphan = /^Strategy ([A-Z]) (?:Flow|Worked Example Flow)$/.exec(value);
-          if (orphan && diagnostics.some(diagnostic => /^(?:worked-example )?flows without matching strategies: /.test(diagnostic) &&
-              diagnostic.split(': ')[1]?.split(', ').includes(orphan[1]!))) sourceFields.push(path);
+          const literalFlows = [...value.matchAll(/^### Strategy ([A-Z]) (Flow|Worked Example Flow)$/gm)];
+          const orphanLetters = literalFlows.map(match => match[1]!);
+          if (orphan) orphanLetters.push(orphan[1]!);
+          for (const letter of orphanLetters) if (!semanticMains.has(letter))
+            attribute(path, finding => finding === `flows without matching strategies: ${letter}` || finding === `worked-example flows without matching strategies: ${letter}`);
+          for (const flow of literalFlows) {
+            const prefix = `Strategy ${flow[1]} ${flow[2] === 'Flow' ? 'flow' : 'worked-example flow'}`;
+            attribute(path, finding => finding === `${prefix} must contain one Mermaid fence only` || finding === `${prefix} lacks Mermaid classDef styling`);
+          }
         } else if (Array.isArray(value)) value.slice(0, 64).forEach((item, index) => inspect(item, `${path}[${index}]`, depth + 1));
         else if (value && typeof value === 'object') for (const [key, item] of Object.entries(value).slice(0, 64))
           inspect(item, path ? `${path}.${key}` : key, depth + 1);
       };
       inspect(options.semantic_input, '');
-      throw failure(missing.length || sourceFields.length ? 'content' : 'runtime', 'CORNELL_CANONICAL_INVALID', missing.length
-        ? `The semantic explanations omit required flow sections: ${missing.join(', ')}. Correct those explanations; no generated files were written.`
-        : sourceFields.length ? `The pinned validator rejected unchanged professional content in ${[...new Set(sourceFields)].join(', ')}. Findings: ${diagnostics.slice(0, 6).join('; ')}. Correct those fields; no generated files were written.`
+      const contentOwned = attributionComplete && !mappingChanged && findings.length > 0 && findings.every(finding => attributed.has(finding));
+      throw failure(contentOwned ? 'content' : 'runtime', 'CORNELL_CANONICAL_INVALID', contentOwned && observedMissing.length
+        ? `The semantic explanations omit required flow sections: ${observedMissing.join(', ')}. Correct those explanations; no generated files were written.`
+        : contentOwned ? `The pinned validator rejected unchanged professional content in ${[...new Set(sourceFields)].join(', ')}. Findings: ${diagnostics.slice(0, 6).join('; ')}. Correct those fields; no generated files were written.`
         : 'The pinned validator rejected this exact compiler generation. Runtime must reconcile the source-to-render mapping before another unchanged model attempt; no generated files were written.', diagnostics);
     }
     return { schema_version: 1, ...identity, validated_at: now(), exit_code: 0 };

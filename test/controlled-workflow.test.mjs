@@ -1489,6 +1489,28 @@ test('renderer maintenance authenticates an unbound retained source from its act
     await assert.rejects(reconcileControlledCornellRenderer(env.root, input), /completed signed producer|authentic/);
   } finally { fs.writeFileSync(a.statePath, stateBytes); }
   assert.deepEqual(getRecord(env.root, a.note.meta.id), beforeNote);
+  for (const authority of ['report', 'receipt']) {
+    const path = authority === 'report' ? safePath(env.root, getRecord(env.root, producer.report_id).path)
+      : safePath(env.root, `.neomind/native/receipts/${producer.invocation_id}.json`);
+    const originalBytes = readFileSync(path), originalWrite = fs.writeFileSync;
+    let changed = false;
+    fs.writeFileSync = function(file, ...args) {
+      if (!changed && typeof file === 'string' && /\/neomind-cornell-validation-[^/]+\/note\.md$/.test(file.replaceAll('\\', '/'))) {
+        changed = true;
+        if (authority === 'report') originalWrite.call(this, path, Buffer.concat([originalBytes, Buffer.from('\nA user edited the historical report during validation.\n')]));
+        else {
+          const receipt = JSON.parse(originalBytes); receipt.task_id = 'FOREIGN-TASK';
+          originalWrite.call(this, path, JSON.stringify(receipt));
+        }
+      }
+      return originalWrite.call(this, file, ...args);
+    }; syncBuiltinESMExports();
+    try { await assert.rejects(reconcileControlledCornellRenderer(env.root, input)); }
+    finally { fs.writeFileSync = originalWrite; syncBuiltinESMExports(); fs.writeFileSync(path, originalBytes); }
+    assert.equal(changed, true, `The ${authority} changed while actual canonical validation was in progress.`);
+    assert.deepEqual(getRecord(env.root, a.note.meta.id), beforeNote);
+    assert.deepEqual(readFileSync(a.statePath), stateBytes);
+  }
   const repaired = await reconcileControlledCornellRenderer(env.root, input), done = controlledStatus(env.root, a.run.workflow_id);
   assert.equal(repaired.replayed, false); assert.equal(done.status, 'paused'); assert.equal(getRecord(env.root, a.note.meta.id).meta.revision, 2);
   assert.equal(done.renderer_reconciliations.length, 1); assert.deepEqual(done.repair_budget, a.run.repair_budget);

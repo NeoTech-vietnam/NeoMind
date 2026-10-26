@@ -1904,6 +1904,11 @@ export async function reconcileControlledCornellRenderer(root: string, value: Co
     if (hash(readFileSync(statePath(root, input.workflow_id))) !== hash(before) ||
         current.revision !== input.expected_revision || readContract(root, current).plan_hash !== contract.plan_hash)
       throw new Error('The workflow or immutable contract changed during validation. Current work is preserved.');
+    const authority = controlledContractForTask(root, getRecord(root, contract.task_id));
+    if (authority.run.revision !== current.revision || authority.run.contract_hash !== current.contract_hash)
+      throw new Error('The authoritative task changed during canonical validation. Current work is preserved.');
+    // Historical signed producer/report authority is mutable external input too; reauthenticate it after the child returns.
+    prepareCornellRendererReconciliation(root, current, authority.contract, input, prepared.identity);
     assertControlledPayloadCurrent(root, prepared.source);
     if (!same(controlledFingerprints(root, Object.keys(contract.preserved_hashes)), contract.preserved_hashes) ||
         Object.entries(contract.requirement_fingerprints).some(([id, digest]) => evidenceRecordFingerprint(getRecord(root, id)) !== digest))

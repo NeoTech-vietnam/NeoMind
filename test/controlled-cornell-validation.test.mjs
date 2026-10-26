@@ -45,7 +45,7 @@ test('a renderer regression is rejected before persistence and the same generati
   const a = fixture(t), compiled = a.compile();
   compiled.note.main_notes = compiled.note.main_notes.replace(/^## Strategy A:/m, '### Strategy A:');
   let failure;
-  await assert.rejects(validateControlledCornell(a.root, compiled, { explanation_headings: a.input.explanations.map(item => item.heading) }), error => {
+  await assert.rejects(validateControlledCornell(a.root, compiled, { semantic_input: a.input }), error => {
     failure = error.failure; return error.code === 'CORNELL_CANONICAL_INVALID' && failure.owner === 'runtime';
   });
   assert.ok(failure.diagnostics.some(value => value.includes('without matching strategies')));
@@ -57,6 +57,68 @@ test('a renderer regression is rejected before persistence and the same generati
   } finally { process.env.PATH = originalPath; }
 });
 
+test('source-owned reserved heading duplicates and literal orphan flows retain exact content ownership', async t => {
+  const a = fixture(t);
+  for (const literal of ['# Cornell Notes', '### Problem Description', '#### Constraints', '#### Function Contract',
+    '### Cue Column (Questions, Keywords, or Prompts)', '### Notes Section (Main Notes)', '### Summary Section (Summary of Notes)',
+    '### Strategy Z Flow', '### Strategy Z Worked Example Flow']) {
+    const input = structuredClone(a.input);
+    input.explanations[0].body += `\n\n\`\`\`md\n${literal}\n\`\`\``;
+    const compiled = a.compile(input);
+    await assert.rejects(validateControlledCornell(a.root, compiled, { semantic_input: input }), error =>
+      error.failure?.owner === 'content' && error.message.includes('explanations['), literal);
+    assert.equal(existsSync(safePath(a.root, compiled.note.path)), false);
+  }
+  const input = structuredClone(a.input);
+  input.explanations.push({ heading: 'Problem Description', body: 'An authored ordinary heading collides with the fixed project heading.' });
+  await assert.rejects(validateControlledCornell(a.root, a.compile(input), { semantic_input: input }), error =>
+    error.failure?.owner === 'content' && error.message.includes('explanations[3].heading'));
+});
+
+test('valid semantic headers and harmless style-like text cannot conceal a renderer-owned canonical failure', async t => {
+  const a = fixture(t);
+  for (const defect of ['topic', 'reserved-heading', 'style', 'flow-level', 'worked-flow-level', 'flow-body', 'mixed']) {
+    const input = structuredClone(a.input);
+    if (defect === 'style') input.explanations[0].body += '\n<style-component>Harmless literal custom tag.</style-component>';
+    if (defect === 'mixed') input.explanations[1].body = 'Authored content has no Mermaid fence.';
+    const compiled = a.compile(input);
+    if (defect === 'topic') compiled.note.topic = 'Broken renderer topic field';
+    if (defect === 'reserved-heading') compiled.note.main_notes += '\n\n### Problem Description\n';
+    if (defect === 'style') compiled.note.main_notes += '\n<style>Injected backend defect</style>\n';
+    if (defect === 'flow-level') compiled.note.main_notes = compiled.note.main_notes.replace(/^### Strategy A Flow$/m, '## Strategy A Flow');
+    if (defect === 'worked-flow-level') compiled.note.main_notes = compiled.note.main_notes.replace(/^### Strategy A Worked Example Flow$/m, '## Strategy A Worked Example Flow');
+    if (defect === 'flow-body') compiled.note.main_notes = compiled.note.main_notes.replace('classDef sample fill:#123,stroke:#fff', 'class sample fill:#123');
+    if (defect === 'mixed') compiled.note.topic = 'A backend topic regression coexists with authored malformed Mermaid.';
+    await assert.rejects(validateControlledCornell(a.root, compiled, { semantic_input: input }), error => error.failure?.owner === 'runtime', defect);
+    assert.equal(existsSync(safePath(a.root, compiled.note.path)), false);
+  }
+});
+
+test('backend-produced Topic prefix, Date, fixed-section and fence regressions remain runtime with valid semantic input', async t => {
+  const a = fixture(t), originalDate = a.input.date;
+  assert.throws(() => a.compile({ ...a.input, date: '23/10/2026' }), /YYYY|ISO|date|Invalid/i);
+  for (const defect of ['topic-prefix', 'date-display', 'fixed-section', 'fence']) {
+    const compiled = a.compile(), original = fs.writeFileSync;
+    let injected = false;
+    fs.writeFileSync = function(file, data, ...args) {
+      if (!injected && typeof file === 'string' && /\/neomind-cornell-validation-[^/]+\/note\.md$/.test(file.replaceAll('\\', '/'))) {
+        injected = true;
+        // Fault injection into the disposable renderer-to-validator boundary; the actual pinned Python checker is unchanged.
+        if (defect === 'topic-prefix') data = String(data).replace(/^## Topic:/m, '## Broken Topic:');
+        if (defect === 'date-display') data = String(data).replace(/^## Date: .+$/m, `## Date: ${originalDate}`);
+        if (defect === 'fixed-section') data = String(data).replace(/^### Problem Description$/m, '## Broken Problem Description');
+        if (defect === 'fence') data = String(data) + '\n~~~md\nBackend introduced an unclosed fence.\n';
+      }
+      return original.call(this, file, data, ...args);
+    }; syncBuiltinESMExports();
+    try {
+      await assert.rejects(validateControlledCornell(a.root, compiled, { semantic_input: a.input }), error => error.failure?.owner === 'runtime', defect);
+    } finally { fs.writeFileSync = original; syncBuiltinESMExports(); }
+    assert.equal(injected, true); assert.equal(a.input.date, originalDate);
+    assert.equal(existsSync(safePath(a.root, compiled.note.path)), false);
+  }
+});
+
 test('actual canonical rejection with a provably missing semantic flow identifies content ownership', async t => {
   const a = fixture(t), input = { ...a.input, explanations: a.input.explanations.slice(0, 1) }, compiled = a.compile(input);
   await assert.rejects(validateControlledCornell(a.root, compiled, { explanation_headings: input.explanations.map(item => item.heading) }), error =>
@@ -64,12 +126,47 @@ test('actual canonical rejection with a provably missing semantic flow identifie
   assert.equal(existsSync(safePath(a.root, compiled.note.path)), false);
 });
 
+test('source correction guidance describes the actual finding rather than inventing missing structured flow fields', async t => {
+  const a = fixture(t), input = structuredClone(a.input);
+  input.explanations = [input.explanations[0]];
+  input.explanations[0].body += `\n\n### Strategy A Flow\n\n${a.input.explanations[1].body}\n\n### Strategy A Worked Example Flow\n\n${a.input.explanations[2].body}`;
+  input.context += '\n<style>Authored style violates the pinned format.</style>\n';
+  await assert.rejects(validateControlledCornell(a.root, a.compile(input), { semantic_input: input }), error =>
+    error.failure?.owner === 'content' && error.message.includes('raw HTML style') && !error.message.includes('omit required flow'));
+});
+
+test('a runtime finding after the 24-line diagnostic projection cannot be hidden by earlier content findings', async t => {
+  const a = fixture(t), input = structuredClone(a.input);
+  input.explanations = Array.from({ length: 26 }, (_, index) => ({ heading: `Strategy ${String.fromCharCode(65 + index)} Flow`,
+    body: 'Authored flow text lacks the required Mermaid fence.' }));
+  const compiled = a.compile(input);
+  await assert.rejects(validateControlledCornell(a.root, compiled, { semantic_input: input }), error =>
+    error.failure?.owner === 'content' && error.failure.diagnostics.length === 24);
+  const original = fs.writeFileSync; let injected = false;
+  fs.writeFileSync = function(file, data, ...args) {
+    if (!injected && typeof file === 'string' && /\/neomind-cornell-validation-[^/]+\/validate\.py$/.test(file.replaceAll('\\', '/'))) {
+      injected = true;
+      // Fault injection appends a backend-owned finding after all real canonical content findings; the project validator stays pinned.
+      data = String(data).replace('from __future__ import annotations',
+        'from __future__ import annotations\nimport atexit\natexit.register(lambda: print("  - missing or invalid DD/MM/YYYY Date heading"))');
+    }
+    return original.call(this, file, data, ...args);
+  }; syncBuiltinESMExports();
+  try {
+    await assert.rejects(validateControlledCornell(a.root, compiled, { semantic_input: input }), error =>
+      error.failure?.owner === 'runtime' && error.failure.diagnostics.length === 24 && !error.failure.diagnostics.some(value => value.includes('Date heading')));
+  } finally { fs.writeFileSync = original; syncBuiltinESMExports(); }
+  assert.equal(injected, true); assert.equal(existsSync(safePath(a.root, compiled.note.path)), false);
+});
+
 test('actual malformed Mermaid, styling and topic findings stay with unchanged professional input fields', async t => {
   const a = fixture(t);
-  for (const kind of ['styling', 'flow-content', 'topic', 'style', 'context-style', 'literal-heading', 'orphan-flow', 'tilde', 'width']) {
+  for (const kind of ['styling', 'flow-content', 'worked-styling', 'worked-content', 'topic', 'style', 'context-style', 'literal-heading', 'orphan-flow', 'tilde', 'width']) {
     const input = structuredClone(a.input);
     if (kind === 'styling') input.explanations[1].body = input.explanations[1].body.replace('classDef sample fill:#123,stroke:#fff', 'class sample fill:#123');
     if (kind === 'flow-content') input.explanations[1].body = 'This professional flow omits its Mermaid fence.';
+    if (kind === 'worked-styling') input.explanations[2].body = input.explanations[2].body.replace('classDef sample fill:#123,stroke:#fff', 'class sample fill:#123');
+    if (kind === 'worked-content') input.explanations[2].body = 'This professional worked-example flow omits its Mermaid fence.';
     if (kind === 'topic') input.topic = 'A professional title that violates the pinned project topic contract';
     if (kind === 'style') input.explanations[0].body += '\n<style>body { color: red; }</style>';
     if (kind === 'context-style') input.context += '\n<style>body { color: red; }</style>';
