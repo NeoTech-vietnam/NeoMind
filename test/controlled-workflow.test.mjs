@@ -893,12 +893,13 @@ test('owner close waits for actual checker-tree cancellation and durable failed 
   },
     'actual owned checker and descendant must be running before owner close', env.errors);
   const started = Date.now();
-  const closing = env.closeOwner();
+  let closeDuration;
+  const closing = env.closeOwner().then(() => { closeDuration = Date.now() - started; });
   await assert.rejects(controlControlledWorkflow(env.root, { workflow_id: initial.workflow_id, action: 'resume' }));
   await assert.rejects(startControlledWorkflow(env.root, { requirement: 'No admission during shutdown.', request_id: 'shutdown-race' }));
   await closing;
   assert.equal(loadRecords(env.root).filter(record => record.meta.data.kind === 'manager-workflow').length, 1);
-  assert.ok(Date.now() - started < 8000, 'Owned command cancellation and persistence must be bounded.');
+  assert.ok(closeDuration < 8000, 'Owned command cancellation and persistence must be bounded.');
   const stopped = controlledStatus(env.root, initial.workflow_id);
   assert.equal(stopped.status, 'interrupted');
   assert.ok(stopped.check_intents.every(intent => intent.state === 'completed'), 'Owner close must wait for domain persistence, not only cancelled MCP delivery.');
