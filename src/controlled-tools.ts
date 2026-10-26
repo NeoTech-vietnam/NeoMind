@@ -13,6 +13,7 @@ import { controlledExecutionSchema, type ControlledExecutionInput, type Controll
 import { controlledPayloadSchema, resolveControlledPayload, assertControlledPayloadCurrent, ControlledPayloadError, type ControlledPayloadSource } from './controlled-payload.js';
 import { controlledPlanExecutionStepSubmissionSchema, controlledPlanCheckSubmissionSchema } from './controlled-plan-submission.js';
 import { controlledPlanRequestSchemas, controlledPlanSubmissionGuide, type ControlledPlanRequestDefaults } from './controlled-plan-request.js';
+import { controlledOperationDiagnostic, type ControlledDiagnosticPhase } from './controlled-operation-diagnostic.js';
 
 export type ControlledStage = 'planning' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
 export type ControlledReviewPurpose = 'checker-readiness' | 'final-product';
@@ -102,7 +103,7 @@ export interface ControlledCallbacks {
 export class ControlledToolError extends Error {
   constructor(readonly code: string, message: string,
     readonly ownership?: { target_owner: 'developer' | 'verifier' | 'protected-acceptance' | 'outside-scope'; next_action: string;
-      rule?: 'ROLE_HANDOFF_REQUIRED'; target_path?: string }) { super(message); }
+      rule?: 'ROLE_HANDOFF_REQUIRED'; target_path?: string; missing_paths?: string[] }) { super(message); }
 }
 interface ToolState {
   schema_version: 1; binding_hash: string;
@@ -324,21 +325,27 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
     action: (args: any) => unknown | Promise<unknown>): void {
     server.registerTool(name, { description, inputSchema: schema,
       annotations: { readOnlyHint: readOnly, destructiveHint: false, openWorldHint: false } }, async (args: any) => {
+      let phase: ControlledDiagnosticPhase = 'assert-active';
       try {
         if (closed) throw new ControlledToolError('ACTOR_INACTIVE', 'This worker session has ended.');
         await callbacks.assertActive();
+        phase = 'request-encoding';
         await trace({ event: 'tool-request', tool: name, model_input: controlledModelInput(name, args), owner: 'runtime',
           backend_binding: { workflow_id: binding.workflow_id, task_id: binding.task_id ?? null, invocation_id: binding.invocation_id } });
+        phase = 'operation';
         const result = await action(args);
+        phase = 'result-encoding';
+        const encoded = JSON.stringify(result ?? { saved: true });
         await trace({ event: 'tool-result', tool: name, status: 'succeeded' });
-        return { content: [{ type: 'text' as const, text: JSON.stringify(result ?? { saved: true }) }] };
+        return { content: [{ type: 'text' as const, text: encoded }] };
       } catch (error) {
         const known = error instanceof ControlledToolError || error instanceof ControlledPayloadError;
         const validation = error instanceof z.ZodError ? controlledValidation('SCHEMA_INVALID', undefined, error.issues)
           : controlledValidation(known ? error.code : undefined, known ? error.message : undefined);
         const ownership = error instanceof ControlledToolError && error.ownership ? redactControlledValue(error.ownership) as Record<string, unknown> : {};
         await trace({ event: 'tool-result', tool: name, status: 'failed', code: validation.code, validation,
-          request_sha256: hash(JSON.stringify(args)), ...ownership });
+          request_sha256: hash(JSON.stringify(args)), ...ownership,
+          ...(!known && !(error instanceof z.ZodError) ? { diagnostic: controlledOperationDiagnostic(phase, name, error) } : {}) });
         return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify({ error: validation.rule, code: validation.code,
           validation, ...ownership }) }] };
       }

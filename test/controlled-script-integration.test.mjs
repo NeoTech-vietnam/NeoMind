@@ -81,6 +81,7 @@ function actions(stage, attempt, mode) {
     call('check_evidence', { title }, 'producer-proof-verifier'),
     call('check_evidence', { title: 'Not a canonical evidence selector' }, 'unknown-producer-selector', 'INVALID_CHECK'),
   ] : []), call('project_read', { path: checker }), call('task_file_write', { path: checker, content: oracle }),
+    ...(mode === 'missing-check-fixture' ? [call('check_run', {}, 'missing-check-input', 'CHECK_INPUT_MISSING')] : []),
     call('project_read', { path: wrong }), call('task_file_write', { path: wrong, content: '{"value":7}\n' }), call('check_run'), report(stage)];
   if (stage === 'review') return mode === 'producer-evidence' ? [call('check_evidence', { title }, 'producer-proof-reviewer'),
     call('check_evidence', {}, 'producer-proof-all'), report(stage)] : [call('check_evidence'), report(stage)];
@@ -128,6 +129,10 @@ async function fixture(t, mode = 'normal') {
           const diagnostic = JSON.parse(response.content[0].text);
           if (state.previous?.expectedError !== diagnostic.code) { errors.push(response); throw new Error('Rejected controlled integration input.'); }
           if (state.previous.capture) captures[state.previous.capture] = diagnostic;
+          if (mode === 'missing-check-fixture' && state.previous.capture === 'missing-check-input') {
+            const [current] = controlledStatus(root);
+            captures['before-fixture-execution-counts'] = { checks: current.checks.length, intents: current.check_intents?.length ?? 0 };
+          }
         } else {
           if (state.previous?.expectedError) throw new Error('A different prepared source unexpectedly borrowed the first execution result.');
           if (state.previous?.capture) captures[state.previous.capture] = JSON.parse(response.content[0].text);
@@ -252,6 +257,26 @@ test('bound task_run consumes JSON, replays without another effect, and passes i
   const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.workflow_id === initial.workflow_id);
   assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true);
   for (const attempt of done.attempts) assert.equal(readInvocation(env.root, attempt.invocation_id).inference_completed, true);
+});
+
+test('a missing negative fixture preflights the whole group before any checker runs, then the Verifier prepares it and closes', async t => {
+  const env = await fixture(t, 'missing-check-fixture'), initial = await startControlledWorkflow(env.root, {
+    requirement: 'Generate JSON scalar six and independently check both the correct result and a deliberately wrong fixture.',
+    request_id: 'whole-check-group-preflight',
+  });
+  const done = await until(env, initial.workflow_id, run => run.status === 'completed');
+  assert.deepEqual(env.errors, []);
+  assert.equal(env.captures['missing-check-input'].code, 'CHECK_INPUT_MISSING');
+  assert.equal(env.captures['missing-check-input'].target_owner, 'verifier');
+  assert.deepEqual(env.captures['missing-check-input'].missing_paths, [wrong]);
+  assert.deepEqual(env.captures['before-fixture-execution-counts'], { checks: 0, intents: 0 });
+  assert.equal(done.checks.length, 2);
+  assert.deepEqual(done.checks.map(check => ({ negative: check.negative, passed: check.passed })),
+    [{ negative: false, passed: true }, { negative: true, passed: true }]);
+  assert.equal(done.check_intents.length, 2);
+  assert.deepEqual(done.repair_budget, { schema_version: 1, product: 0, protocol: 0, environment: 0 });
+  const contract = savedContract(env, done);
+  assert.equal(verify(env.root, contract.task_id, 'accepted').ok, true);
 });
 
 test('backend derives a prepared JSON read baseline without requiring planner bookkeeping or widening write scope', async t => {

@@ -1,6 +1,6 @@
 import { canonicalJson } from './routing.js';
-import { getRecord, now } from './storage.js';
-import { controlledContractForTask, controlledFingerprints } from './controlled-acceptance.js';
+import { now } from './storage.js';
+import { controlledContractForTask, controlledFingerprints, controlledRecordView } from './controlled-acceptance.js';
 import { controlledPublicReferencePath, controlledSkillInputPath, type ControlledReviewPurpose } from './controlled-tools.js';
 import type { ControlledContract, ControlledSnapshot } from './controlled-workflow.js';
 import { latestControlledChecks } from './controlled-current-checks.js';
@@ -17,7 +17,8 @@ export function controlledReviewContext(root: string, supplied: ControlledSnapsh
   // Reuse the acceptance authority seam: validate the actual journal, sealed
   // contract, task scopes, parent binding and immutable requirement baselines.
   // A caller-supplied hash map alone can never become preservation evidence.
-  const { run, contract } = controlledContractForTask(root, getRecord(root, expected.task_id));
+  const recordAt = controlledRecordView(root);
+  const { run, contract } = controlledContractForTask(root, recordAt(expected.task_id), undefined, recordAt);
   if (run.workflow_id !== supplied.workflow_id || run.epoch_id !== supplied.epoch_id ||
       run.contract_hash !== supplied.contract_hash || canonicalJson(expected) !== canonicalJson(contract))
     return unavailable('CONTRACT_BINDING_MISMATCH');
@@ -39,7 +40,7 @@ export function controlledReviewContext(root: string, supplied: ControlledSnapsh
   const reportId = run.final_report_id ?? run.finalizing_report_id;
   if (reportId) {
     try {
-      const report = getRecord(root, reportId);
+      const report = recordAt(reportId);
       const matches = report.meta.type === 'knowledge' && report.meta.owner === 'manager' &&
         report.meta.data.kind === 'controlled-final-report' && report.meta.data.workflow_id === run.workflow_id &&
         report.meta.data.epoch_id === run.epoch_id && report.meta.data.contract_hash === run.contract_hash;

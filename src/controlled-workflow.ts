@@ -35,6 +35,7 @@ import { controlledPlanConflicts, type ControlledPlanConflict } from './controll
 import { controlledPlanningRecovery } from './controlled-recovery-context.js';
 import { controlledRegistrationEvidence } from './controlled-registration-evidence.js';
 import { assertControlledReadBaseline } from './controlled-read-baselines.js';
+import { assertControlledCheckInputs } from './controlled-check-preflight.js';
 import { ControlledOperationDrain } from './controlled-operation-drain.js';
 import { assertControlledPayloadCurrent, ControlledPayloadError, type ControlledPayloadSource } from './controlled-payload.js';
 import { persistControlledCornellNote, ControlledCornellWriteError } from './controlled-cornell-write.js';
@@ -1285,7 +1286,11 @@ class Controller {
         ({ ...negative, timeout_ms: check.timeout_ms, negative: true, runtimePilotContext }))];
     });
     if (!selected.length) throw new Error('Choose a check title from the assigned plan.');
+    assertControlledCheckInputs(this.root, contract.plan, selected);
     for (const check of selected) {
+      // Recheck presence after an awaited command as well: a concurrent outside
+      // deletion must retain actionable ownership instead of generic capture errors.
+      assertControlledCheckInputs(this.root, contract.plan, selected);
       run = readState(this.root, id);
       const baseline = fingerprints(this.root, check.baseline_paths);
       const prior = latestControlledChecks(run.checks, attemptId).find(item => item.title === check.title);

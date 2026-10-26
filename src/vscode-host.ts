@@ -14,6 +14,7 @@ import { vscodeProviderDiagnostic } from './vscode-provider-diagnostic.js';
 import { controlledModelInput, controlledResultFailure, controlledLoopState, ControlledFailureLoop } from './controlled-observability.js';
 import { ModelCallProgress, type ModelCallTerminalReason } from './vscode-model-progress.js';
 import { ControlledObservationLoop } from './controlled-observation-loop.js';
+import { controlledOperationDiagnostic } from './controlled-operation-diagnostic.js';
 
 // VS Code is supplied by extension host, not imported into CLI or added as dependency.
 type VSCode = any;
@@ -224,6 +225,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
     }
   }
   const server = await serveHost(root, async (operation, input) => {
+    try {
     if (closed || !enabled()) throw new Error('Workspace trust or workspace folder changed.');
     if (['controlled-start', 'controlled-control', 'controlled-status'].includes(operation)) {
       const { dispatchControlledHost } = await import('./controlled-workflow.js');
@@ -319,6 +321,26 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
     }
     if (operation === 'cancel') { stop(turn, 'interrupted', 'VS Code invocation interrupted.', 'owner-cancel'); return { ok: true }; }
     throw new Error('Unknown host operation.');
+    } catch (error) {
+      // Preserve the failed host boundary without returning provider text or
+      // transport capabilities. Only a verified, privately owned invocation
+      // can attach diagnostics to an existing workflow.
+      try {
+        if (typeof input?.invocation_id === 'string') {
+          const receipt = readInvocation(root, input.invocation_id);
+          const context = ownedContext(root, receipt.request_id);
+          if (receipt.issuer === 'neomind-vscode-lm' && receipt.controlled_execution && context &&
+              context.epoch_id === receipt.controlled_execution.epoch_id &&
+              (context.binding.workflow_id ?? null) === receipt.workflow_id && context.binding.role === receipt.role &&
+              (context.binding.task_id ?? null) === receipt.task_id) {
+            const diagnostic = controlledOperationDiagnostic('host-dispatch', operation, error);
+            await context.callbacks.trace?.({ event: 'host-dispatch-failure', tool: diagnostic.tool, status: 'failed',
+              diagnostic, owner: 'runtime' });
+          }
+        }
+      } catch { /* Diagnostic collection cannot replace the original failure. */ }
+      throw error;
+    }
   });
   instance = server.instance;
   const watchdog = setInterval(() => {

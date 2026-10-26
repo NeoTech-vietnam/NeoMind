@@ -5,13 +5,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sign } from 'node:crypto';
 import { getRecord } from '../dist/storage.js';
-import { initialize } from '../dist/storage.js';
+import { initialize, createRecord } from '../dist/storage.js';
 import { canonicalJson, ensureRoutingPolicy, readInvocation, routingProblems } from '../dist/routing.js';
 import { vscodeSelection } from '../dist/vscode-policy.js';
 import { enableVSCodeHost } from '../dist/vscode-host.js';
 import { startNative, waitNative, interruptNative, resumeNative, shutdownNative } from '../dist/native.js';
 import { managedRun } from '../dist/managed.js';
 import { readHost, hostRequest } from '../dist/vscode-wire.js';
+import { registerControlledContext } from '../dist/controlled-context.js';
+import { createHash } from 'node:crypto';
 
 class Text { constructor(value) { this.value = value; } }
 class Call { constructor(callId, name, input) { Object.assign(this, { callId, name, input }); } }
@@ -60,6 +62,36 @@ async function ended(root, id) {
   } while (Date.now() < deadline);
   assert.fail(`Fake host did not finish within 30 seconds: ${receipt.state}`);
 }
+
+test('failed owned host selection keeps private safe diagnostics and unchanged public refusal', async t => {
+  const { root, model } = await setup(t);
+  const events = [], request = 'host-open-diagnostic', epoch = 'diagnostic-epoch';
+  const workflow = createRecord(root, { type: 'knowledge', title: 'Owned host diagnostic fixture', data: { kind: 'workflow' } }).meta.id;
+  const unregister = registerControlledContext(root, request, {
+    epoch_id: epoch,
+    binding: { role: 'manager', stage: 'planning', workflow_id: workflow,
+      implementation_paths: [], verification_paths: [], readable_paths: [] },
+    bindInvocation() {},
+    callbacks: { assertActive() {}, trace(event) { events.push(event); } },
+  });
+  t.after(unregister);
+  const secret = 'Bearer hidden-host-selection-credential';
+  model.api.lm.selectChatModels = async () => { throw new Error(secret); };
+  const receipt = await startNative(root, { role: 'manager', prompt: 'Inspect failed selection.', workflow_id: workflow, request_id: request });
+  assert.equal(receipt.state, 'blocked');
+  assert.match(receipt.error, /VS Code bridge refused request/);
+  assert.equal(model.count, 0);
+  const failure = events.find(event => event.event === 'host-dispatch-failure');
+  assert.ok(failure, 'Actual failed owned host dispatch must retain a diagnostic.');
+  assert.equal(failure.tool, 'open');
+  assert.equal(failure.owner, 'runtime');
+  assert.equal(failure.diagnostic.phase, 'host-dispatch');
+  assert.equal(failure.diagnostic.tool, 'open');
+  assert.equal(failure.diagnostic.error_class, 'Error');
+  assert.equal(failure.diagnostic.message_sha256, createHash('sha256').update(secret).digest('hex'));
+  assert.ok(!JSON.stringify({ receipt, events }).includes(secret));
+  assert.ok(!JSON.stringify(events).includes(root));
+});
 test('VS Code host selects exact vendor/ID, signs truthful provenance, resumes and rejects tampering', async t => {
   const { root, model } = await setup(t);
   const first = await startNative(root, { role: 'reviewer', prompt: 'Review bounded material.' });

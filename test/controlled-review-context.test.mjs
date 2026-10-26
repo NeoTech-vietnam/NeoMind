@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -53,6 +55,30 @@ function fixture(t, count = 2) {
     .map(entry => { const path = join(entry.parentPath, entry.name); return [path, hash(readFileSync(path))]; }).sort(([a], [b]) => a.localeCompare(b)));
   return { root, run, contract, parent, task, requirement, statePath, contractPath, saveRun, seal, snapshot };
 }
+
+test('one workflow-context evaluation reads each record once and a later evaluation sees record changes', t => {
+  const { root, run, contract } = fixture(t);
+  const report = createRecord(root, { type: 'knowledge', title: 'Pending backend final report', owner: 'manager', data: {
+    kind: 'controlled-final-report', workflow_id: run.workflow_id, epoch_id: run.epoch_id, contract_hash: run.contract_hash } });
+  run.finalizing_report_id = report.meta.id;
+  atomicWrite(safePath(root, `.neomind/controlled/workflows/${hash(run.workflow_id)}.json`), JSON.stringify(run));
+  const prefix = safePath(root, '.neomind/records').replaceAll('\\', '/').toLowerCase() + '/', reads = new Map(), original = fs.readFileSync;
+  fs.readFileSync = function(file, ...args) {
+    if (typeof file === 'string') {
+      const path = file.replaceAll('\\', '/').toLowerCase();
+      if (path.startsWith(prefix) && path.endsWith('.md')) reads.set(path, (reads.get(path) ?? 0) + 1);
+    }
+    return Reflect.apply(original, this, [file, ...args]);
+  }; syncBuiltinESMExports();
+  let value;
+  try { value = controlledReviewContext(root, run, contract); }
+  finally { fs.readFileSync = original; syncBuiltinESMExports(); }
+  assert.equal(value.available, true); assert.equal(value.finalization.backend_final_report, 'pending-acceptance');
+  assert.ok(reads.size >= 4); assert.equal(Math.max(...reads.values()), 1, 'Task, contract and final-report lookup share one fresh record view per evaluation.');
+  const requirement = getRecord(root, contract.requirement_ids[0]);
+  updateRecord(root, requirement.meta.id, {}, requirement.body + '\nAn external requirement edit must not inherit a cached preservation observation.\n');
+  assert.throws(() => controlledReviewContext(root, run, contract), /requirement baseline changed/);
+});
 
 test('Reviewer receives actual original preservation hashes and explicit report lifecycle without changing records', t => {
   const { root, run, contract, snapshot } = fixture(t), before = snapshot();
