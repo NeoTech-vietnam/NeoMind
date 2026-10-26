@@ -149,7 +149,7 @@ function scriptFor(name, stage, attempt, options, held) {
       }] : []), report({ artifacts: [output] })];
   }
   if (stage === 'verification') {
-    const wrongChecker = options.checkerFailure && attempt === 1;
+    const wrongChecker = (options.checkerFailure || options.legacyDiagnosis) && attempt === 1;
     const childCode = `require('node:fs').writeFileSync(${JSON.stringify(`${name}/verify/child.json`)},JSON.stringify({pid:process.pid,created_at:new Date(performance.timeOrigin).toISOString()}));setInterval(()=>{},1000);`;
     const content = options.slowChecker && attempt === (options.orphanHistory ? 2 : 1)
       ? `const child=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(childCode)}],{stdio:'ignore',windowsHide:true});require('node:fs').writeFileSync(${JSON.stringify(`${name}/verify/running.json`)},JSON.stringify({pid:process.pid,created_at:new Date(performance.timeOrigin).toISOString(),child:child.pid}));console.log('owned long checker started');setInterval(()=>{},1000);\n`
@@ -177,7 +177,7 @@ function scriptFor(name, stage, attempt, options, held) {
       }] : []),
       report({ outcome: defect ? 'failed' : 'completed', verdict: defect ? 'fail' : 'pass', artifacts: [output, checker, bad],
         negative_controls: ['The prescribed incorrect scalar fixture must exit one.'],
-        ...(defect ? { failure_kind: wrongChecker ? 'checker' : 'implementation' } : {}) })];
+        ...(defect ? { failure_kind: options.legacyDiagnosis ? 'unknown' : wrongChecker ? 'checker' : 'implementation' } : {}) })];
   }
   if (stage === 'review') {
     if (options.observationLoop && (attempt === 1 || options.repeatObservationLoop)) return [
@@ -209,7 +209,8 @@ function scriptFor(name, stage, attempt, options, held) {
         return new Text('Review response ended; a concurrent outside edit must remain preserved.');
       }] : [])];
   }
-  if (stage === 'diagnosis') return [call('project_read', { path: checker }), report({ failure_kind: 'checker' })];
+  if (stage === 'diagnosis') return [call('project_read', { path: checker }), report({ failure_kind: 'checker',
+    ...(options.legacyDiagnosis ? { findings: ['failure_kind: checker. The scalar checker compares against two instead of the required one.'] } : {}) })];
   throw new Error(`Unexpected fixture stage ${stage}`);
 }
 
@@ -252,6 +253,16 @@ async function setup(t, scenarios, existingRoot) {
         const name = /Scenario: ([a-z0-9-]+)/.exec(text)?.[1], stage = /Your stage: (planning|implementation|verification|review|diagnosis)/.exec(text)?.[1];
         assert.ok(name && stage, 'controller must provide meaningful stage/request context');
         const key = `${name}:${stage}`, attempt = (counts.get(key) ?? 0) + 1; counts.set(key, attempt);
+        if (scenarios[name]?.legacyDiagnosis && stage === 'diagnosis') {
+          // Emulate the prior backend's saved optional-field report shape using
+          // the real owned callback and signed session; never rewrite history.
+          const run = controlledStatus(root).find(run => run.requirement.startsWith(`Scenario: ${name}\n`));
+          const context = ownedContext(root, run.attempts.at(-1).request_id), save = context.callbacks.saveReport;
+          context.callbacks.saveReport = (value, source) => {
+            const { failure_kind: _legacyOptionalField, ...legacy } = value;
+            return save(legacy, source);
+          };
+        }
         conversation = { name, stage, attempt, actions: scriptFor(name, stage, attempt, scenarios[name] ?? {}, held), round: 0 };
         conversations.set(messages, conversation);
         observed.push({ name, stage, attempt, tools: options.tools.map(tool => tool.name),
@@ -695,6 +706,31 @@ test('same Verifier can fix its checker and close on fresh current receipts whil
   } finally { atomicWrite(safePath(env.root, checker), raw); }
   assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true);
   assert.equal(done.checks.length, 4); assert.equal(env.errors.length, 0);
+});
+
+test('an authenticated legacy anchored diagnosis resumes its classified repair without rewriting the old report or repeating diagnosis', async t => {
+  const name = 'legacydiagnosis', env = await setup(t, { [name]: { legacyDiagnosis: true } });
+  const initial = await submit(env.root, name), deadline = Date.now() + (process.platform === 'win32' ? 180000 : 60000);
+  let stopped;
+  while (Date.now() < deadline) {
+    stopped = controlledStatus(env.root, initial.workflow_id);
+    if (stopped.status === 'blocked') break;
+    await delay(25);
+  }
+  assert.equal(stopped.status, 'blocked'); assert.equal(stopped.phase, 'diagnosis');
+  const diagnosis = stopped.attempts.at(-1), before = getRecord(env.root, diagnosis.report_id);
+  assert.equal(diagnosis.report.failure_kind, undefined); assert.match(diagnosis.report.findings[0], /^failure_kind: checker\./);
+  assert.equal(readInvocation(env.root, diagnosis.invocation_id).inference_completed, true);
+  await controlControlledWorkflow(env.root, { workflow_id: initial.workflow_id, action: 'resume' });
+  const done = await until(env.root, initial.workflow_id, run => run.status === 'completed',
+    'the signed explicit legacy classification should route one bounded checker repair', env.errors);
+  assert.deepEqual(getRecord(env.root, diagnosis.report_id), before);
+  assert.equal(done.attempts.filter(attempt => attempt.stage === 'diagnosis').length, 1);
+  assert.equal(done.diagnosis_reconciliations.length, 1); assert.equal(done.diagnosis_reconciliations[0].failure_kind, 'checker');
+  assert.equal(done.diagnosis_reconciliations[0].report_id, diagnosis.report_id);
+  assert.equal(done.repair_budget.product, 1); assert.equal(done.repair_budget.protocol, 0); assert.equal(done.repair_budget.environment, 0);
+  const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.epoch_id === done.epoch_id);
+  assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true); assert.deepEqual(env.errors, []);
 });
 
 test('product and checker defects route repairs to the correct bounded stage', async t => {

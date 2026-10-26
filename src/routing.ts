@@ -6,6 +6,7 @@ import { vscodeSelection } from './vscode-policy.js';
 import { roleCapabilities } from './tools.js';
 import { controlledToolNames, type ControlledStage } from './controlled-tools.js';
 import { listUpstreams } from './upstreams.js';
+import { onlyAddedRequiredNeoMindMcp } from './codex-required-compatibility.js';
 import {
   atomicWrite,
   getRecord,
@@ -259,6 +260,23 @@ export function invocationConfigurationHashes(root: string, receipt: NativeRecei
     const old = invocationPolicy(root, receipt), current = requireRoutingPolicy(root);
     const { role_models: _old, ...oldBase } = old, { role_models: _current, ...currentBase } = current;
     if (canonicalJson(oldBase) === canonicalJson(currentBase)) hashes['.neomind/routing.json'] = receipt.configuration_hashes['.neomind/routing.json']!;
+  }
+  const codex = '.codex/config.toml', oldHash = receipt.configuration_hashes[codex];
+  if (receipt.issuer === 'neomind-vscode-lm' && receipt.execution_mode === 'vscode-extension-host' &&
+      receipt.identity_provenance === 'local-vscode-extension-host' && receipt.controlled_execution &&
+      oldHash !== hashes[codex] && /^[a-f0-9]{64}$/.test(oldHash ?? '')) {
+    try {
+      // Callers holding an in-memory owner receipt do not supply verification
+      // authority. Authenticate its current signed stable binding from disk.
+      const signed = readInvocation(root, receipt.id);
+      const stable = (value: NativeReceipt) => {
+        const { signature: _signature, state: _state, output: _output, error: _error,
+          updated_at: _updated, inference_completed: _completed, ...binding } = value;
+        return binding;
+      };
+      if (signed.issuer === 'neomind-vscode-lm' && signed.controlled_execution && canonicalJson(stable(signed)) === canonicalJson(stable(receipt)) &&
+          onlyAddedRequiredNeoMindMcp(readFileSync(safePath(root, codex)), signed.configuration_hashes[codex]!)) hashes[codex] = oldHash!;
+    } catch { /* An unverifiable receipt or any other file change retains the current hash. */ }
   }
   return hashes;
 }

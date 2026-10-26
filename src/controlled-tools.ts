@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { atomicWrite, hash, now, safePath, withOperationLock } from './storage.js';
 import { replaceWorkspaceFile, workspaceFileBytes, workspaceContentBytes, workspacePathLockKey } from './workspace.js';
 import { registerProcedureSchema, procedureInputContractHint } from './procedures.js';
+import { controlledReportSubmissionSchema } from './controlled-report-normalization.js';
 import { controlledModelInput, controlledValidation, redactControlledValue } from './controlled-observability.js';
 import { controlledCornellResearchSchema } from './controlled-cornell-sources.js';
 import { controlledRuntimeGuide, controlledGuidePath, controlledRuntimeQuerySchema, type ControlledRuntimeQuery } from './controlled-runtime-context.js';
@@ -77,7 +78,8 @@ export type ControlledPlan = z.infer<typeof controlledPlanSchema>;
 export const controlledReportSchema = z.strictObject({
   outcome: z.enum(['completed', 'blocked', 'failed']), summary: text,
   artifacts: paths.optional().describe('Actual delivered files inside this workflow implementation/checker/Cornell output scopes. Preserved inputs and files only read are not deliverables; discuss their preservation in findings instead.'), findings: z.array(text).max(64).optional(),
-  failure_kind: z.enum(['implementation', 'checker', 'protocol', 'environment', 'unknown']).optional(),
+  failure_kind: z.enum(['implementation', 'checker', 'protocol', 'environment', 'unknown']).optional()
+    .describe('Professional failure classification. A completed manager diagnosis requires this field; use unknown when the actual cause remains uncertain.'),
   verdict: z.enum(['pass', 'fail']).optional(), negative_controls: z.array(text).max(32).optional(),
   limitations: z.array(text).max(32).optional(),
 });
@@ -232,7 +234,9 @@ export function controlledInstructions(binding: ControlledBinding): string {
       : '') +
     (binding.stage === 'planning' || available.has('procedure_run') ? procedureInputContractHint() : '') +
     'Before ending, save one compact assignment_report with outcome, summary, artifacts and findings. ' +
-    (['verification', 'review'].includes(binding.stage)
+    (binding.stage === 'diagnosis' && binding.role === 'manager'
+      ? 'For a completed diagnosis, provide top-level failure_kind as implementation, checker, protocol, environment or unknown. Use unknown when evidence does not establish the cause; summary prose alone is not a structured classification. '
+      : ['verification', 'review'].includes(binding.stage)
       ? 'For outcome completed, include your explicit verdict pass or fail. Blocked or failed findings may omit verdict and are still retained. '
       : '') +
     'A blocked or failed report preserves useful work and does not submit a task. Reported prose is distinct from observed execution evidence. Runtime events supply progress and advance the workflow; focus on the assigned work.';
@@ -546,20 +550,21 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
     }
   }
   const requiresVerdict = ['verification', 'review'].includes(binding.stage);
-  const reportSchema = requiresVerdict ? controlledReportSchema.superRefine((report, context) => {
-    if (report.outcome === 'completed' && report.verdict === undefined)
-      context.addIssue({ code: 'custom', path: ['verdict'], message: 'A completed verification or review result requires an explicit verdict pass or fail. Blocked or failed findings may omit verdict.' });
-  }) : controlledReportSchema;
-  let reportInput = controlledPayloadSchema(reportSchema);
-  if (requiresVerdict) {
+  const requiresFailureKind = binding.stage === 'diagnosis' && binding.role === 'manager';
+  const reportSchema = controlledReportSubmissionSchema(controlledReportSchema, { requiresVerdict, requiresFailureKind });
+  // The SDK needs a concrete root object. Role normalization/validation runs
+  // after raw capture and prepared-source loading, before any report is saved.
+  let reportInput = controlledPayloadSchema(controlledReportSchema);
+  if (requiresVerdict || requiresFailureKind) {
     const metadata = reportInput.meta() ?? {};
     reportInput = reportInput.meta({ ...metadata, allOf: [...(Array.isArray(metadata.allOf) ? metadata.allOf : []), {
       if: { properties: { outcome: { const: 'completed' } }, required: ['outcome'] },
-      then: { required: ['verdict'] },
+      then: { required: [requiresFailureKind ? 'failure_kind' : 'verdict'] },
     }] });
   }
   register('assignment_report', 'Persist one substantive compact result. Incomplete findings are retained without submitting the task.' +
-    (requiresVerdict ? ' A completed verification or review must include an explicit verdict pass or fail; blocked or failed findings may omit it.' : ''),
+    (requiresVerdict ? ' A completed verification or review must include an explicit verdict pass or fail; blocked or failed findings may omit it.' : '') +
+    (requiresFailureKind ? ' A completed manager diagnosis must include failure_kind: implementation, checker, protocol, environment or unknown; use unknown when evidence remains inconclusive. Blocked or failed findings may omit it.' : ''),
     reportInput, false, args => prepared(reportSchema, args, (report, source) => {
       for (const path of report.artifacts ?? []) { publicTarget(root, path, binding.approved_inputs); assertReadable(binding, path); }
       return callbacks.saveReport(report, source);

@@ -466,7 +466,9 @@ export function adapterOutputs(root: string, config: AdapterConfig): ManagedOutp
       path: '.codex/config.toml',
       kind: 'block',
       key: 'mcp',
-      content: `[mcp_servers.neomind]\ncommand = ${JSON.stringify(node)}\nargs = ${JSON.stringify(server.args)}\n${controlled ? 'enabled_tools = ["manager_run", "manager_status", "manager_control"]\n' : ''}`,
+      // Controlled entrypoints are essential: optional startup can omit their
+      // tools from Codex's first model request while the server is still loading.
+      content: `[mcp_servers.neomind]\ncommand = ${JSON.stringify(node)}\nargs = ${JSON.stringify(server.args)}\n${controlled ? 'required = true\nenabled_tools = ["manager_run", "manager_status", "manager_control"]\n' : ''}`,
     });
     for (const item of optionalServers.filter(item => pluginClientConnectionEnabled(root, item.id, 'codex')))
       outputs.push({

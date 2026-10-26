@@ -24,6 +24,7 @@ import { compileCornellResearch, readCornellDestination, type CornellResearchInp
 import { createCornellNote, validateCornellNote } from './notes.js';
 import { controlledFailure } from './controlled-failure.js';
 import { redactControlledValue } from './controlled-observability.js';
+import { classifyControlledDiagnosisReport } from './controlled-report-normalization.js';
 import { continuationObligations, controlledFingerprints, controlledFingerprintsAsync, executeControlledPilot, materializeControlledEvidence,
   prepareControlledCheckEvidence, verifyControlledTask, controlledContractForTask, controlledAcceptanceBudget, type ContinuationObligations } from './controlled-acceptance.js';
 import { controlledProducerExecutionEvidence } from './controlled-execution-evidence.js';
@@ -98,6 +99,8 @@ export interface ControlledSnapshot {
   pending_artifact_repair?: { kind: 'owned-cornell-overwrite'; note_ids: string[]; source_attempt_id: string;
     record_fingerprints: Record<string, string>; prepared?: { note_id: string; record_fingerprint: string;
       mode: 'canonical-restoration' | 'committed-generation' }[] };
+  diagnosis_reconciliations?: { id: string; attempt_id: string; invocation_id: string; report_id: string;
+    report_fingerprint: string; baseline_hash: string; failure_kind: FailureKind; source: 'anchored-finding'; index: number }[];
   local_executions?: { id: string; attempt_id: string; request_hash: string; title: string; state: 'running' | 'completed';
     pid?: number; intent_path: string; intent_sha256: string; result_path?: string; result_sha256?: string; passed?: boolean }[];
   pending_check_review?: boolean;
@@ -639,6 +642,8 @@ class Controller {
         save(this.root, run, 'reuse-inspected', run.reuse.decision);
       }
       const contract = run.contract_hash ? readContract(this.root, run) : undefined;
+      const diagnosed = contract ? this.reconcileCompletedDiagnosis(run, contract) : undefined;
+      if (diagnosed !== undefined) { if (!diagnosed) return; continue; }
       if (contract && run.phase === 'implementation' && run.pending_artifact_repair && !run.pending_artifact_repair.prepared) {
         const pending = run.pending_artifact_repair, prepared: NonNullable<typeof pending.prepared> = [];
         for (const noteId of pending.note_ids) {
@@ -814,7 +819,7 @@ class Controller {
                 return !generated || generated.record_fingerprint === current.pending_artifact_repair!.record_fingerprints[noteId] ||
                   generated.record_fingerprint !== evidenceRecordFingerprint(getRecord(this.root, noteId)) || !validateCornellNote(this.root, noteId).ok;
               }))
-            throw new ControlledToolError('ACCEPTANCE_INCOMPLETE', 'Recompile the assigned Cornell bundle through cornell_research_compile before reporting this owned-artifact repair complete. The backend needs its fresh managed generation result.');
+            throw new ControlledToolError('STATE_UNCERTAIN', 'The prepared managed Cornell artifacts no longer match their current backend generation. Preserve the current files for backend reconciliation; do not reconstruct the research payload or guess repair metadata.');
           if (active.report) {
             if (canonicalJson(active.report) !== canonicalJson(report)) throw new Error('Attempt already saved a different report.');
             return { saved: true, outcome: report.outcome };
@@ -1330,6 +1335,50 @@ class Controller {
     return { checks: latestControlledChecks(run.checks, attemptId).filter(item => phaseTitles.has(item.title))
       .map(item => ({ title: item.title, passed: item.passed, exit_code: item.exit_code, evidence: item.log_path })) };
   }
+  /** Reconcile a precise legacy professional marker without rewriting its signed report. */
+  private reconcileCompletedDiagnosis(run: ControlledSnapshot, contract: Contract): boolean | undefined {
+    const attempt = run.attempts.at(-1);
+    if (run.phase !== 'diagnosis' || attempt?.stage !== 'diagnosis' || attempt.role !== 'manager' ||
+        attempt.purpose === 'specialist' || attempt.state !== 'completed' || attempt.report?.outcome !== 'completed' ||
+        attempt.report.failure_kind !== undefined || !attempt.invocation_id || !attempt.report_id || !attempt.report_fingerprint)
+      return undefined;
+    let classification;
+    try { classification = classifyControlledDiagnosisReport(attempt.report); } catch { return undefined; }
+    if (classification?.source !== 'anchored-finding' || classification.index === undefined) return undefined;
+    const report = getRecord(this.root, attempt.report_id), receipt = readInvocation(this.root, attempt.invocation_id);
+    const baseline = attempt.bound_hashes ?? {};
+    if (report.meta.type !== 'knowledge' || report.meta.owner !== 'manager' ||
+        evidenceRecordFingerprint(report) !== attempt.report_fingerprint || report.meta.data.kind !== 'controlled-work-record' ||
+        report.meta.data.workflow_id !== run.workflow_id || report.meta.data.task_id !== contract.task_id ||
+        report.meta.data.epoch_id !== run.epoch_id || report.meta.data.attempt_id !== attempt.id ||
+        report.meta.data.invocation_id !== attempt.invocation_id || report.meta.data.stage !== 'diagnosis' ||
+        report.meta.data.outcome !== 'completed' || report.meta.data.report_payload_hash !== hash(canonicalJson(attempt.report)) ||
+        !same(report.meta.data.artifact_hashes, baseline) || !same(baseline, fingerprints(this.root, Object.keys(baseline))) ||
+        receipt.issuer !== 'neomind-vscode-lm' || receipt.state !== 'completed' || !receipt.inference_completed ||
+        receipt.workflow_id !== run.workflow_id || receipt.task_id !== contract.task_id || receipt.role !== 'manager' ||
+        receipt.request_id !== attempt.request_id || receipt.controlled_execution?.epoch_id !== run.epoch_id ||
+        receipt.controlled_execution.stage !== 'diagnosis' ||
+        routingProblems(this.root, 'manager', receipt.id, { workflow_id: run.workflow_id, task_id: contract.task_id, require_completed: true }).length)
+      return undefined;
+    const baselineHash = hash(canonicalJson(baseline));
+    const existing = run.diagnosis_reconciliations?.find(entry => entry.attempt_id === attempt.id &&
+      entry.report_fingerprint === attempt.report_fingerprint && entry.baseline_hash === baselineHash);
+    if (existing && (existing.failure_kind !== classification.failure_kind || existing.source !== classification.source ||
+        existing.index !== classification.index || existing.invocation_id !== receipt.id || existing.report_id !== report.meta.id))
+      throw new ControlledToolError('STATE_UNCERTAIN', 'The saved diagnosis classification no longer matches its unchanged signed source.');
+    if (!existing) run.diagnosis_reconciliations = [...(run.diagnosis_reconciliations ?? []), {
+      id: randomUUID(), attempt_id: attempt.id, invocation_id: receipt.id, report_id: report.meta.id,
+      report_fingerprint: attempt.report_fingerprint, baseline_hash: baselineHash,
+      failure_kind: classification.failure_kind, source: classification.source, index: classification.index,
+    }];
+    if (classification.failure_kind === 'unknown') {
+      this.block(run, 'unknown', 'The authenticated diagnosis explicitly reports an unknown cause; no bounded repair was inferred.'); return false;
+    }
+    const repaired = this.repair(run, classification.failure_kind,
+      `Backend read the explicit anchored ${classification.failure_kind} classification from the unchanged completed diagnosis. ${attempt.report.summary}`, true);
+    if (repaired) save(this.root, run, 'diagnosis-reconciled', 'An explicit professional finding was classified under its original signed report and current artifacts; the historical report and its payload hash were not rewritten.');
+    return repaired;
+  }
   private repair(run: ControlledSnapshot, kind: FailureKind, message: string, diagnosed = false): boolean {
     this.reconcileRepairBudget(run);
     const budget = run.repair_budget!, max = readConfig(this.root).repair_attempts;
@@ -1521,6 +1570,14 @@ class Controller {
       // An explicit allowance increase resumes the already diagnosed repair,
       // rather than rerunning an unchanged failed review. It never refunds usage.
       if (run.repair_budget!.product >= readConfig(this.root).repair_attempts) return run;
+      if (last && run.phase === 'diagnosis' && run.diagnosis_reconciliations?.some(entry => entry.attempt_id === last.id)) {
+        run.owner_pid = process.pid; run.owner_instance = readHost(this.root).instance;
+        const reconciled = this.reconcileCompletedDiagnosis(run, readContract(this.root, run));
+        if (reconciled !== undefined) {
+          if (reconciled) { save(this.root, run, 'resume', 'Explicit project allowance resumed the reauthenticated diagnosis decision without refunding prior usage.'); this.schedule(id); }
+          return run;
+        }
+      }
       if (run.blocker.kind === 'implementation' && run.pending_artifact_repair?.kind === 'owned-cornell-overwrite') {
         const contract = readContract(this.root, run), pending = run.pending_artifact_repair;
         const valid = pending.note_ids.length > 0 && pending.note_ids.every(noteId => {
