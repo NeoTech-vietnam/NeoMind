@@ -10,7 +10,7 @@ import { executionModes } from '../dist/execution-mode.js';
 import { ensureRoutingPolicy, readInvocation } from '../dist/routing.js';
 import { enableVSCodeHost } from '../dist/vscode-host.js';
 import { shutdownNative } from '../dist/native.js';
-import { startControlledHost, startControlledWorkflow, controlControlledWorkflow, controlledStatus, reconcileInterruptedControlledChecks } from '../dist/controlled-workflow.js';
+import { startControlledHost, startControlledWorkflow, controlControlledWorkflow, controlledStatus, reconcileInterruptedControlledChecks, reconcileControlledCornellRenderer } from '../dist/controlled-workflow.js';
 import { readCheckReconciliations, unresolvedControlledChecks, assertFreshVerifierAfterReconciliation, reconciliationPath } from '../dist/controlled-check-reconciliation.js';
 import { setRoleModel } from '../dist/model-control.js';
 import { readAgentMap } from '../dist/agent-map.js';
@@ -22,6 +22,7 @@ import { openAssignment } from '../dist/assignment-runtime.js';
 import { planNativeSoftware, readNativeSoftwareContract } from '../dist/native-software.js';
 import { controlledContractForTask, verifyControlledTask } from '../dist/controlled-acceptance.js';
 import { researchFixture } from './cornell-research-fixture.mjs';
+import { cornellMaintenanceFixture } from './cornell-maintenance-fixture.mjs';
 
 // These tests exercise the actual signed local Bridge, MCP, filesystem and child runner.
 // The language model and editor API are deterministic fixtures, not actual Copilot/Codex inference.
@@ -58,6 +59,7 @@ function semanticToolValue(messages) {
   return content?.type === 'text' ? JSON.parse(content.text) : result;
 }
 function planFor(name, options = {}) {
+  if (options.customPlan) return structuredClone(options.customPlan);
   if (options.preparedCornell) {
     const directory = `${name}/notes`, checker = `${name}/verify/check.cjs`, wrong = `${name}/verify/bad.md`;
     const outputs = ['note.md', 'exercises.md', 'answers.md'].map(path => `${directory}/${path}`);
@@ -113,6 +115,7 @@ function planFor(name, options = {}) {
   return plan;
 }
 function scriptFor(name, stage, attempt, options, held) {
+  if (options.customActions) return options.customActions({ name, stage, attempt, held, call, Text, semanticToolValue });
   const plan = planFor(name, options), output = plan.outputs[0], checker = plan.checks[0].command[1], bad = plan.checks[0].negative_controls[0].command[2];
   const report = (extra = {}) => call('assignment_report', { outcome: 'completed', summary: `${stage} completed with actual scoped artifacts.`,
     findings: [`Independent ${stage} result recorded.`], ...extra });
@@ -311,12 +314,16 @@ async function setup(t, scenarios, existingRoot) {
       }
       const prior = lastToolResult(messages);
       if (prior?.isError) {
+        if (scenarios[conversation.name]?.expectedToolError?.(prior, conversation, held)) {
+          (held.expectedToolErrors ??= []).push(prior);
+        } else {
         const expectedScopeProbe = scenarios[conversation.name]?.probeReportScope && conversation.stage === 'implementation' && conversation.attempt === 2 &&
           JSON.parse(prior.content[0].text).code === 'SCOPE_DENIED';
         if (expectedScopeProbe) (held.documentationScopeDenials ??= []).push(prior);
         else {
           errors.push({ name: conversation.name, stage: conversation.stage, round: conversation.round, result: prior });
           throw new Error('Deterministic fixture encountered a failed semantic MCP call.');
+        }
         }
       }
       const action = conversation.actions[conversation.round++];
@@ -1305,4 +1312,186 @@ test('completed signed verification uses one fresh record inventory and observes
     assert.equal(verifyControlledTask(env.root, task, 'accepted').ok, false, 'Signed receipt files are re-read rather than included in the metadata snapshot.');
   } finally { fs.writeFileSync(receiptPath, originalReceipt); }
   assert.equal(verifyControlledTask(env.root, task, 'accepted').ok, true);
+});
+
+test('renderer recovery resumes the real signed returned producer after a crash without repeating it', async t => {
+  const a = cornellMaintenanceFixture(t), name = 'renderercheckpoint';
+  a.run.requirement = `Scenario: ${name}\nExplain the supplied research source under the frozen scope and criteria.`;
+  atomicWrite(a.statePath, JSON.stringify(a.run));
+  await reconcileControlledCornellRenderer(a.root, a.input);
+  const plan = a.contract.plan, output = plan.outputs[0], checker = plan.checks[0].command[1], bad = plan.checks[0].negative_controls[0].command[2];
+  const options = { customPlan: plan, customActions: ({ stage, call }) => {
+    const report = extra => call('assignment_report', { outcome: 'completed', summary: `${stage} inspected the actual managed artifacts under the original scope.`, ...extra });
+    if (stage === 'implementation') return [...plan.outputs.map(path => call('project_read', { path })), report({ artifacts: plan.outputs })];
+    if (stage === 'verification') return [call('project_read', { path: checker }), call('task_file_write', { path: checker,
+      content: `const fs=require('node:fs'),assert=require('node:assert/strict');const body=fs.readFileSync(process.argv[2],'utf8');assert.match(body,/^## Strategy A:/m);assert.match(body,/^### Strategy A Flow$/m);assert.match(body,/^### Strategy A Worked Example Flow$/m);console.log('independent current renderer artifact inspected');\n` }),
+      call('project_read', { path: bad }), call('task_file_write', { path: bad, content: '# Deliberately incorrect note\n' }),
+      call('check_run', {}), report({ verdict: 'pass', artifacts: [checker, bad] })];
+    if (stage === 'review') return [call('project_read', { path: output }), call('check_evidence', { kind: 'workflow' }), call('check_evidence', {}), report({ verdict: 'pass' })];
+    throw new Error(`Unexpected renderer recovery stage ${stage}`);
+  } };
+  const env = await setup(t, { [name]: options }, a.root), originalRename = fs.renameSync;
+  let injected = false;
+  fs.renameSync = function(from, to, ...args) {
+    const target = typeof to === 'string' ? to.replaceAll('\\', '/') : '';
+    const temporary = typeof from === 'string' && target === a.statePath.replaceAll('\\', '/') ? JSON.parse(readFileSync(from, 'utf8')) : undefined;
+    const result = originalRename.call(this, from, to, ...args);
+    if (!injected && temporary?.events.at(-1)?.kind === 'returned' && temporary.pending_renderer_recovery &&
+        temporary.attempts.at(-1)?.stage === 'implementation' && temporary.attempts.at(-1)?.report?.outcome === 'completed') {
+      injected = true; throw Object.assign(new Error('Injected crash after the real signed producer return checkpoint committed.'), { code: 'EIO' });
+    }
+    return result;
+  }; syncBuiltinESMExports();
+  let stopped;
+  try {
+    await controlControlledWorkflow(env.root, { workflow_id: a.run.workflow_id, action: 'resume' });
+    stopped = await until(env.root, a.run.workflow_id, run => run.status === 'blocked' && run.attempts.at(-1)?.state === 'completed',
+      'the actual producer must persist its completed result before the injected crash', env.errors);
+  } finally { fs.renameSync = originalRename; syncBuiltinESMExports(); }
+  assert.equal(injected, true); assert.ok(stopped.pending_renderer_recovery); assert.equal(stopped.attempts.length, 1);
+  const producer = stopped.attempts[0], savedReport = getRecord(env.root, producer.report_id), signed = readInvocation(env.root, producer.invocation_id);
+  assert.equal(signed.issuer, 'neomind-vscode-lm'); assert.equal(signed.state, 'completed'); assert.equal(signed.inference_completed, true);
+  assert.equal(producer.report.outcome, 'completed');
+  await env.restart();
+  await controlControlledWorkflow(env.root, { workflow_id: a.run.workflow_id, action: 'resume' });
+  const done = await until(env.root, a.run.workflow_id, run => run.status === 'completed',
+    'the same authenticated producer must reconcile into fresh independent verification and required review', env.errors);
+  assert.deepEqual(env.observed.map(item => item.stage), ['implementation', 'verification', 'review']);
+  assert.equal(done.attempts.filter(attempt => attempt.stage === 'implementation').length, 1);
+  assert.deepEqual(getRecord(env.root, producer.report_id), savedReport); assert.equal(done.pending_renderer_recovery, undefined);
+  assert.deepEqual(done.repair_budget, a.run.repair_budget); assert.equal(done.repairs, a.run.repairs);
+  assert.equal(done.checks.length, 2); assert.ok(done.checks.every(check => check.passed));
+  assert.equal(getRecord(env.root, a.note.meta.id).meta.revision, 2); assert.equal(done.cornell_results.length, 2);
+});
+
+test('real signed compiler MCP rejects canonical-invalid content before persistence and a corrected request closes normally', async t => {
+  const name = 'canonical-ingress', directory = `${name}/notes`, checker = `${name}/verify/check.cjs`, bad = `${name}/verify/bad.md`;
+  const template = '.agents/skills/profile/assets/layout.md', validator = '.agents/skills/profile/scripts/check.py';
+  const outputs = ['note.md', 'exercises.md', 'answers.md'].map(file => `${directory}/${file}`);
+  const professional = structuredClone(researchFixture(t).input);
+  for (const key of ['schema_version', 'requirement_id', 'expected_requirement_revision', 'workflow_id', 'task_id', 'owner', 'output_dir']) delete professional[key];
+  professional.topic = 'Leetcode - 4242 - Controlled canonical ingress';
+  professional.sources = [{ id: 'S1', title: 'Finite ordered-pair reference', uri: 'https://example.com/ordered-pairs' }];
+  delete professional.practice.solution_path; delete professional.practice.starter;
+  const flow = '```mermaid\nflowchart TD\n A[Inspect] --> B[Count]\n classDef step fill:#123,stroke:#fff\n class A,B step\n```';
+  professional.explanations = [
+    { heading: 'Strategy A: Enumerate all pairs', body: '[expected] Enumerating the six distinct pairs establishes the count [S1].' },
+    { heading: 'Strategy A Flow', body: flow }, { heading: 'Strategy A Worked Example Flow', body: flow },
+  ];
+  const missingFlow = { ...professional, explanations: professional.explanations.slice(0, 1) };
+  const malformedFlow = structuredClone(professional);
+  malformedFlow.explanations[1].body = 'The authored flow deliberately omits the Mermaid fence.';
+  const plan = { title: 'Validate canonical content at the real compiler callback',
+    objective: 'Reject invalid authored layout before persistence, then independently check the corrected Cornell bundle.',
+    rationale: 'The actual signed worker MCP callback must run the pinned validator before saving generated artifacts.',
+    acceptance_criteria: ['The primary Cornell bundle explains six ordered pairs with Strategy A and both flows.', 'The same independent checker rejects a wrong note.'],
+    allowed_paths: [directory], verification_paths: [`${name}/verify`], outputs: [...outputs, checker, bad], documentation_paths: outputs,
+    cornell_output_dir: directory, input_paths: [template, validator], execution_steps: [], risk: 'high',
+    checks: [{ title: 'Inspect corrected canonical bundle', command: [process.execPath, checker, outputs[0]],
+      negative_controls: [{ title: 'Reject incorrect canonical note', command: [process.execPath, checker, bad], expected_exit_code: 1 }] }] };
+  let env;
+  const noPersistedBundle = held => {
+    const run = controlledStatus(held.root).find(run => run.requirement.startsWith(`Scenario: ${name}\n`));
+    assert.ok(run); assert.equal(run.cornell_results?.length ?? 0, 0); assert.equal(run.cornell_note_ids?.length ?? 0, 0);
+    assert.equal(loadRecords(held.root).filter(record => record.meta.data.format === 'cornell-v1').length, 0);
+    for (const path of outputs) assert.equal(existsSync(safePath(held.root, path)), false, `${path} cannot be persisted after rejection`);
+    assert.equal(run.compiler_failures.at(-1).owner, 'content');
+    assert.equal(run.compiler_failures.at(-1).code, 'CORNELL_CANONICAL_INVALID');
+  };
+  env = await setup(t, { [name]: { customPlan: plan,
+    expectedToolError(prior, conversation, held) {
+      const result = JSON.parse(prior.content[0].text);
+      if (conversation.stage !== 'implementation' || result.code !== 'CORNELL_INVALID') return false;
+      (held.compilerRejections ??= []).push(result); assert.equal(result.validation.owner, 'agent-content'); return true;
+    },
+    customActions({ stage, held }) {
+      const report = extra => call('assignment_report', { outcome: 'completed', summary: 'The controlled canonical compiler boundary and actual scoped artifacts were inspected.', ...extra });
+      if (stage === 'planning') return [call('workflow_plan', plan), report()];
+      if (stage === 'implementation') return [call('cornell_research_compile', missingFlow), async () => {
+        noPersistedBundle(held); assert.equal(held.compilerRejections.length, 1);
+        return new Call('invalid-mermaid-request', 'cornell_research_compile', malformedFlow);
+      }, async () => {
+        noPersistedBundle(held); assert.equal(held.compilerRejections.length, 2);
+        return new Call('corrected-canonical-request', 'cornell_research_compile', professional);
+      }, async ({ messages }) => {
+        held.canonicalSuccess = semanticToolValue(messages); assert.equal(held.canonicalSuccess.saved, true);
+        assert.equal(held.canonicalSuccess.canonical_validation.exit_code, 0);
+        return new Call('completed-canonical-producer', 'assignment_report', report({ artifacts: outputs }).input);
+      }];
+      if (stage === 'verification') return [call('project_read', { path: outputs[0] }), call('project_read', { path: checker }),
+        call('task_file_write', { path: checker, content: "const fs=require('node:fs'),assert=require('node:assert/strict');const note=fs.readFileSync(process.argv[2],'utf8');assert.match(note,/^## Strategy A:/m);assert.match(note,/^### Strategy A Flow$/m);assert.match(note,/^### Strategy A Worked Example Flow$/m);assert.match(note,/six ordered pairs/);console.log('Corrected canonical bundle independently checked');\n" }),
+        call('project_read', { path: bad }), call('task_file_write', { path: bad, content: '# Wrong note\nThere are 999 ordered pairs.\n' }),
+        call('check_run', {}), report({ verdict: 'pass', artifacts: [checker, bad] })];
+      if (stage === 'review') return [call('project_read', { path: outputs[0] }), call('check_evidence', {}), report({ verdict: 'pass' })];
+      throw new Error(`Unexpected canonical-ingress stage ${stage}`);
+    },
+  } });
+  for (const [path, asset] of [[template, 'cornell-note-template.md'], [validator, 'validate_notes.py']])
+    atomicWrite(safePath(env.root, path), readFileSync(new URL(`./fixtures/cornell-format-assets/${asset}`, import.meta.url)));
+  const initial = await startControlledWorkflow(env.root, { requirement: `Scenario: ${name}\nCompile and independently verify the corrected canonical research bundle.`, request_id: 'actual-canonical-mcp-ingress' });
+  const done = await until(env.root, initial.workflow_id, run => run.status === 'completed',
+    'canonical-invalid authored requests must not persist a bundle or prevent a later valid correction in the same signed producer', env.errors);
+  assert.deepEqual(env.errors, []); assert.equal(env.held.compilerRejections.length, 2);
+  assert.deepEqual(env.observed.map(item => item.stage), ['planning', 'implementation', 'verification', 'review']);
+  assert.equal(done.compiler_failures.length, 2); assert.ok(done.compiler_failures.every(failure => failure.owner === 'content'));
+  assert.equal(done.cornell_results.length, 1); assert.equal(done.cornell_note_ids.length, 1);
+  const note = getRecord(env.root, done.cornell_note_ids[0]); assert.equal(note.meta.revision, 1);
+  assert.equal(done.cornell_results[0].canonical_validation.exit_code, 0);
+  assert.deepEqual(done.repair_budget, { schema_version: 1, product: 0, protocol: 0, environment: 0 });
+  assert.equal(done.checks.length, 2); assert.ok(done.checks.every(check => check.passed));
+  const contract = JSON.parse(readFileSync(safePath(env.root, `.neomind/controlled/workflows/${hash(initial.workflow_id)}.${done.epoch_id}.contract.json`), 'utf8'));
+  assert.equal(verifyControlledTask(env.root, getRecord(env.root, contract.task_id), 'accepted').ok, true);
+});
+
+test('renderer maintenance authenticates an unbound retained source from its actual signed historical producer', async t => {
+  const a = cornellMaintenanceFixture(t, { unbound: true }), name = 'retainednative';
+  a.run.requirement = `Scenario: ${name}\nRetain the original source and generated artifact checkpoint.`;
+  a.run.status = 'paused'; a.run.blocker = { kind: 'environment', message: 'Fixture awaits its original signed producer checkpoint.' };
+  atomicWrite(a.statePath, JSON.stringify(a.run));
+  const options = { customPlan: a.contract.plan, customActions: ({ stage, call }) => {
+    assert.equal(stage, 'implementation', 'The injected owner failure happens before any verifier dispatch.');
+    const artifacts = [...a.contract.plan.outputs, a.source.path];
+    return [...artifacts.map(path => call('project_read', { path })), call('assignment_report', {
+      outcome: 'completed', summary: 'The original producer recorded the unchanged retained source and its generated trio.', artifacts })];
+  } };
+  const env = await setup(t, { [name]: options }, a.root), originalRename = fs.renameSync; let injected = false;
+  fs.renameSync = function(from, to, ...args) {
+    const target = typeof to === 'string' ? to.replaceAll('\\', '/') : '';
+    const saved = typeof from === 'string' && target === a.statePath.replaceAll('\\', '/') ? JSON.parse(readFileSync(from, 'utf8')) : undefined;
+    const result = originalRename.call(this, from, to, ...args);
+    if (!injected && saved?.events.at(-1)?.kind === 'returned' && saved.attempts.at(-1)?.stage === 'implementation') {
+      injected = true; throw Object.assign(new Error('Injected owner crash after the actual historical producer checkpoint.'), { code: 'EIO' });
+    }
+    return result;
+  }; syncBuiltinESMExports();
+  let original;
+  try {
+    await controlControlledWorkflow(env.root, { workflow_id: a.run.workflow_id, action: 'resume' });
+    original = await until(env.root, a.run.workflow_id, run => run.status === 'blocked' && run.attempts.at(-1)?.state === 'completed',
+      'the signed historical producer must retain the source and original trio hashes', env.errors);
+  } finally { fs.renameSync = originalRename; syncBuiltinESMExports(); }
+  assert.equal(injected, true); const producer = original.attempts[0], signed = readInvocation(env.root, producer.invocation_id);
+  assert.equal(signed.issuer, 'neomind-vscode-lm'); assert.equal(signed.inference_completed, true);
+  assert.equal(producer.bound_hashes[a.source.path], a.source.sha256);
+  await delay(100); await env.closeOwner(); await shutdownNative(env.root); await env.closeBridge();
+  const checkpoint = controlledStatus(env.root, a.run.workflow_id), input = { ...a.input, expected_revision: checkpoint.revision };
+  assert.equal(checkpoint.status, 'blocked'); assert.equal(a.contract.plan.cornell_input_path, undefined);
+  const sourceBytes = readFileSync(safePath(env.root, a.source.path)), stateBytes = readFileSync(a.statePath), beforeNote = getRecord(env.root, a.note.meta.id);
+  try {
+    fs.writeFileSync(safePath(env.root, a.source.path), Buffer.concat([sourceBytes, Buffer.from('\nA changed retained source cannot be adopted.\n')]));
+    await assert.rejects(reconcileControlledCornellRenderer(env.root, input));
+  } finally { fs.writeFileSync(safePath(env.root, a.source.path), sourceBytes); }
+  try {
+    const altered = JSON.parse(stateBytes), foreign = `${a.contract.plan.cornell_output_dir}/foreign-research.json`;
+    fs.writeFileSync(safePath(env.root, foreign), sourceBytes);
+    altered.cornell_results[0].payload_source.path = foreign;
+    atomicWrite(a.statePath, JSON.stringify(altered));
+    await assert.rejects(reconcileControlledCornellRenderer(env.root, input), /completed signed producer|authentic/);
+  } finally { fs.writeFileSync(a.statePath, stateBytes); }
+  assert.deepEqual(getRecord(env.root, a.note.meta.id), beforeNote);
+  const repaired = await reconcileControlledCornellRenderer(env.root, input), done = controlledStatus(env.root, a.run.workflow_id);
+  assert.equal(repaired.replayed, false); assert.equal(done.status, 'paused'); assert.equal(getRecord(env.root, a.note.meta.id).meta.revision, 2);
+  assert.equal(done.renderer_reconciliations.length, 1); assert.deepEqual(done.repair_budget, a.run.repair_budget);
+  assert.deepEqual(readFileSync(safePath(env.root, a.source.path)), sourceBytes);
+  assert.equal((await reconcileControlledCornellRenderer(env.root, input)).replayed, true);
 });

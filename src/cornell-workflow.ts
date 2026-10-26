@@ -8,7 +8,7 @@ import { atomicWrite, getRecord, hash, loadRecords, now, readConfig, safePath, w
 import type { ProjectRecord } from './types.js';
 import { hasUnfinishedCornellProse, renderCornellClaimLabels } from './cornell-content.js';
 import { withCornellRecordView, type CornellRecordView } from './cornell-record-view.js';
-import { assertCornellFormatProfile, type CornellFormatProfile } from './cornell-format-profile.js';
+import { assertCornellFormatProfile, cornellExplanationHeading, cornellFormatRendererRevision, type CornellFormatProfile } from './cornell-format-profile.js';
 
 const prose = z.string().trim().min(8).max(32_000).refine(value => !hasUnfinishedCornellProse(value), 'Complete substantive prose is required.')
   .describe('Complete substantive prose. Discussion of TODO or placeholder validation is allowed; unfinished markers, filler and unexpanded template tokens are not.');
@@ -129,7 +129,7 @@ function compileCornellResearchWithRecords(root: string, value: CornellResearchI
   const formatProfile = sourcePolicy?.format_profile;
   if (formatProfile) assertCornellFormatProfile(root, formatProfile);
   const inputHash = hash(cornellCanonical({ input, requirement_fingerprint: fingerprint,
-    ...(formatProfile ? { format_profile: formatProfile } : {}) }));
+    ...(formatProfile ? { format_profile: formatProfile, format_renderer_revision: cornellFormatRendererRevision(formatProfile) } : {}) }));
   const questions = (items: CornellResearchInput['questions']) => items.map(item => `### ${item.id}: ${item.prompt}\n\nObjectives: ${item.objective_ids.join(', ')}\n`).join('\n');
   const answers = [...input.questions, ...input.practice.questions].map(item => `## ${item.id}\n\n${item.answer}\n`).join('\n');
   const compiled: CornellInput = {
@@ -138,7 +138,7 @@ function compileCornellResearchWithRecords(root: string, value: CornellResearchI
     path: `${input.output_dir}/note.md`, workflow_id: input.workflow_id,
     requirement_ids: [requirement.meta.id], context: input.context, constraints: input.constraints,
     cues: input.questions.map(item => `${item.id} (${item.objective_ids.join(', ')}): ${item.prompt}`),
-    main_notes: `### Methods\n\n${renderCornellClaimLabels(input.methods)}\n\n${input.explanations.map(item => `### ${item.heading}\n\n${renderCornellClaimLabels(item.body)}`).join('\n\n')}\n\n### Results\n\n${renderCornellClaimLabels(input.results)}\n\n### Discussion\n\n${renderCornellClaimLabels(input.discussion)}\n\n### Research Questions\n\n${questions(input.questions)}`,
+    main_notes: `### Methods\n\n${renderCornellClaimLabels(input.methods)}\n\n${input.explanations.map(item => `${cornellExplanationHeading(formatProfile, item.heading)}\n\n${renderCornellClaimLabels(item.body)}`).join('\n\n')}\n\n### Results\n\n${renderCornellClaimLabels(input.results)}\n\n### Discussion\n\n${renderCornellClaimLabels(input.discussion)}\n\n### Research Questions\n\n${questions(input.questions)}`,
     demonstration: input.worked_example, sources: input.sources, failure_cases: input.failure_cases, summary: input.summary,
     practice: { exercise_path: `${input.output_dir}/exercises.md`, answer_path: `${input.output_dir}/answers.md`,
       exercise: `# Research and practice questions\n\nAnswer the research questions before consulting the separate answer file. Explain the assumptions and reasoning in your own words.\n\n${questions(input.questions)}\n## Practice\n\n${questions(input.practice.questions)}` +
@@ -147,6 +147,7 @@ function compileCornellResearchWithRecords(root: string, value: CornellResearchI
       ...(input.practice.command ? { command: input.practice.command } : { mode: 'manual', procedure: input.practice.procedure }),
       ...(input.practice.solution_path ? { solution_path: input.practice.solution_path, starter: input.practice.starter } : {}) },
     research: { schema_version: 1, input_hash: inputHash, requirement_id: requirement.meta.id,
+      ...(formatProfile ? { format_renderer_revision: cornellFormatRendererRevision(formatProfile) } : {}),
       requirement_revision: requirement.meta.revision, requirement_fingerprint: fingerprint,
       abstract: input.abstract, learning_objectives: input.learning_objectives },
   };

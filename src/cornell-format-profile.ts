@@ -11,6 +11,17 @@ export interface CornellFormatProfile {
   schema_version: 1; id: 'leetcode-cornell-v1';
   template: { path: string; sha256: string }; validator: { path: string; sha256: string };
 }
+/** A changed renderer cannot replay an older generation of the same research. */
+export function cornellFormatRendererRevision(profile: CornellFormatProfile): number {
+  if (profile.id !== 'leetcode-cornell-v1') throw new CornellFormatProfileError('Unsupported Cornell rendering profile.');
+  return 2;
+}
+/** Format-owned heading levels only; supplied narrative and literal code stay untouched. */
+export function cornellExplanationHeading(profile: CornellFormatProfile | undefined, heading: string): string {
+  const strategy = profile && /^Strategy [A-Z](?:\b|:)/.test(heading) &&
+    !/^Strategy [A-Z] (?:Flow|Worked Example Flow)$/.test(heading);
+  return `${strategy ? '##' : '###'} ${heading}`;
+}
 export class CornellFormatProfileError extends Error {
   readonly code = 'CORNELL_FORMAT_PROFILE_UNSUPPORTED';
 }

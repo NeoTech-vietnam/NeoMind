@@ -411,19 +411,20 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
   register('project_list', 'List readable project files; private runtime, credential and dependency directories are excluded.',
     z.strictObject({ path: z.string().min(1).max(1024).default('.'), limit: z.number().int().min(1).max(1000).default(200) }), true,
     args => walk(args.path, args.limit));
-  register('project_search', 'Find literal text in one readable project file or a readable directory tree without invoking a shell.',
+  register('project_search', 'Find literal text in one readable project file or a public readable directory tree without invoking a shell. An exact approved hidden skill input can be searched as a file; its approval never permits directory traversal or sibling files.',
     z.strictObject({ query: z.string().min(1).max(1000), path: z.string().min(1).max(1024).default('.'),
       max_matches: z.number().int().min(1).max(100).default(40) }), true, args => {
-      const selected = publicTarget(root, args.path);
+      const selected = publicTarget(root, args.path, binding.approved_inputs);
       assertReadable(binding, args.path, true);
       const info = lstatSync(selected);
+      if (info.isDirectory()) publicTarget(root, args.path); // Exact file approvals never authorize private traversal.
       assertReadable(binding, args.path, info.isDirectory());
       if (!info.isFile() && !info.isDirectory() || info.isFile() && (info.nlink !== 1 || info.size > 2 * 1024 * 1024))
         throw new ControlledToolError('INVALID_FILE', 'Search an ordinary unlinked text file up to 2 MiB, or a readable directory.');
       const found = info.isFile() ? { files: [args.path], truncated: false } : walk(args.path, 1000);
       const matches: { path: string; line: number; text: string }[] = [];
       for (const path of found.files) {
-        const target = publicTarget(root, path), info = lstatSync(target);
+        const target = publicTarget(root, path, binding.approved_inputs), info = lstatSync(target);
         if (info.size > 2 * 1024 * 1024 || info.nlink > 1) continue;
         let content: string;
         try { content = new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(target)); } catch { continue; }

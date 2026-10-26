@@ -15,7 +15,7 @@ export class ControlledCornellWriteError extends Error { readonly code = 'STATE_
 /** A generated draft is revised only from this execution's last durable receipt.
  * Model input never selects a record, revision, old hash or repair credential. */
 export function persistControlledCornellNote(root: string, compiled: CompiledCornellResearch, context: ControlledCornellSourceContext,
-  options: { recover_owned_overwrite?: boolean } = {}): ProjectRecord {
+  options: { recover_owned_overwrite?: boolean; validated_artifacts?: Record<string, string> } = {}): ProjectRecord {
   if (compiled.recipe_input.task_id !== context.task_id || compiled.note.workflow_id !== context.workflow_id ||
       compiled.recipe_input.workflow_id !== context.workflow_id ||
       (compiled.note.requirement_ids ?? []).some(id => !context.requirement_ids.includes(id)))
@@ -124,6 +124,8 @@ export function persistControlledCornellNote(root: string, compiled: CompiledCor
         // These hashes are owned by this exact immutable rendering checkpoint, never a worker argument.
         rendered?.artifacts) } : {}),
       prepare(value) {
+        if (options.validated_artifacts && Object.entries(options.validated_artifacts).some(([path, digest]) => value.artifacts[path] !== digest))
+          throw new ControlledCornellWriteError('The durable Cornell rendering differs from its actual pinned-validator receipt. No generated files were replaced.');
         const next = { schema_version: 1, request_hash: requestHash, rendered: value };
         if (existsSync(renderPath)) {
           if (!same(read(renderPath), next)) throw new ControlledCornellWriteError('Research rendering changed while recovering the same operation.');

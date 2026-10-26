@@ -82,6 +82,7 @@ export interface ControlledCornellSourceContext {
   file_allowed(path: string): boolean;
 }
 export interface ControlledCornellResult {
+  canonical_validation?: import('./controlled-cornell-validation.js').CornellCanonicalReceipt;
   note_id: string; input_hash: string; compiled_note_hash: string;
   record_fingerprint: string; artifact_hashes: Record<string, string>;
   payload_source?: ControlledPayloadSource;

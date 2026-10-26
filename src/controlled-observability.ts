@@ -64,6 +64,7 @@ const contentCodes = new Set(['PLAN_INVALID', 'INVALID_PATH', 'PRIVATE_PATH', 'S
   'INVALID_CHECK', 'CHECK_INPUT_MISSING', 'CORNELL_INVALID', 'GENERATED_ARTIFACT', 'VERDICT_REQUIRED', 'SCHEMA_INVALID', 'INVALID_PAYLOAD']);
 const runtimeCodes = new Set(['ACTOR_INACTIVE', 'INPUT_CHANGED', 'STALE_READ', 'STATE_UNCERTAIN', 'PROTOCOL_ERROR', 'UNSUPPORTED_STAGE', 'EVIDENCE_SCAN_TIMEOUT',
   'CORNELL_FORMAT_PROFILE_UNSUPPORTED',
+  'CORNELL_CANONICAL_INVALID', 'CORNELL_VALIDATOR_UNAVAILABLE',
   'NO_BOUND_PROCEDURE', 'NO_CORNELL_OUTPUT', 'NO_CHECK_EVIDENCE', 'REUSE_NOT_APPLICABLE', 'CONTROLLED_OPERATION_FAILED',
   'ACCEPTANCE_INCOMPLETE', 'CONTINUATION_PILOT_UNSUPPORTED', 'INTAKE_IDENTITY_MISMATCH', 'INTAKE_PAYLOAD_MISMATCH']);
 const schemaMessages = {
@@ -131,7 +132,7 @@ export function controlledValidation(code: unknown, rule?: unknown, schemaIssues
   const redacted = safeCode === 'SCHEMA_INVALID' ? schemaRule : known && typeof rule === 'string' ? redactControlledValue(rule) : undefined;
   const safeRule = redacted !== undefined ? (typeof redacted === 'string' ? redacted : JSON.stringify(redacted)).slice(0, 2000)
     : 'The bound operation could not complete. The runtime must reconcile the failed boundary; existing work is preserved.';
-  return { code: safeCode, rule: safeRule, owner: contentCodes.has(safeCode) ? 'agent-content' : 'runtime',
+  return { code: safeCode, rule: safeRule, owner: contentCodes.has(safeCode) ? 'agent-content' : safeCode === 'CORNELL_VALIDATOR_UNAVAILABLE' ? 'environment' : 'runtime',
     rule_id: `controlled.${safeCode.toLowerCase()}`, ...(issues.length ? { issues } : {}) };
 }
 export function controlledResultFailure(result: any) {

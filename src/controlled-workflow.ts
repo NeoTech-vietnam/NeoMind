@@ -41,6 +41,10 @@ import { ControlledOperationDrain } from './controlled-operation-drain.js';
 import { assertControlledPayloadCurrent, ControlledPayloadError, type ControlledPayloadSource } from './controlled-payload.js';
 import { persistControlledCornellNote, ControlledCornellWriteError } from './controlled-cornell-write.js';
 import { CornellFormatProfileError, resolveControlledCornellFormatProfile } from './cornell-format-profile.js';
+import { validateControlledCornell, assertControlledCornellValidationCurrent, CornellCanonicalError,
+  type CornellCompilerFailure } from './controlled-cornell-validation.js';
+import { cornellRendererMaintenanceSchema, cornellRendererLedgerPath, prepareCornellRendererReconciliation,
+  assertCornellRendererResultCurrent, type CornellRendererMaintenanceInput, type CornellRendererReconciliation } from './controlled-cornell-maintenance.js';
 import { controlledCornellFormatContext } from './controlled-cornell-format-context.js';
 import { controlledDiagnosisDecision, type ControlledDiagnosisSource } from './controlled-diagnosis-policy.js';
 import { controlledCornellOwnedOverwriteRecovery } from './controlled-cornell-recovery.js';
@@ -100,6 +104,9 @@ export interface ControlledSnapshot {
   finalizing_report_id?: string;
   procedure_runs?: { id: string; status: string }[]; procedure_candidate_id?: string; procedure_candidate_version?: string; cornell_note_ids?: string[];
   cornell_results?: ControlledCornellResult[];
+  compiler_failures?: (CornellCompilerFailure & { attempt_ids: string[]; at: string })[];
+  renderer_reconciliations?: { id: string; sha256: string; expected_revision: number; note_id: string }[];
+  pending_renderer_recovery?: { id: string; note_id: string; result_fingerprint: string; started_attempt_id?: string };
   check_reconciliations?: InterruptedCheckReconciliationLink[];
   pending_plan?: { plan: ControlledPlan; attempt_id: string; parent_fingerprint: string;
     requirement_fingerprints: Record<string, string>; conflicts: ControlledPlanConflict[]; payload_source?: ControlledPayloadSource;
@@ -768,6 +775,8 @@ class Controller {
         ...(specialist ? { purpose: 'specialist', specialist_index: specialistIndex } : {}),
         ...(stage === 'review' && run.pending_check_review ? { purpose: 'check-review' } : {}),
         ...(documentation ? { purpose: 'evidence-documentation' as const, documentation_source: documentation } : {}) };
+      if (stage === 'implementation' && !documentation && run.pending_renderer_recovery)
+        run.pending_renderer_recovery.started_attempt_id = attempt.id;
       run.attempts.push(attempt); run.status = 'running'; run.owner_pid = process.pid;
       if (stage === 'implementation' && contract) saveStatus(this.root, contract.task_id, 'in-progress');
       save(this.root, run, 'dispatch', `NeoMind dispatches ${role} for ${stage}.`);
@@ -877,6 +886,8 @@ class Controller {
                   generated.record_fingerprint !== evidenceRecordFingerprint(getRecord(this.root, noteId)) || !validateCornellNote(this.root, noteId).ok;
               }))
             throw new ControlledToolError('STATE_UNCERTAIN', 'The prepared managed Cornell artifacts no longer match their current backend generation. Preserve the current files for backend reconciliation; do not reconstruct the research payload or guess repair metadata.');
+          if (stage === 'implementation' && !documentation && report.outcome === 'completed' && current.pending_renderer_recovery)
+            readRendererReconciliation(this.root, current, current.pending_renderer_recovery.id);
           if ((stage === 'verification' || stage === 'review' && binding.review_purpose !== 'checker-readiness') &&
               report.outcome === 'completed' && report.verdict === 'pass' && contract) {
             const checks = this.currentChecks(current, contract);
@@ -977,7 +988,7 @@ class Controller {
             return { status: result.status, outputs: result.outputs, error: result.status === 'succeeded' ? undefined : 'Procedure did not succeed; retained outputs require reconciliation.' };
           });
         },
-        compileResearch: (input, source) => {
+        compileResearch: (input, source) => this.operationDrain.run(id, async () => {
           assertActive();
           if (source) assertControlledPayloadCurrent(this.root, source);
           const primarySource = stage === 'implementation' ? contract?.plan.cornell_input_path : undefined;
@@ -1010,30 +1021,48 @@ class Controller {
               expected_requirement_revision: requirement.meta.revision, workflow_id: id, task_id: contract!.task_id,
               owner: role, output_dir: directory } as CornellResearchInput, { approved_source_files: sources.approved_source_files,
                 ...(formatProfile ? { format_profile: formatProfile } : {}) });
+            const proof = await validateControlledCornell(this.root, compiled, { signal: attemptAbort.signal,
+              previous_failures: completed.compiler_failures,
+              semantic_input: input as { topic?: string; explanations?: { heading: string; body: string }[] } });
+            assertActive();
+            if (source) assertControlledPayloadCurrent(this.root, source);
+            assertControlledCornellValidationCurrent(this.root, compiled, proof);
             const solutionPath = compiled.note.practice.solution_path;
             const solutionExisted = solutionPath ? existsSync(safePath(this.root, solutionPath)) : false;
             const note = persistControlledCornellNote(this.root, compiled, sourceContext,
-              { recover_owned_overwrite: completed.pending_artifact_repair?.kind === 'owned-cornell-overwrite' });
+              { recover_owned_overwrite: completed.pending_artifact_repair?.kind === 'owned-cornell-overwrite',
+                ...(proof ? { validated_artifacts: proof.artifact_hashes } : {}) });
             const solutionCreated = !!solutionPath && !solutionExisted && existsSync(safePath(this.root, solutionPath));
             const current = readState(this.root, id); current.cornell_note_ids = [...new Set([...(current.cornell_note_ids ?? []), note.meta.id])];
             if (!current.cornell_results?.some(result => result.note_id === note.meta.id && result.input_hash === compiled.input_hash &&
                 result.record_fingerprint === evidenceRecordFingerprint(note) &&
+                (!proof || result.canonical_validation?.generation === proof.generation) &&
                 result.payload_source?.path === source?.path && result.payload_source?.sha256 === source?.sha256))
               current.cornell_results = [...(current.cornell_results ?? []), { ...controlledCornellResult(compiled, note),
+                ...(proof ? { canonical_validation: proof } : {}),
                 ...(source ? { payload_source: source } : {}) }];
             save(this.root, current, 'cornell-compiled', 'Research note, exercises and separate answers compiled by the existing Cornell formatter.');
-            return { saved: true, observation_policy: stage === 'implementation' ? 'Expected-only primary deliverable; the independent Verifier supplies execution evidence next.' : 'Actual current independent evidence bound by the backend.',
+            return { saved: true, note_id: note.meta.id, revision: note.meta.revision,
+              ...(proof ? { canonical_validation: proof } : {}),
+              observation_policy: stage === 'implementation' ? 'Expected-only primary deliverable; the independent Verifier supplies execution evidence next.' : 'Actual current independent evidence bound by the backend.',
               artifacts: [`${directory}/note.md`, `${directory}/exercises.md`, `${directory}/answers.md`, ...(solutionCreated ? [solutionPath!] : [])],
               ...(solutionPath ? { learner_solution: { path: solutionPath, created: solutionCreated } } : {}),
               ...(sources.unfetched_sources.length ? { unfetched_source_ids: sources.unfetched_sources,
                 source_limitation: 'External URLs are recorded references; the runtime did not fetch or verify their contents.' } : {}) };
           } catch (error) {
+            if (error instanceof CornellCanonicalError) {
+              const current = readState(this.root, id), existing = current.compiler_failures?.find(item => item.generation === error.failure.generation);
+              if (existing) existing.attempt_ids = [...new Set([...existing.attempt_ids, attempt.id])];
+              else current.compiler_failures = [...(current.compiler_failures ?? []), { ...error.failure, attempt_ids: [attempt.id], at: now() }];
+              save(this.root, current, 'compiler-rejected', `Pinned Cornell validation refused generation ${error.failure.generation}; owner ${error.failure.owner}.`);
+              throw new ControlledToolError(error.failure.owner === 'content' ? 'CORNELL_INVALID' : error.code, error.message);
+            }
             if (error instanceof ControlledCornellWriteError) throw new ControlledToolError('STATE_UNCERTAIN', error.message);
             if (error instanceof CornellFormatProfileError) throw new ControlledToolError(error.code, error.message);
             if (error instanceof ControlledToolError || error instanceof ControlledPayloadError || error instanceof ControlledEvidenceScanTimeout) throw error;
             throw new ControlledToolError('CORNELL_INVALID', error instanceof Error ? error.message : 'Research did not satisfy the Cornell format.');
           }
-        },
+        }),
         prepareWork: query => prepareWork(this.root, { request: query.request, parameters: query.parameters,
           environment: { client: 'copilot' }, scope: { allowed_paths: contract?.plan.allowed_paths ?? [], network: false, publication: false,
             mode: 'neomind-controlled', assurance: 'invocation-bound-local' } }),
@@ -1062,6 +1091,13 @@ class Controller {
         const active = run.attempts.at(-1)!;
         active.invocation_id = receipt.id; active.state = 'completed'; run.active_invocations = [];
         save(this.root, run, 'returned', `${role} session returned ${receipt.state}.`);
+        const compilerFailure = run.compiler_failures?.findLast(failure => failure.owner === 'runtime' && failure.attempt_ids.includes(active.id));
+        if (compilerFailure) {
+          this.block(run, 'protocol', compilerFailure.message);
+          run.blocker = { ...run.blocker!, code: compilerFailure.code, owner: 'runtime',
+            next_action: 'Reconcile this exact compiler generation with a reviewed runtime change; do not retry the unchanged semantic input with another model.' };
+          save(this.root, run); return;
+        }
         if (receipt.state !== 'completed' || !active.report) {
           const observationLoop = receipt.error?.startsWith('CONTROLLED_OBSERVATION_LOOP:') === true;
           const deliveryProtocol = receipt.error?.startsWith('MCP_DELIVERY_PROTOCOL:') === true;
@@ -1098,6 +1134,7 @@ class Controller {
         } else if (stage === 'implementation') {
           if (documentation) delete run.pending_documentation;
           if (!documentation) delete run.pending_artifact_repair;
+          if (!documentation) delete run.pending_renderer_recovery;
           saveStatus(this.root, contract!.task_id, 'submitted'); run.phase = 'verification';
         }
         else if (stage === 'verification') {
@@ -1172,6 +1209,7 @@ class Controller {
       `User requirement:\n${run.requirement}`,
       `Your stage: ${stage}. Use only the supplied semantic tools. Runtime owns identity, records, transitions and checks.`,
       stage === 'planning' ? 'Inspect the project and existing scripts. Save one bounded workflow_plan, then assignment_report. Define an independently authored checker in verification_paths, disjoint from implementation paths. Use explicit check argv. Keep ordinary work low-risk; elevate real security/storage/runtime changes.' : '',
+      stage === 'implementation' && run.pending_renderer_recovery ? 'Trusted backend maintenance already regenerated the exact retained professional source with a newer renderer and ran the pinned canonical validator. Inspect all current product outputs and the managed Cornell trio, complete only any remaining declared producer work, then save a fresh honest producer report. Do not reconstruct the semantic source. This is not a verifier verdict; fresh independent checks and required review follow.' : '',
       recovery.length ? `Earlier backend validation in this same execution, retained across resume. These are diagnostic constraints, not an accepted plan or instructions to replay a request:\n${JSON.stringify(recovery)}` : '',
       contract ? `Immutable plan:\n${JSON.stringify(contract.plan)}` : '',
       contract?.knowledge_directory ? `Managed final knowledge destination: ${contract.knowledge_directory}. Coordinator synthesis must compile a separate evidence-derived research Cornell bundle after checks and before final review.` : '',
@@ -1690,6 +1728,37 @@ class Controller {
     if (!this.admitCheckEffects(run)) return run;
     this.reconcileRepairBudget(run);
     const last = run.attempts.at(-1), blocker = run.blocker;
+    if (run.pending_renderer_recovery) {
+      const pending = run.pending_renderer_recovery;
+      readRendererReconciliation(this.root, run, pending.id);
+      const producer = pending.started_attempt_id ? run.attempts.find(attempt => attempt.id === pending.started_attempt_id) : undefined;
+      if (producer?.state === 'completed') {
+        // A crash can occur after the real producer returned but before its normal phase transition.
+        // Reauthenticate that exact saved result; never invent a replacement report or dispatch it again.
+        if (producer !== last || producer.stage !== 'implementation' || producer.role !== 'developer' ||
+            producer.report?.outcome !== 'completed' || !producer.invocation_id || !producer.report_id) return run;
+        const contract = readContract(this.root, run), report = getRecord(this.root, producer.report_id), receipt = readInvocation(this.root, producer.invocation_id);
+        if (report.meta.data.kind !== 'controlled-work-record' || report.meta.data.workflow_id !== id ||
+            report.meta.data.epoch_id !== run.epoch_id || report.meta.data.task_id !== contract.task_id ||
+            report.meta.data.attempt_id !== producer.id || report.meta.data.invocation_id !== producer.invocation_id ||
+            report.meta.owner !== 'developer' || report.meta.data.outcome !== 'completed' ||
+            report.meta.data.report_payload_hash !== hash(canonicalJson(producer.report)) ||
+            producer.report_fingerprint !== evidenceRecordFingerprint(report) ||
+            !same(report.meta.data.artifact_hashes, producer.bound_hashes) ||
+            !Object.entries(fingerprints(this.root, contract.plan.outputs)).every(([path, digest]) => digest !== 'missing' && producer.bound_hashes?.[path] === digest) ||
+            receipt.issuer !== 'neomind-vscode-lm' || receipt.state !== 'completed' || !receipt.inference_completed ||
+            receipt.workflow_id !== id || receipt.task_id !== contract.task_id || receipt.role !== 'developer' ||
+            receipt.request_id !== producer.request_id || receipt.controlled_execution?.epoch_id !== run.epoch_id ||
+            receipt.controlled_execution.stage !== 'implementation')
+          throw new ControlledToolError('STATE_UNCERTAIN', 'The returned producer checkpoint differs from its signed report or current artifacts. Preserve the checkpoint for runtime reconciliation.');
+        delete run.pending_renderer_recovery; saveStatus(this.root, contract.task_id, 'submitted'); run.phase = 'verification';
+      } else run.phase = 'implementation';
+      run.status = 'queued'; run.owner_pid = process.pid; run.owner_instance = readHost(this.root).instance;
+      delete run.blocker;
+      save(this.root, run, 'resume', 'Resume the authenticated backend renderer correction through a fresh producer report, independent checks and required review; all original budgets and failed reports remain unchanged.');
+      this.schedule(id); return run;
+    }
+    if (run.status === 'blocked' && blocker?.code === 'CORNELL_CANONICAL_INVALID' && blocker.owner === 'runtime') return run;
     if (run.status === 'blocked' && blocker?.message.startsWith('Product/checker repair budget exhausted.') &&
         (blocker.kind === 'implementation' || blocker.kind === 'checker') && last?.stage === 'verification' &&
         last.state === 'completed' && last.report?.outcome === 'completed' &&
@@ -1776,6 +1845,97 @@ class Controller {
     })();
     return this.closing;
   }
+}
+
+function readRendererReconciliation(root: string, run: ControlledSnapshot, id: string): CornellRendererReconciliation {
+  const link = run.renderer_reconciliations?.find(item => item.id === id);
+  if (!link) throw new Error('The renderer recovery has no authoritative workflow ledger link.');
+  const bytes = readFileSync(safePath(root, cornellRendererLedgerPath(id)));
+  if (hash(bytes) !== link.sha256) throw new Error('The immutable renderer reconciliation ledger changed.');
+  const ledger = JSON.parse(bytes.toString('utf8')) as CornellRendererReconciliation;
+  if (ledger.schema_version !== 1 || ledger.kind !== 'controlled-cornell-renderer-reconciliation' || ledger.id !== id ||
+      ledger.workflow_id !== run.workflow_id || ledger.epoch_id !== run.epoch_id || ledger.contract_hash !== run.contract_hash ||
+      ledger.expected_revision !== link.expected_revision || ledger.result?.note_id !== link.note_id ||
+      !run.cornell_results?.some(result => result.note_id === ledger.result!.note_id && result.record_fingerprint === ledger.result!.record_fingerprint))
+    throw new Error('The renderer reconciliation belongs to a different execution or result.');
+  assertCornellRendererResultCurrent(root, ledger);
+  return ledger;
+}
+
+/** INTERNAL trusted maintenance; not an MCP tool, repair-budget change or acceptance operation. */
+export async function reconcileControlledCornellRenderer(root: string, value: CornellRendererMaintenanceInput) {
+  root = exactRoot(root);
+  const input = cornellRendererMaintenanceSchema.parse(value), lock = maintenanceLockKey(input.workflow_id);
+  const disabled = () => {
+    let enabled = false;
+    try { readHost(root); enabled = true; } catch { /* Dead descriptors cannot own inference. */ }
+    if (enabled) throw new Error('Disable this project Model Bridge before trusted renderer maintenance.');
+  };
+  const response = (ledger: CornellRendererReconciliation, replayed: boolean) => ({ id: ledger.id,
+    workflow_id: ledger.workflow_id, epoch_id: ledger.epoch_id, note_id: ledger.result!.note_id,
+    renderer_revision: ledger.renderer_revision, canonical_validation: ledger.canonical_validation,
+    outcome: 'renderer-corrected-awaiting-independent-verification', replayed });
+  const initial = withOperationLock(root, lock, () => {
+    const run = readState(root, input.workflow_id);
+    const linked = run.renderer_reconciliations?.find(item => item.expected_revision === input.expected_revision && item.note_id === input.note_id);
+    if (linked) return { replay: readRendererReconciliation(root, run, linked.id) };
+    disabled();
+    const contract = readContract(root, run), before = readFileSync(statePath(root, run.workflow_id));
+    const authority = controlledContractForTask(root, getRecord(root, contract.task_id));
+    if (authority.run.revision !== run.revision || authority.run.contract_hash !== run.contract_hash)
+      throw new Error('The authoritative workflow changed before renderer maintenance.');
+    if (run.attempts.some(attempt => attempt.invocation_id && invocationIsActive(readInvocation(root, attempt.invocation_id))))
+      throw new Error('A signed native invocation is still active; renderer maintenance cannot race inference.');
+    const intentPath = safePath(root, `.neomind/controlled/cornell-renderer-intents/${hash(JSON.stringify({ workflow_id: run.workflow_id,
+      epoch_id: run.epoch_id, expected_revision: input.expected_revision, note_id: input.note_id }))}.json`);
+    const retained = existsSync(intentPath) ? JSON.parse(readFileSync(intentPath, 'utf8')) as CornellRendererReconciliation : undefined;
+    const prepared = prepareCornellRendererReconciliation(root, run, contract, input, retained);
+    return { run, contract, before, intentPath, prepared };
+  }, 0);
+  if ('replay' in initial) return response(initial.replay!, true);
+  const { run, contract, before, intentPath, prepared } = initial;
+  const completionPath = safePath(root, cornellRendererLedgerPath(prepared.identity.id));
+  const proof = existsSync(completionPath) ? (JSON.parse(readFileSync(completionPath, 'utf8')) as CornellRendererReconciliation).canonical_validation
+    : await validateControlledCornell(root, prepared.compiled, { semantic_input: prepared.semantic });
+  if (!proof) throw new Error('Renderer maintenance cannot replace a canonical artifact without its actual pinned-validator receipt.');
+  return withOperationLock(root, lock, () => {
+    disabled();
+    const current = readState(root, input.workflow_id);
+    if (hash(readFileSync(statePath(root, input.workflow_id))) !== hash(before) ||
+        current.revision !== input.expected_revision || readContract(root, current).plan_hash !== contract.plan_hash)
+      throw new Error('The workflow or immutable contract changed during validation. Current work is preserved.');
+    assertControlledPayloadCurrent(root, prepared.source);
+    if (!same(controlledFingerprints(root, Object.keys(contract.preserved_hashes)), contract.preserved_hashes) ||
+        Object.entries(contract.requirement_fingerprints).some(([id, digest]) => evidenceRecordFingerprint(getRecord(root, id)) !== digest))
+      throw new Error('A frozen input or requirement changed during canonical validation. Current work is preserved.');
+    assertControlledCornellValidationCurrent(root, prepared.compiled, proof);
+    const bytes = `${JSON.stringify(prepared.identity, null, 2)}\n`;
+    if (!existsSync(intentPath)) { mkdirSync(dirname(intentPath), { recursive: true }); writeFileSync(intentPath, bytes, { flag: 'wx', mode: 0o600 }); }
+    else if (readFileSync(intentPath, 'utf8') !== bytes) throw new Error('The immutable renderer maintenance intent changed.');
+    const note = persistControlledCornellNote(root, prepared.compiled, prepared.context, { validated_artifacts: proof.artifact_hashes });
+    const result: ControlledCornellResult = { ...controlledCornellResult(prepared.compiled, note),
+      payload_source: prepared.source, canonical_validation: proof };
+    let ledger: CornellRendererReconciliation;
+    if (existsSync(completionPath)) {
+      ledger = JSON.parse(readFileSync(completionPath, 'utf8'));
+      if (ledger.id !== prepared.identity.id || !same(ledger.result, result))
+        throw new Error('The persisted renderer completion differs from this exact durable generation.');
+    } else {
+      ledger = { ...prepared.identity, result, canonical_validation: proof, completed_at: now() };
+      mkdirSync(dirname(completionPath), { recursive: true });
+      writeFileSync(completionPath, `${JSON.stringify(ledger, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+    }
+    assertCornellRendererResultCurrent(root, ledger);
+    current.cornell_results = [...(current.cornell_results ?? []), result];
+    current.renderer_reconciliations = [...(current.renderer_reconciliations ?? []), { id: ledger.id,
+      sha256: hash(readFileSync(completionPath)), expected_revision: input.expected_revision, note_id: note.meta.id }];
+    current.pending_renderer_recovery = { id: ledger.id, note_id: note.meta.id, result_fingerprint: result.record_fingerprint };
+    current.phase = 'implementation'; current.status = 'paused';
+    current.blocker = { kind: 'protocol', code: 'CORNELL_RENDERER_RECONCILED', owner: 'runtime',
+      message: 'The newer renderer corrected the exact retained source and passed the pinned canonical validator. A fresh producer report, independent verification and required review remain mandatory. Original failed reports and all budget usage remain unchanged.' };
+    save(root, current, 'renderer-reconciled', current.blocker.message);
+    return response(ledger, false);
+  }, 0);
 }
 
 /** INTERNAL trusted-operator maintenance. Never registered as an MCP worker tool. */

@@ -144,24 +144,50 @@ test('active assignment guidance reports the backend format and reuses only a cu
   assert.equal(context(a.root,{plan:{input_paths:[]},preserved_hashes:{}},[saved],allowed),'','Default requests receive no new profile-specific instruction.');
 });
 
+test('diagnosis separates current renderer capability from saved generation and actual canonical validation', async t => {
+  const {controlledCornellFormatContext:context}=await import('../dist/controlled-cornell-format-context.js');
+  const {validateControlledCornell}=await import('../dist/controlled-cornell-validation.js');
+  const access={read_only:true,sourceAllowed(){throw new Error('Diagnosis must not advertise a producer source path.');}};
+  const legacy=fixture(t),legacyContract={...legacy.contract,plan:{...legacy.contract.plan,cornell_output_dir:legacy.input.output_dir}};
+  const oldCompiled=compileCornellResearch(legacy.root,legacy.input),oldNote=createCornellNote(legacy.root,oldCompiled.note);
+  const oldText=context(legacy.root,legacyContract,[controlledCornellResult(oldCompiled,oldNote)],access);
+  assert.match(oldText,/Current backend renderer revision: 2/);
+  assert.match(oldText,/"generated_renderer_revision":"not-recorded"/);
+  assert.match(oldText,/"canonical_validation":"not-recorded"/);
+  const a=fixture(t),contract={...a.contract,plan:{...a.contract.plan,cornell_output_dir:a.input.output_dir}};
+  const compiled=compileCornellResearch(a.root,a.input,{approved_source_files:[],format_profile:a.profile});
+  const proof=await validateControlledCornell(a.root,compiled),note=createCornellNote(a.root,compiled.note);
+  const saved={...controlledCornellResult(compiled,note),canonical_validation:proof};
+  const validated=context(a.root,contract,[saved],access);
+  assert.match(validated,/"generated_renderer_revision":2/);
+  assert.match(validated,/"canonical_validation":"passed-current-generation"/);
+  assert.match(validated,new RegExp(proof.generation));
+  writeFileSync(safePath(a.root,compiled.note.path),readFileSync(safePath(a.root,compiled.note.path),'utf8')+'\nExternal user edit\n');
+  const stale=context(a.root,contract,[saved],access);
+  assert.match(stale,/"artifacts_current":false/);
+  assert.match(stale,/"canonical_validation":"stale-or-unavailable"/);
+  assert.doesNotMatch(stale,/"canonical_validation":"passed-current-generation"/);
+  assert.match(stale,/Current format capability alone establishes neither execution success nor verifier verdict nor workflow acceptance/);
+});
+
 test('read-only diagnosis receives current verified format capability without an unavailable compiler request or source replay', async t => {
   const {controlledCornellFormatContext:context}=await import('../dist/controlled-cornell-format-context.js');
   const a=fixture(t),contract={...a.contract,plan:{...a.contract.plan,cornell_output_dir:a.input.output_dir,
     cornell_input_path:'not-readable-in-this-diagnosis.json'}};
-  const saved={get artifact_hashes(){throw new Error('Read-only capability must not inspect a retained producer replay.');}};
   const access={read_only:true,sourceAllowed(){throw new Error('Read-only capability must not advertise a producer source path.');}};
-  const text=context(a.root,contract,[saved],access);
+  const text=context(a.root,contract,[],access);
   assert.match(text,/Current backend format capability is active: leetcode-cornell-v1/);
   assert.match(text,/verified against this task's declared approved template and validator fingerprints/);
   assert.match(text,/ISO YYYY-MM-DD and renders DD\/MM\/YYYY plus the exact approved project headings/);
   assert.match(text,/does not mean existing saved artifacts have already been regenerated/);
   assert.match(text,/diagnosis session is read-only and has no compiler operation/);
-  assert.match(text,/Only a separately dispatched producer session can compile/);
+  assert.match(text,/A separately dispatched producer session handles ordinary content compilation or regeneration/);
+  assert.match(text,/trusted runtime maintenance can reconcile its own faulty renderer from the exact retained source/);
   assert.match(text,/Do not call a compiler, edit artifacts or supply a model format\/profile argument here/);
   assert.doesNotMatch(text,/cornell_research_compile|input_path|not-readable-in-this-diagnosis|Reuse it with/);
   assert.match(text,/establishes neither execution success nor verifier verdict nor workflow acceptance/);
-  assert.equal(context(a.root,{plan:{input_paths:[]},preserved_hashes:{}},[saved],access),'');
+  assert.equal(context(a.root,{plan:{input_paths:[]},preserved_hashes:{}},[],access),'');
   writeFileSync(safePath(a.root,a.validator),'# Changed validator\n');
-  assert.throws(()=>context(a.root,contract,[saved],access),error=>error.code==='CORNELL_FORMAT_PROFILE_UNSUPPORTED',
+  assert.throws(()=>context(a.root,contract,[],access),error=>error.code==='CORNELL_FORMAT_PROFILE_UNSUPPORTED',
     'Read-only capability facts require the current exact approved pair; they are not a stale capability claim.');
 });

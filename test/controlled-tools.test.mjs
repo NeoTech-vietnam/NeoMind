@@ -294,6 +294,53 @@ test('literal search accepts a file path and retains directory search and match 
   assert.equal(limited.matches.length, 1); assert.equal(limited.matches[0].line, 2); assert.equal(limited.truncated, true);
 });
 
+test('literal search reads an exact approved hidden skill input without exposing its directory or sibling files', async t => {
+  const root = project(t), input = '.agents/skills/cornell/assets/template.md';
+  mkdirSync(join(root, '.agents/skills/cornell/assets'), { recursive: true });
+  writeFileSync(join(root, input), '# Canonical template\nStrategy A Flow\n');
+  writeFileSync(join(root, '.agents/skills/cornell/assets/other.md'), 'HIDDEN_SIBLING_CANARY');
+  mkdirSync(join(root, '.agents/skills/cornell/assets/directory.md'));
+  writeFileSync(join(root, '.agents/skills/cornell/assets/directory.md/nested.md'), 'HIDDEN_DIRECTORY_CANARY');
+  const c = await connect(t, root, binding('implementation', {
+    approved_inputs: [input, '.agents/skills/cornell/assets/directory.md'],
+  }));
+  assert.match(decode(await c.call('project_read', { path: input })).text, /Strategy A Flow/);
+  const response = await c.call('project_search', { path: input, query: 'Strategy A Flow' });
+  assert.equal(response.isError, undefined, JSON.stringify(response));
+  assert.deepEqual(decode(response), {
+    matches: [{ path: input, line: 2, text: 'Strategy A Flow' }], truncated: false,
+  });
+  for (const path of ['.agents/skills/cornell/assets', '.agents/skills/cornell/assets/other.md',
+    '.agents/skills/cornell/assets/directory.md', '.neomind/config.json']) {
+    const denied = await c.call('project_search', { path, query: 'CANARY' });
+    assert.equal(decode(denied).code, 'PRIVATE_PATH', path);
+    assert.doesNotMatch(JSON.stringify(denied), /HIDDEN_(?:SIBLING|DIRECTORY)_CANARY/);
+  }
+  assert.equal(decode(await c.call('project_search', { path: '.', query: 'CANARY' })).matches.length, 0);
+  const unapproved = await connect(t, root, binding('implementation'));
+  assert.equal(decode(await unapproved.call('project_search', { path: input, query: 'Strategy' })).code, 'PRIVATE_PATH');
+  const scoped = await connect(t, root, binding('implementation', { approved_inputs: [input], read_paths: ['docs'] }));
+  assert.equal(decode(await scoped.call('project_search', { path: input, query: 'Strategy' })).code, 'SCOPE_DENIED');
+});
+
+test('approved hidden input search still refuses hard links and symlinked path components', async t => {
+  const root = project(t), assets = '.agents/skills/cornell/assets';
+  mkdirSync(join(root, assets), { recursive: true });
+  writeFileSync(join(root, 'docs/source.md'), 'LINKED_INPUT_CANARY');
+  const alias = `${assets}/hard.md`;
+  linkSync(join(root, 'docs/source.md'), join(root, alias));
+  const linked = `${assets}/linked/source.md`;
+  const c = await connect(t, root, binding('implementation', { approved_inputs: [alias, linked] }));
+  assert.equal(decode(await c.call('project_search', { path: alias, query: 'CANARY' })).code, 'INVALID_FILE');
+  try { symlinkSync(join(root, 'docs'), join(root, assets, 'linked'), process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) { if (process.platform === 'win32' && ['EPERM', 'EACCES'].includes(error.code)) {
+    t.diagnostic('Windows junction privilege unavailable; hard-link, private-directory and exact-file guards were checked.'); return;
+  } throw error; }
+  const denied = await c.call('project_search', { path: linked, query: 'CANARY' });
+  assert.equal(decode(denied).code, 'INVALID_PATH');
+  assert.doesNotMatch(JSON.stringify(denied), /LINKED_INPUT_CANARY/);
+});
+
 test('file-path search still refuses private, out-of-scope, oversized and linked inputs', async t => {
   const root = project(t), c = await connect(t, root);
   writeFileSync(join(root, '.env'), 'PRIVATE_SEARCH_CREDENTIAL');

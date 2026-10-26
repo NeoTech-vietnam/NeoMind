@@ -77,6 +77,9 @@ function executable(program: Program, candidate?: string): { path: string | null
   return { path: null, ...(rejected_candidate ? { rejected_candidate } : {}) };
 }
 
+/** The same executable resolver used by runtime_context, without model-selected argv. */
+export function controlledPythonExecutable(): string | null { return executable('python').path; }
+
 /** Fixed version observations: no worker-supplied argv, environment or shell. */
 export async function controlledToolchain(root: string, query: ControlledRuntimeQuery, signal?: AbortSignal) {
   const observations = await Promise.all((Object.keys(names) as Program[]).map(async program => {

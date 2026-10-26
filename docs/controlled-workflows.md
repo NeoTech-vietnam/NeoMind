@@ -89,3 +89,11 @@ When the controller and Bridge share an extension-host process, internal control
 - Network/publication policy still applies. The controlled runner's tool mediation and output checks are not a general OS sandbox for arbitrary scripts.
 
 For the runtime-facing sequence and evidence rules, see [the controlled workflow guide](../resources/guides/controlled-workflows.md). Release acceptance requires actual successful calls through each claimed entrypoint and a complete verified workflow, not configuration checks alone.
+
+## Cornell compiler acceptance
+
+A reviewed LeetCode Cornell profile uses its pinned Python validator on the exact candidate note before any visible bundle is saved or replayed. The renderer owns the Strategy/Flow heading levels. Its revision participates in generation identity so an older incompatible rendering cannot satisfy a new compiler request. The validation receipt binds that revision, approved validator fingerprint and candidate artifact hashes; it is a formatting observation, not execution evidence for the exercise solution.
+
+Compiler failures retain their generation identity across workers. An unchanged runtime-owned rendering failure stops without spending additional product-repair attempts. Missing interpreters and interrupted validation remain explicit environment/cancellation outcomes. Existing files and records remain protected while validation runs, and the commit rechecks source and artifact versions afterwards.
+
+An old draft affected by a renderer defect can be reconciled through trusted backend maintenance only after its original contract, semantic source, managed artifact hashes and quiescent ownership are authenticated. This creates a new managed revision with the old bytes retained, preserves prior reports and repair usage, and requires new independent checks and any required review before acceptance. Ordinary worker tools cannot request this maintenance or alter its proofs.

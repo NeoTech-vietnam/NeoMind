@@ -71,6 +71,10 @@ Preserve the distinction between JSON representation and string content. Authore
 
 For a primary Cornell deliverable, the Implementer supplies an expected worked result and the Verifier checks the generated bundle independently. A separately assigned post-verification synthesis uses current observed evidence. An expected example, a stored source file or a successful compiler call does not establish execution or acceptance.
 
+For a backend-selected LeetCode format profile, the compiler validates its exact rendered note with the pinned canonical validator before saving or replaying the bundle. Main Strategy headings and their Flow/Worked Example Flow headings are rendered by the backend; keep the professional heading text and Mermaid bodies intact. The runtime supplies the interpreter and fixed validator command. Generic research does not require Python.
+
+Read the returned compiler validation provenance separately from the current capability. A capability describes what this runtime supports; an older artifact is validated only when its own renderer revision and artifact hashes match a successful validation receipt. A compiler failure that returns no saved bundle is not an implementation result. Follow its typed owner and field diagnostics. Do not replay unchanged research to repair a runtime-owned renderer failure or edit compiler-owned files. The runtime retains the failed generation and stops unchanged recovery across sessions; upgrading the renderer does not turn old checks into current evidence.
+
 ## Client entrypoint
 
 1. Submit the complete user requirement once through `manager_run` with `execution_mode: neomind-controlled`. Keep the returned workflow receipt. For existing work, select its actual saved workflow ID and use the backend's resume operation.

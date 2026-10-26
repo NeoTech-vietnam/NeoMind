@@ -77,6 +77,7 @@ export interface CornellInput {
   };
   research?: {
     schema_version: 1;
+    format_renderer_revision?: number;
     input_hash: string;
     requirement_id: string;
     requirement_revision: number;
@@ -625,12 +626,21 @@ export function reviseCornellNote(
     throw new Error('Cornell revision must preserve workflow ownership.');
   return writeCornellNote(root, input, { id, expected_revision: expectedRevision, reason }, policy);
 }
+/** Exact writer rendering without reserving IDs or changing managed/user files. */
+export function previewCornellArtifacts(root: string, input: CornellInput): Record<string, string> {
+  return writeCornellNote(root, input, undefined, undefined, true);
+}
+function writeCornellNote(root: string, input: CornellInput, revision: CornellRevision | undefined,
+  policy: CornellWritePolicy | undefined, previewOnly: true): Record<string, string>;
+function writeCornellNote(root: string, input: CornellInput, revision?: CornellRevision,
+  policy?: CornellWritePolicy): ProjectRecord;
 function writeCornellNote(
   root: string,
   input: CornellInput,
   revision?: CornellRevision,
   policy?: CornellWritePolicy,
-): ProjectRecord {
+  previewOnly = false,
+): ProjectRecord | Record<string, string> {
   readConfig(root);
   if (!cornellKinds.includes(input.kind)) throw new Error('Unsupported Cornell note kind.');
   text(input.topic, 'Topic');
@@ -788,6 +798,7 @@ function writeCornellNote(
   const body = `# Cornell Notes\n\n## Topic: ${input.topic}\n\n## Date: ${layout?.date ?? date}\n\n${cornellQuote}\n${researchHeader}\n${layout?.context_heading ?? '## Context and Constraints'}\n\n${input.context}\n\n${layout?.constraints_heading ?? ''}${constraintBody}${functionContract}\n\n${layout?.cue_heading ?? '## Cue Column'}\n\n${input.cues.map((item) => `- ${item}`).join('\n')}\n\n${layout?.notes_heading ?? '## Main Notes'}\n\n${input.main_notes}\n\n## Demonstration\n\n${input.demonstration.body}\n\n${command(input.demonstration.command)}\n\n### Expected Result\n\n[expected] ${input.demonstration.expected}\n\n### Observed Result\n\n${input.demonstration.observed ? `[observed] ${input.demonstration.observed}\nEvidence: ${evidenceIds.join(', ')}` : '[expected] The demonstration has not been executed; no observed result is claimed.'}\n\n## Failure Cases\n\n${input.failure_cases.map((item) => `- ${item}`).join('\n')}\n\n## Practice\n\n[Exercise](${link(exercisePath)}) · [Answer](${link(answerPath)})${solutionPath ? ` · [Your solution](${link(solutionPath)})` : ''}\n\n${practiceProcedure}\n${cause}\n${layout?.summary_heading ?? '## Summary'}\n\n${input.summary}\n\n## Sources\n\n${sourceBody}\n`;
   const citationErrors = sourceLinks(body, sources);
   if (citationErrors.length) throw new Error(citationErrors.join(' '));
+  if (previewOnly) return { [path]: body, [exercisePath]: input.practice.exercise, [answerPath]: input.practice.answer };
   return withOperationLock(root, `cornell-${hash(path).slice(0, 32)}`, () => {
     if (input.format_profile) assertCornellFormatProfile(root, input.format_profile);
     const proposed = {
