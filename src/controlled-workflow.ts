@@ -938,7 +938,12 @@ class Controller {
           const message = receipt.state === 'completed' ? 'Session ended without its required typed result. Saved work is retained; inspect current artifacts then save the missing compact result.'
             : receipt.error ?? 'Model session did not complete.';
           const hardFailure = !observationLoop && /CONTROLLED_TOOL_LOOP|MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED|CONTEXT_LIMIT_EXCEEDED|TOOL_CALLING_UNSUPPORTED|NoPermissions|NotFound|access denied|permission|policy|configuration changed|cancelled|canceled/i.test(message);
-          if (!hardFailure && this.repair(run, kind, message)) continue;
+          if (!hardFailure) {
+            if (this.repair(run, kind, message)) continue;
+            // repair already persisted the authoritative exhausted-budget or
+            // reconciliation blocker. Do not overwrite its cause below.
+            return;
+          }
           this.block(run, kind, message); return;
         }
         if (active.report.outcome !== 'completed') {
