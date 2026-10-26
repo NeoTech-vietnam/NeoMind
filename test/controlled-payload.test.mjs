@@ -333,3 +333,81 @@ test('actual Cornell MCP boundary loads prepared JSON without copying its serial
   const fenced = actual.match(/```json\n([\s\S]*?)\n```/)[1];
   assert.equal(JSON.parse(fenced).cli_examples[0].stdout, '{"sum":6}\n');
 });
+
+async function boundPrimaryCornellClient(t) {
+  const fixture = researchFixture(t), { root, input, workflow } = fixture;
+  const { requirement_id, expected_requirement_revision, workflow_id, task_id, owner, output_dir, ...professional } = input;
+  professional.explanations[0].body = [
+    'Backend-bound research paragraph [S1].', '', '```json',
+    JSON.stringify({ cli_examples: [{ stdout: 'first\nsecond\n' }] }, null, 2),
+    '```', '', 'Keep the real Markdown newlines and escaped JSON example distinct [S1].',
+  ].join('\n');
+  mkdirSync(join(root, 'scripts'), { recursive: true });
+  const path = 'scripts/bound-research.json', bytes = Buffer.from(JSON.stringify(professional));
+  writeFileSync(join(root, path), bytes);
+  const source = { path, sha256: hashBytes(bytes) }, received = [];
+  const server = createControlledMcpServer(root, {
+    workflow_id: workflow.meta.id, task_id: 'CORNELL-TASK-0001', invocation_id: 'bound-primary-payload',
+    role: 'developer', stage: 'implementation', implementation_paths: ['docs'], verification_paths: ['checks'],
+    read_paths: ['scripts', 'docs'], procedure_bound: false, execution_steps: [],
+    cornell_bound: true, cornell_source: source, cornell_starter_allowed: false,
+  }, { assertActive() {}, saveReport() { return { saved: true }; },
+    compileResearch(value, actualSource) { received.push({ value, source: actualSource }); return { saved: true }; } });
+  const client = new Client({ name: 'bound-primary-cornell-mcp-fixture', version: '1' });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await server.connect(st); await client.connect(ct);
+  t.after(async () => { await client.close(); await server.close(); });
+  return { ...fixture, client, path, bytes, source, professional, received,
+    expected: controlledCornellResearchSchema(false, false).parse(professional),
+    call: (name, args = {}) => client.callTool({ name, arguments: args }) };
+}
+
+test('a backend-bound primary Cornell tool advertises only its optional exact source and consumes it from empty input', async t => {
+  const c = await boundPrimaryCornellClient(t);
+  const schema = (await c.client.listTools()).tools.find(tool => tool.name === 'cornell_research_compile').inputSchema;
+  assert.equal(schema.type, 'object'); assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(Object.keys(schema.properties), ['input_path']);
+  assert.equal(schema.properties.input_path.const, c.path);
+  assert.equal(schema.required?.includes('input_path') ?? false, false);
+  assert.doesNotMatch(JSON.stringify(schema), new RegExp(c.source.sha256), 'The immutable hash remains backend metadata, not a model input.');
+  const result = await c.call('cornell_research_compile', {});
+  assert.equal(result.isError, undefined, JSON.stringify(result));
+  assert.deepEqual(c.received, [{ value: c.expected, source: { ...c.source, size_bytes: c.bytes.length } }]);
+  const body = c.received[0].value.explanations[0].body;
+  assert.equal(body, c.professional.explanations[0].body);
+  assert.ok(body.includes('\n```json\n'));
+  assert.equal(JSON.parse(body.match(/```json\n([\s\S]*?)\n```/)[1]).cli_examples[0].stdout, 'first\nsecond\n');
+  assert.equal((await c.call('cornell_research_compile', { input_path: c.path })).isError, undefined);
+  assert.deepEqual(c.received[1], c.received[0], 'An explicit exact path consumes the same backend-bound content.');
+});
+
+test('a bound primary Cornell source cannot be swapped for an identical public file or overridden inline', async t => {
+  const c = await boundPrimaryCornellClient(t), alternate = 'scripts/identical-research.json';
+  writeFileSync(join(c.root, alternate), c.bytes);
+  assert.deepEqual(readFileSync(join(c.root, alternate)), readFileSync(join(c.root, c.path)));
+  for (const args of [
+    { input_path: alternate },
+    { topic: 'Inline replacement of backend-owned source' },
+    { input_path: c.path, topic: 'Mixed source override' },
+    c.professional,
+  ]) {
+    const result = await c.call('cornell_research_compile', args);
+    assert.equal(result.isError, true, JSON.stringify(result));
+  }
+  assert.equal(c.received.length, 0, 'Rejected substitutions never reach the compiler callback.');
+  assert.deepEqual(readFileSync(join(c.root, c.path)), c.bytes);
+});
+
+test('rereading a changed bound Cornell file cannot replace its immutable source fingerprint', async t => {
+  const c = await boundPrimaryCornellClient(t);
+  const changed = { ...c.professional, topic: 'A legitimate user changed the prepared research topic' };
+  const changedBytes = Buffer.from(JSON.stringify(changed));
+  writeFileSync(join(c.root, c.path), changedBytes);
+  assert.notEqual(hashBytes(changedBytes), c.source.sha256);
+  assert.equal((await c.call('project_read', { path: c.path })).isError, undefined);
+  const result = await c.call('cornell_research_compile', {});
+  assert.equal(result.isError, true, JSON.stringify(result));
+  assert.equal(JSON.parse(result.content[0].text).code, 'INPUT_CHANGED');
+  assert.equal(c.received.length, 0, 'A fresh ordinary read cannot reauthorize a changed frozen payload.');
+  assert.deepEqual(readFileSync(join(c.root, c.path)), changedBytes, 'Preserve the user edit after refusing compilation.');
+});

@@ -21,6 +21,7 @@ import { prepareReportedAssignment } from '../dist/native-assignment.js';
 import { openAssignment } from '../dist/assignment-runtime.js';
 import { planNativeSoftware, readNativeSoftwareContract } from '../dist/native-software.js';
 import { controlledContractForTask, verifyControlledTask } from '../dist/controlled-acceptance.js';
+import { researchFixture } from './cornell-research-fixture.mjs';
 
 // These tests exercise the actual signed local Bridge, MCP, filesystem and child runner.
 // The language model and editor API are deterministic fixtures, not actual Copilot/Codex inference.
@@ -57,6 +58,18 @@ function semanticToolValue(messages) {
   return content?.type === 'text' ? JSON.parse(content.text) : result;
 }
 function planFor(name, options = {}) {
+  if (options.preparedCornell) {
+    const directory = `${name}/notes`, checker = `${name}/verify/check.cjs`, wrong = `${name}/verify/bad.md`;
+    const outputs = ['note.md', 'exercises.md', 'answers.md'].map(path => `${directory}/${path}`);
+    return { title: 'Compile the backend-bound prepared Cornell source', objective: 'Deliver a source-bound research note with independent positive and negative checks.',
+      rationale: 'Native compilation consumes one prepared JSON source through the existing backend formatter, not a guessed executable.',
+      acceptance_criteria: ['The primary Cornell bundle explains six ordered pairs.', 'Its actual independent checker rejects a deliberately incorrect note.'],
+      allowed_paths: [directory], verification_paths: [`${name}/verify`], outputs: [...outputs, checker, wrong], documentation_paths: outputs,
+      cornell_output_dir: directory, preservation_paths: [`${name}/reference.md`, '.agents/skills/native-cornell/assets/template.md'],
+      cornell_input_path: `prepared/${name}.json`, execution_steps: [],
+      checks: [{ title: 'Inspect source-bound Cornell', command: [process.execPath, checker, outputs[0]],
+        negative_controls: [{ title: 'Reject an incorrect research note', command: [process.execPath, checker, wrong], expected_exit_code: 1 }] }], risk: 'high' };
+  }
   const output = `${name}/src/value.txt`, checker = `${name}/verify/check.cjs`, bad = `${name}/verify/bad.txt`;
   const baseline = [output, checker];
   const plan = { title: `Produce ${name} scalar`, objective: 'Persist a scalar equal to one with independent positive and negative verification.',
@@ -102,6 +115,17 @@ function scriptFor(name, stage, attempt, options, held) {
   const plan = planFor(name, options), output = plan.outputs[0], checker = plan.checks[0].command[1], bad = plan.checks[0].negative_controls[0].command[2];
   const report = (extra = {}) => call('assignment_report', { outcome: 'completed', summary: `${stage} completed with actual scoped artifacts.`,
     findings: [`Independent ${stage} result recorded.`], ...extra });
+  if (options.preparedCornell) {
+    if (stage === 'planning') return [call('workflow_plan', plan), report()];
+    if (stage === 'implementation') return [call('cornell_research_compile', {}), call('cornell_research_compile', {}), report()];
+    if (stage === 'verification') return [call('project_read', { path: output }), call('project_read', { path: checker }),
+      call('task_file_write', { path: checker, content: "const fs=require('node:fs'),assert=require('node:assert/strict');assert.match(fs.readFileSync(process.argv[2],'utf8'),/six ordered pairs/);console.log('source-bound Cornell independently checked');\n" }),
+      call('project_read', { path: bad }), call('task_file_write', { path: bad, content: '# Wrong research\nThere are 999 ordered pairs.\n' }),
+      call('check_run', {}), report({ verdict: 'pass', artifacts: [checker, bad] })];
+    if (stage === 'review') return [call('project_read', { path: output }), call('check_evidence', { kind: 'workflow' }),
+      call('check_evidence', {}), report({ verdict: 'pass' })];
+    throw new Error(`Unexpected source-bound Cornell fixture stage ${stage}`);
+  }
   if (stage === 'planning') return [call('project_list', { path: '.' }), call('workflow_plan', plan), report()];
   if (stage === 'implementation') {
     if (options.evidenceReport && attempt > 1) return [call('check_evidence', {}), async ({ messages }) => {
@@ -184,6 +208,11 @@ async function setup(t, scenarios, existingRoot) {
     atomicWrite(safePath(root, 'scripts/.env'), 'PRIVATE_BASELINE_CANARY=must-not-be-captured\n');
   if (Object.values(scenarios).some(options => options.conflictingReadInput))
     atomicWrite(safePath(root, '.github/skills/helpers/assets/oracle.json'), '{"expected":1}\n');
+  for (const [name, options] of Object.entries(scenarios)) if (options.preparedCornell) {
+    atomicWrite(safePath(root, `prepared/${name}.json`), `${JSON.stringify(options.preparedResearch, null, 2)}\n`);
+    atomicWrite(safePath(root, `${name}/reference.md`), '# Finite ordered pairs\nThree letters and two digits produce six ordered pairs.\n');
+    atomicWrite(safePath(root, '.agents/skills/native-cornell/assets/template.md'), '# Existing read-only research template\n');
+  }
   const policy = ensureRoutingPolicy(root);
   atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([
     { name: 'fixture-strong', vendor: 'fixture-strong', models: [{ id: policy.strong_model, name: policy.strong_model }] },
@@ -208,6 +237,8 @@ async function setup(t, scenarios, existingRoot) {
         conversation = { name, stage, attempt, actions: scriptFor(name, stage, attempt, scenarios[name] ?? {}, held), round: 0 };
         conversations.set(messages, conversation);
         observed.push({ name, stage, attempt, tools: options.tools.map(tool => tool.name),
+          ...(scenarios[name]?.preparedCornell && stage === 'implementation'
+            ? { compilerSchema: options.tools.find(tool => tool.name === 'cornell_research_compile').inputSchema } : {}),
           promptLayers: messages.filter(message => typeof message.content === 'string').map(message => message.content) });
       }
       const prior = lastToolResult(messages);
@@ -290,6 +321,61 @@ function countRecordReads(root, action) {
 
 test('controlled execution mode is explicit and distinct from unsigned native modes', () => {
   assert.ok(executionModes.includes('neomind-controlled'));
+});
+
+test('bound native Cornell plan consumes its exact prepared source through empty MCP input and closes after real independent checks', async t => {
+  const name = 'preparedcornell', seed = researchFixture(t).input;
+  const { schema_version, requirement_id, expected_requirement_revision, workflow_id, task_id, owner, output_dir, ...professional } = seed;
+  professional.sources = [{ id: 'S1', title: 'Actual finite ordered-pair source', uri: `${name}/reference.md` }];
+  professional.practice = { ...professional.practice }; delete professional.practice.solution_path; delete professional.practice.starter;
+  professional.explanations[0].body = '[inferred] Three letters and two digits yield six ordered pairs [S1].\n\n```json\n{"stdout":"six ordered pairs\\n"}\n```\n\nThe Markdown line breaks remain real text [S1].';
+  const env = await setup(t, { [name]: { preparedCornell: true, preparedResearch: professional } });
+  const prepared = `prepared/${name}.json`, sourceBytes = readFileSync(safePath(env.root, prepared)), sourceHash = hash(sourceBytes);
+  const initial = await startControlledWorkflow(env.root, { requirement: `Scenario: ${name}\nCompile the existing prepared professional JSON source into a Cornell note, separate exercises and answers, then independently verify and review the result.`, request_id: 'prepared-native-cornell' });
+  const done = await until(env.root, initial.workflow_id, run => run.status === 'completed',
+    'native Cornell metadata must be bound by the backend and complete without model-owned payload copying', env.errors);
+  assert.deepEqual(env.errors, []);
+  assert.deepEqual(env.observed.map(item => item.stage), ['planning', 'implementation', 'verification', 'review']);
+  const sealed = JSON.parse(readFileSync(safePath(env.root,
+    `.neomind/controlled/workflows/${hash(initial.workflow_id)}.${done.epoch_id}.contract.json`), 'utf8'));
+  const task = getRecord(env.root, sealed.task_id), { contract } = controlledContractForTask(env.root, task);
+  assert.equal(contract.plan.cornell_input_path, prepared); assert.deepEqual(contract.plan.execution_steps, []);
+  assert.equal(contract.preserved_hashes[prepared], sourceHash);
+  assert.ok(contract.plan.input_paths.includes('.agents/skills/native-cornell/assets/template.md'));
+  assert.deepEqual(contract.plan.outputs, ['note.md', 'exercises.md', 'answers.md'].map(path => `${name}/notes/${path}`));
+  assert.ok(!env.observed.find(item => item.stage === 'implementation').tools.includes('task_run'));
+  const compilerSchema = env.observed.find(item => item.stage === 'implementation').compilerSchema;
+  assert.deepEqual(Object.keys(compilerSchema.properties), ['input_path']);
+  assert.ok(!compilerSchema.required?.length); assert.equal(compilerSchema.additionalProperties, false);
+  assert.deepEqual(readFileSync(safePath(env.root, prepared)), sourceBytes);
+  assert.equal(done.cornell_note_ids.length, 1); assert.equal(done.cornell_results.length, 1, 'The second empty compiler call reuses its exact owned generation result.');
+  const generated = done.cornell_results[0];
+  assert.deepEqual(generated.payload_source, { path: prepared, sha256: sourceHash, size_bytes: sourceBytes.length });
+  const note = getRecord(env.root, generated.note_id);
+  assert.equal(note.meta.data.demonstration.observed, undefined);
+  assert.deepEqual(note.meta.data.demonstration.evidence_ids, []);
+  assert.ok(readFileSync(safePath(env.root, note.meta.data.artifact_path), 'utf8').includes(professional.explanations[0].body));
+  assert.deepEqual(done.checks.map(check => [check.negative, check.exit_code, check.passed]), [[false, 0, true], [true, 1, true]]);
+  assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true);
+  for (const attempt of done.attempts) {
+    const signed = readInvocation(env.root, attempt.invocation_id);
+    assert.equal(signed.issuer, 'neomind-vscode-lm'); assert.equal(signed.inference_completed, true);
+  }
+  const statePath = safePath(env.root, `.neomind/controlled/workflows/${hash(initial.workflow_id)}.json`), before = readFileSync(statePath);
+  for (const mutate of [
+    proof => { delete proof.payload_source; },
+    proof => { proof.payload_source.sha256 = 'f'.repeat(64); },
+    proof => { proof.payload_source.path = 'prepared/another-source.json'; },
+  ]) {
+    const changed = JSON.parse(before.toString('utf8')); mutate(changed.cornell_results[0]);
+    try {
+      atomicWrite(statePath, `${JSON.stringify(changed, null, 2)}\n`);
+      const invalid = verify(env.root, task.meta.id, 'accepted');
+      assert.equal(invalid.ok, false, 'The primary bundle must not lose or substitute its frozen prepared-source consumption proof.');
+      assert.ok(invalid.findings.some(finding => /consume its immutable prepared research source/.test(finding.message)));
+    } finally { atomicWrite(statePath, before); }
+  }
+  assert.equal(verifyControlledTask(env.root, getRecord(env.root, task.meta.id), 'accepted').ok, true);
 });
 
 test('backend schedules a report-only post-check pass then fresh full independent verification before acceptance', async t => {

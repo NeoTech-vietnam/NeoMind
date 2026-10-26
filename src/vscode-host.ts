@@ -12,6 +12,7 @@ import { ownedContext, type OwnedContext } from './controlled-context.js';
 import { invocationPolicy, invocationConfigurationHashes } from './routing.js';
 import { vscodeProviderDiagnostic } from './vscode-provider-diagnostic.js';
 import { controlledModelInput, controlledResultFailure, controlledLoopState, ControlledFailureLoop } from './controlled-observability.js';
+import { ModelCallProgress, type ModelCallTerminalReason } from './vscode-model-progress.js';
 
 // VS Code is supplied by extension host, not imported into CLI or added as dependency.
 type VSCode = any;
@@ -23,6 +24,7 @@ interface Turn {
   waiting: Map<string, { resolve(value: any): void; reject(error: Error): void }>;
   timer?: NodeJS.Timeout; lastSeen: number; configuration: string; checkpoint: number; observedTool: boolean;
   controlled?: OwnedContext; failureLoop?: ControlledFailureLoop;
+  progress: ModelCallProgress;
 }
 export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): Promise<{ close(): Promise<void> }> {
   if (!vscode.workspace.isTrusted) throw new Error('VS Code Workspace Trust is required.');
@@ -38,9 +40,11 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
       backend_binding: { workflow_id: turn.controlled.binding.workflow_id, task_id: turn.controlled.binding.task_id ?? null,
         invocation_id: turn.invocation }, owner: 'runtime' }); } catch { /* Observability cannot replay a persisted operation. */ }
   }
-  function stop(turn: Turn, state: 'blocked' | 'interrupted', error: string): void {
+  function stop(turn: Turn, state: 'blocked' | 'interrupted', error: string, reason: ModelCallTerminalReason = 'model-or-host-error'): void {
     if (['completed', 'blocked', 'interrupted'].includes(turn.state)) return;
-    turn.state = state; turn.error = error; turn.source.cancel();
+    turn.state = state; turn.error = error;
+    turn.progress.finish(state === 'interrupted' ? 'cancelled' : 'error', reason);
+    turn.source.cancel();
     clearTimeout(turn.timer);
     for (const waiting of turn.waiting.values()) waiting.reject(new Error(error));
     turn.waiting.clear(); turn.events = [];
@@ -71,19 +75,28 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
       const conversation = conversations.get(turn.conversation)!;
       for (let round = 0; round < 128; round++) {
         phase = 'preflight';
+        turn.progress.beginRound(round + 1);
         check(turn);
         if (Buffer.byteLength(bounded(conversation.messages)) > 768000) throw new Error('Conversation limit reached.');
         turn.checkpoint = conversation.messages.length;
         phase = 'request';
+        turn.progress.request();
         const response = await turn.model.sendRequest(conversation.messages, {
           tools: turn.tools, toolMode: vscode.LanguageModelChatToolMode.Auto,
           justification: 'Run explicitly enabled NeoMind workflow using only invocation-bound engineering tools.',
         }, turn.source.token);
         phase = 'response-stream';
+        // This is the SDK response handle, not an HTTP-header or upstream-model attestation.
+        turn.progress.handleReceived();
         const parts: any[] = [], calls: any[] = [];
         let dataBytes = 0;
         for await (const part of response.stream) {
           check(turn, false);
+          turn.progress.part(part instanceof vscode.LanguageModelTextPart ? 'text'
+            : part instanceof vscode.LanguageModelToolCallPart ? 'tool-call'
+            : typeof vscode.LanguageModelDataPart === 'function' && part instanceof vscode.LanguageModelDataPart ? 'data' : 'other',
+          part instanceof vscode.LanguageModelTextPart ? Buffer.byteLength(part.value)
+            : typeof vscode.LanguageModelDataPart === 'function' && part instanceof vscode.LanguageModelDataPart ? part.data.byteLength : 0);
           if (parts.length >= 4096) throw new Error('Response part limit reached.');
           if (part instanceof vscode.LanguageModelTextPart) {
             if (turn.output.length + part.value.length > 64000) throw new Error('Output limit reached.');
@@ -103,9 +116,10 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
         conversation.messages.push(vscode.LanguageModelChatMessage.Assistant(parts));
         if (!calls.length) {
           if (!turn.observedTool) throw new Error('Model did not demonstrate required tool calling.');
-          turn.state = 'completed'; clearTimeout(turn.timer); return;
+          turn.state = 'completed'; turn.progress.endRound(); turn.progress.finish('completed'); clearTimeout(turn.timer); return;
         }
         phase = 'tool-results';
+        turn.progress.executingTools();
         const results = [];
         for (const call of calls) {
           check(turn);
@@ -116,7 +130,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
                 model_input: controlledModelInput(call.name, call.input), code: 'CONTROLLED_TOOL_LOOP',
                 validation: { rule_id: 'controlled.identical_failure_loop', owner: 'runtime',
                   rule: 'Two identical requests already failed the same validation in unchanged runtime state. The third identical request was not dispatched.' } });
-              stop(turn, 'blocked', 'CONTROLLED_TOOL_LOOP: The same semantic request failed the same validation twice in unchanged runtime state. A third identical call was refused before dispatch. Correct the request or reconcile runtime state before resuming.');
+              stop(turn, 'blocked', 'CONTROLLED_TOOL_LOOP: The same semantic request failed the same validation twice in unchanged runtime state. A third identical call was refused before dispatch. Correct the request or reconcile runtime state before resuming.', 'loop-stopped');
               return;
             }
             await traceControlled(turn, { event: 'model-tool-request', tool: call.name, model_input: controlledModelInput(call.name, call.input) });
@@ -126,6 +140,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
             turn.events.push({ call_id: call.callId, name: call.name, input: call.input });
           });
           check(turn);
+          turn.progress.toolResult();
           if (turn.controlled) {
             const validation = controlledResultFailure(result);
             turn.failureLoop!.observe(call.name, call.input, result,
@@ -139,6 +154,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
         conversation.messages.push(vscode.LanguageModelChatMessage.User(results));
         turn.observedTool = true;
         turn.checkpoint = conversation.messages.length;
+        turn.progress.endRound();
       }
       throw new Error('Tool round limit reached.');
     } catch (error) {
@@ -233,6 +249,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
       const turn: Turn = { id, invocation: receipt.id, conversation: conversationId, model: models[0],
         source: new vscode.CancellationTokenSource(), state: 'prepared', output: '', error: null, tools, events: [], waiting: new Map(),
         configuration: canonicalJson(receipt.configuration_hashes), lastSeen: Date.now(), checkpoint: conversation.messages.length, observedTool: false,
+        progress: new ModelCallProgress(root, receipt.id, models[0].id, models[0].vendor),
         ...(controlled ? { controlled, failureLoop: new ControlledFailureLoop() } : {}) };
       turns.set(id, turn);
       return { protocol: bridgeProtocol, host_instance: instance, vendor: models[0].vendor, model: models[0].id,
@@ -244,7 +261,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
     if (operation === 'run') {
       if (turn.state !== 'prepared') throw new Error('Turn already started.');
       turn.state = 'running'; check(turn);
-      turn.timer = setTimeout(() => stop(turn, 'blocked', 'VS Code invocation exceeded 30 minute limit.'), 1800000);
+      turn.timer = setTimeout(() => stop(turn, 'blocked', 'VS Code invocation exceeded 30 minute limit.', 'deadline-exceeded'), 1800000);
       // Respond first: manager receipt and workflow binding must exist before any scoped tool executes.
       setImmediate(() => { void generate(turn); });
       return { state: turn.state };
@@ -260,20 +277,20 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
       turn.waiting.delete(input.call_id); waiting.resolve(input.result);
       return { ok: true };
     }
-    if (operation === 'cancel') { stop(turn, 'interrupted', 'VS Code invocation interrupted.'); return { ok: true }; }
+    if (operation === 'cancel') { stop(turn, 'interrupted', 'VS Code invocation interrupted.', 'owner-cancel'); return { ok: true }; }
     throw new Error('Unknown host operation.');
   });
   instance = server.instance;
   const watchdog = setInterval(() => {
     for (const turn of turns.values()) if (!enabled() || Date.now() - turn.lastSeen > 90000)
-      stop(turn, 'blocked', 'VS Code host lost invocation owner or workspace trust.');
+      stop(turn, 'blocked', 'VS Code host lost invocation owner or workspace trust.', 'owner-or-trust-lost');
   }, 5000);
   watchdog.unref();
   return { close: async () => {
     if (closed) return;
     closed = true;
     clearInterval(watchdog);
-    for (const turn of turns.values()) { stop(turn, 'interrupted', 'VS Code bridge disabled.'); turn.source.dispose(); }
+    for (const turn of turns.values()) { stop(turn, 'interrupted', 'VS Code bridge disabled.', 'host-close'); turn.source.dispose(); }
     turns.clear(); conversations.clear(); await server.close();
   } };
 }

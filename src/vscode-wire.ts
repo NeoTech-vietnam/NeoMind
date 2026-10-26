@@ -35,7 +35,10 @@ function descriptorPath(root: string): string {
   const key = createHash('sha256').update(`${userInfo().username}\0${exactRoot(root)}`).digest('hex');
   return join(tmpdir(), `neomind-vscode-${key}`, 'host.json');
 }
-function privateDirectory(path: string): void {
+/** Internal diagnostic sidecars share the directory already secured by serveHost; no wire API or bearer material. */
+export function hostPrivateDirectory(root: string): string { return join(descriptorPath(root), '..'); }
+/** Apply and verify the same owner-only policy for private Bridge subdirectories. Never exposed as a wire operation. */
+export function secureHostPrivateDirectory(path: string): void {
   let created = false;
   try { mkdirSync(path, { mode: 0o700 }); created = true; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
@@ -143,7 +146,7 @@ export async function serveHost(root: string, dispatch: (operation: string, inpu
   for (const value of Object.values(options.operation_timeouts_ms ?? {})) checkedTimeout(value);
   root = exactRoot(root);
   const path = descriptorPath(root), directory = join(path, '..');
-  privateDirectory(directory);
+  secureHostPrivateDirectory(directory);
   if (existsSync(path)) {
     const old = readHostIfLive(root);
     if (old) throw new Error('VS Code bridge already enabled for this workspace. Disable its existing host first.');

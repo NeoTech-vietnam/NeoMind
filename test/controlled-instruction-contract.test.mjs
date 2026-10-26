@@ -43,6 +43,22 @@ test('planning describes future bindings while an executable producer receives i
   assert.match(producer, /procedure_run/);
 });
 
+test('the planning schema presented over MCP distinguishes native tools, OS processes and each artifact owner', async t => {
+  const { root } = researchFixture(t);
+  const server = createControlledMcpServer(root, binding('planning'), { assertActive() {}, saveReport() {} });
+  const client = new Client({ name: 'documented-planning-boundaries-fixture', version: '1' });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await server.connect(st); await client.connect(ct);
+  t.after(async () => { await client.close(); await server.close(); });
+  const plan = (await client.listTools()).tools.find(tool => tool.name === 'workflow_plan').inputSchema.properties;
+  assert.match(plan.execution_steps.description, /direct local script.*fixed --version/);
+  assert.match(plan.execution_steps.description, /cornell_research_compile and procedure_run are not OS executables/);
+  assert.match(plan.cornell_output_dir.description, /supplies cornell_research_compile directly/);
+  assert.match(plan.outputs.description, /Verifier checker scripts, negative fixtures and verifier-authored reports belong to verification_paths, not outputs/);
+  assert.match(plan.input_paths.description, /hidden canonical templates and validators here, not in preservation_paths/);
+  assert.match(plan.preservation_paths.description, /Hidden skill templates and validator scripts belong in input_paths/);
+});
+
 test('the post-check report assignment receives report-only instructions and no unavailable producer tools', () => {
   const actor = binding('implementation', { evidence_documentation: true,
     implementation_paths: ['docs/final-report.md'], execution_steps: [], procedure_bound: false });

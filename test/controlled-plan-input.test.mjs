@@ -7,7 +7,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createControlledMcpServer, controlledPlanSchema, controlledConsultationRoles } from '../dist/controlled-tools.js';
 import { normalizeControlledPlanInput, controlledConsultationRole } from '../dist/controlled-plan-input.js';
-import { initialize, atomicWrite, loadRecords, hash, safePath } from '../dist/storage.js';
+import { initialize, atomicWrite, createRecord, loadRecords, hash, safePath } from '../dist/storage.js';
+import { prepareControlledCheckEvidence, controlledFingerprints } from '../dist/controlled-acceptance.js';
+import { randomUUID } from 'node:crypto';
 import { ensureRoutingPolicy } from '../dist/routing.js';
 import { enableVSCodeHost } from '../dist/vscode-host.js';
 import { shutdownNative } from '../dist/native.js';
@@ -31,6 +33,79 @@ function plan() {
       negative_controls: [{ title: 'Reject invalid fixture', command: ['node', 'checks/check.mjs', 'checks/bad.json'], expected_exit_code: 1 }] }], risk: 'low' };
 }
 
+test('actual MCP canonicalizes reported Cornell tool steps, checker ownership and exact hidden input metadata before strict plan submission', async t => {
+  const root = fixture(t), directory = 'docs/cornell', prepared = 'src/prepared-cornell.json';
+  const bundle = ['note.md', 'exercises.md', 'answers.md'].map(name => `${directory}/${name}`);
+  const template = '.agents/skills/existing/assets/template.md';
+  writeFileSync(join(root, prepared), JSON.stringify({ topic: 'Existing prepared research content' }));
+  const captured = [], server = createControlledMcpServer(root, { workflow_id: 'BACKEND-WORKFLOW', invocation_id: 'BOUND-NATIVE-CORNELL-PLAN',
+    stage: 'planning', role: 'manager', implementation_paths: [], verification_paths: [] }, {
+    assertActive() {}, saveReport() { return { saved: true }; },
+    submitPlan(value) { captured.push(normalizeControlledPlanInput(root, value)); return { saved: true }; },
+  });
+  const client = new Client({ name: 'actual-captured-native-cornell-plan', version: '1' }), [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(b); await client.connect(a); t.after(async () => { await client.close(); await server.close(); });
+  // Sanitized shape from actual Local requests0143/0144: native tools were put
+  // into OS execution_steps, verifier artifacts into producer outputs, and an
+  // exact skill template into public preservation metadata.
+  const source = { ...plan(), allowed_paths: [directory], verification_paths: ['checks'],
+    outputs: [...bundle, 'checks/check.mjs', 'checks/bad.json'], documentation_paths: [...bundle],
+    cornell_output_dir: directory, input_paths: [], preservation_paths: [prepared, template],
+    checks: [{ title: 'Inspect primary Cornell', argv: ['node', 'checks/check.mjs', directory],
+      baseline_paths: [template, prepared], negative_controls: [{ title: 'Reject wrong Cornell output',
+        argv: ['node', 'checks/check.mjs', 'checks/bad.json'], expected_exit_code: 1 }] }] };
+  const variants = [
+    { title: 'Compile prepared Cornell from file', tool: 'cornell_research_compile', input_path: prepared,
+      parameters: { input_path: prepared }, outputs: bundle },
+    { title: 'Native compiler with bound content', command: ['cornell_research_compile'], output_paths: bundle },
+    { title: 'Native compiler with prepared source', command: ['cornell_research_compile', prepared], output_paths: bundle },
+  ];
+  for (const [index, step] of variants.entries()) {
+    const request = { ...source, execution_steps: [step] }, before = JSON.stringify(request);
+    const result = await client.callTool({ name: 'workflow_plan', arguments: request });
+    assert.equal(result.isError, undefined, JSON.stringify(result));
+    assert.equal(JSON.stringify(request), before, 'Canonicalization must not mutate the original model request.');
+    const normalized = captured.at(-1);
+    assert.deepEqual(normalized.outputs, bundle);
+    assert.deepEqual(normalized.allowed_paths, source.allowed_paths);
+    assert.deepEqual(normalized.verification_paths, source.verification_paths);
+    assert.deepEqual(normalized.documentation_paths, bundle);
+    assert.deepEqual(normalized.input_paths, [template]);
+    assert.deepEqual(normalized.preservation_paths, [prepared]);
+    assert.equal(normalized.cornell_input_path, index === 1 ? undefined : prepared,
+      'An explicit source remains bound; a source-less native marker keeps the author-content interface.');
+    assert.deepEqual(normalized.execution_steps, [], 'Native compilation stays a bound tool, never an invented executable.');
+    assert.deepEqual(normalized.checks[0].command, source.checks[0].argv);
+    assert.deepEqual(normalized.checks[0].negative_controls[0].command, source.checks[0].negative_controls[0].argv);
+    assert.ok(normalized.checks[0].baseline_paths.includes('checks/check.mjs'));
+    assert.ok(normalized.checks[0].negative_controls[0].baseline_paths.includes('checks/bad.json'));
+    assert.deepEqual(normalized.acceptance_criteria, source.acceptance_criteria);
+  }
+  assert.equal(captured.length, 3);
+  const canonical = await client.callTool({ name: 'workflow_plan', arguments: { ...source, execution_steps: [], cornell_input_path: prepared } });
+  assert.equal(canonical.isError, undefined, JSON.stringify(canonical));
+  assert.equal(captured.length, 4);
+  assert.equal(captured.at(-1).cornell_input_path, prepared);
+  assert.deepEqual(captured.at(-1).preservation_paths, [prepared]);
+  assert.deepEqual(captured.at(-1).execution_steps, [], 'Canonical prepared input needs no fictitious OS execution step.');
+  for (const forbidden of [{ cornell_input_sha256: 'f'.repeat(64) }, { cornell_source: { path: prepared, sha256: 'f'.repeat(64) } },
+    { workflow_id: 'forged-workflow' }, { invocation_id: 'forged-invocation' }]) {
+    const forged = await client.callTool({ name: 'workflow_plan', arguments: { ...source, execution_steps: [], cornell_input_path: prepared, ...forbidden } });
+    assert.equal(forged.isError, true, 'Source paths are professional input; hashes and invocation identity are backend-only.');
+  }
+  assert.equal(captured.length, 4);
+  const schema = (await client.listTools()).tools.find(tool => tool.name === 'workflow_plan').inputSchema;
+  assert.equal(schema.properties.cornell_input_path.type, 'string');
+  assert.equal('cornell_input_sha256' in schema.properties, false); assert.equal('cornell_source' in schema.properties, false);
+  assert.ok(schema.properties.checks.items.properties.command);
+  assert.equal('argv' in schema.properties.checks.items.properties, false);
+  assert.ok(schema.properties.execution_steps.items.properties.command);
+  assert.equal('tool' in schema.properties.execution_steps.items.properties, false);
+  assert.equal('parameters' in schema.properties.execution_steps.items.properties, false);
+  assert.equal(existsSync(join(root, '.neomind/controlled/workflows')), false, 'The boundary fixture creates no workflow, task or product files.');
+  assert.equal(readFileSync(join(root, template), 'utf8'), '# Existing readonly template\n');
+});
+
 test('producer execution capability and cross-step output collisions are rejected before freezing any task', t => {
   const root = fixture(t), proposed = { ...plan(), allowed_paths: ['src','docs'], outputs: ['docs/generated.md'] };
   const step = { title: 'One', command: ['node','src/value.mjs'], input_paths: [], output_paths: ['docs/generated.md'] };
@@ -43,6 +118,114 @@ test('producer execution capability and cross-step output collisions are rejecte
   assert.throws(() => normalizeControlledPlanInput(root, { ...proposed,
     execution_steps: [{ ...step, output_paths: ['checks/generated.md'] }] }), /producer|checker|scope/);
   assert.equal(existsSync(join(root, '.neomind/controlled/workflows')), false);
+});
+
+test('referenced verifier outputs retain actual required check baselines while unrelated promised artifacts cannot disappear', t => {
+  const root = fixture(t), source = controlledPlanSchema.parse({ ...plan(), outputs: [...plan().outputs, 'checks/check.mjs', 'checks/bad.json'] });
+  const normalized = normalizeControlledPlanInput(root, source);
+  assert.deepEqual(normalized.outputs, plan().outputs);
+  assert.deepEqual(normalized.allowed_paths, source.allowed_paths); assert.deepEqual(normalized.verification_paths, source.verification_paths);
+  assert.ok(normalized.checks[0].baseline_paths.includes('checks/check.mjs'));
+  assert.ok(normalized.checks[0].negative_controls[0].baseline_paths.includes('checks/bad.json'));
+  assert.deepEqual(normalized.checks[0].command, source.checks[0].command);
+  assert.deepEqual(normalized.checks[0].negative_controls[0].command, source.checks[0].negative_controls[0].command);
+  assert.deepEqual(source.outputs, [...plan().outputs, 'checks/check.mjs', 'checks/bad.json']);
+  assert.throws(() => normalizeControlledPlanInput(root, controlledPlanSchema.parse({ ...source,
+    outputs: [...source.outputs, 'checks/unreferenced-report.md'] })), /not referenced.*without dropping/);
+  initialize(root, { project_id: 'PARTITION-BASELINE' });
+  writeFileSync(join(root, 'checks/check.mjs'), 'process.exit(1);\n');
+  const requirement = createRecord(root, { type: 'requirement', title: 'The independent checker needs its real invalid fixture.', owner: 'manager' });
+  const workflow = createRecord(root, { type: 'knowledge', title: 'Workflow: partitioned check fixture', owner: 'manager',
+    data: { kind: 'manager-workflow', requirement_id: requirement.meta.id } });
+  const task = createRecord(root, { type: 'task', title: 'Bounded fixture check', owner: 'developer', data: { workflow_id: workflow.meta.id } });
+  const run = { workflow_id: workflow.meta.id, epoch_id: randomUUID(), contract_hash: 'a'.repeat(64) };
+  const contract = { task_id: task.meta.id, requirement_ids: [requirement.meta.id] };
+  const negative = normalized.checks[0].negative_controls[0], missing = controlledFingerprints(root, negative.baseline_paths);
+  assert.equal(missing['checks/bad.json'], 'missing');
+  assert.throws(() => prepareControlledCheckEvidence(root, run, contract, negative, missing, null), /hash|missing|SHA-256/i);
+  assert.equal(loadRecords(root).filter(record => record.meta.type === 'evidence').length, 0,
+    'A missing verifier fixture cannot become a passing materialized execution.');
+});
+
+test('only an exact existing safe skill file can move from preservation to read-only input metadata', t => {
+  const root = fixture(t), template = '.agents/skills/existing/assets/template.md';
+  writeFileSync(join(root, 'prior.md'), '# Existing public read-only source\n');
+  const source = controlledPlanSchema.parse({ ...plan(), input_paths: [], preservation_paths: [template, 'prior.md'] });
+  const normalized = normalizeControlledPlanInput(root, source);
+  assert.deepEqual(normalized.input_paths, [template]); assert.deepEqual(normalized.preservation_paths, ['prior.md']);
+  assert.deepEqual(normalized.allowed_paths, source.allowed_paths); assert.deepEqual(normalized.verification_paths, source.verification_paths);
+  for (const path of ['.agents/skills/existing', '.agents/skills/existing/assets', '.agents/skills/existing/assets/secrets.json',
+    '.codex/config.toml', '.vscode/settings.json', '.env', '.agents/skills/existing/assets/missing.md'])
+    assert.throws(() => normalizeControlledPlanInput(root, controlledPlanSchema.parse({ ...source, preservation_paths: [path] })), undefined, path);
+  mkdirSync(join(root, '.agents/skills/existing/assets/directory.md'));
+  assert.throws(() => normalizeControlledPlanInput(root, controlledPlanSchema.parse({ ...source,
+    preservation_paths: ['.agents/skills/existing/assets/directory.md'] })), /ordinary/);
+  assert.equal(readFileSync(join(root, template), 'utf8'), '# Existing readonly template\n');
+  assert.equal(existsSync(join(root, '.neomind')), false);
+});
+
+test('native Cornell normalization retains its prepared source and rejects ambiguous tools, outputs, limits and source ownership', t => {
+  const root = fixture(t), directory = 'docs/cornell', prepared = 'src/prepared.json';
+  const bundle = ['note.md', 'exercises.md', 'answers.md'].map(name => `${directory}/${name}`);
+  writeFileSync(join(root, prepared), JSON.stringify({ topic: 'Prepared semantic research input' }));
+  mkdirSync(join(root, directory)); writeFileSync(join(root, directory, 'owned-input.json'), JSON.stringify({ topic: 'Producer-owned changing data' }));
+  const step = { title: 'Bound native compiler', command: ['cornell_research_compile', prepared], output_paths: bundle };
+  const source = { ...plan(), allowed_paths: [directory], outputs: bundle, cornell_output_dir: directory, input_paths: [], execution_steps: [step] };
+  const normalized = normalizeControlledPlanInput(root, controlledPlanSchema.parse(source));
+  assert.deepEqual(normalized.execution_steps, []);
+  assert.equal(normalized.cornell_input_path, prepared);
+  assert.deepEqual(normalized.preservation_paths, [prepared]);
+  assert.deepEqual(normalized.outputs, bundle); assert.deepEqual(normalized.allowed_paths, source.allowed_paths);
+  assert.deepEqual(normalized.acceptance_criteria, source.acceptance_criteria);
+  assert.deepEqual(normalizeControlledPlanInput(root, normalized), normalized, 'Canonical metadata must be idempotent on resubmission.');
+  for (const invalid of [
+    { cornell_output_dir: undefined },
+    { execution_steps: [{ ...step, output_paths: [...bundle, 'docs/extra.md'] }] },
+    { execution_steps: [{ ...step, output_paths: bundle.slice(0, 2) }] },
+    { execution_steps: [{ ...step, timeout_ms: 10 }] },
+    { execution_steps: [step, { ...step, title: 'Different native input' }] },
+    { execution_steps: [step, { title: 'Local conflicting generator', command: ['node', 'src/value.mjs'], output_paths: [bundle[0]] }] },
+    { execution_steps: [{ ...step, command: ['cornell_research_compile', '.neomind/config.json'] }] },
+    { execution_steps: [{ ...step, command: ['cornell_research_compile', `${directory}/owned-input.json`] }] },
+    { execution_steps: [{ ...step, command: ['cornell_research_compile', '../outside.json'] }] },
+    { execution_steps: [{ ...step, command: ['cornell_research_compile', 'https://example.invalid/input.json'] }] },
+  ]) assert.throws(() => normalizeControlledPlanInput(root, controlledPlanSchema.parse({ ...source, ...invalid })), undefined, JSON.stringify(invalid));
+  assert.equal(controlledPlanSchema.safeParse({ ...source, execution_steps: [{ ...step, command: ['cornell_research_compile', prepared],
+    tool: 'cornell_research_compile', parameters: { input_path: 'src/different.json' } }] }).success, false);
+  assert.equal(controlledPlanSchema.safeParse({ ...source, execution_steps: [{ ...step, tool: 'cornell_research_compile',
+    parameters: { input_path: prepared, shell: 'unexpected' } }] }).success, false);
+  assert.equal(controlledPlanSchema.safeParse({ ...source, execution_steps: [{ ...step, tool: 'cornell_research_compile',
+    workflow_id: 'forged-identity' }] }).success, false);
+  const conflictingCheck = { ...plan().checks[0], argv: ['node', 'checks/different.mjs'] };
+  assert.equal(controlledPlanSchema.safeParse({ ...source, checks: [conflictingCheck] }).success, false);
+  assert.equal(existsSync(join(root, '.neomind')), false);
+});
+
+test('queued normalized Cornell plans retain exactly one canonical source path and revalidate its read-only authority', t => {
+  const root = fixture(t), directory = 'docs/cornell', first = 'src/first.json', second = 'src/second.json';
+  const bundle = ['note.md', 'exercises.md', 'answers.md'].map(name => `${directory}/${name}`);
+  for (const path of [first, second]) writeFileSync(join(root, path), JSON.stringify({ topic: 'Prepared compiler source' }));
+  const marker = { title: 'Explicit native source', command: ['cornell_research_compile', first], output_paths: bundle };
+  const submitted = controlledPlanSchema.parse({ ...plan(), allowed_paths: [directory], outputs: bundle, input_paths: [],
+    cornell_output_dir: directory, execution_steps: [marker] });
+  const pending = normalizeControlledPlanInput(root, submitted), before = JSON.stringify(pending);
+  assert.equal(pending.cornell_input_path, first); assert.deepEqual(pending.execution_steps, []);
+  const canonical = controlledPlanSchema.parse({ ...submitted, execution_steps: [], cornell_input_path: first });
+  assert.deepEqual(normalizeControlledPlanInput(root, canonical), pending,
+    'Canonical source paths and compatibility markers bind the same prepared data.');
+  assert.throws(() => normalizeControlledPlanInput(root, { ...canonical, cornell_output_dir: undefined }), /actual bound output directory/);
+  assert.deepEqual(normalizeControlledPlanInput(root, pending), pending);
+  assert.equal(JSON.stringify(pending), before);
+  assert.equal(controlledPlanSchema.safeParse(pending).success, true,
+    'A canonical source path can be resubmitted without constructing source hashes or internal identity.');
+  assert.throws(() => normalizeControlledPlanInput(root, { ...pending, execution_steps: [{ ...marker, command: ['cornell_research_compile', second] }] }), /conflicting prepared sources/);
+  assert.throws(() => normalizeControlledPlanInput(root, { ...submitted,
+    execution_steps: [{ ...marker, input_paths: [first, second] }] }), /one unambiguous/);
+  assert.throws(() => normalizeControlledPlanInput(root, { ...pending, cornell_input_path: '.neomind/config.json' }), /public read-only|managed storage/);
+  writeFileSync(join(root, first), '{');
+  assert.throws(() => normalizeControlledPlanInput(root, pending), /valid UTF-8 JSON object/);
+  assert.equal(JSON.stringify(pending), before, 'Failed revalidation must not rewrite the retained source or preservation contract.');
+  assert.equal(existsSync(join(root, '.neomind')), false);
 });
 
 test('actual owning planner MCP canonicalizes terminal scope separators before checker baselines and frozen-plan validation', async t => {
@@ -110,7 +293,7 @@ test('actual controlled MCP accepts semantic plans without baseline bookkeeping 
   const check = schema.properties.checks.items;
   assert.ok(check.required.includes('negative_controls')); assert.equal(check.required.includes('baseline_paths'), false);
   assert.match(schema.properties.input_paths.description, /Ordinary public source paths are already readable/);
-  assert.match(schema.properties.preservation_paths.description, /Narrow existing files/);
+  assert.match(schema.properties.preservation_paths.description, /Narrow existing public files/);
   const source = plan(), before = JSON.stringify(source);
   const response = await client.callTool({ name: 'workflow_plan', arguments: source });
   assert.equal(response.isError, undefined, JSON.stringify(response)); assert.equal(captured.length, 1);

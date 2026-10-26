@@ -430,7 +430,8 @@ class Controller {
       if (obligations.registration && !plan.procedure_candidate) throw new Error('Original acceptance requires a planned reusable procedure candidate using the actual producer and checker scripts.');
       if (obligations.intended_use && !plan.checks.some(check => check.purpose === 'intended-use' && !original.plan.checks.some(old => same(old.command, check.command))))
         throw new Error('Original acceptance needs a separate intended-use pilot check; keep the original fixture self-check and add purpose intended-use with its own checker argv.');
-      if (obligations.preservation && !plan.preservation_paths?.length) throw new Error('Declare the existing exercise/asset preservation paths; backend fingerprints them before work.');
+      if (obligations.preservation && !plan.preservation_paths?.length && !plan.input_paths?.length)
+        throw new Error('Declare the existing exercise/asset preservation paths or exact approved skill inputs; backend fingerprints them before work.');
     }
     if (run.contract_hash) {
       const prior = readContract(this.root, run);
@@ -642,6 +643,10 @@ class Controller {
       const specialist = specialistIndex >= 0 ? contract!.plan.specialists![specialistIndex] : undefined;
       const stage = specialist ? 'diagnosis' : run.phase === 'intake' ? 'planning' : run.phase;
       const documentation = stage === 'implementation' ? run.pending_documentation : undefined;
+      const primarySourcePath = stage === 'implementation' && !documentation ? contract?.plan.cornell_input_path : undefined;
+      const primarySourceHash = primarySourcePath ? contract?.preserved_hashes[primarySourcePath] : undefined;
+      if (primarySourcePath && (!primarySourceHash || !/^[a-f0-9]{64}$/.test(primarySourceHash)))
+        throw new ControlledToolError('STATE_UNCERTAIN', 'The prepared primary Cornell source lost its immutable input fingerprint.');
       if (documentation && (!contract || !same(documentation, pendingEvidenceDocumentation(run, contract))))
         throw new ControlledToolError('STATE_UNCERTAIN', 'The post-check documentation assignment no longer matches its original producer and actual check checkpoint.');
       const documentationGuard = documentation && contract ? assertEvidenceDocumentationAuthority(this.root, run, contract, documentation) : undefined;
@@ -665,6 +670,7 @@ class Controller {
         stage, role, implementation_paths: documentation?.paths ?? contract?.plan.allowed_paths ?? [], verification_paths: contract?.plan.verification_paths ?? [],
         ...(documentation ? { evidence_documentation: true, evidence_documentation_source_hash: hash(canonicalJson(documentation)) } : {}),
         cornell_bound: !documentation && !!(stage === 'synthesis' ? contract?.knowledge_directory : contract?.plan.cornell_output_dir),
+        ...(primarySourcePath ? { cornell_source: { path: primarySourcePath, sha256: primarySourceHash! } } : {}),
         cornell_starter_allowed: stage === 'synthesis' || !!contract?.plan.cornell_output_dir &&
           contract.plan.outputs.includes(`${contract.plan.cornell_output_dir}/practice-solution.md`),
         ...(documentation ? { execution_steps: [] } : contract?.plan.execution_steps === undefined ? {} : { execution_steps: contract.plan.execution_steps }),
@@ -829,6 +835,9 @@ class Controller {
         compileResearch: (input, source) => {
           assertActive();
           if (source) assertControlledPayloadCurrent(this.root, source);
+          const primarySource = stage === 'implementation' ? contract?.plan.cornell_input_path : undefined;
+          if (primarySource && (source?.path !== primarySource || source.sha256 !== contract?.preserved_hashes[primarySource]))
+            throw new ControlledToolError('INPUT_CHANGED', 'Primary Cornell compilation must consume its exact backend-bound prepared source and immutable fingerprint.');
           const directory = stage === 'synthesis' ? contract?.knowledge_directory : contract?.plan.cornell_output_dir;
           if (!directory) throw new ControlledToolError('NO_CORNELL_OUTPUT', 'The immutable plan does not include a Cornell research bundle.');
           const requirement = getRecord(this.root, contract!.requirement_ids[0]!);
@@ -859,7 +868,8 @@ class Controller {
             const solutionCreated = !!solutionPath && !solutionExisted && existsSync(safePath(this.root, solutionPath));
             const current = readState(this.root, id); current.cornell_note_ids = [...new Set([...(current.cornell_note_ids ?? []), note.meta.id])];
             if (!current.cornell_results?.some(result => result.note_id === note.meta.id && result.input_hash === compiled.input_hash &&
-                result.record_fingerprint === evidenceRecordFingerprint(note)))
+                result.record_fingerprint === evidenceRecordFingerprint(note) &&
+                result.payload_source?.path === source?.path && result.payload_source?.sha256 === source?.sha256))
               current.cornell_results = [...(current.cornell_results ?? []), { ...controlledCornellResult(compiled, note),
                 ...(source ? { payload_source: source } : {}) }];
             save(this.root, current, 'cornell-compiled', 'Research note, exercises and separate answers compiled by the existing Cornell formatter.');

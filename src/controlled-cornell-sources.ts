@@ -6,6 +6,7 @@ import { validateCornellNote, type CornellSource } from './notes.js';
 import { atomicWrite, hash, loadRecords, now, safePath, withOperationLock } from './storage.js';
 import type { ProjectRecord } from './types.js';
 import { evidenceRecordFingerprint } from './evidence-inputs.js';
+import type { ControlledPayloadSource } from './controlled-payload.js';
 
 // Public modules can reach this helper through the engineering/controller graph
 // while Cornell's module is still initializing. Resolve its authoritative schema
@@ -82,6 +83,7 @@ export interface ControlledCornellSourceContext {
 export interface ControlledCornellResult {
   note_id: string; input_hash: string; compiled_note_hash: string;
   record_fingerprint: string; artifact_hashes: Record<string, string>;
+  payload_source?: ControlledPayloadSource;
 }
 export function controlledCornellResult(compiled: CompiledCornellResearch, note: ProjectRecord): ControlledCornellResult {
   return { note_id: note.meta.id, input_hash: compiled.input_hash, compiled_note_hash: hash(JSON.stringify(compiled.note)),

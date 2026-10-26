@@ -8,8 +8,9 @@ import { registerProcedureSchema, procedureInputContractHint } from './procedure
 import { controlledModelInput, controlledValidation, redactControlledValue } from './controlled-observability.js';
 import { controlledCornellResearchSchema } from './controlled-cornell-sources.js';
 import { controlledRuntimeGuide, controlledGuidePath, controlledRuntimeQuerySchema, type ControlledRuntimeQuery } from './controlled-runtime-context.js';
-import { controlledExecutionSchema, controlledExecutionDeclarationSchema, type ControlledExecutionInput, type ControlledExecutionDeclaration } from './controlled-execution.js';
+import { controlledExecutionSchema, type ControlledExecutionInput, type ControlledExecutionDeclaration } from './controlled-execution.js';
 import { controlledPayloadSchema, resolveControlledPayload, assertControlledPayloadCurrent, ControlledPayloadError, type ControlledPayloadSource } from './controlled-payload.js';
+import { controlledPlanExecutionStepSubmissionSchema, controlledPlanCheckSubmissionSchema } from './controlled-plan-submission.js';
 
 export type ControlledStage = 'planning' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
 export type ControlledReviewPurpose = 'checker-readiness' | 'final-product';
@@ -26,6 +27,8 @@ export interface ControlledBinding {
   procedure_bound?: boolean;
   cornell_starter_allowed?: boolean;
   cornell_bound?: boolean;
+  /** Backend-only primary compiler source from the immutable contract. */
+  cornell_source?: { path: string; sha256: string };
   evidence_documentation?: boolean;
   evidence_documentation_source_hash?: string;
 }
@@ -35,28 +38,32 @@ export const controlledPlanSchema = z.strictObject({
   title: text.max(256), objective: text, rationale: text,
   acceptance_criteria: z.array(text).min(1).max(32),
   allowed_paths: paths.min(1).describe('Producer-owned implementation files or directories, disjoint from verification_paths. Use project-relative paths.'),
-  verification_paths: paths.min(1).describe('Verifier-owned checker scripts and negative fixtures, disjoint from producer paths. Directory scopes are allowed. The backend derives checker baselines from actual check argv.'),
-  outputs: paths.min(1).describe('Producer deliverables only, within allowed_paths. Do not include verifier checker scripts or negative fixtures; those belong to verification_paths and are captured by backend check baselines.'),
-  documentation_paths: paths.default([]),
+  verification_paths: paths.min(1).describe('Verifier-owned checker scripts, negative fixtures and verifier-authored reports, disjoint from producer paths. Directory scopes are allowed. Declare the checker here and in checks[].command, not in producer outputs. The backend captures its baseline.'),
+  outputs: paths.min(1).describe('Producer deliverables only, within allowed_paths: product code, requested notes and producer documentation. Verifier checker scripts, negative fixtures and verifier-authored reports belong to verification_paths, not outputs; backend check baselines and the Verifier report retain those artifacts.'),
+  documentation_paths: paths.default([]).describe('Producer-authored documentation within allowed_paths. Read-only source references and Verifier-owned checker reports are not producer documentation outputs.'),
   evidence_report_paths: paths.optional().describe('Final factual execution reports written after independent checks. Exact paths must also be producer outputs and documentation_paths; primary Cornell note/exercises/answers remain their own deliverables. Backend schedules this documentation handoff and fresh verification without a failed-review retry.'),
-  execution_steps: z.array(z.lazy(() => controlledExecutionDeclarationSchema)).max(16).optional().describe('Declare each producer script/version operation needed for this plan. Use exact local argv, readable inputs and producer-owned new outputs. Backend validates executable/tool/scope compatibility before freezing; implementation supplies prepared JSON input to task_run. Independent acceptance remains check_run under Verifier.'),
-  checks: z.array(z.strictObject({ title: text.max(256),
+  execution_steps: z.array(controlledPlanExecutionStepSubmissionSchema()).max(16).optional().describe('Only direct local script execution or fixed --version observations, using OS argv such as ["node","scripts/generate.mjs"] or ["python","scripts/check_notes.py"]. Native tools cornell_research_compile and procedure_run are not OS executables and must not be command[0]. Request Cornell with cornell_output_dir and eligible procedure reuse with reuse; the backend supplies those tools separately. For a direct script, declare exact argv and producer-owned new outputs. Implementation sends prepared JSON to task_run; independent acceptance remains check_run under Verifier.'),
+  checks: z.array(controlledPlanCheckSubmissionSchema(z.strictObject({ title: text.max(256),
     purpose: z.enum(['self-check', 'intended-use']).optional(),
     after_evidence_reports: z.boolean().optional().describe('A check of the final factual report, deferred until actual product-check evidence is available and the report has been written. Declare at least one nondeferred product check first. Final acceptance still requires this check and its negative controls through a fresh Verifier.'),
     command: z.array(z.string().min(1).max(8000)).min(2).max(128).describe('Exact argument array [executable, verifier-owned-checker-script, ...inputs]. The checker script must be inside verification_paths. Negative controls invoke this same executable and script with deliberately invalid verifier-owned inputs.'),
     baseline_paths: paths.default([]).describe('Optional additional check inputs within write scopes, or exact existing ordinary files under public preservation_paths or approved hidden input_paths. Read-only baselines must name needed files, not directories; never move them into write scopes merely to capture them. The backend adds delivered outputs and actual checker argv paths before freezing a new plan; committed check baselines remain unchanged.'), expected_exit_code: z.number().int().min(0).max(255).optional(),
     timeout_ms: z.number().int().min(1).max(600000).optional(),
-    negative_controls: z.array(z.strictObject({ title: text.max(256),
+    negative_controls: z.array(controlledPlanCheckSubmissionSchema(z.strictObject({ title: text.max(256),
       command: z.array(z.string().min(1).max(8000)).min(2).max(128),
       baseline_paths: paths.default([]).describe('Optional additional fixture/dependency inputs within write scopes, or exact existing ordinary files under public preservation_paths or approved hidden input_paths. Read-only baselines name files, not directories, and do not become writable. The backend adds the independent checker and verifier-owned fixture argv paths.'), expected_exit_code: z.number().int().min(1).max(255),
-    })).min(1).max(16).describe('Required for every check in the current process contract, including intended-use checks. Declare actual failing fixtures or --negative-control cases for the same independent checker; expected_exit_code must be nonzero.'),
-  })).min(1).max(16),
+    }))).min(1).max(16).describe('Required for every check in the current process contract, including intended-use checks. Declare actual failing fixtures or --negative-control cases for the same independent checker; expected_exit_code must be nonzero.'),
+  }))).min(1).max(16),
   risk: z.enum(['low', 'elevated', 'high']).optional(),
-  reuse: z.strictObject({ procedure_id: text.max(80), version: text.max(80).optional(), parameters: z.record(z.string(), z.unknown()) }).optional(),
+  reuse: z.strictObject({ procedure_id: text.max(80), version: text.max(80).optional(), parameters: z.record(z.string(), z.unknown()) }).optional()
+    .describe('A currently eligible procedure selected through work_prepare. The backend supplies its bound procedure_run tool; this is not an OS command or execution_steps entry.'),
   procedure_candidate: registerProcedureSchema.omit({ id: true, version: true, author: true }).optional().describe('Reusable FUTURE-RUN manifest. script/verification_script/dependencies are tool INPUTS delivered or reused here. outputs are future generated exercise/note/report files, often destination-parameterized; they are NOT the delivered plan.outputs or executable scripts. Generated outputs must be new and covered by nonempty effects.write_roots. Backend supplies registration identity; do not invent IDs.'),
-  cornell_output_dir: z.string().min(1).max(1024).optional(),
-  input_paths: paths.optional().describe('Exact hidden read-only skill assets/scripts only: .agents/skills/<skill>/(assets|scripts)/<file> or .github/skills/<skill>/(assets|scripts)/<file>. Ordinary public source paths are already readable and need no approval. Never list private client configuration, credentials or entire hidden directories.'),
-  preservation_paths: paths.optional().describe('Narrow existing files or small trees that must remain unchanged, outside producer/checker write scopes. Prefer exact exercised files and canonical template/validator assets; avoid repository roots, dependency trees and caches. These are preservation baselines, not extra read or write permissions.'),
+  cornell_output_dir: z.string().min(1).max(1024).optional()
+    .describe('Requested primary Cornell bundle directory; include its note.md, exercises.md and answers.md in producer outputs. Backend supplies cornell_research_compile directly. Do not add the native tool as an execution_steps command.'),
+  cornell_input_path: z.string().min(1).max(1024).optional()
+    .describe('Existing public prepared research JSON for the primary Cornell bundle, outside every write scope. Backend preserves its bytes, binds its frozen hash and loads it for the Implementer automatically. Use this semantic source path instead of a native compiler execution_steps entry; do not supply hashes or identities.'),
+  input_paths: paths.optional().describe('Exact hidden read-only skill assets/scripts only: .agents/skills/<skill>/(assets|scripts)/<file> or .github/skills/<skill>/(assets|scripts)/<file>. Put hidden canonical templates and validators here, not in preservation_paths; the backend fingerprints these inputs too. Ordinary public source paths are already readable and need no approval. Never list private client configuration, credentials or entire hidden directories.'),
+  preservation_paths: paths.optional().describe('Narrow existing public files or small public trees that must remain unchanged, outside producer/checker write scopes. Hidden skill templates and validator scripts belong in input_paths instead. Prefer exact exercised files and public canonical assets; avoid repository roots, dependency trees and caches. These baselines grant no extra read or write permissions.'),
   specialists: z.array(z.strictObject({ role: z.enum(controlledConsultationRoles)
     .describe('Optional bounded consultation role only. Reviewer and Verifier are backend-owned workflow stages, not consultation roles.'),
     objective: text })).max(4).optional().describe('Optional consultations for a concrete expert question. Do not add Reviewer or Verifier here; the backend preserves and schedules all required independent verification, pre-check review and final review gates.'),
@@ -199,7 +206,7 @@ export function controlledInstructions(binding: ControlledBinding): string {
     `Available operations: ${[...available].join(', ')}. Their actor, workflow, task, scope and authorization are already bound by the runtime. Supply semantic content and project-relative file paths.\n` +
     'Your bound worker already executes through the enabled Bridge. runtime_context supplies one session snapshot when execution facts are needed; after preflight_complete, continue professional work without repeating unchanged queries. Optional executable paths must come from actual project configuration or documentation; never guess locations. Missing optional toolchains do not invalidate the session. Existing AGENTS/profile setup instructions address the parent intake client; credentials and workflow IDs remain private.\n' +
     (binding.stage === 'planning'
-      ? 'Declare execution_steps for required producer script operations. Bind reuse {procedure_id,version,parameters} only after work_prepare reports exact eligibility. For newly delivered reusable scripts declare procedure_candidate (manifest without id/version/author); runtime registers it after checked completion without claiming qualification. For requested Cornell notes declare cornell_output_dir and all three note.md/exercises.md/answers.md outputs. When a requested final execution report needs actual independent results, declare its exact evidence_report_paths within both outputs and documentation_paths. The backend schedules report completion after a verification checkpoint and then fresh verification; keep the primary Cornell trio out of these report paths.\n'
+      ? 'Declare execution_steps only for required direct local scripts or fixed version observations. Native cornell_research_compile and procedure_run tools are not OS executables: request them through cornell_output_dir or eligible reuse, not command argv. Keep producer outputs separate from checker/fixture/report files in verification_paths. Put exact hidden skill assets and validators in input_paths; preservation_paths describes public unchanged files. Bind reuse {procedure_id,version,parameters} only after work_prepare reports exact eligibility. For newly delivered reusable scripts declare procedure_candidate (manifest without id/version/author); runtime registers it after checked completion without claiming qualification. For requested Cornell notes declare cornell_output_dir and all three note.md/exercises.md/answers.md outputs. If research is supplied as a prepared JSON file, name cornell_input_path; backend binds and loads that exact source for the worker. When a requested final execution report needs actual independent results, declare its exact evidence_report_paths within both outputs and documentation_paths. The backend schedules report completion after a verification checkpoint and then fresh verification; keep the primary Cornell trio out of these report paths.\n'
       : '') +
     (available.has('task_run')
       ? 'Use task_run for a scoped direct local execution bound to your plan. For prepared JSON data, supply its project-relative input_path with the declared step title; the backend reads and parses it. Use input only for directly authored semantic data. Direct execution is separate from qualified automatic procedure reuse and never qualifies a registry candidate.\n'
@@ -208,7 +215,9 @@ export function controlledInstructions(binding: ControlledBinding): string {
       ? 'Use procedure_run for the saved qualified procedure rather than recreating its generator. The backend binds its identity, execution key and output paths.\n'
       : '') +
     (available.has('cornell_research_compile')
-      ? 'Use cornell_research_compile for the requested Cornell bundle with substantive research content; its output folder and provenance are backend-bound. When the semantic research is already saved as scoped JSON, send only {input_path:"project/prepared-research.json"}; the backend reads and parses the current file. Direct research fields are a separate form for new content. Preserve real prose newlines and literal escape sequences in examples rather than copying serialized tool text or rewriting escapes.\n'
+      ? binding.cornell_source
+        ? `The primary Cornell source is already backend-bound to ${binding.cornell_source.path}. Call cornell_research_compile with {} or its exact input_path; do not copy, rewrite or override the prepared research. Backend verifies the frozen input hash and supplies the content.\n`
+        : 'Use cornell_research_compile for the requested Cornell bundle with substantive research content; its output folder and provenance are backend-bound. When the semantic research is already saved as scoped JSON, send only {input_path:"project/prepared-research.json"}; the backend reads and parses the current file. Direct research fields are a separate form for new content. Preserve real prose newlines and literal escape sequences in examples rather than copying serialized tool text or rewriting escapes.\n'
       : '') +
     (binding.stage === 'planning' || available.has('procedure_run') ? procedureInputContractHint() : '') +
     'Before ending, save one compact assignment_report with outcome, summary, artifacts and findings. A blocked or failed report preserves useful work and does not submit a task. Reported prose is distinct from observed execution evidence. Runtime events supply progress and advance the workflow; focus on the assigned work.';
@@ -501,14 +510,24 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
   }
   if (['implementation', 'synthesis'].includes(binding.stage) && !binding.evidence_documentation && binding.cornell_bound !== false) {
     const researchSchema = controlledCornellResearchSchema(binding.stage === 'synthesis', binding.stage === 'synthesis' || binding.cornell_starter_allowed === true);
+    const boundSource = binding.stage === 'implementation' ? binding.cornell_source : undefined;
+    const compile = (input: Record<string, unknown>, source?: ControlledPayloadSource) => {
+      if (!callbacks.compileResearch) throw new ControlledToolError('NO_CORNELL_OUTPUT', 'The plan does not request Cornell output.');
+      if (boundSource && (source?.path !== boundSource.path || source.sha256 !== boundSource.sha256))
+        throw new ControlledToolError('INPUT_CHANGED', 'The prepared primary Cornell source differs from its immutable backend binding.');
+      return callbacks.compileResearch(input, source);
+    };
+    if (boundSource) {
+      register('cornell_research_compile', 'Compile the prepared primary Cornell source already bound by the backend. Call with {} or its exact input_path; the backend supplies the content and detects source changes. Do not copy or override research fields.',
+        z.strictObject({ input_path: z.literal(boundSource.path).optional() }), false,
+        () => prepared(researchSchema, { input_path: boundSource.path }, compile));
+    } else {
     register('cornell_research_compile', binding.stage === 'implementation'
       ? 'Compile the primary research deliverable with an expected worked example and separate questions/answers inside the assigned folder. Independent Verifier runs next. Observed-result fields and evidence identities are backend-owned at this stage; do not submit placeholder observations.'
       : 'Compile post-verification research using actual current independent evidence, with separate questions and answers inside the assigned note folder.',
       controlledPayloadSchema(researchSchema), false,
-      args => prepared(researchSchema, args, (input, source) => {
-        if (!callbacks.compileResearch) throw new ControlledToolError('NO_CORNELL_OUTPUT', 'The plan does not request Cornell output.');
-        return callbacks.compileResearch(input, source);
-      }));
+      args => prepared(researchSchema, args, compile));
+    }
   }
   register('assignment_report', 'Persist one substantive compact result. Incomplete findings are retained without submitting the task.',
     controlledPayloadSchema(controlledReportSchema), false, args => prepared(controlledReportSchema, args, (report, source) => {

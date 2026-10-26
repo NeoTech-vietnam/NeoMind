@@ -4,6 +4,8 @@ Use this path when the project explicitly configures `execution_mode: neomind-co
 
 ## Backend-owned session
 
+Prepared Cornell research uses `workflow_plan.cornell_input_path` with `cornell_output_dir`. This names professional source data; the backend supplies its hash, source binding and compiler payload. The bound Implementer calls `cornell_research_compile({})` without copying or overriding the source. Native compiler tools are not operating-system commands.
+
 An explicit runtime role/stage packet and bound semantic tools identify this branch. Follow that packet and use the supplied tools for saved context, ordinary project files and the assigned operation. Runtime identities, credentials, authorization and lifecycle remain backend-owned. A generated profile name or project instruction file alone does not establish this context.
 
 Workspace Trust, model-access consent and client MCP discovery belong to client setup. The host enforces them during worker dispatch. Report a specific observed host/tool failure; reading a private `.neomind` guide or configuration is not a prerequisite for an active assignment. When project `AGENTS.md`, generated profiles or other source files describe the client entrypoint, apply those instructions to client intake and continue the worker assignment from its backend-provided state. Private path guards remain in force.
@@ -11,6 +13,12 @@ Workspace Trust, model-access consent and client MCP discovery belong to client 
 The `runtime_context` result supplies current-session observations and toolchain discovery from the enabled host's PATH. Successful observations establish the current preflight checkpoint; work then proceeds with the assigned implementation, independent verification or review. Optional absolute executable paths come from actual project configuration or documentation. An invalid optional path produces a diagnostic for that tool while authoritative session context and other observations remain available. A toolchain is required only when the assigned operation needs it.
 
 Use the operations advertised for this invocation. Planning describes future execution bindings; an implementation session can execute only the steps and procedure actually supplied to it. A read-only review inspects artifacts and evidence and returns its verdict. Each role saves one compact `assignment_report` when its professional work is ready; runtime events and the saved report drive the next stage.
+
+## Planning boundaries
+
+`execution_steps` describes direct OS processes, such as `node scripts/generate.mjs`, or fixed version observations. The native `cornell_research_compile` and `procedure_run` tools are supplied through the declared Cornell destination or eligible reuse binding; their tool names are not executable argv. A plan needing only those bound tools has no corresponding local-process step.
+
+Producer `outputs` lists product code, requested notes and producer documentation. Checker scripts, negative fixtures and verifier-authored reports stay in `verification_paths` and the independent check contract. Exact hidden skill templates and validator sources belong to read-only `input_paths`; `preservation_paths` identifies existing public files to keep unchanged. Both input groups are fingerprinted by the backend without making them writable.
 
 ## Prepared payloads
 

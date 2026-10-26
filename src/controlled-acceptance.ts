@@ -455,6 +455,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
         if (!generated || generated.input_hash !== research?.input_hash || generated.record_fingerprint !== evidenceRecordFingerprint(note) ||
             !same(generated.artifact_hashes, note.meta.data.artifact_hashes))
           throw new Error('Cornell output lacks its current task\'s intact backend generation result.');
+        return generated;
       };
       if (contract.knowledge_directory) {
         const positive = checks.filter(check => !check.negative).map(check => check.evidence_id!);
@@ -490,7 +491,11 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
               practice?.exercise_path !== paths.rendered[1] || practice?.answer_path !== paths.rendered[2] || !artifacts ||
               !same(Object.keys(artifacts).sort(), [...paths.rendered].sort()))
             throw new Error('Primary Cornell output must be the valid same-workflow bundle declared by this task.');
-          assertGenerated(note);
+          const generated = assertGenerated(note);
+          if (contract.plan.cornell_input_path &&
+              (generated.payload_source?.path !== contract.plan.cornell_input_path ||
+                generated.payload_source.sha256 !== contract.preserved_hashes[contract.plan.cornell_input_path]))
+            throw new Error('Primary Cornell output did not consume its immutable prepared research source.');
           const current = budget.fingerprints(paths.all);
           if (paths.rendered.some(path => artifacts[path] !== current[path]) ||
               paths.all.some(path => !positive.some(check => check.baseline[path] === current[path])) ||
