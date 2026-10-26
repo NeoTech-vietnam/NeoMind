@@ -107,6 +107,7 @@ import {
 } from './recipes.js';
 import { managedRun, type ManagedRunInput } from './managed.js';
 import { controlledStatus, controlControlledWorkflow, hasControlledWorkflow } from './controlled-workflow.js';
+import { ControlledIntakeDeliveryError } from './controlled-intake-delivery.js';
 import { controlledCommandReceipt, isControlledCommandSnapshot } from './controlled-command-receipt.js';
 import { workspaceWrite } from './workspace.js';
 import { checkpointLightweight } from './lightweight.js';
@@ -891,7 +892,9 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
             ...output({ error: error instanceof Error ? error.message : String(error),
               ...(error instanceof AssignmentRuntimeError ? { code: error.code, phase: error.phase,
                 retryable: error.retryable, next_action: error.next_action } : {}),
-              ...(error instanceof AssignmentContextError ? { code: error.code, retryable: false, next_action: error.next_action } : {}) }),
+              ...(error instanceof AssignmentContextError ? { code: error.code, retryable: false, next_action: error.next_action } : {}),
+              ...(error instanceof ControlledIntakeDeliveryError ? { code: error.code, owner: error.owner,
+                request_id: error.request_id, retryable: error.retryable, next_action: error.next_action } : {}) }),
             isError: true,
           };
         }
@@ -1218,6 +1221,7 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
         // Select a legacy ID explicitly to inspect its original acceptance.
         legacy_workflows: loadRecords(root).filter(record => record.meta.data.kind === 'manager-workflow' &&
           !hasControlledWorkflow(root, record.meta.id)).map(record => ({ workflow_id: record.meta.id, title: record.meta.title,
+            ...(typeof record.meta.data.request_id === 'string' ? { request_id: record.meta.data.request_id } : {}),
             execution_mode: record.meta.data.execution_mode, phase: record.meta.data.phase, validation: 'not-evaluated' })),
       } : Object.assign({}, workflowStatus(root, i.workflow_id), { controlled_workflows: controlledStatus(root) }),
   );

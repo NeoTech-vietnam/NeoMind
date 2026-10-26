@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 export const bridgeLimit = 1024 * 1024;
 export const bridgeProtocol = 'neomind-vscode-lm-v1';
 export interface HostDescriptor { protocol: string; root: string; port: number; token: string; instance: string; pid: number }
-type HostOperation = 'open' | 'run' | 'poll' | 'result' | 'cancel';
+type HostOperation = 'open' | 'run' | 'poll' | 'result' | 'cancel' | 'controlled-start' | 'controlled-control' | 'controlled-status';
 /** Trusted process configuration; never read these budgets from a wire request body. */
 export interface BridgeTimeoutOptions {
   connect_timeout_ms?: number;
@@ -38,6 +38,9 @@ function refused(status?: number): Error {
 const operationTimeouts: Record<HostOperation, number> = {
   // Selection and signed result validation include bounded filesystem/model-discovery work.
   open: 30000, result: 30000,
+  // Durable admission and controls validate current project records and commit
+  // their checkpoint before acknowledging. They are not model polling calls.
+  'controlled-start': 30000, 'controlled-control': 30000, 'controlled-status': 15000,
   // Model generation runs asynchronously; these operations return control metadata only.
   run: 15000, poll: 15000, cancel: 5000,
 };

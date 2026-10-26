@@ -269,11 +269,6 @@ function beginWorkflowClaimed(root: string, input: WorkflowInput): ProjectRecord
       data: { intake_workflow_id: parent.meta.id, acceptance_criteria: [], source: 'user-request' },
       body: `# Stakeholder requirement\n${requirement}\n\n# Acceptance criteria\nRefine measurable criteria from the request and clarification.\n`,
     });
-  if (parent.meta.data.requirement_id !== rootRequirement.meta.id)
-    parent = updateRecord(root, parent.meta.id, {
-      data: { requirement_id: rootRequirement.meta.id },
-      links: [{ type: 'documents', target: rootRequirement.meta.id }],
-    });
   const leaves: string[] = [];
   if (requirements.length > 1) {
     for (const [index, item] of requirements.entries()) {
@@ -300,9 +295,10 @@ function beginWorkflowClaimed(root: string, input: WorkflowInput): ProjectRecord
       leaves.push(leaf.meta.id);
     }
   } else leaves.push(rootRequirement.meta.id);
-  if (JSON.stringify(parent.meta.data.requirement_ids) !== JSON.stringify(leaves))
+  if (parent.meta.data.requirement_id !== rootRequirement.meta.id ||
+      JSON.stringify(parent.meta.data.requirement_ids) !== JSON.stringify(leaves))
     parent = updateRecord(root, parent.meta.id, {
-      data: { requirement_ids: leaves },
+      data: { requirement_id: rootRequirement.meta.id, requirement_ids: leaves },
       links: [
         { type: 'documents', target: rootRequirement.meta.id },
         ...leaves

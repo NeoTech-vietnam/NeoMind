@@ -33,6 +33,16 @@ test('selection and result delivery have explicit larger budgets than lightweigh
   await assert.rejects(hostRequest(host, 'poll', {}, undefined, options), /timed out during poll/);
 });
 
+test('controlled admission and mutation have explicit trusted budgets while control status remains a separate observation', async t => {
+  const calls = [];
+  const host = await endpoint(t, async req => { calls.push(req.url); await pause(80); return { ok: true }; });
+  const options = { operation_timeouts_ms: { 'controlled-start': 300, 'controlled-control': 300, 'controlled-status': 30 } };
+  assert.deepEqual(await hostRequest(host, 'controlled-start', { request_id: 'stable-intake' }, undefined, options), { ok: true });
+  assert.deepEqual(await hostRequest(host, 'controlled-control', { workflow_id: 'saved', action: 'pause' }, undefined, options), { ok: true });
+  await assert.rejects(hostRequest(host, 'controlled-status', {}, undefined, options), /timed out during controlled-status/);
+  assert.deepEqual(calls, ['/controlled-start', '/controlled-control', '/controlled-status']);
+});
+
 test('control calls after synchronous local work use fresh connections without replaying mutations', async t => {
   const observed = [];
   const host = await endpoint(t, req => {

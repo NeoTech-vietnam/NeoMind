@@ -48,7 +48,8 @@ test('fault after parent creation but before initial journal save recovers the s
   // A directory at the final file path injects a real atomic-rename failure.
   // No model dispatch can occur before that initial journal becomes durable.
   mkdirSync(path, { recursive: true });
-  await assert.rejects(startControlledWorkflow(a.root, { requirements, request_id: request, title: 'Crash-window intake' }), /refused/);
+  await assert.rejects(startControlledWorkflow(a.root, { requirements, request_id: request, title: 'Crash-window intake' }),
+    error => error.code === 'INTAKE_OUTCOME_UNCERTAIN' && error.request_id === request && error.retryable === false);
   const parents = () => loadRecords(a.root).filter(record => record.meta.data.kind === 'manager-workflow');
   assert.equal(parents().length, 1); assert.equal(parents()[0].meta.id, id);
   assert.equal(parents()[0].meta.data.request_id, request);

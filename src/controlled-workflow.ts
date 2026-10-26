@@ -9,6 +9,7 @@ import { beginWorkflow, readAutomationPolicy } from './manager.js';
 import { startNative, waitNative, interruptNative, nativeStatus } from './native.js';
 import { canonicalJson, invocationIsActive, readInvocation, requireRoutingPolicy, routingProblems, type NativeRole } from './routing.js';
 import { exactRoot, hostRequest, readHost } from './vscode-wire.js';
+import { ControlledIntakeDeliveryError } from './controlled-intake-delivery.js';
 import { registerControlledContext } from './controlled-context.js';
 import { prepareWork, type WorkPreparation } from './procedure-reuse.js';
 import { runCommand } from './command-runner.js';
@@ -1818,6 +1819,7 @@ export async function dispatchControlledHost(root: string, operation: string, in
   throw new Error('Unknown controlled host operation.');
 }
 export async function startControlledWorkflow(root: string, input: ControlledStartInput): Promise<ControlledSnapshot> {
+  root = exactRoot(root);
   input = controlledStartSchema.parse(input);
   // Preserve this fixed public diagnostic before the credential-hiding wire seam.
   // The owner repeats the same check against current state before dispatch.
@@ -1831,7 +1833,50 @@ export async function startControlledWorkflow(root: string, input: ControlledSta
     const original = readNativeSoftwareContract(root, existing.meta.id);
     if (original) assertSupportedContinuation(original.plan.acceptance_criteria);
   }
-  return hostRequest(readHost(root), 'controlled-start', input);
+  // The caller owns this stable identity before the single mutation crosses IPC.
+  // A server-generated ID cannot reconcile a receipt lost after durable admission.
+  input = { ...input, request_id: input.request_id ?? (typeof existing?.meta.data.request_id === 'string'
+    ? existing.meta.data.request_id : randomUUID()) };
+  try { return await hostRequest(readHost(root), 'controlled-start', input); }
+  catch (error) {
+    const code = error instanceof Error ? (error as Error & { code?: string; status_code?: number }).code : undefined;
+    const ambiguous = ['BRIDGE_RESPONSE_TIMEOUT', 'BRIDGE_CONNECTION_TIMEOUT', 'BRIDGE_CONNECTION_FAILED'].includes(code ?? '') ||
+      code === 'BRIDGE_REFUSED' && (error as Error & { status_code?: number }).status_code === 400;
+    if (!ambiguous) throw error;
+    // This is observation only: never resend controlled-start, resume a workflow,
+    // allocate another ID, mutate its journal or spend a workflow repair allowance.
+    const deadline = Date.now() + 10000;
+    do {
+      try {
+        const records = loadRecords(root);
+        const matches = records.filter(record => record.meta.data.kind === 'manager-workflow' && record.meta.data.request_id === input.request_id);
+        if (matches.length > 1) throw new ControlledIntakeDeliveryError(input.request_id!);
+        const parent = matches[0];
+        if (parent) {
+          if (input.workflow_id && parent.meta.id !== input.workflow_id) throw new ControlledIntakeDeliveryError(input.request_id!);
+          assertIntakePayload(parent, input);
+          const requirement = records.find(record => record.meta.id === parent.meta.data.requirement_id);
+          const linked = parent.meta.data.requirement_ids;
+          if (requirement?.meta.type === 'requirement' && requirement.meta.data.intake_workflow_id === parent.meta.id &&
+              Array.isArray(linked) && linked.length && linked.every(id => records.some(record =>
+                record.meta.id === id && record.meta.type === 'requirement' && record.meta.data.intake_workflow_id === parent.meta.id)) &&
+              existsSync(statePath(root, parent.meta.id))) {
+            const saved = controlledStatus(root, parent.meta.id) as ControlledSnapshot;
+            if (saved.request_id !== input.request_id || saved.requirement !== parent.meta.data.original_requirement ||
+                saved.title !== parent.meta.title || saved.transport !== 'vscode-lm') throw new ControlledIntakeDeliveryError(input.request_id!);
+            return saved;
+          }
+        }
+      } catch (observed) {
+        if (observed instanceof ControlledIntakeDeliveryError || observed instanceof ControlledToolError && observed.code === 'INTAKE_PAYLOAD_MISMATCH') throw observed;
+        // A malformed or partial checkpoint never becomes an acknowledgement.
+        // A later fresh observation may see an atomic admission commit complete.
+      }
+      if (Date.now() >= deadline) break;
+      await new Promise<void>(done => setTimeout(done, Math.min(250, deadline - Date.now())));
+    } while (Date.now() < deadline);
+    throw new ControlledIntakeDeliveryError(input.request_id!);
+  }
 }
 export async function controlControlledWorkflow(root: string, input: { workflow_id: string; action: 'pause' | 'resume' | 'cancel' }): Promise<ControlledSnapshot> {
   return hostRequest(readHost(root), 'controlled-control', input);
