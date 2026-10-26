@@ -6,6 +6,7 @@ import { atomicWrite, safePath, hash, getRecord, updateRecord } from '../dist/st
 import { controlledFingerprints, prepareControlledCheckEvidence, materializeControlledEvidence, verifyControlledTask } from '../dist/controlled-acceptance.js';
 import { assertCompletedEvidenceDocumentationLineage } from '../dist/controlled-report-authority.js';
 import { runCommand } from '../dist/command-runner.js';
+import { captureControlledCheckerScope } from '../dist/controlled-checker-scope.js';
 import { lineageFixture } from './controlled-report-lineage-fixture.mjs';
 
 async function completed(t, repairChecker = false) {
@@ -28,13 +29,14 @@ async function completed(t, repairChecker = false) {
     const evidenceInput = prepareControlledCheckEvidence(root, run, contract, selected, baseline, finalVerifier.invocation_id);
     const result = await runCommand({ command: selected.command, cwd: root, timeout_ms: 5000 });
     assert.equal(result.exit_code, selected.expected_exit_code);
+    const checkerScope = captureControlledCheckerScope(contract.plan.verification_paths, paths => controlledFingerprints(root, paths));
     const id = randomUUID(), logPath = `.neomind/controlled/checks/${id}.log`;
-    const log = JSON.stringify({ command: selected.command, planned_command: selected.command, purpose: 'self-check', baseline, result });
+    const log = JSON.stringify({ command: selected.command, planned_command: selected.command, purpose: 'self-check', baseline, result, checker_scope: checkerScope });
     atomicWrite(safePath(root, logPath), log);
     const check = { id, attempt_id: finalVerifier.id, invocation_id: finalVerifier.invocation_id, title: selected.title,
       command: selected.command, planned_command: selected.command, purpose: 'self-check', baseline, log_path: logPath,
       log_sha256: hash(log), exit_code: result.exit_code, expected_exit_code: selected.expected_exit_code,
-      negative: selected.negative, passed: true, cancelled: false, at: new Date().toISOString(), evidence_input: evidenceInput };
+      negative: selected.negative, passed: true, cancelled: false, at: new Date().toISOString(), evidence_input: evidenceInput, checker_scope: checkerScope };
     check.evidence_id = materializeControlledEvidence(root, run, contract, check); run.checks.push(check);
   }
   report(finalVerifier, ['checks/check.cjs', 'checks/bad.txt']);

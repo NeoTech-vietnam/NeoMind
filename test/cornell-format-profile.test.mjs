@@ -143,3 +143,25 @@ test('active assignment guidance reports the backend format and reuses only a cu
   const stale=context(a.root,contract,[saved],allowed); assert.doesNotMatch(stale,/research-source\.json/); assert.match(stale,/No prior semantic input path/);
   assert.equal(context(a.root,{plan:{input_paths:[]},preserved_hashes:{}},[saved],allowed),'','Default requests receive no new profile-specific instruction.');
 });
+
+test('read-only diagnosis receives current verified format capability without an unavailable compiler request or source replay', async t => {
+  const {controlledCornellFormatContext:context}=await import('../dist/controlled-cornell-format-context.js');
+  const a=fixture(t),contract={...a.contract,plan:{...a.contract.plan,cornell_output_dir:a.input.output_dir,
+    cornell_input_path:'not-readable-in-this-diagnosis.json'}};
+  const saved={get artifact_hashes(){throw new Error('Read-only capability must not inspect a retained producer replay.');}};
+  const access={read_only:true,sourceAllowed(){throw new Error('Read-only capability must not advertise a producer source path.');}};
+  const text=context(a.root,contract,[saved],access);
+  assert.match(text,/Current backend format capability is active: leetcode-cornell-v1/);
+  assert.match(text,/verified against this task's declared approved template and validator fingerprints/);
+  assert.match(text,/ISO YYYY-MM-DD and renders DD\/MM\/YYYY plus the exact approved project headings/);
+  assert.match(text,/does not mean existing saved artifacts have already been regenerated/);
+  assert.match(text,/diagnosis session is read-only and has no compiler operation/);
+  assert.match(text,/Only a separately dispatched producer session can compile/);
+  assert.match(text,/Do not call a compiler, edit artifacts or supply a model format\/profile argument here/);
+  assert.doesNotMatch(text,/cornell_research_compile|input_path|not-readable-in-this-diagnosis|Reuse it with/);
+  assert.match(text,/establishes neither execution success nor verifier verdict nor workflow acceptance/);
+  assert.equal(context(a.root,{plan:{input_paths:[]},preserved_hashes:{}},[saved],access),'');
+  writeFileSync(safePath(a.root,a.validator),'# Changed validator\n');
+  assert.throws(()=>context(a.root,contract,[saved],access),error=>error.code==='CORNELL_FORMAT_PROFILE_UNSUPPORTED',
+    'Read-only capability facts require the current exact approved pair; they are not a stale capability claim.');
+});

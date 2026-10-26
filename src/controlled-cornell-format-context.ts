@@ -9,9 +9,14 @@ import type { ControlledCornellResult } from './controlled-cornell-sources.js';
  * It exposes an old semantic input path only after current provenance/read-scope checks. */
 export function controlledCornellFormatContext(root: string, contract: {
   plan: { input_paths?: readonly string[]; cornell_output_dir?: string; cornell_input_path?: string }; preserved_hashes: Record<string, string>;
-}, results: readonly ControlledCornellResult[], access: { sourceAllowed(path: string): boolean }): string {
+}, results: readonly ControlledCornellResult[], access: { sourceAllowed(path: string): boolean; read_only?: boolean }): string {
   const profile = resolveControlledCornellFormatProfile(root, contract);
   if (!profile || !contract.plan.cornell_output_dir) return '';
+  if (access.read_only) return `Current backend format capability is active: ${profile.id}, verified against this task's declared approved template and validator fingerprints. ` +
+    'The backend accepts professional JSON dates in ISO YYYY-MM-DD and renders DD/MM/YYYY plus the exact approved project headings, preserving research sections and separate exercises/answers. ' +
+    'The earlier generic ISO-date renderer is not the active capability now; this does not mean existing saved artifacts have already been regenerated. ' +
+    'This diagnosis session is read-only and has no compiler operation. Only a separately dispatched producer session can compile or regenerate the managed bundle. Do not call a compiler, edit artifacts or supply a model format/profile argument here. ' +
+    'Use the available read-only evidence to classify the actual current failure and state a bounded repair direction. Current format capability alone establishes neither execution success nor verifier verdict nor workflow acceptance.';
   const boundPath = contract.plan.cornell_input_path;
   let boundSourceCurrent = false;
   if (boundPath && access.sourceAllowed(boundPath)) {

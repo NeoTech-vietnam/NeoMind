@@ -1161,10 +1161,10 @@ class Controller {
     const documentation = stage === 'implementation' ? run.pending_documentation : undefined;
     const operations = binding ? new Set(controlledToolNames(binding)) : new Set<string>();
     const reportPaths = contract ? evidenceReportPaths(contract.plan) : [];
-    const formatContext = stage === 'implementation' && operations.has('cornell_research_compile') && contract && !documentation
+    const formatContext = (stage === 'diagnosis' || stage === 'implementation' && operations.has('cornell_research_compile')) && contract && !documentation
       ? controlledCornellFormatContext(this.root, contract, run.cornell_results ?? [], { sourceAllowed: path =>
         (controlledPublicReferencePath(path) || !!binding?.approved_inputs?.includes(path) && controlledSkillInputPath(path)) &&
-        (binding?.read_paths ?? ['.']).some(scope => scope === '.' || covers(path, [scope])) }) : '';
+        (binding?.read_paths ?? ['.']).some(scope => scope === '.' || covers(path, [scope])), read_only: stage === 'diagnosis' }) : '';
     return [
       `User requirement:\n${run.requirement}`,
       `Your stage: ${stage}. Use only the supplied semantic tools. Runtime owns identity, records, transitions and checks.`,

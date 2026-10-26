@@ -878,9 +878,21 @@ test('pause and owner restart retain checkpoint artifacts and resume the same wo
 test('owner close waits for actual checker-tree cancellation and durable failed evidence before returning, then resumes the same workflow', async t => {
   const env = await setup(t, { closingchecker: { slowChecker: true } });
   const initial = await submit(env.root, 'closingchecker'), marker = safePath(env.root, 'closingchecker/verify/running.json');
-  await until(env.root, initial.workflow_id, run => run.check_intents?.some(intent => intent.state === 'running') && existsSync(marker),
+  let owned;
+  await until(env.root, initial.workflow_id, run => {
+    if (!run.check_intents?.some(intent => intent.state === 'running')) return false;
+    try {
+      const value = JSON.parse(readFileSync(marker, 'utf8'));
+      if (!Number.isSafeInteger(value.pid) || value.pid <= 0 || !Number.isSafeInteger(value.child) || value.child <= 0 ||
+          value.pid === value.child || typeof value.created_at !== 'string' || !Number.isFinite(Date.parse(value.created_at))) return false;
+      owned = value; return true;
+    } catch (error) {
+      if (error instanceof SyntaxError || error.code === 'ENOENT') return false;
+      throw error;
+    }
+  },
     'actual owned checker and descendant must be running before owner close', env.errors);
-  const owned = JSON.parse(readFileSync(marker, 'utf8')), started = Date.now();
+  const started = Date.now();
   const closing = env.closeOwner();
   await assert.rejects(controlControlledWorkflow(env.root, { workflow_id: initial.workflow_id, action: 'resume' }));
   await assert.rejects(startControlledWorkflow(env.root, { requirement: 'No admission during shutdown.', request_id: 'shutdown-race' }));
