@@ -727,11 +727,11 @@ class Controller {
           atomicWrite(contextPath, JSON.stringify(observation, null, 2) + '\n');
           return observation;
         },
-        runTask: input => {
+        runTask: (input, source) => {
           assertActive();
-          const key = hash(canonicalJson({ id, epoch: run.epoch_id, input }));
+          const key = hash(canonicalJson({ id, epoch: run.epoch_id, input, ...(source ? { payload_source: source } : {}) }));
           const existing = this.localExecutions.get(key); if (existing) return existing;
-          const operation = this.operationDrain.run(id, () => this.executeTask(id, attempt.id, input, attemptAbort.signal, assertActive));
+          const operation = this.operationDrain.run(id, () => this.executeTask(id, attempt.id, input, attemptAbort.signal, assertActive, source));
           this.localExecutions.set(key, operation);
           void operation.finally(() => { if (this.localExecutions.get(key) === operation) this.localExecutions.delete(key); }).catch(() => {});
           return operation;
@@ -1010,7 +1010,7 @@ class Controller {
       `Prior reports:\n${JSON.stringify(run.attempts.filter(item => item.report).slice(-4).map(item => ({ stage: item.stage, report: item.report })))}`,
       'Your current signed-session context establishes the active Bridge and model request. Use runtime_context only for missing execution facts; one completed snapshot suffices. Continue the role work after preflight_complete instead of repeating unchanged context queries. Optional executable paths must come from actual project configuration, never guessed locations. Missing optional languages do not invalidate the session. Client intake setup instructions do not become worker preconditions.',
       stage === 'planning' ? 'Declare required producer execution_steps before freeze. For requested post-check factual reports, declare evidence_report_paths as exact outputs also listed in documentation_paths. Preserve all promised output and independent check criteria.' : '',
-      operations.has('task_run') ? 'Use the available task_run only for its bound producer operations. A blocked automatic-reuse candidate does not prohibit a separately scoped direct operation. Prepared JSON data is passed by input_path when declared in that operation input_paths, without recopying serialized tool text.' : '',
+      operations.has('task_run') ? 'Use the available task_run only for its bound producer operations. A blocked automatic-reuse candidate does not prohibit a separately scoped direct operation. Pass readable prepared JSON data by input_path without recopying serialized tool text; the backend captures its input baseline without changing the frozen command or output scope.' : '',
       documentation ? `Post-verification documentation purpose. Write ONLY these already promised report outputs: ${JSON.stringify(documentation.paths)}. Implementation, checker and Cornell files are read-only. Read check_evidence for the actual completed checkpoint commands, diagnostics, exits and limitations. Report its actual facts without claiming future final review, final verification or workflow closure. Save one assignment_report when the reports are complete. Backend runs fresh independent verification before required review and acceptance. This is a normal scheduled handoff, not a product repair or permission to change scope.` : '',
       stage === 'implementation' && !documentation && reportPaths.length ? `Promised final execution reports: ${JSON.stringify(reportPaths)}. Create their truthful implementation handoff before reporting this stage complete so the first check can fingerprint all declared outputs. State that independent results are pending; record only actual observations already available. The backend schedules their factual post-check completion separately, followed by fresh full verification. These handoff files do not establish acceptance.` : '',
       contract && (stage === 'review' || stage === 'verification' || documentation) ? `Current backend workflow evidence: ${JSON.stringify(controlledReviewContext(this.root, run, contract, reviewPurpose))}\nRead check_evidence({kind:"workflow"}) to refresh the original preservation and report lifecycle observations. This preserves only the declared historical coverage; do not require an invented whole-repository baseline. Genuine missing or changed required artifacts remain defects.` : '',
@@ -1025,9 +1025,11 @@ class Controller {
     ].filter(Boolean).join('\n\n');
   }
   private async executeTask(id: string, attemptId: string, value: ControlledExecutionInput, signal: AbortSignal,
-    assertActive: () => void): Promise<unknown> {
+    assertActive: () => void, source?: ControlledPayloadSource): Promise<unknown> {
     assertActive();
-    const input = controlledExecutionSchema.parse(value), requestHash = hash(canonicalJson(input));
+    if (source) assertControlledPayloadCurrent(this.root, source);
+    const input = controlledExecutionSchema.parse(value);
+    const requestHash = hash(canonicalJson(source ? { input, payload_source: source } : input));
     let run = readState(this.root, id);
     const contract = readContract(this.root, run), attempt = run.attempts.find(item => item.id === attemptId);
     if (attempt?.stage !== 'implementation' || attempt.role !== 'developer' || attempt.id !== run.attempts.at(-1)?.id || !attempt.invocation_id)
@@ -1075,17 +1077,20 @@ class Controller {
     try { prepared = prepareControlledExecution(this.root, { stage: 'implementation', role: 'developer',
       implementation_paths: contract.plan.allowed_paths, verification_paths: contract.plan.verification_paths,
       read_paths: ['.'], approved_inputs: contract.plan.input_paths, protected_paths: this.protectedPaths(contract),
-      preserved_hashes: contract.preserved_hashes }, input); }
+      preserved_hashes: contract.preserved_hashes, ...(source ? { payload_source: source } : {}) }, input); }
     catch (error) {
       if (error instanceof ControlledExecutionError) throw new ControlledToolError(error.code, error.message);
       throw error;
     }
+    if (source && prepared.baseline[source.path] !== source.sha256)
+      throw new ControlledToolError('INPUT_CHANGED', 'Prepared JSON source changed before the backend captured its execution baseline.');
     const operationId = randomUUID(), folder = `.neomind/controlled/executions/${operationId}`;
     const { input: _directInput, ...declaredOperation } = input;
     const guardedBefore = fingerprints(this.root, [...contract.plan.verification_paths, ...this.protectedPaths(contract)]);
     const identity = { schema_version: 1, kind: 'controlled-direct-local-execution', id: operationId,
       workflow_id: id, task_id: contract.task_id, epoch_id: run.epoch_id, contract_hash: run.contract_hash,
-      attempt_id: attemptId, invocation_id: attempt.invocation_id, request_hash: requestHash };
+      attempt_id: attemptId, invocation_id: attempt.invocation_id, request_hash: requestHash,
+      ...(source ? { payload_source: source } : {}) };
     const intent = JSON.stringify({ ...identity, created_at: now(), authorization: 'immutable-producer-scope',
       command: prepared.command, input_sha256: prepared.input_sha256, baseline: prepared.baseline,
       output_baseline: prepared.output_baseline, payload_hash: prepared.payload_hash,
@@ -1097,14 +1102,16 @@ class Controller {
     let execution: Awaited<ReturnType<typeof runControlledExecution>> | undefined, started = false, notStarted = false;
     let startFailure: { code: string; rule: string } | undefined;
     try {
-      execution = await runControlledExecution(prepared, { signal, assertActive, onStart: pid => {
+      execution = await runControlledExecution(prepared, { signal, assertActive: () => {
+        assertActive(); if (source) assertControlledPayloadCurrent(this.root, source);
+      }, onStart: pid => {
         started = true; const current = readState(this.root, id);
         current.local_executions!.find(item => item.id === operationId)!.pid = pid; save(this.root, current);
       } });
     } catch (error) {
       if (started) throw error; // An unobserved started process remains uncertain; never invent a result.
       notStarted = true;
-      startFailure = error instanceof ControlledExecutionError ? { code: error.code, rule: error.message }
+      startFailure = error instanceof ControlledExecutionError || error instanceof ControlledPayloadError ? { code: error.code, rule: error.message }
         : { code: signal.aborted ? 'ACTOR_INACTIVE' : 'CONTROLLED_OPERATION_FAILED',
           rule: signal.aborted ? 'The owned operation was cancelled before process start.' : 'The backend could not start this bound local operation.' };
     }

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { createProcedureInputPacket, serializeProcedureInputPacket, procedureInputContractHint,
   registerProcedure, reviewProcedure, runProcedure } from '../dist/procedures.js';
-import { controlledInstructions } from '../dist/controlled-tools.js';
+import { controlledInstructions, controlledToolNames } from '../dist/controlled-tools.js';
 
 test('controlled procedure hint matches the actual generator and checker stdin in both execution branches', async t => {
   const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-packet-contract-')));
@@ -32,11 +32,27 @@ assert.ok(raw.endsWith('\\n'));assert.equal(raw,readFileSync(packet.outputs[0],'
   const hint = procedureInputContractHint(), marker = 'Procedure subprocess stdin contract: ';
   const example = JSON.parse(hint.split('\n')[0].slice(marker.length));
   assert.deepEqual(Object.keys(example), ['schema_version', 'request_id', 'procedure_id', 'version', 'parameters', 'outputs']);
-  for (const stage of ['planning', 'implementation', 'verification', 'review']) {
-    const instructions = controlledInstructions({ stage, role: stage === 'implementation' ? 'developer' : stage === 'verification' ? 'verifier' : 'manager',
-      workflow_id: 'BACKEND-WORKFLOW', implementation_paths: ['scripts/generate.mjs'], verification_paths: ['scripts/verify.mjs'] });
-    assert.ok(instructions.includes(hint)); assert.match(instructions, /identical packet.*generator.*verification script/);
-    assert.match(instructions, /backend-owned metadata, not model inputs/);
+  for (const actor of [
+    { stage: 'planning', role: 'manager', procedure_bound: false },
+    { stage: 'implementation', role: 'developer', procedure_bound: true },
+    { stage: 'implementation', role: 'developer', procedure_bound: false },
+    { stage: 'implementation', role: 'developer', procedure_bound: false, evidence_documentation: true, execution_steps: [] },
+    { stage: 'verification', role: 'verifier', procedure_bound: false },
+    { stage: 'review', role: 'reviewer', procedure_bound: false },
+    { stage: 'synthesis', role: 'manager', procedure_bound: false },
+    { stage: 'diagnosis', role: 'manager', procedure_bound: false },
+  ]) {
+    const binding = { ...actor, workflow_id: 'BACKEND-WORKFLOW',
+      implementation_paths: ['scripts/generate.mjs'], verification_paths: ['scripts/verify.mjs'] };
+    const instructions = controlledInstructions(binding);
+    const needsPacketContract = actor.stage === 'planning' || controlledToolNames(binding).includes('procedure_run');
+    assert.equal(instructions.includes(hint), needsPacketContract, `${actor.stage}: bound procedure ${actor.procedure_bound}`);
+    if (needsPacketContract) {
+      assert.match(instructions, /identical packet.*generator.*verification script/);
+      assert.match(instructions, /backend-owned metadata, not model inputs/);
+    } else {
+      assert.doesNotMatch(instructions, /Procedure subprocess stdin contract:|Workers invoke the bound procedure_run tool/);
+    }
     assert.doesNotMatch(hint, /BACKEND-WORKFLOW/);
   }
   for (const cancellable of [false, true]) {

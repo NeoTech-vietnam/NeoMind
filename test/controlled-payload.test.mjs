@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createControlledMcpServer, controlledPlanSchema, controlledReportSchema } from '../dist/controlled-tools.js';
 import { controlledCornellResearchSchema } from '../dist/controlled-cornell-sources.js';
 import { researchFixture } from './cornell-research-fixture.mjs';
@@ -68,6 +69,15 @@ test('planning and assignment-report MCP boundaries consume prepared JSON and re
     assertPayloadBranches(actual, z.toJSONSchema(schema, { io: 'input' }).required ?? [], Object.keys(schema.shape));
     assert.equal(actual.properties.summary?.type ?? actual.properties.title?.type, 'string');
   }
+  const checkSchema = declared.find(tool => tool.name === 'workflow_plan').inputSchema.properties.checks.items;
+  assert.equal(checkSchema.required.includes('baseline_paths'), false, 'Defaulted checker baselines remain optional input.');
+  assert.ok(checkSchema.required.includes('command')); assert.ok(checkSchema.required.includes('negative_controls'));
+  assert.equal(checkSchema.properties.baseline_paths.type, 'array');
+  assert.equal(checkSchema.properties.baseline_paths.items.type, 'string');
+  const negativeSchema = checkSchema.properties.negative_controls.items;
+  assert.equal(negativeSchema.required.includes('baseline_paths'), false, 'Nested negative-control defaults remain optional input.');
+  assert.ok(negativeSchema.required.includes('expected_exit_code'));
+  assert.equal(negativeSchema.properties.baseline_paths.type, 'array');
   writeFileSync(join(c.root, 'scripts/plan.json'), JSON.stringify(plan));
   writeFileSync(join(c.root, 'scripts/report.json'), JSON.stringify(report));
   assert.equal((await c.call('workflow_plan', { input_path: 'scripts/plan.json' })).isError, undefined);
@@ -119,22 +129,25 @@ test('source edits during asynchronous payload tracing cannot commit a stale sem
   assert.equal(JSON.parse(readFileSync(join(c.root, 'scripts/plan.json'), 'utf8')).title, 'Concurrent user change');
 });
 
-test('declared task_run passes decoded prepared input and binds its file into actual execution inputs', async t => {
-  const executed = [], input = { body: 'A real paragraph\n\nAnother paragraph', expected_stdout: '{"sum":6}\n' };
+test('task_run passes decoded prepared data with private source identity and leaves declaration bookkeeping to the backend', async t => {
+  const executed = [], sources = [], input = { body: 'A real paragraph\n\nAnother paragraph', expected_stdout: '{"sum":6}\n' };
   const step = { title: 'Run bounded generator', command: ['node', 'src/generator.mjs'], input_paths: ['scripts/input.json'], output_paths: ['docs/output.md'] };
-  const c = await payloadClient(t, 'implementation', { runTask(request) { executed.push(request); return { passed: true }; } }, { execution_steps: [step] });
+  const c = await payloadClient(t, 'implementation', { runTask(request, source) { executed.push(request); sources.push(source); return { passed: true }; } }, { execution_steps: [step] });
   writeFileSync(join(c.root, 'src/generator.mjs'), 'console.log("Scoped source inspected before execution.");\n');
   writeFileSync(join(c.root, 'scripts/input.json'), JSON.stringify(input));
   writeFileSync(join(c.root, 'scripts/undeclared.json'), JSON.stringify(input));
   assert.equal((await c.call('project_read', { path: 'src/generator.mjs' })).isError, undefined);
   assert.equal((await c.call('task_run', { title: step.title, input_path: 'scripts/input.json' })).isError, undefined);
   assert.deepEqual(executed, [{ ...step, input }]);
+  assert.equal(sources[0].path, 'scripts/input.json');
   assert.equal((await c.call('task_run', { title: step.title, input_path: 'scripts/input.json', input })).isError, true);
-  assert.equal((await c.call('task_run', { title: step.title, input_path: 'scripts/undeclared.json' })).isError, true);
+  assert.equal((await c.call('task_run', { title: step.title, input_path: 'scripts/undeclared.json' })).isError, undefined);
+  assert.deepEqual(executed[1], { ...step, input }, 'The runtime still validates the original declaration before adding its private read baseline.');
+  assert.equal(sources[1].path, 'scripts/undeclared.json');
   writeFileSync(join(c.root, 'scripts/input.json'), JSON.stringify({ ...input, body: 'A later user edit.' }));
   const stale = await c.call('task_run', { title: step.title, input_path: 'scripts/input.json' });
   assert.equal(stale.isError, true); assert.equal(JSON.parse(stale.content[0].text).code, 'STALE_READ');
-  assert.equal(executed.length, 1);
+  assert.equal(executed.length, 2);
 });
 
 test('advertised payload schema is a strict root object whose prepared-file arm never synthesizes semantic defaults', () => {
@@ -156,6 +169,32 @@ test('advertised payload schema is a strict root object whose prepared-file arm 
   assert.equal(schema.safeParse({ input_path: 'inputs/research.json', entries: [] }).success, false);
   assert.equal(schema.safeParse({ input_path: 'inputs/research.json', unknown: 'override' }).success, false);
   assert.throws(() => controlledPayloadSchema(z.strictObject({ input_path: z.string() })), /reserve input_path/);
+});
+
+test('actual MCP schema preserves nested optional defaults across objects, array items and union branches', async t => {
+  const semantic = z.strictObject({ title: z.string().min(2), configuration: z.strictObject({
+    required_name: z.string().min(3), rows: z.array(z.strictObject({ name: z.string(), flags: z.array(z.string()).default([]) })).default([]),
+    choice: z.union([z.strictObject({ kind: z.literal('first'), baseline_paths: z.array(z.string()).default([]) }),
+      z.strictObject({ kind: z.literal('second'), count: z.number().int().min(0).default(0) })]),
+  }) });
+  const server = new McpServer({ name: 'nested-prepared-schema-test', version: '1' });
+  server.registerTool('nested', { inputSchema: controlledPayloadSchema(semantic) }, () => ({ content: [{ type: 'text', text: '{"saved":true}' }] }));
+  const client = new Client({ name: 'nested-prepared-schema-client', version: '1' });
+  const [ct, st] = InMemoryTransport.createLinkedPair(); await server.connect(st); await client.connect(ct);
+  t.after(async () => { await client.close(); await server.close(); });
+  const advertised = (await client.listTools()).tools[0].inputSchema.properties.configuration;
+  assert.deepEqual(advertised.required, ['required_name', 'choice']);
+  assert.equal(advertised.properties.required_name.type, 'string'); assert.equal(advertised.properties.required_name.minLength, 3);
+  assert.equal(advertised.properties.rows.type, 'array');
+  assert.deepEqual(advertised.properties.rows.items.required, ['name']);
+  assert.equal(advertised.properties.rows.items.properties.flags.type, 'array');
+  for (const branch of advertised.properties.choice.anyOf) assert.deepEqual(branch.required, ['kind']);
+  for (const configuration of [{ required_name: 'Real input', choice: { kind: 'first' } },
+    { required_name: 'Real input', rows: [{ name: 'Row without defaulted flags' }], choice: { kind: 'second' } }]) {
+    assert.equal((await client.callTool({ name: 'nested', arguments: { title: 'Valid semantic input', configuration } })).isError, undefined);
+    assert.doesNotThrow(() => semantic.parse({ title: 'Valid semantic input', configuration }));
+  }
+  assert.equal((await client.callTool({ name: 'nested', arguments: { title: 'Missing real required input', configuration: { choice: { kind: 'first' } } } })).isError, true);
 });
 
 test('prepared source preserves decoded Markdown and legitimate JSON example escapes exactly once', t => {

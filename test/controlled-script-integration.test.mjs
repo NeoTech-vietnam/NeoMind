@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { atomicWrite, hash, initialize, loadRecords, safePath } from '../dist/storage.js';
@@ -23,6 +23,9 @@ class Cancellation {
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const script = 'source/generate.mjs', product = 'source/value.json', checker = 'checks/check.cjs', wrong = 'checks/wrong.json';
 const title = 'Generate scalar JSON';
+const preparedSource = 'prepared/generator-input.json';
+const alternatePreparedSource = 'prepared/same-content-other-source.json';
+const preparedInput = { values: [1, 2, 3], description: 'A real Markdown paragraph\n\nSecond paragraph.', expected_stdout: '{"value":6}\n' };
 const producer = `import {writeFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 let text=''; for await(const chunk of process.stdin) text+=chunk;
@@ -45,7 +48,7 @@ function plan() {
     checks: [{ title: 'Independent JSON check', command: [process.execPath, checker, product],
       negative_controls: [{ title: 'Reject incorrect JSON', command: [process.execPath, checker, wrong], expected_exit_code: 1 }] }] };
 }
-const call = (name, input = {}, capture) => ({ name, input, capture });
+const call = (name, input = {}, capture, expectedError) => ({ name, input, capture, expectedError });
 const report = (stage, extra = {}) => call('assignment_report', { outcome: 'completed', summary: `Scoped ${stage} result saved.`,
   ...(stage === 'verification' || stage === 'review' ? { verdict: 'pass' } : {}), ...extra });
 function actions(stage, attempt, mode) {
@@ -61,9 +64,11 @@ function actions(stage, attempt, mode) {
     const failed = mode === 'repair' && attempt === 1;
     const input = { values: failed ? [100, 2] : [1, 2, 3], ...(failed ? { fail: true } : {}),
       ...(mode === 'close' && attempt === 1 ? { slow: true } : {}) };
+    const taskInput = mode === 'prepared-input' ? { title, input_path: preparedSource } : { title, input };
     return [call('project_read', { path: script }), call('task_file_write', { path: script, content: producer }),
-      call('project_read', { path: script }), call('task_run', { title, input }, `execution-${attempt}`),
-      call('task_run', { title, input }, `replay-${attempt}`),
+      call('project_read', { path: script }), call('task_run', taskInput, `execution-${attempt}`),
+      call('task_run', taskInput, `replay-${attempt}`),
+      ...(mode === 'prepared-input' ? [call('task_run', { title, input_path: alternatePreparedSource }, 'different-source-replay', 'OUTPUT_EXISTS')] : []),
       report(stage, failed ? { outcome: 'failed', failure_kind: 'implementation', findings: ['The real producer exited seven after creating its output.'] } : {})];
   }
   if (stage === 'verification') return [call('project_read', { path: checker }), call('task_file_write', { path: checker, content: oracle }),
@@ -83,6 +88,8 @@ async function fixture(t, mode = 'normal') {
   ]));
   atomicWrite(safePath(root, '.neomind/routing.json'), JSON.stringify({ ...policy, language_models_file: 'catalog.json',
     strong_provider: 'fixture-strong', worker_provider: 'fixture-worker', vscode_effort_policy: 'allow-unavailable' }));
+  if (mode === 'prepared-input') for (const path of [preparedSource, alternatePreparedSource])
+    atomicWrite(safePath(root, path), `${JSON.stringify(preparedInput, null, 2)}\n`);
   const conversations = new WeakMap(), counts = new Map(), captures = {}, errors = [], observed = [], progress = [];
   const started = performance.now();
   const api = { version: '1.109.0', workspace: { isTrusted: true, workspaceFolders: [{ uri: { scheme: 'file', fsPath: root } }] },
@@ -100,15 +107,21 @@ async function fixture(t, mode = 'normal') {
         if (stage === 'implementation') {
           const tool = options.tools.find(tool => tool.name === 'task_run');
           const fields = Object.keys(tool?.inputSchema.properties ?? {}).sort();
-          if (JSON.stringify(fields) !== JSON.stringify(['input', 'title'])) errors.push({ code: 'TASK_RUN_SCHEMA_MISMATCH', fields });
-          assert.deepEqual(fields, ['input', 'title']);
+          if (JSON.stringify(fields) !== JSON.stringify(['input', 'input_path', 'title'])) errors.push({ code: 'TASK_RUN_SCHEMA_MISMATCH', fields });
+          assert.deepEqual(fields, ['input', 'input_path', 'title']);
         }
       }
       const prior = messages.at(-1)?.content?.[0];
       if (prior instanceof Result) {
         const response = JSON.parse(prior.content[0].value);
-        if (response.isError) { errors.push(response); throw new Error('Rejected controlled integration input.'); }
-        if (state.previous?.capture) captures[state.previous.capture] = JSON.parse(response.content[0].text);
+        if (response.isError) {
+          const diagnostic = JSON.parse(response.content[0].text);
+          if (state.previous?.expectedError !== diagnostic.code) { errors.push(response); throw new Error('Rejected controlled integration input.'); }
+          if (state.previous.capture) captures[state.previous.capture] = diagnostic;
+        } else {
+          if (state.previous?.expectedError) throw new Error('A different prepared source unexpectedly borrowed the first execution result.');
+          if (state.previous?.capture) captures[state.previous.capture] = JSON.parse(response.content[0].text);
+        }
       }
       const action = state.actions[state.round++]; state.previous = action;
       progress.push({ elapsed_ms: Math.round(performance.now() - started), stage: state.stage,
@@ -178,6 +191,73 @@ test('bound task_run consumes JSON, replays without another effect, and passes i
   const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.workflow_id === initial.workflow_id);
   assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true);
   for (const attempt of done.attempts) assert.equal(readInvocation(env.root, attempt.invocation_id).inference_completed, true);
+});
+
+test('backend derives a prepared JSON read baseline without requiring planner bookkeeping or widening write scope', async t => {
+  const env = await fixture(t, 'prepared-input');
+  const sourceBefore = readFileSync(safePath(env.root, preparedSource)), sourceHash = hash(sourceBefore);
+  const initial = await startControlledWorkflow(env.root, {
+    requirement: 'Generate and independently verify scalar six from the readable prepared JSON source, preserving its exact bytes.', request_id: 'derived-prepared-input' });
+  const done = await until(env, initial.workflow_id, run => run.status === 'completed');
+  assert.deepEqual(env.errors, []); assert.deepEqual(env.observed, ['planning', 'implementation', 'verification']);
+  const contract = JSON.parse(readFileSync(safePath(env.root,
+    `.neomind/controlled/workflows/${hash(initial.workflow_id)}.${done.epoch_id}.contract.json`), 'utf8'));
+  assert.deepEqual(contract.plan.execution_steps[0].input_paths, [], 'Immutable declarations do not acquire model-derived source bookkeeping.');
+  assert.deepEqual(contract.plan.allowed_paths, ['source']); assert.deepEqual(contract.plan.verification_paths, ['checks']);
+  assert.equal(contract.plan.outputs.includes(preparedSource), false);
+  assert.deepEqual(readFileSync(safePath(env.root, preparedSource)), sourceBefore);
+  assert.equal(done.local_executions.length, 1); assert.equal(done.local_executions[0].passed, true);
+  assert.equal(env.captures['execution-1'].replayed, false); assert.equal(env.captures['replay-1'].replayed, true);
+  assert.equal(env.captures['different-source-replay'].code, 'OUTPUT_EXISTS', 'Different source identity cannot borrow a prior successful result or overwrite its output.');
+  const entry = done.local_executions[0], intent = JSON.parse(readFileSync(safePath(env.root, entry.intent_path), 'utf8'));
+  const result = savedResult(env, entry);
+  assert.deepEqual(intent.declaration.input_paths, []);
+  assert.equal(intent.payload_source.path, preparedSource); assert.equal(intent.payload_source.sha256, sourceHash);
+  assert.equal(intent.payload_source.size_bytes, sourceBefore.length);
+  assert.deepEqual(result.payload_source, intent.payload_source);
+  assert.equal(result.execution.baseline[preparedSource], sourceHash);
+  assert.equal(result.execution.input_sha256, hash(JSON.stringify(preparedInput)));
+  assert.deepEqual(result.execution.command, [process.execPath, script]);
+  assert.deepEqual(JSON.parse(readFileSync(safePath(env.root, product), 'utf8')), { value: 6 });
+  assert.deepEqual(done.checks.map(check => [check.negative, check.exit_code, check.passed]), [[false, 0, true], [true, 1, true]]);
+  assert.equal(verify(env.root, contract.task_id, 'accepted').ok, true);
+  const statePath = safePath(env.root, `.neomind/controlled/workflows/${hash(initial.workflow_id)}.json`);
+  const originalState = readFileSync(statePath), originalIntent = readFileSync(safePath(env.root, entry.intent_path));
+  const originalResult = readFileSync(safePath(env.root, entry.result_path));
+  for (const mutate of [
+    (_intent, result) => { result.payload_source.sha256 = 'f'.repeat(64); },
+    (intent, result) => { intent.payload_source.path = result.payload_source.path = alternatePreparedSource; },
+    (_intent, result) => { result.execution.baseline[preparedSource] = 'f'.repeat(64); },
+  ]) {
+    const tamperedIntent = JSON.parse(originalIntent.toString('utf8')), tamperedResult = JSON.parse(originalResult.toString('utf8'));
+    const tamperedState = JSON.parse(originalState.toString('utf8')); mutate(tamperedIntent, tamperedResult);
+    const intentBytes = `${JSON.stringify(tamperedIntent, null, 2)}\n`, resultBytes = `${JSON.stringify(tamperedResult, null, 2)}\n`;
+    const operation = tamperedState.local_executions.find(operation => operation.id === entry.id);
+    operation.intent_sha256 = hash(intentBytes); operation.result_sha256 = hash(resultBytes);
+    try {
+      atomicWrite(safePath(env.root, entry.intent_path), intentBytes); atomicWrite(safePath(env.root, entry.result_path), resultBytes);
+      atomicWrite(statePath, `${JSON.stringify(tamperedState, null, 2)}\n`);
+      const invalid = verify(env.root, contract.task_id, 'accepted');
+      assert.equal(invalid.ok, false, 'Recomputed envelope hashes cannot hide inconsistent prepared-source provenance.');
+      assert.ok(invalid.findings.some(finding => /Prepared JSON source differs/.test(finding.message)));
+    } finally {
+      atomicWrite(safePath(env.root, entry.intent_path), originalIntent); atomicWrite(safePath(env.root, entry.result_path), originalResult);
+      atomicWrite(statePath, originalState);
+    }
+  }
+  assert.equal(verify(env.root, contract.task_id, 'accepted').ok, true);
+  for (const mutateSource of [
+    () => atomicWrite(safePath(env.root, preparedSource), Buffer.concat([sourceBefore, Buffer.from(' \n')])),
+    () => unlinkSync(safePath(env.root, preparedSource)),
+  ]) {
+    try {
+      mutateSource();
+      const stale = verify(env.root, contract.task_id, 'accepted');
+      assert.equal(stale.ok, false, 'A completed execution must not silently accept edited or deleted current prepared data.');
+      assert.ok(stale.findings.some(finding => /current prepared JSON source changed/.test(finding.message)));
+    } finally { atomicWrite(safePath(env.root, preparedSource), sourceBefore); }
+    assert.equal(verify(env.root, contract.task_id, 'accepted').ok, true);
+  }
 });
 
 test('a partial-output failure is retained and corrected structured input succeeds in the bounded repair', async t => {

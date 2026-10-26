@@ -8,7 +8,7 @@ license: MIT
 
 ## Backend-owned session
 
-An explicit NeoMind-owned role/stage packet and bound tools select this branch. Read the supplied baseline and implement only the assigned paths with `task_file_write`. Use a declared `task_run` or bound `procedure_run` only when it is advertised; pass prepared JSON by `input_path` rather than copying serialized tool text. A report-only assignment edits only its supplied report paths using actual bound evidence. Save one compact `assignment_report`; the backend schedules independent checks, review and closure. Follow the runtime-provided controlled-workflow guide when payload or evidence details are needed.
+An explicit NeoMind-owned role/stage packet and bound tools select this branch. Read the supplied baseline and implement only the assigned paths with `task_file_write`. Use advertised `task_run` with its declared step title or a bound `procedure_run`; pass already-readable public prepared JSON by `input_path` rather than copying serialized tool text. The backend captures the payload's read-only source baseline while retaining the saved command and write scope. A report-only assignment edits only its supplied report paths using actual bound evidence. Save one compact `assignment_report`; the backend schedules independent checks, review and closure. Follow the runtime-provided controlled-workflow guide when payload or evidence details are needed.
 
 ## Client intake and other saved modes
 

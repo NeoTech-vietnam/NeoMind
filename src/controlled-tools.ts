@@ -79,7 +79,7 @@ export interface ControlledCallbacks {
   prepareWork?(query: { request: string; parameters?: Record<string, unknown> }): unknown | Promise<unknown>;
   runProcedure?(parameters?: Record<string, unknown>): unknown | Promise<unknown>;
   runtimeContext?(query: ControlledRuntimeQuery): unknown | Promise<unknown>;
-  runTask?(input: ControlledExecutionInput): unknown | Promise<unknown>;
+  runTask?(input: ControlledExecutionInput, source?: ControlledPayloadSource): unknown | Promise<unknown>;
   compileResearch?(input: Record<string, unknown>, source?: ControlledPayloadSource): unknown | Promise<unknown>;
   readEvidence?(title?: string, kind?: 'execution' | 'registration' | 'workflow'): unknown | Promise<unknown>;
   trace?(event: Record<string, unknown>): void | Promise<void>;
@@ -467,7 +467,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
     const schema = binding.execution_steps === undefined ? controlledExecutionSchema.extend({ input: z.record(z.string(), z.unknown()).optional(), input_path: z.string().min(1).max(1024).optional() }) : z.strictObject({
       title: text.max(256).describe('Choose a declared execution_steps title. Backend supplies its argv, inputs, outputs and limits.'),
       input: z.record(z.string(), z.unknown()).optional().describe('Direct semantic JSON data; runtime supplies all internal identity.'),
-      input_path: z.string().min(1).max(1024).optional().describe('Readable prepared JSON data file declared in this step input_paths. Backend reads and parses it; use instead of input, without recopying serialized tool text.') });
+      input_path: z.string().min(1).max(1024).optional().describe('Readable prepared JSON data file. Backend reads, parses and captures its input baseline; use instead of input, without recopying serialized tool text.') });
     register('task_run', 'Execute a scoped direct local script or fixed version observation. Backend validates the plan/role, supplies cwd/identity/hashes, retains the actual bounded result and prevents duplicate effects. This is not procedure qualification or independent acceptance evidence.',
       schema, false, async args => {
         if (!callbacks.runTask) throw new ControlledToolError('UNSUPPORTED_STAGE', 'Direct execution is unavailable in this invocation.');
@@ -476,8 +476,6 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         if (args.input_path !== undefined && args.input !== undefined)
           throw new ControlledToolError('INVALID_PAYLOAD', 'Use input_path or direct input, never both.');
         const { input_path: sourcePath, ...direct } = args;
-        if (sourcePath !== undefined && !(step?.input_paths ?? direct.input_paths ?? []).includes(sourcePath))
-          throw new ControlledToolError('INVALID_EXECUTION', 'Declare the prepared JSON source in this execution step input_paths before running it.');
         let source: ControlledPayloadSource | undefined;
         let input = args.input;
         if (sourcePath !== undefined) await prepared(z.record(z.string(), z.unknown()), { input_path: sourcePath }, (value, observed) => { input = value; source = observed; });
@@ -490,7 +488,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         });
         activeAtCommit();
         if (source) assertControlledPayloadCurrent(root, source);
-        return callbacks.runTask(request);
+        return callbacks.runTask(request, source);
       });
     }
     if (binding.procedure_bound !== false) {

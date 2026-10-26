@@ -21,11 +21,61 @@ export interface ControlledPayloadOptions<T> {
   parse(input: Record<string, unknown>): T;
 }
 
+type JsonSchema = boolean | Record<string, unknown>;
+const schemaObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
+
+/** Input presence/constraints win at every depth. Output fills type information
+ * only where a preprocessor makes its input schema opaque. */
+function payloadAdvertisement(input: unknown, output: unknown): JsonSchema {
+  if (input === false) return false;
+  if (input === true) return true;
+  if (!schemaObject(input)) return schemaObject(output) ? payloadAdvertisement({}, output) : output === false ? false : {};
+  if (!schemaObject(output)) return structuredClone(input);
+  const represented = ['type', '$ref', 'anyOf', 'oneOf', 'allOf', 'properties', 'items', 'enum', 'const'].some(key => Object.hasOwn(input, key));
+  const merged: Record<string, unknown> = structuredClone(represented ? input : { ...output, ...input });
+  for (const name of ['properties', 'patternProperties', 'definitions', '$defs', 'dependentSchemas']) {
+    const incoming = schemaObject(input[name]) ? input[name] : undefined;
+    const outgoing = schemaObject(output[name]) ? output[name] : undefined;
+    if (!incoming && !outgoing) continue;
+    const keys = name === 'definitions' || name === '$defs' ? [...new Set([...Object.keys(incoming ?? {}), ...Object.keys(outgoing ?? {})])]
+      : Object.keys(incoming ?? outgoing!);
+    merged[name] = Object.fromEntries(keys.map(key => [key, payloadAdvertisement(incoming?.[key], outgoing?.[key])]));
+  }
+  if (schemaObject(input.properties)) {
+    // Output marks defaulted properties as present. The input contract decides
+    // which fields the caller must actually provide, including nested objects.
+    if (Object.hasOwn(input, 'required')) merged.required = structuredClone(input.required);
+    else delete merged.required;
+  } else if (!represented && schemaObject(output.properties) && Array.isArray(output.required)) {
+    const required = output.required.filter(name => typeof name === 'string' &&
+      !(schemaObject(output.properties) && schemaObject(output.properties[name]) && Object.hasOwn(output.properties[name], 'default')));
+    if (required.length) merged.required = required;
+    else delete merged.required;
+  }
+  for (const name of ['items', 'additionalItems', 'contains', 'additionalProperties', 'propertyNames', 'not', 'if', 'then', 'else']) {
+    const incoming = input[name], outgoing = output[name];
+    if (incoming === undefined && (represented || outgoing === undefined)) continue;
+    if (Array.isArray(incoming) || Array.isArray(outgoing)) {
+      const values = Array.isArray(incoming) ? incoming : outgoing as unknown[];
+      merged[name] = values.map((value, index) => payloadAdvertisement(Array.isArray(incoming) ? value : undefined,
+        Array.isArray(outgoing) ? outgoing[index] : undefined));
+    } else merged[name] = payloadAdvertisement(incoming, outgoing);
+  }
+  for (const name of ['anyOf', 'oneOf', 'allOf', 'prefixItems']) {
+    const incoming = Array.isArray(input[name]) ? input[name] : undefined;
+    const outgoing = Array.isArray(output[name]) ? output[name] : undefined;
+    if (!incoming && (represented || !outgoing)) continue;
+    merged[name] = (incoming ?? outgoing!).map((value, index) => payloadAdvertisement(incoming ? value : undefined, outgoing?.[index]));
+  }
+  return merged;
+}
+
 /** Actual root object for the MCP SDK: legacy semantic fields OR a prepared-file path, never an SDK-incompatible root union. */
 export function controlledPayloadSchema<T extends z.ZodRawShape>(semantic: z.ZodObject<T>) {
   if ('input_path' in semantic.shape) throw new Error('Semantic schemas cannot reserve input_path.');
   const semanticInput = z.toJSONSchema(semantic, { io: 'input', target: 'draft-7' });
   const semanticOutput = z.toJSONSchema(semantic, { io: 'output', target: 'draft-7' });
+  const advertisement = payloadAdvertisement(semanticInput, semanticOutput) as Record<string, unknown>;
   const optional = Object.fromEntries(Object.entries(semantic.shape).map(([name, field]) =>
     // A direct .optional() around a default still inserts that default in Zod 4.
     // Identity preprocess keeps absent fields absent in the prepared-file arm.
@@ -47,8 +97,8 @@ export function controlledPayloadSchema<T extends z.ZodRawShape>(semantic: z.Zod
     }).meta({
       // The MCP SDK converts preprocessors with io=input. Advertise the typed
       // semantic values rather than erasing every field to an unknown schema.
-      properties: { ...semanticOutput.properties, input_path: sourceProperty },
-      ...(semanticOutput.definitions ? { definitions: semanticOutput.definitions } : {}),
+      properties: { ...(advertisement.properties as Record<string, unknown>), input_path: sourceProperty },
+      ...(advertisement.definitions ? { definitions: advertisement.definitions } : {}),
       anyOf: [
         { required: ['input_path'], ...(fields.length ? { not: { anyOf: fields.map(name => ({ required: [name] })) } } : {}) },
         { required: semanticInput.required ?? [], not: { required: ['input_path'] } },

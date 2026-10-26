@@ -5,6 +5,7 @@ import { runCommand, type CommandResult } from './command-runner.js';
 import { hash, safePath, withOperationLock } from './storage.js';
 import { validateProcedurePath } from './procedures.js';
 import { workspacePathLockKey } from './workspace.js';
+import type { ControlledPayloadSource } from './controlled-payload.js';
 
 const paths = z.array(z.string().min(1).max(1024)).max(128);
 /** Semantic local operation. Invocation identity, cwd and hashes are backend owned. */
@@ -33,6 +34,8 @@ export interface ControlledExecutionBinding {
   read_paths?: string[]; approved_inputs?: string[]; protected_paths?: string[];
   /** Exact saved preservation fingerprints, supplied by the immutable contract. */
   preserved_hashes?: Record<string, string>;
+  /** Backend-observed prepared JSON input; never added to the frozen declaration. */
+  payload_source?: ControlledPayloadSource;
 }
 export interface PreparedControlledExecution {
   request: ControlledExecutionInput;
@@ -204,10 +207,25 @@ export function prepareControlledExecution(root: string, binding: ControlledExec
   if (stdin !== undefined && Buffer.byteLength(stdin) > 1024 * 1024)
     throw new ControlledExecutionError('INVALID_EXECUTION', 'Structured execution input exceeds one MiB.');
   const inputs = unique([...(script ? [script] : []), ...request.input_paths, ...Object.keys(binding.preserved_hashes ?? {})]);
-  if (inputs.length > 512) throw new ControlledExecutionError('INVALID_EXECUTION', 'The execution baseline exceeds 512 exact files.');
+  const source = binding.payload_source;
+  if (source && (typeof source.path !== 'string' || !/\.json$/i.test(source.path) || !/^[a-f0-9]{64}$/.test(source.sha256) ||
+      !Number.isSafeInteger(source.size_bytes) || source.size_bytes < 0 || source.size_bytes > 1024 * 1024))
+    throw new ControlledExecutionError('INVALID_EXECUTION', 'The backend prepared-source observation must name a bounded JSON file and its exact content identity.');
+  if (source && privatePath(source.path))
+    throw new ControlledExecutionError('PRIVATE_PATH', 'Prepared JSON data cannot come from private runtime, client, credential or dependency files.');
+  if (unique([...inputs, ...(source ? [source.path] : [])]).length > 512)
+    throw new ControlledExecutionError('INVALID_EXECUTION', 'The execution baseline exceeds 512 exact files.');
   const baseline = Object.fromEntries(inputs.map(path => [path, fingerprint(root, path, binding)!]));
   for (const [path, expected] of Object.entries(binding.preserved_hashes ?? {}))
     if (baseline[path] !== expected) throw new ControlledExecutionError('INPUT_CHANGED', 'An immutable preservation input changed before execution.');
+  if (source) {
+    const digest = fingerprint(root, source.path, binding)!, info = lstatSync(checkedPath(root, source.path, binding));
+    if (info.nlink !== 1 || info.size !== source.size_bytes || digest !== source.sha256)
+      throw new ControlledExecutionError('INPUT_CHANGED', 'Prepared JSON source changed before its backend-owned execution baseline was captured.');
+    // Preserve original declared/preserved keys, while retaining the exact
+    // private observation key even when Windows resolves a case variant.
+    baseline[source.path] = digest;
+  }
   const outputs = request.output_paths;
   const missing_parent_paths = missingOutputParents(root, outputs);
   const input_sha256 = stdin === undefined ? null : hash(stdin);

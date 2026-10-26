@@ -345,6 +345,17 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
       const resultBytes = readFileSync(safePath(root, operation.result_path));
       if (hash(resultBytes) !== operation.result_sha256) throw new Error('The local execution result changed.');
       const intent = JSON.parse(intentBytes.toString('utf8')), result = JSON.parse(resultBytes.toString('utf8'));
+      if (intent.payload_source || result.payload_source) {
+        const source = intent.payload_source;
+        if (!source || !same(source, result.payload_source) || typeof source.path !== 'string' ||
+            !/^[a-f0-9]{64}$/.test(source.sha256) || !Number.isSafeInteger(source.size_bytes) || source.size_bytes < 0 ||
+            intent.baseline?.[source.path] !== source.sha256 ||
+            result.execution && result.execution.baseline?.[source.path] !== source.sha256)
+          throw new Error('Prepared JSON source differs from its backend-owned execution baseline.');
+        const currentOperation = run.local_executions?.findLast(item => item.title === operation.title && item.passed);
+        if (operation.passed && currentOperation?.id === operation.id && budget.fingerprints([source.path])[source.path] !== source.sha256)
+          throw new Error('The current prepared JSON source changed after its successful producer execution.');
+      }
       const attempt = run.attempts.find(item => item.id === operation.attempt_id);
       const receipt = attempt?.invocation_id ? readInvocation(root, attempt.invocation_id) : undefined;
       for (const proof of [intent, result]) if (proof.id !== operation.id || proof.request_hash !== operation.request_hash ||

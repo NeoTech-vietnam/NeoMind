@@ -23,6 +23,51 @@ const request = (extra = {}) => ({ title: 'Generate the requested value', comman
   input: { content: 'actual semantic input' }, input_paths: [], output_paths: ['generated/value.txt'], ...extra });
 const coded = code => error => error instanceof ControlledExecutionError && error.code === code;
 
+test('backend prepared source is a separate baseline entry without expanding the 128-input declaration', t => {
+  const { root, binding } = fixture(t), paths = [];
+  for (let index = 0; index < 128; index++) {
+    const path = `scripts/input-${index}.txt`; paths.push(path); writeFileSync(join(root, path), `${index}\n`);
+  }
+  const path = 'scripts/prepared.json', bytes = '{"content":"Decoded professional input"}\n'; writeFileSync(join(root, path), bytes);
+  const source = { path, sha256: hash(bytes), size_bytes: Buffer.byteLength(bytes) };
+  const value = request({ input_paths: paths, input: { content: 'Decoded professional input' } }), original = structuredClone(value);
+  const prepared = prepareControlledExecution(root, { ...binding, payload_source: source }, value);
+  assert.deepEqual(value, original); assert.deepEqual(prepared.request, original);
+  assert.equal(prepared.request.input_paths.length, 128); assert.equal(prepared.request.input_paths.includes(path), false);
+  assert.equal(prepared.baseline[path], source.sha256); assert.deepEqual(prepared.binding.payload_source, source);
+});
+
+test('prepared source read authority and content identity fail before process start', t => {
+  const { root, binding } = fixture(t), path = 'scripts/prepared.json', bytes = '{"content":"original"}\n';
+  writeFileSync(join(root, path), bytes);
+  const source = { path, sha256: hash(bytes), size_bytes: Buffer.byteLength(bytes) };
+  assert.throws(() => prepareControlledExecution(root, { ...binding, payload_source: { ...source, sha256: 'f'.repeat(64) } }, request()), coded('INPUT_CHANGED'));
+  assert.throws(() => prepareControlledExecution(root, { ...binding, payload_source: { ...source, size_bytes: source.size_bytes + 1 } }, request()), coded('INPUT_CHANGED'));
+  assert.throws(() => prepareControlledExecution(root, { ...binding, read_paths: ['scripts/generate.mjs', 'scripts/input.txt'], payload_source: source }, request()), coded('SCOPE_DENIED'));
+  assert.throws(() => prepareControlledExecution(root, { ...binding, payload_source: { ...source, path: '.codex/auth.json' } }, request()), coded('PRIVATE_PATH'));
+  assert.equal(existsSync(join(root, 'generated/value.txt')), false);
+});
+
+test('private source cannot exceed the existing 512-file baseline quota', t => {
+  const { root, binding } = fixture(t), declared = Array.from({ length: 128 }, (_, index) => `scripts/declared-${index}.txt`);
+  for (const path of declared) writeFileSync(join(root, path), 'declared input\n');
+  const preserved_hashes = Object.fromEntries(Array.from({ length: 383 }, (_, index) => [`scripts/preserved-${index}.txt`, 'a'.repeat(64)]));
+  const path = 'scripts/prepared.json', bytes = '{}\n'; writeFileSync(join(root, path), bytes);
+  assert.throws(() => prepareControlledExecution(root, { ...binding, preserved_hashes,
+    payload_source: { path, sha256: hash(bytes), size_bytes: Buffer.byteLength(bytes) } }, request({ input_paths: declared })),
+  error => coded('INVALID_EXECUTION')(error) && /512 exact files/.test(error.message));
+});
+
+test('Windows prepared source case variants preserve original declaration keys and exact private source key', { skip: process.platform !== 'win32' }, t => {
+  const { root, binding } = fixture(t), originalPath = 'scripts/Prepared.json', sourcePath = 'SCRIPTS/PREPARED.JSON', bytes = '{}\n';
+  writeFileSync(join(root, originalPath), bytes);
+  const value = request({ input_paths: [originalPath] });
+  const prepared = prepareControlledExecution(root, { ...binding, preserved_hashes: { ...binding.preserved_hashes, [originalPath]: hash(bytes) },
+    payload_source: { path: sourcePath, sha256: hash(bytes), size_bytes: Buffer.byteLength(bytes) } }, value);
+  assert.deepEqual(prepared.request.input_paths, [originalPath]);
+  assert.equal(prepared.baseline[originalPath], hash(bytes)); assert.equal(prepared.baseline[sourcePath], hash(bytes));
+});
+
 test('declaration and request expose semantic inputs without caller identity, cwd or hashes', () => {
   const declaration = { title: 'Observe Node', command: ['node', '--version'], output_paths: [] };
   assert.equal(controlledExecutionDeclarationSchema.safeParse(declaration).success, true);
