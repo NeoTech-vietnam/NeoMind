@@ -93,7 +93,7 @@ test('Reviewer receives actual original preservation hashes and explicit report 
   assert.equal(evidence.finalization.final_report_pending, true);
   assert.deepEqual(evidence.finalization.producer_documents, [{ path: 'docs/report.md', owner: 'developer',
     declared_output: true, final_criteria_still_apply: true }]);
-  assert.match(evidence.finalization.duties, /handoff prose cannot replace promised post-verification findings/);
+  assert.match(evidence.finalization.duties, /handoff prose cannot replace promised post-verification findings/i);
   assert.equal(snapshot(), before, 'An observation cannot rebaseline, rewrite reports or pass an acceptance gate.');
 });
 
