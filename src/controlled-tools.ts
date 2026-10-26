@@ -11,7 +11,7 @@ import { controlledRuntimeGuide, controlledGuidePath, controlledRuntimeQuerySche
 import { controlledExecutionSchema, type ControlledExecutionInput, type ControlledExecutionDeclaration } from './controlled-execution.js';
 import { controlledPayloadSchema, resolveControlledPayload, assertControlledPayloadCurrent, ControlledPayloadError, type ControlledPayloadSource } from './controlled-payload.js';
 import { controlledPlanExecutionStepSubmissionSchema, controlledPlanCheckSubmissionSchema } from './controlled-plan-submission.js';
-import { controlledPlanRequestSchemas, type ControlledPlanRequestDefaults } from './controlled-plan-request.js';
+import { controlledPlanRequestSchemas, controlledPlanSubmissionGuide, type ControlledPlanRequestDefaults } from './controlled-plan-request.js';
 
 export type ControlledStage = 'planning' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
 export type ControlledReviewPurpose = 'checker-readiness' | 'final-product';
@@ -32,6 +32,8 @@ export interface ControlledBinding {
   cornell_bound?: boolean;
   /** Backend-only primary compiler source from the immutable contract. */
   cornell_source?: { path: string; sha256: string };
+  /** Compiler-owned renderings. A worker supplies semantic compiler input instead of raw bytes. */
+  generated_artifact_paths?: string[];
   evidence_documentation?: boolean;
   evidence_documentation_source_hash?: string;
 }
@@ -45,7 +47,7 @@ export const controlledPlanSchema = z.strictObject({
   outputs: paths.min(1).describe('Producer deliverables only, within allowed_paths: product code, requested notes and producer documentation. Verifier checker scripts, negative fixtures and verifier-authored reports belong to verification_paths, not outputs; backend check baselines and the Verifier report retain those artifacts.'),
   documentation_paths: paths.default([]).describe('Producer-authored documentation within allowed_paths. Read-only source references and Verifier-owned checker reports are not producer documentation outputs.'),
   evidence_report_paths: paths.optional().describe('Final factual execution reports written after independent checks. Exact paths must also be producer outputs and documentation_paths; primary Cornell note/exercises/answers remain their own deliverables. Backend schedules this documentation handoff and fresh verification without a failed-review retry.'),
-  execution_steps: z.array(z.lazy(() => controlledPlanExecutionStepSubmissionSchema())).max(16).optional().describe('Only direct local script execution or fixed --version observations, using OS argv such as ["node","scripts/generate.mjs"] or ["python","scripts/check_notes.py"]. Native tools cornell_research_compile and procedure_run are not OS executables and must not be command[0]. Request Cornell with cornell_output_dir and eligible procedure reuse with reuse; the backend supplies those tools separately. For a direct script, declare exact argv and producer-owned new outputs. Implementation sends prepared JSON to task_run; independent acceptance remains check_run under Verifier.'),
+  execution_steps: z.array(z.lazy(() => controlledPlanExecutionStepSubmissionSchema())).max(16).optional().describe('Each item is {title,command,output_paths}, with optional exact input_paths and limits. Example: {"title":"Generate the result","command":["node","scripts/generate.cjs"],"output_paths":["generated/result.json"]}. Only direct local script execution or fixed --version observations are available. Native tools cornell_research_compile and procedure_run are not OS executables. Request them through cornell_output_dir or reuse. For prepared JSON, the later task_run call supplies {title,input_path}; the backend sends JSON on stdin. Do not declare stdin_path or node -e/--eval wrappers. Independent checks remain in checks under Verifier ownership.'),
   checks: z.array(controlledPlanCheckSubmissionSchema(z.strictObject({ title: text.max(256),
     purpose: z.enum(['self-check', 'intended-use']).optional(),
     after_evidence_reports: z.boolean().optional().describe('A check of the final factual report, deferred until actual product-check evidence is available and the report has been written. Declare at least one nondeferred product check first. Final acceptance still requires this check and its negative controls through a fresh Verifier.'),
@@ -144,6 +146,8 @@ function assertReadable(binding: ControlledBinding, path: string, directory = fa
 }
 function assertWritable(binding: ControlledBinding, path: string): void {
   canonical(path);
+  if (binding.generated_artifact_paths?.some(artifact => key(artifact) === key(path)))
+    throw new ControlledToolError('GENERATED_ARTIFACT', 'This file is a compiler-owned Cornell rendering. Submit the corrected professional content through cornell_research_compile; its backend writer preserves revisions and synchronizes all three artifacts.');
   const scopes = binding.stage === 'implementation' && binding.role === 'developer' ? binding.implementation_paths
     : binding.stage === 'verification' && ['verifier', 'check-executor'].includes(binding.role) ? binding.verification_paths : [];
   const other = binding.stage === 'implementation' ? binding.verification_paths : binding.implementation_paths;
@@ -194,7 +198,7 @@ export function controlledInstructions(binding: ControlledBinding): string {
     implementation: documentation
       ? 'Complete only the requested final report files in your writable paths. Read the bound check_evidence and the supplied independent verification checkpoint, then describe the observed commands, results and limitations accurately. Use task_file_write after reading the current report. Implementation code, checker files and Cornell bundles remain read-only. The backend schedules fresh independent verification and required review after this report; the workflow is not yet accepted or closed.'
       : available.has('task_file_write')
-      ? 'Read existing files before editing. Implement only the assigned outputs with task_file_write. Backend handles file versions, operation identity and task lifecycle. Preserve independent checker and acceptance files.'
+      ? 'Read existing files before editing. Write only ordinary assigned source and report files with task_file_write. Backend handles file versions, operation identity and task lifecycle. Preserve independent checker and acceptance files.'
       : 'Inspect the assigned implementation and report your professional findings. This session has no source-write operation; the backend retains implementation ownership.',
     verification: 'Inspect the delivered implementation. Author and repair only the independent checker paths, including deliberately invalid fixtures for the prescribed negative_controls. Run the prescribed checks with check_run; backend executes both positive and negative commands. Report prose alone is not negative-control evidence. Distinguish a product defect from a checker or environment failure.',
     review: controlledReviewInstructions(binding.review_purpose ?? 'final-product'),
@@ -214,16 +218,17 @@ export function controlledInstructions(binding: ControlledBinding): string {
     (binding.stage === 'planning'
       ? 'Declare execution_steps only for required direct local scripts or fixed version observations. Native cornell_research_compile and procedure_run tools are not OS executables: request them through cornell_output_dir or eligible reuse, not command argv. Keep producer outputs separate from checker/fixture/report files in verification_paths. Put exact hidden skill assets and validators in input_paths; preservation_paths describes public unchanged files. Bind reuse {procedure_id,version,parameters} only after work_prepare reports exact eligibility. For newly delivered reusable scripts declare procedure_candidate (manifest without id/version/author); runtime registers it after checked completion without claiming qualification. For requested Cornell notes declare cornell_output_dir and all three note.md/exercises.md/answers.md outputs. If research is supplied as a prepared JSON file, name cornell_input_path; backend binds and loads that exact source for the worker. When a requested final execution report needs actual independent results, declare its exact evidence_report_paths within both outputs and documentation_paths. The backend schedules report completion after a verification checkpoint and then fresh verification; keep the primary Cornell trio out of these report paths.\n'
       : '') +
+    (binding.stage === 'planning' ? controlledPlanSubmissionGuide(controlledPlanSchema) + '\n' : '') +
     (available.has('task_run')
-      ? 'Use task_run for a scoped direct local execution bound to your plan. For prepared JSON data, supply its project-relative input_path with the declared step title; the backend reads and parses it. Use input only for directly authored semantic data. Direct execution is separate from qualified automatic procedure reuse and never qualifies a registry candidate.\n'
+      ? 'Use task_run for a scoped direct local execution bound to your plan. For prepared JSON data, send {"title":"<declared step title>","input_path":"project/prepared-input.json"}; the backend reads and parses that JSON object and supplies it to the declared script on stdin. Use input instead only for directly authored semantic data. Do not change the saved command or invent node -e, wrapper scripts or stdin_path to read the payload file. Direct execution is separate from qualified automatic procedure reuse and never qualifies a registry candidate.\n'
       : '') +
     (available.has('procedure_run')
       ? 'Use procedure_run for the saved qualified procedure rather than recreating its generator. The backend binds its identity, execution key and output paths.\n'
       : '') +
     (available.has('cornell_research_compile')
-      ? binding.cornell_source
+      ? 'The canonical Cornell note.md, exercises.md and answers.md are compiler-owned generated artifacts. Author their professional content through cornell_research_compile semantic input; do not create, patch or overwrite this managed trio with task_file_write. Ordinary implementation/report files remain separate.\n' + (binding.cornell_source
         ? `The primary Cornell source is already backend-bound to ${binding.cornell_source.path}. Call cornell_research_compile with {} or its exact input_path; do not copy, rewrite or override the prepared research. Backend verifies the frozen input hash and supplies the content.\n`
-        : 'Use cornell_research_compile for the requested Cornell bundle with substantive research content; its output folder and provenance are backend-bound. When the semantic research is already saved as scoped JSON, send only {input_path:"project/prepared-research.json"}; the backend reads and parses the current file. Direct research fields are a separate form for new content. Preserve real prose newlines and literal escape sequences in examples rather than copying serialized tool text or rewriting escapes.\n'
+        : 'Use cornell_research_compile for the requested Cornell bundle with substantive research content; its output folder and provenance are backend-bound. When the semantic research is already saved as scoped JSON, send only {input_path:"project/prepared-research.json"}; the backend reads and parses the current file. Direct research fields are a separate form for new content. Preserve real prose newlines and literal escape sequences in examples rather than copying serialized tool text or rewriting escapes.\n')
       : '') +
     (binding.stage === 'planning' || available.has('procedure_run') ? procedureInputContractHint() : '') +
     'Before ending, save one compact assignment_report with outcome, summary, artifacts and findings. ' +
@@ -457,7 +462,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       });
   if (binding.stage === 'planning') {
     const submission = controlledPlanRequestSchemas(controlledPlanSchema, binding.plan_defaults);
-    register('workflow_plan', 'Save one semantic plan or send input_path alone for a prepared JSON plan. Backend supplies missing title and objective from this saved workflow when bound, normalizes unambiguous content, creates and links records and applies the minimum risk policy. Supply the professional rationale, scopes, deliverables and independent check design.', controlledPayloadSchema(submission.schema),
+    register('workflow_plan', 'Save one semantic plan or send input_path alone for a prepared JSON plan. Backend supplies missing title and objective from this saved workflow when bound, normalizes unambiguous content, creates and links records and applies the minimum risk policy. Supply the professional rationale, scopes, deliverables and independent check design.\n' + controlledPlanSubmissionGuide(controlledPlanSchema), controlledPayloadSchema(submission.schema),
       false, args => prepared(submission.parseSchema, args, (plan, source) => {
         if (!callbacks.submitPlan) throw new ControlledToolError('UNSUPPORTED_STAGE', 'Planning is unavailable in this invocation.');
         return callbacks.submitPlan(plan, source);

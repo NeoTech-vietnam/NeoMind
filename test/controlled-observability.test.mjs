@@ -44,6 +44,24 @@ test('validation traces contain the actual redacted rule and static repair owner
   ]) }] });
   assert.equal(schema.code, 'SCHEMA_INVALID'); assert.match(schema.rule, /invalid_type|checks|command/);
   assert.doesNotMatch(JSON.stringify(schema), /SECRET_/);
+  const generated = controlledValidation('GENERATED_ARTIFACT', 'Use the bound Cornell compiler for its managed artifacts.');
+  assert.equal(generated.code, 'GENERATED_ARTIFACT'); assert.equal(generated.owner, 'agent-content');
+  assert.match(generated.rule, /bound Cornell compiler/);
+});
+
+test('canonical producer schema feedback names execution_steps and output_paths while masking unknown or sensitive fields', () => {
+  const issues = [
+    { code: 'invalid_type', expected: 'array', path: ['execution_steps', 0, 'output_paths'], message: 'SECRET_INVALID_VALUE' },
+    { code: 'invalid_type', expected: 'array', path: ['execution_steps', 0, 'command'], message: 'SECRET_INVALID_VALUE' },
+    { code: 'invalid_type', expected: 'string', path: ['execution_steps', 0, 'api_key'], message: 'SECRET_INVALID_VALUE' },
+    { code: 'invalid_type', expected: 'string', path: ['execution_steps', 0, 'private_customer_name'], message: 'SECRET_INVALID_VALUE' },
+  ];
+  const result = controlledValidation('SCHEMA_INVALID', undefined, issues);
+  assert.deepEqual(result.issues[0].path, ['execution_steps', 0, 'output_paths']);
+  assert.deepEqual(result.issues[1].path, ['execution_steps', 0, 'command']);
+  assert.deepEqual(result.issues[2].path, ['execution_steps', 0, '[redacted-field]']);
+  assert.deepEqual(result.issues[3].path, ['execution_steps', 0, '[field]']);
+  assert.doesNotMatch(JSON.stringify(result), /SECRET_|api_key|private_customer_name/);
 });
 
 test('actual SDK flat schema diagnostics become safe structured trace issues without changing the model result', async t => {

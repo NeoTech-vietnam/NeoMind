@@ -50,6 +50,10 @@ Prepared research JSON can be passed to the controlled Cornell tool by project-r
 
 A declared local script step can also consume an already-readable public JSON file through `task_run` with its step title and `input_path`. NeoMind captures the source hash as a read-only execution input without asking the planner to add the file to frozen `input_paths`. The saved command and authorized outputs stay the same; a prepared-file reference grants no additional read or write scope.
 
+Use `{"title":"Generate report","input_path":"requests/report.json"}` for that prepared-file call. NeoMind parses the JSON object and supplies it to the fixed script on stdin; direct authored data uses `input` instead. The plan declares the script under `execution_steps[].command` and its new files under `execution_steps[].output_paths`; outer `outputs` lists producer deliverables. No `stdin_path`, `node -e` or file-reading wrapper is needed or authorized by the payload reference.
+
+For a controlled Cornell bundle, canonical `note.md`, `exercises.md` and `answers.md` are compiler-owned generated artifacts. Their professional content comes from `cornell_research_compile` semantic input, not raw `task_file_write` creation or patches. Keep ordinary source and authored execution reports separate, and preserve an already bound research source and its generated provenance.
+
 New plan submissions receive backend-generated baseline metadata for delivered outputs, the checker and its declared fixtures. Ordinary source references do not need hidden-file approval. Original continuation check baselines stay exact; previously frozen contracts are not normalized or rewritten. A resumed planner receives bounded, redacted prior validation diagnostics instead of having to rediscover a failed request.
 
 A generic check labelled `intended-use` runs its declared command unchanged. Only an explicitly bound supported continuation adapter adds its own pilot protocol. The LeetCode continuation adapter still requires the separate disposable Cornell/C11/C++17 pilot and actual independent evidence; that contract is not imposed on unrelated Node.js tasks.

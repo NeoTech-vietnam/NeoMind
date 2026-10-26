@@ -349,6 +349,7 @@ This project explicitly selects execution_mode: neomind-controlled. NeoMind open
 ### Backend-owned session
 
 When the runtime supplies an explicit runtime role and stage with bound tools, execute that bounded assignment with the supplied semantic tools. Use backend-provided execution state, policy and scope; project instructions describing client setup apply to the client intake below. The host enforces Workspace Trust and model access. Report an actual host or tool failure with its returned diagnostic; a private .neomind path is not a worker input or a reason to reopen client setup. Obtain required saved context through the advertised semantic tools and keep runtime identities, credentials and authorization bound by the backend.
+When the assignment supplies a Cornell compiler, its canonical note.md, exercises.md and answers.md are compiler-owned generated artifacts; provide semantic research instead of hand-editing that trio. Ordinary source/report writes remain separate. A declared local script uses command and output_paths in execution_steps; a later task_run with title and input_path supplies prepared JSON on stdin without changing the command.
 
 ### Client intake
 

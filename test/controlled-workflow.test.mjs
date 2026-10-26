@@ -197,7 +197,11 @@ function scriptFor(name, stage, attempt, options, held) {
         held.reviewEvidence = semanticToolValue(messages); held.reviewEntered = true;
         while (!token.isCancellationRequested && !held.reviewRelease) await delay(10);
         return held.reviewRelease ? new Call('fixture-review-result', result.name, result.input) : new Text('Canceled held review fixture.');
-      }] : [result])];
+      }] : [result]),
+      ...(options.finalizationExternalEdit ? [async () => {
+        atomicWrite(safePath(held.root, output), 'External user content after review\n');
+        return new Text('Review response ended; a concurrent outside edit must remain preserved.');
+      }] : [])];
   }
   if (stage === 'diagnosis') return [call('project_read', { path: checker }), report({ failure_kind: 'checker' })];
   throw new Error(`Unexpected fixture stage ${stage}`);
@@ -228,7 +232,7 @@ async function setup(t, scenarios, existingRoot) {
   ]));
   atomicWrite(safePath(root, '.neomind/routing.json'), JSON.stringify({ ...policy, language_models_file: 'catalog.json',
     strong_provider: 'fixture-strong', worker_provider: 'fixture-worker', vscode_effort_policy: 'allow-unavailable' }));
-  const conversations = new WeakMap(), counts = new Map(), observed = [], errors = [], held = { entered: false };
+  const conversations = new WeakMap(), counts = new Map(), observed = [], errors = [], held = { entered: false, root };
   const api = {
     version: '1.109.0', workspace: { isTrusted: true, workspaceFolders: [{ uri: { scheme: 'file', fsPath: root } }] },
     LanguageModelTextPart: Text, LanguageModelToolCallPart: Call, LanguageModelToolResultPart: Result,
@@ -329,6 +333,26 @@ function countRecordReads(root, action) {
 
 test('controlled execution mode is explicit and distinct from unsigned native modes', () => {
   assert.ok(executionModes.includes('neomind-controlled'));
+});
+
+test('a final acceptance mismatch preserves external edits and reports a typed gate without closing or charging product repair', async t => {
+  const name = 'finalexternal', env = await setup(t, { [name]: { highRisk: true, finalizationExternalEdit: true } });
+  const initial = await startControlledWorkflow(env.root, { requirement: `Scenario: ${name}\nCreate the scalar and independently check and review it.`, request_id: 'final-external-edit' });
+  const deadline = Date.now() + (process.platform === 'win32' ? 180000 : 60000);
+  let stopped;
+  while (Date.now() < deadline) {
+    stopped = controlledStatus(env.root, initial.workflow_id);
+    if (stopped.status === 'blocked') break;
+    await delay(25);
+  }
+  assert.equal(stopped.status, 'blocked'); assert.equal(stopped.blocker.code, 'ACCEPTANCE_INCOMPLETE');
+  assert.ok(stopped.blocker.findings.length > 0); assert.match(stopped.blocker.message, /baseline|changed|artifact|output/i);
+  assert.equal(JSON.parse(readFileSync(safePath(env.root, `.neomind/controlled/traces/${stopped.blocker.trace_id}.json`), 'utf8')).event, 'acceptance-failure');
+  assert.equal(stopped.final_report_id, undefined); assert.equal(stopped.repair_budget.product, 0);
+  assert.equal(stopped.pending_artifact_repair, undefined); assert.deepEqual(env.errors, []);
+  assert.equal(readFileSync(safePath(env.root, `${name}/src/value.txt`), 'utf8'), 'External user content after review\n');
+  const parent = getRecord(env.root, initial.workflow_id);
+  assert.notEqual(parent.meta.status, 'accepted'); assert.equal(parent.meta.data.final_report_id ?? null, null);
 });
 
 test('bound native Cornell plan consumes its exact prepared source through empty MCP input and closes after real independent checks', async t => {

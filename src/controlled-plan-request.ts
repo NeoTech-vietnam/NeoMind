@@ -7,6 +7,41 @@ export interface ControlledPlanRequestDefaults {
   objective: string;
 }
 
+/** A backend-authored shape example, never a default plan or an authorization. */
+export function controlledPlanSubmissionExample() {
+  return {
+    title: 'Generate one independently checked JSON result',
+    objective: 'Generate the requested JSON result from prepared project data.',
+    rationale: 'A bounded producer creates the new result; a separate checker compares it with an independent expected value.',
+    acceptance_criteria: ['The generated example result contains the expected value.', 'The same independent checker rejects deliberately incorrect data.'],
+    allowed_paths: ['scripts/example-producer'], verification_paths: ['scripts/example-checks'],
+    outputs: ['scripts/example-producer/generate.cjs', 'scripts/example-producer/result.json'],
+    preservation_paths: ['inputs/example.json'],
+    execution_steps: [{ title: 'Generate the prepared result', command: ['node', 'scripts/example-producer/generate.cjs'],
+      output_paths: ['scripts/example-producer/result.json'] }],
+    checks: [{ title: 'Compare the generated result',
+      command: ['node', 'scripts/example-checks/check.cjs', 'scripts/example-producer/result.json'],
+      negative_controls: [{ title: 'Reject an incorrect result',
+        command: ['node', 'scripts/example-checks/check.cjs', 'scripts/example-checks/wrong.json'], expected_exit_code: 1 }] }],
+    risk: 'low' as const,
+  };
+}
+
+/** One shared example keeps tool metadata and worker guidance in agreement.
+ * Supplying the canonical schema checks the example without filesystem effects. */
+export function controlledPlanSubmissionGuide(canonical?: z.ZodType): string {
+  const example = controlledPlanSubmissionExample();
+  canonical?.parse(example);
+  return 'Canonical planning shape example only; replace its professional content, paths and criteria with the actual request. This example is not a default plan or permission to create these example files.\n' +
+    JSON.stringify(example) + '\n' +
+    'execution_steps items use title, command and output_paths. command is direct OS argv ["node","path/to/producer.cjs"]; output_paths lists only the exact new files this producer operation creates. ' +
+    'checks contains independent checker commands and each check owns its negative_controls. Do not substitute verification/commands for checks or put narrative implementation_steps into the payload; retain the professional approach in rationale. ' +
+    'For an existing prepared JSON file, keep its path read-only and later call task_run({"title":"Generate the prepared result","input_path":"inputs/example.json"}). ' +
+    'The backend parses that file and sends the resulting JSON object on the producer script stdin. JSON string values keep their decoded newlines and literal backslashes; original file whitespace is not promised on stdin. ' +
+    'Do not add stdin_path to an execution_steps item, pass the JSON path as a replacement for stdin, use shell redirection, or create a node -e/--eval wrapper. ' +
+    'Native Cornell compilation uses cornell_output_dir and optional cornell_input_path, not an OS execution_steps command.';
+}
+
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const same = isDeepStrictEqual;
 const aliases = ['intent', 'summary', 'implementation_instructions', 'verification_instructions', 'negative_controls'] as const;

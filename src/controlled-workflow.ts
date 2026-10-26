@@ -23,6 +23,7 @@ import { registerProcedure, resolveProcedure, runProcedure } from './procedures.
 import { compileCornellResearch, readCornellDestination, type CornellResearchInput } from './cornell-workflow.js';
 import { createCornellNote, validateCornellNote } from './notes.js';
 import { controlledFailure } from './controlled-failure.js';
+import { redactControlledValue } from './controlled-observability.js';
 import { continuationObligations, controlledFingerprints, controlledFingerprintsAsync, executeControlledPilot, materializeControlledEvidence,
   prepareControlledCheckEvidence, verifyControlledTask, controlledContractForTask, controlledAcceptanceBudget, type ContinuationObligations } from './controlled-acceptance.js';
 import { controlledProducerExecutionEvidence } from './controlled-execution-evidence.js';
@@ -36,6 +37,7 @@ import { assertControlledReadBaseline } from './controlled-read-baselines.js';
 import { ControlledOperationDrain } from './controlled-operation-drain.js';
 import { assertControlledPayloadCurrent, ControlledPayloadError, type ControlledPayloadSource } from './controlled-payload.js';
 import { persistControlledCornellNote, ControlledCornellWriteError } from './controlled-cornell-write.js';
+import { controlledCornellOwnedOverwriteRecovery } from './controlled-cornell-recovery.js';
 import { controlledReviewContext } from './controlled-review-context.js';
 import { evidenceReportPaths, pendingEvidenceDocumentation, controlledChecksForPhase, type EvidenceDocumentationSource } from './controlled-report-phase.js';
 import { controlledCornellDirectories, controlledKnowledgeFreshness } from './controlled-cornell-selection.js';
@@ -76,7 +78,8 @@ export interface ControlledSnapshot {
   requirement: string; title: string; revision: number; request_id: string; contract_hash?: string;
   attempts: Attempt[]; checks: ControlledCheckReceipt[]; events: Event[]; repairs: number;
   active_invocations: { id: string; role: string; state: string; requested_model: string; confirmed_model: string | null; provider: string | null }[];
-  blocker?: { kind: FailureKind; message: string; code?: string; trace_id?: string; owner?: string; next_action?: string }; reuse?: WorkPreparation; final_report_id?: string;
+  blocker?: { kind: FailureKind; message: string; code?: string; trace_id?: string; owner?: string; next_action?: string;
+    findings?: { code: string; message: string }[] }; reuse?: WorkPreparation; final_report_id?: string;
   continuation?: { original_mode: string; original_fingerprint: string; original_contract_hash: string };
   intake_recovery?: { code: 'INTAKE_OUTCOME_UNCERTAIN'; observed_records: string[]; observed_invocations: string[]; observed_artifacts: string[] };
   repair_budget?: { schema_version: 1; product: number; protocol: number; environment: number };
@@ -89,6 +92,9 @@ export interface ControlledSnapshot {
   pending_plan?: { plan: ControlledPlan; attempt_id: string; parent_fingerprint: string;
     requirement_fingerprints: Record<string, string>; conflicts: ControlledPlanConflict[]; payload_source?: ControlledPayloadSource };
   pending_documentation?: EvidenceDocumentationSource;
+  /** Backend-authenticated repair of an earlier owned write, never a user-edit override. */
+  pending_artifact_repair?: { kind: 'owned-cornell-overwrite'; note_ids: string[]; source_attempt_id: string;
+    record_fingerprints: Record<string, string> };
   local_executions?: { id: string; attempt_id: string; request_hash: string; title: string; state: 'running' | 'completed';
     pid?: number; intent_path: string; intent_sha256: string; result_path?: string; result_sha256?: string; passed?: boolean }[];
   pending_check_review?: boolean;
@@ -623,7 +629,7 @@ class Controller {
         run.status = 'uncertain'; run.blocker = { kind: 'protocol', message: 'Previous invocation needs reconciliation before resume.' };
         save(this.root, run, 'uncertain', run.blocker.message); return;
       }
-      if (run.phase === 'completed') { this.complete(run); return; }
+      if (run.phase === 'completed') { if (this.complete(run)) return; continue; }
       if (!run.reuse) {
         run.reuse = prepareWork(this.root, { request: run.requirement, request_id: run.request_id,
           environment: { client: 'copilot' }, scope: { mode: 'neomind-controlled', assurance: 'invocation-bound-local', publication: false, network: false } });
@@ -675,6 +681,9 @@ class Controller {
             : 'Implement the complete saved user requirement for this workflow; its scope and acceptance criteria remain authoritative.' } } : {}),
         ...(documentation ? { evidence_documentation: true, evidence_documentation_source_hash: hash(canonicalJson(documentation)) } : {}),
         cornell_bound: !documentation && !!(stage === 'synthesis' ? contract?.knowledge_directory : contract?.plan.cornell_output_dir),
+        generated_artifact_paths: [contract?.plan.cornell_output_dir, contract?.knowledge_directory]
+          .filter((directory): directory is string => !!directory)
+          .flatMap(directory => ['note.md', 'exercises.md', 'answers.md'].map(name => `${directory}/${name}`)),
         ...(primarySourcePath ? { cornell_source: { path: primarySourcePath, sha256: primarySourceHash! } } : {}),
         cornell_starter_allowed: stage === 'synthesis' || !!contract?.plan.cornell_output_dir &&
           contract.plan.outputs.includes(`${contract.plan.cornell_output_dir}/practice-solution.md`),
@@ -763,6 +772,13 @@ class Controller {
             throw new ControlledToolError('ACCEPTANCE_INCOMPLETE', 'Complete each declared producer execution step through task_run before reporting the implementation complete.');
           if (['verification', 'review'].includes(stage) && report.outcome === 'completed' && !report.verdict)
             throw new ControlledToolError('VERDICT_REQUIRED', 'Completed independent verification or review must state verdict pass or fail.');
+          if (stage === 'implementation' && !documentation && report.outcome === 'completed' && current.pending_artifact_repair &&
+              current.pending_artifact_repair.note_ids.some(noteId => {
+                const generated = current.cornell_results?.findLast(result => result.note_id === noteId);
+                return !generated || generated.record_fingerprint === current.pending_artifact_repair!.record_fingerprints[noteId] ||
+                  generated.record_fingerprint !== evidenceRecordFingerprint(getRecord(this.root, noteId)) || !validateCornellNote(this.root, noteId).ok;
+              }))
+            throw new ControlledToolError('ACCEPTANCE_INCOMPLETE', 'Recompile the assigned Cornell bundle through cornell_research_compile before reporting this owned-artifact repair complete. The backend needs its fresh managed generation result.');
           if (active.report) {
             if (canonicalJson(active.report) !== canonicalJson(report)) throw new Error('Attempt already saved a different report.');
             return { saved: true, outcome: report.outcome };
@@ -884,7 +900,8 @@ class Controller {
               owner: role, output_dir: directory } as CornellResearchInput, { approved_source_files: sources.approved_source_files });
             const solutionPath = compiled.note.practice.solution_path;
             const solutionExisted = solutionPath ? existsSync(safePath(this.root, solutionPath)) : false;
-            const note = persistControlledCornellNote(this.root, compiled, sourceContext);
+            const note = persistControlledCornellNote(this.root, compiled, sourceContext,
+              { recover_owned_overwrite: completed.pending_artifact_repair?.kind === 'owned-cornell-overwrite' });
             const solutionCreated = !!solutionPath && !solutionExisted && existsSync(safePath(this.root, solutionPath));
             const current = readState(this.root, id); current.cornell_note_ids = [...new Set([...(current.cornell_note_ids ?? []), note.meta.id])];
             if (!current.cornell_results?.some(result => result.note_id === note.meta.id && result.input_hash === compiled.input_hash &&
@@ -966,6 +983,7 @@ class Controller {
           run.phase = 'implementation';
         } else if (stage === 'implementation') {
           if (documentation) delete run.pending_documentation;
+          if (!documentation) delete run.pending_artifact_repair;
           saveStatus(this.root, contract!.task_id, 'submitted'); run.phase = 'verification';
         }
         else if (stage === 'verification') {
@@ -1013,7 +1031,7 @@ class Controller {
           continue;
         }
         run.status = 'queued'; save(this.root, run, 'transition', `Backend selected ${run.phase}.`);
-        if (run.phase === 'completed') { this.complete(run); return; }
+        if (run.phase === 'completed') { if (this.complete(run)) return; continue; }
       } finally { attemptAbort.abort(); signal.removeEventListener('abort', abortAttempt); unregister(); }
     }
   }
@@ -1043,6 +1061,8 @@ class Controller {
       run.reuse?.manager_brief ?? '',
       `Cornell destination default: ${readCornellDestination(this.root).directory}/${run.workflow_id.toLowerCase()}. Only add a Cornell bundle when requested by the user.`,
       run.blocker ? `Repair/diagnosis context:\n${JSON.stringify(run.blocker)}` : '',
+      stage === 'implementation' && run.pending_artifact_repair
+        ? 'An earlier authenticated producer overwrote a compiler-owned Cornell rendering. Recompile the professional research content with cornell_research_compile; do not write note.md/exercises.md/answers.md directly. The backend authorizes only the proven owned overwrite, preserves both prior versions, then requires a new producer report, fresh independent verification and required final review.' : '',
       `Prior reports:\n${JSON.stringify(run.attempts.filter(item => item.report).slice(-4).map(item => ({ stage: item.stage, report: item.report })))}`,
       'Your current signed-session context establishes the active Bridge and model request. Use runtime_context only for missing execution facts; one completed snapshot suffices. Continue the role work after preflight_complete instead of repeating unchanged context queries. Optional executable paths must come from actual project configuration, never guessed locations. Missing optional languages do not invalidate the session. Client intake setup instructions do not become worker preconditions.',
       stage === 'planning' ? 'Declare required producer execution_steps before freeze. For requested post-check factual reports, declare evidence_report_paths as exact outputs also listed in documentation_paths. Preserve all promised output and independent check criteria.' : '',
@@ -1112,7 +1132,10 @@ class Controller {
     let prepared;
     try { prepared = prepareControlledExecution(this.root, { stage: 'implementation', role: 'developer',
       implementation_paths: contract.plan.allowed_paths, verification_paths: contract.plan.verification_paths,
-      read_paths: ['.'], approved_inputs: contract.plan.input_paths, protected_paths: this.protectedPaths(contract),
+      read_paths: ['.'], approved_inputs: contract.plan.input_paths,
+      protected_paths: [...this.protectedPaths(contract), ...[contract.plan.cornell_output_dir, contract.knowledge_directory]
+        .filter((directory): directory is string => !!directory)
+        .flatMap(directory => ['note.md', 'exercises.md', 'answers.md'].map(name => `${directory}/${name}`))],
       preserved_hashes: contract.preserved_hashes, ...(source ? { payload_source: source } : {}) }, input); }
     catch (error) {
       if (error instanceof ControlledExecutionError) throw new ControlledToolError(error.code, error.message);
@@ -1122,7 +1145,9 @@ class Controller {
       throw new ControlledToolError('INPUT_CHANGED', 'Prepared JSON source changed before the backend captured its execution baseline.');
     const operationId = randomUUID(), folder = `.neomind/controlled/executions/${operationId}`;
     const { input: _directInput, ...declaredOperation } = input;
-    const guardedBefore = fingerprints(this.root, [...contract.plan.verification_paths, ...this.protectedPaths(contract)]);
+    const guardedBefore = fingerprints(this.root, [...contract.plan.verification_paths, ...this.protectedPaths(contract),
+      ...[contract.plan.cornell_output_dir, contract.knowledge_directory].filter((directory): directory is string => !!directory)
+        .flatMap(directory => ['note.md', 'exercises.md', 'answers.md'].map(name => `${directory}/${name}`))]);
     const identity = { schema_version: 1, kind: 'controlled-direct-local-execution', id: operationId,
       workflow_id: id, task_id: contract.task_id, epoch_id: run.epoch_id, contract_hash: run.contract_hash,
       attempt_id: attemptId, invocation_id: attempt.invocation_id, request_hash: requestHash,
@@ -1151,7 +1176,7 @@ class Controller {
         : { code: signal.aborted ? 'ACTOR_INACTIVE' : 'CONTROLLED_OPERATION_FAILED',
           rule: signal.aborted ? 'The owned operation was cancelled before process start.' : 'The backend could not start this bound local operation.' };
     }
-    const guardedAfter = fingerprints(this.root, [...contract.plan.verification_paths, ...this.protectedPaths(contract)]);
+    const guardedAfter = fingerprints(this.root, Object.keys(guardedBefore));
     const guardMatches = same(guardedBefore, guardedAfter);
     if (execution && !guardMatches) { execution.passed = false; execution.changed_inputs.push(...Object.keys(guardedBefore).filter(path => guardedBefore[path] !== guardedAfter[path])); }
     const raw = { ...identity, finished_at: now(), execution, not_started: notStarted, start_failure: startFailure,
@@ -1350,7 +1375,7 @@ class Controller {
     return Object.entries(hashes).every(([path, sha]) => approved.bound_hashes?.[path] === sha) &&
       !routingProblems(this.root, 'reviewer', approved.invocation_id, { workflow_id: run.workflow_id }).length;
   }
-  private complete(run: ControlledSnapshot): void {
+  private complete(run: ControlledSnapshot): boolean {
     const contract = readContract(this.root, run);
     const latest = (stage: Stage) => [...run.attempts].reverse().find(item => item.stage === stage && item.state === 'completed');
     const producer = latest('implementation'), verifier = latest('verification'), reviewer = latest('review');
@@ -1358,7 +1383,36 @@ class Controller {
       const verified = verifyControlledTask(this.root, getRecord(this.root, contract.task_id), 'accepted');
       if (!verified?.ok) throw new ControlledToolError('ACCEPTANCE_INCOMPLETE', verified?.findings.map(item => item.message).join('\n') ?? 'Controlled acceptance is unavailable.');
     };
-    acceptance();
+    const verified = verifyControlledTask(this.root, getRecord(this.root, contract.task_id), 'accepted');
+    if (!verified?.ok) {
+      const recoverable = (run.cornell_results ?? []).flatMap((result, index, results) => {
+        if (results.findLastIndex(item => item.note_id === result.note_id) !== index) return [];
+        if (!contract.plan.cornell_output_dir || !Object.hasOwn(result.artifact_hashes, `${contract.plan.cornell_output_dir}/note.md`)) return [];
+        try { const proof = controlledCornellOwnedOverwriteRecovery(this.root, run.workflow_id, contract.task_id, result);
+          return proof ? [{ result, proof }] : []; }
+        catch { return []; } // An unproven change is preserved and cannot authorize a repair.
+      });
+      if (recoverable.length) {
+        run.pending_artifact_repair = { kind: 'owned-cornell-overwrite', note_ids: recoverable.map(({ result }) => result.note_id),
+          source_attempt_id: recoverable[0]!.proof.source_attempt_id,
+          record_fingerprints: Object.fromEntries(recoverable.map(({ result }) => [result.note_id, result.record_fingerprint])) };
+        this.repair(run, 'implementation', 'Final acceptance found a Cornell rendering overwritten by an earlier authenticated producer. Recompile the managed bundle through cornell_research_compile. Preserve the original scope and require fresh independent checks and required review.');
+        return false;
+      }
+      const findings = (verified?.findings ?? []).slice(0, 8).map(finding => ({
+        code: String(redactControlledValue(finding.code)), message: String(redactControlledValue(finding.message)),
+      }));
+      const traceId = randomUUID();
+      atomicWrite(safePath(this.root, `.neomind/controlled/traces/${traceId}.json`), JSON.stringify({
+        event: 'acceptance-failure', workflow_id: run.workflow_id, epoch_id: run.epoch_id, stage: 'completed', at: now(),
+        code: 'ACCEPTANCE_INCOMPLETE', owner: 'runtime', findings,
+      }, null, 2) + '\n');
+      run.status = 'blocked'; run.blocker = { kind: 'protocol', code: 'ACCEPTANCE_INCOMPLETE', owner: 'runtime', trace_id: traceId, findings,
+        message: `Final acceptance did not validate the current artifacts and their saved evidence. No workflow was closed. ${findings.map(finding => finding.message).join(' ')}`.slice(0, 2000),
+        next_action: 'Reconcile the current acceptance findings and artifact provenance; preserve external edits and historical reports. A passed agent verdict alone does not establish acceptance.' };
+      save(this.root, run, 'acceptance-incomplete', run.blocker.message);
+      return true;
+    }
     const checks = run.checks.filter(check => check.attempt_id === verifier!.id);
     const output = fingerprints(this.root, contract.plan.outputs);
     const existingReport = run.finalizing_report_id ? getRecord(this.root, run.finalizing_report_id)
@@ -1378,6 +1432,7 @@ class Controller {
     saveStatus(this.root, run.workflow_id, 'accepted', acceptance);
     run.final_report_id = report.meta.id; run.status = 'completed'; run.phase = 'completed'; delete run.blocker;
     save(this.root, run, 'completed', 'Actual independent checks and required review passed; workflow accepted.');
+    return true;
   }
   async control(id: string, action: 'pause' | 'resume' | 'cancel'): Promise<ControlledSnapshot> {
     if (this.closed && action === 'resume') throw new ControlledToolError('ACTOR_INACTIVE', 'The controlled owner is closing; reopen the Model Bridge before resuming work.');
@@ -1420,6 +1475,21 @@ class Controller {
       // An explicit allowance increase resumes the already diagnosed repair,
       // rather than rerunning an unchanged failed review. It never refunds usage.
       if (run.repair_budget!.product >= readConfig(this.root).repair_attempts) return run;
+      if (run.blocker.kind === 'implementation' && run.pending_artifact_repair?.kind === 'owned-cornell-overwrite') {
+        const contract = readContract(this.root, run), pending = run.pending_artifact_repair;
+        const valid = pending.note_ids.length > 0 && pending.note_ids.every(noteId => {
+          const result = run.cornell_results?.findLast(item => item.note_id === noteId);
+          if (!result || result.record_fingerprint !== pending.record_fingerprints[noteId] || !contract.plan.cornell_output_dir ||
+              !Object.hasOwn(result.artifact_hashes, `${contract.plan.cornell_output_dir}/note.md`)) return false;
+          try { return controlledCornellOwnedOverwriteRecovery(this.root, id, contract.task_id, result)?.source_attempt_id === pending.source_attempt_id; }
+          catch { return false; }
+        });
+        if (!valid) return run;
+        run.owner_pid = process.pid; run.owner_instance = readHost(this.root).instance;
+        if (!this.repair(run, 'implementation', 'Resume the authenticated managed Cornell repair through cornell_research_compile, then obtain fresh independent verification and required review.')) return run;
+        save(this.root, run, 'resume', 'Explicit project repair allowance resumed the reauthenticated owned-artifact repair; prior budget usage and reports remain unchanged.');
+        this.schedule(id); return run;
+      }
       if (!last || last.state !== 'completed' || !last.report ||
           (last.report.outcome === 'completed' && last.report.verdict !== 'fail') ||
           last.report.failure_kind !== run.blocker.kind || !last.invocation_id || !last.report_id) return run;

@@ -11,6 +11,21 @@ import { researchFixture } from './cornell-research-fixture.mjs';
 
 const decode = result => JSON.parse(result.content[0].text);
 
+test('compiler-owned Cornell renderings reject raw worker writes while ordinary documentation remains writable', async t => {
+  const root = project(t), paths = ['note.md', 'exercises.md', 'answers.md'].map(name => `docs/${name}`);
+  for (const path of paths) writeFileSync(join(root, path), 'Canonical compiler bytes\n');
+  const c = await connect(t, root, binding('implementation', { generated_artifact_paths: paths }));
+  for (const path of paths) {
+    await c.call('project_read', { path });
+    const denied = await c.call('task_file_write', { path, content: 'Untracked replacement\n' });
+    assert.equal(denied.isError, true); assert.equal(decode(denied).code, 'GENERATED_ARTIFACT');
+    assert.match(decode(denied).error, /cornell_research_compile/);
+    assert.equal(readFileSync(join(root, path), 'utf8'), 'Canonical compiler bytes\n');
+  }
+  assert.equal((await c.call('task_file_write', { path: 'docs/report.md', content: '# Actual report\n' })).isError, undefined);
+  assert.equal(readFileSync(join(root, 'docs/report.md'), 'utf8'), '# Actual report\n');
+});
+
 test('worker guide is served from trusted runtime documentation without reading a poisoned private project file', async t => {
   const root = project(t);
   mkdirSync(join(root, '.neomind/guides'), { recursive: true });

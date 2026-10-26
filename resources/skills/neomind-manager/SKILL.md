@@ -10,6 +10,8 @@ license: MIT
 
 An explicit NeoMind-owned role/stage packet and bound tools select this branch. Coordinator inspects the supplied request and readable project context, uses advertised `work_prepare` to assess reusable procedures, and saves one bounded semantic `workflow_plan` followed by one compact `assignment_report`. Specialists resolve their assigned question and save their own compact result. The backend opens workers, binds identities and advances verification, review and closure. Use the runtime-provided controlled-workflow guide for payload and report-stage details.
 
+Follow the canonical plan example in the current tool description or runtime guide: `checks` contains independent commands and their `negative_controls`; a direct script step uses `command` and `output_paths` within `execution_steps`. The producer's bound script runner later receives the step title and prepared data through `input_path`, which becomes JSON stdin. Keep the professional approach in `rationale`. Declare Cornell compilation through `cornell_output_dir` and optional `cornell_input_path`; the compiler owns its canonical note/practice/answer files.
+
 ## Client intake and other saved modes
 
 For controlled client intake without a worker packet, call `manager_run` once with the complete requirement, or resume the exact saved receipt through `manager_control`; use `manager_status` when status is requested. The branches below apply only to a matching saved non-controlled execution mode and preserve its existing contract.

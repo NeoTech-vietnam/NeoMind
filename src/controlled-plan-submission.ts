@@ -58,7 +58,12 @@ function nativeCompilerStep(input: unknown): unknown {
  * normalization must bind its exact Cornell destination before removing the
  * marker; it is never authorized as an operating-system command. */
 export function controlledPlanExecutionStepSubmissionSchema() {
-  const ingress = controlledExecutionDeclarationSchema.extend({ command: z.array(z.string().min(1).max(8000)).min(1).max(128) })
+  const canonical = controlledExecutionDeclarationSchema.extend({
+    title: controlledExecutionDeclarationSchema.shape.title.describe('A concise professional operation title, reused by the Implementer task_run call. No invocation or assignment identity is supplied.'),
+    command: controlledExecutionDeclarationSchema.shape.command.describe('Required direct OS argument array, for example ["node","scripts/producer.cjs"]. Use command, not argv. Node -e/--eval, shell wrappers and native tools are unavailable. Prepared JSON is supplied later by task_run input_path as stdin, not a stdin_path field or shell redirection.'),
+    output_paths: controlledExecutionDeclarationSchema.shape.output_paths.describe('Required exact new producer-created files, for example ["generated/result.json"]. This is output_paths, not outputs or baseline_paths. The files must belong to the declared producer scope; existing files are preserved.'),
+  });
+  const ingress = canonical.extend({ command: z.array(z.string().min(1).max(8000)).min(1).max(128) })
     .superRefine((value, context) => {
       if (value.command.length < 2 && value.command[0] !== compiler)
         context.addIssue({ code: 'custom', path: ['command'], message: 'Producer commands require their exact script or fixed version argument.' });
@@ -66,5 +71,5 @@ export function controlledPlanExecutionStepSubmissionSchema() {
   return z.preprocess((value, context) => {
     try { return nativeCompilerStep(value); }
     catch { context.addIssue({ code: 'custom', message: 'Native Cornell metadata is ambiguous. Use its bound compiler with one source and exact fixed outputs; do not add commands or arbitrary parameters.' }); return z.NEVER; }
-  }, ingress).meta(advertised(controlledExecutionDeclarationSchema));
+  }, ingress).meta(advertised(canonical));
 }

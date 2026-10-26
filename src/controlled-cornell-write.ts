@@ -5,6 +5,8 @@ import { existingControlledCornellNote, controlledCornellResult, type Controlled
 import { evidenceRecordFingerprint } from './evidence-inputs.js';
 import { atomicWrite, getRecord, hash, loadRecords, safePath, withOperationLock } from './storage.js';
 import type { ProjectRecord } from './types.js';
+import { authenticateControlledCornellOwnedOverwrite, controlledCornellOwnedOverwriteRecovery,
+  type ControlledCornellOwnedOverwriteRecovery } from './controlled-cornell-recovery.js';
 
 const same = (a: unknown, b: unknown) => cornellCanonical(a) === cornellCanonical(b);
 type Rendered = Parameters<CornellWritePolicy['prepare']>[0];
@@ -12,7 +14,8 @@ export class ControlledCornellWriteError extends Error { readonly code = 'STATE_
 
 /** A generated draft is revised only from this execution's last durable receipt.
  * Model input never selects a record, revision, old hash or repair credential. */
-export function persistControlledCornellNote(root: string, compiled: CompiledCornellResearch, context: ControlledCornellSourceContext): ProjectRecord {
+export function persistControlledCornellNote(root: string, compiled: CompiledCornellResearch, context: ControlledCornellSourceContext,
+  options: { recover_owned_overwrite?: boolean } = {}): ProjectRecord {
   if (compiled.recipe_input.task_id !== context.task_id || compiled.note.workflow_id !== context.workflow_id ||
       compiled.recipe_input.workflow_id !== context.workflow_id ||
       (compiled.note.requirement_ids ?? []).some(id => !context.requirement_ids.includes(id)))
@@ -26,8 +29,25 @@ export function persistControlledCornellNote(root: string, compiled: CompiledCor
     const replay = existingControlledCornellNote(root, compiled, context);
     if (replay) return replay;
     const saved = [...(context.saved_results ?? [])].reverse().find(result => Object.hasOwn(result.artifact_hashes, path));
-    const identity = { workflow_id: context.workflow_id, epoch_id: context.epoch_id, task_id: context.task_id,
+    const baseIdentity = { workflow_id: context.workflow_id, epoch_id: context.epoch_id, task_id: context.task_id,
       input_hash: compiled.input_hash, compiled_note_hash: hash(JSON.stringify(compiled.note)), previous: saved ?? null };
+    let recovery: ControlledCornellOwnedOverwriteRecovery | undefined;
+    if (options.recover_owned_overwrite && saved) {
+      const checkpoint = safePath(root, `.neomind/controlled/cornell-recoveries/${hash(cornellCanonical(baseIdentity))}.json`);
+      if (existsSync(checkpoint)) {
+        const value = JSON.parse(readFileSync(checkpoint, 'utf8'));
+        if (value.schema_version !== 1 || !same(value.identity, baseIdentity) || value.recovery?.kind !== 'owned-cornell-overwrite')
+          throw new ControlledCornellWriteError('The owned Cornell recovery checkpoint differs from its original compiler generation.');
+        recovery = value.recovery;
+      } else {
+        recovery = controlledCornellOwnedOverwriteRecovery(root, context.workflow_id, context.task_id, saved);
+        if (recovery) atomicWrite(checkpoint, `${JSON.stringify({ schema_version: 1, identity: baseIdentity, recovery }, null, 2)}\n`);
+      }
+      if (recovery && (recovery.workflow_id !== context.workflow_id || recovery.task_id !== context.task_id ||
+          recovery.epoch_id !== context.epoch_id || recovery.note_id !== saved.note_id))
+        throw new ControlledCornellWriteError('Owned Cornell recovery cannot cross its original task, epoch or generated note.');
+    }
+    const identity = { ...baseIdentity, ...(recovery ? { owned_overwrite_recovery: recovery } : {}) };
     const requestHash = hash(cornellCanonical(identity)), folder = `.neomind/controlled/cornell-writes/${requestHash}`;
     const intentPath = safePath(root, `${folder}/intent.json`), renderPath = safePath(root, `${folder}/rendered.json`), resultPath = safePath(root, `${folder}/result.json`);
     const read = (file: string) => {
@@ -52,7 +72,8 @@ export function persistControlledCornellNote(root: string, compiled: CompiledCor
         throw new ControlledCornellWriteError('The generated research record changed outside its saved backend receipt. Preserve the current record before revision.');
       const files = [path, compiled.note.practice.exercise_path, compiled.note.practice.answer_path];
       const before = Object.fromEntries(files.map(file => [file, existsSync(safePath(root, file)) ? hash(readFileSync(safePath(root, file))) : null]));
-      if (saved ? Object.entries(saved.artifact_hashes).some(([file, sha256]) => before[file] !== sha256) : Object.values(before).some(value => value !== null))
+      if (saved ? Object.entries(saved.artifact_hashes).some(([file, sha256]) => before[file] !== sha256 &&
+          (!recovery?.artifacts[file] || before[file] !== recovery.artifacts[file].overwritten_sha256)) : Object.values(before).some(value => value !== null))
         throw new ControlledCornellWriteError('Preserve user-edited or pre-existing research artifacts; the backend has no current receipt authorizing their replacement.');
       intent = { schema_version: 1, request_hash: requestHash, identity, previous_revision: previous?.meta.revision ?? 0,
         before_note_ids: loadRecords(root).filter(note => note.meta.data.artifact_path === path).map(note => note.meta.id), before_artifacts: before };
@@ -99,6 +120,9 @@ export function persistControlledCornellNote(root: string, compiled: CompiledCor
     const policy: CornellWritePolicy = {
       recover_creation: !previous && !!rendered && Object.values(intent.before_artifacts).every(value => value === null),
       recover_artifacts: rendered?.artifacts,
+      ...(recovery && saved ? { recover_owned_artifacts: () => authenticateControlledCornellOwnedOverwrite(root, saved, recovery!,
+        // These hashes are owned by this exact immutable rendering checkpoint, never a worker argument.
+        rendered?.artifacts) } : {}),
       prepare(value) {
         const next = { schema_version: 1, request_hash: requestHash, rendered: value };
         if (existsSync(renderPath)) {

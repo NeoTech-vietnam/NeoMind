@@ -7,7 +7,8 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createControlledMcpServer, controlledPlanSchema } from '../dist/controlled-tools.js';
-import { controlledPlanRequestSchemas } from '../dist/controlled-plan-request.js';
+import { controlledPlanRequestSchemas, controlledPlanSubmissionExample, controlledPlanSubmissionGuide } from '../dist/controlled-plan-request.js';
+import { controlledResultFailure } from '../dist/controlled-observability.js';
 
 const defaults = { title: 'Saved bounded Cornell request', objective: 'Create the requested professional Cornell bundle from the complete saved requirement.' };
 function actualRequest() {
@@ -87,6 +88,39 @@ test('actual MCP advertises canonical types and only backend-supplied duplicate 
   const canonical = controlledPlanRequestSchemas(controlledPlanSchema);
   const advertised = (await import('zod')).z.toJSONSchema(canonical.schema, { io: 'input' });
   assert.ok(advertised.required.includes('title')); assert.ok(advertised.required.includes('objective'));
+});
+
+test('actual MCP advertises a backend-generated canonical plan example and accepts it without protocol assembly', async t => {
+  const f = await fixture(t), metadata = (await f.client.listTools()).tools.find(tool => tool.name === 'workflow_plan');
+  const example = controlledPlanSubmissionExample(), before = JSON.stringify(example);
+  const guide = controlledPlanSubmissionGuide(controlledPlanSchema);
+  assert.ok(metadata.description.includes(guide));
+  assert.deepEqual(controlledPlanSchema.parse(example).execution_steps[0].command, ['node', 'scripts/example-producer/generate.cjs']);
+  const execution = metadata.inputSchema.properties.execution_steps.items;
+  assert.ok(execution.required.includes('title')); assert.ok(execution.required.includes('command')); assert.ok(execution.required.includes('output_paths'));
+  assert.equal(execution.required.includes('input_paths'), false);
+  assert.match(execution.properties.command.description, /input_path.*stdin/);
+  assert.match(execution.properties.output_paths.description, /exact new producer-created files/);
+  assert.ok(guide.includes('task_run({"title":"Generate the prepared result","input_path":"inputs/example.json"})'));
+  assert.match(guide, /original file whitespace is not promised on stdin/);
+  assert.match(guide, /node -e\/--eval wrapper/);
+  const result = await f.call(example);
+  assert.equal(result.isError, undefined, JSON.stringify(result)); assert.equal(f.captured.length, 1);
+  assert.deepEqual(f.captured[0].value, controlledPlanSchema.parse(example));
+  assert.equal(JSON.stringify(example), before); assert.equal(existsSync(join(f.root, 'scripts/example-producer')), false);
+  assert.doesNotMatch(before, /workflow_id|task_id|invocation_id|claim_token|credential|verdict/);
+});
+
+test('actual captured producer-ingress mistakes return actionable canonical field paths without guessing missing declarations', async t => {
+  const f = await fixture(t), input = controlledPlanSubmissionExample();
+  input.execution_steps = [{ argv: ['node', 'scripts/example-producer/generate.cjs'], stdin_path: 'inputs/example.json',
+    expected_exit_code: 0, baseline_paths: ['inputs/example.json'] }];
+  const result = await f.call(input);
+  assert.equal(result.isError, true); assert.equal(f.captured.length, 0);
+  const diagnostic = controlledResultFailure(result); assert.equal(diagnostic.code, 'SCHEMA_INVALID');
+  for (const field of ['title', 'command', 'output_paths'])
+    assert.ok(diagnostic.issues.some(issue => JSON.stringify(issue.path) === JSON.stringify(['execution_steps', 0, field])), `Canonical ${field} is visible in the actual SDK diagnostic.`);
+  assert.equal(existsSync(join(f.root, 'scripts/example-producer')), false);
 });
 
 test('bound defaults do not overwrite professional values and missing rationale is never invented', async t => {
