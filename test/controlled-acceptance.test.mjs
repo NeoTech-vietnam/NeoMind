@@ -143,7 +143,12 @@ async function primaryCornell(t, withStarter = false, withKnowledge = false) {
     planNativeSoftware(root, handle, { ...original, process: 'software-tools', checks: checks.map(({ negative_controls, ...check }) => check) });
     initial = await startControlledWorkflow(root, { workflow_id: workflow.meta.id, request_id: 'primary-and-knowledge' });
   } else initial = await startControlledWorkflow(root, { requirement: 'Deliver independently verified primary Cornell documentation.', request_id: 'primary-cornell' });
-  const deadline = Date.now() + 120000; let run;
+  // This is a functional multi-stage fixture, not a latency SLA. The Windows
+  // dual-bundle path includes independent primary and knowledge verification;
+  // measured local filesystem/signing overhead took 178s with every assertion
+  // intact. Keep each bundle's observation allowance without changing any
+  // model, checker, repair or production acceptance limit.
+  const deadline = Date.now() + (process.platform === 'win32' && withKnowledge ? 240000 : 120000); let run;
   do { run = controlledStatus(root, initial.workflow_id);
     if (run.status === 'completed') break;
     if (['blocked', 'uncertain'].includes(run.status)) assert.fail(JSON.stringify({ blocker: run.blocker, phase: run.phase, stages,
