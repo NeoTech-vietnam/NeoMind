@@ -1,0 +1,2 @@
+cornell-note-template.md -text whitespace=cr-at-eol
+validate_notes.py -text whitespace=cr-at-eol

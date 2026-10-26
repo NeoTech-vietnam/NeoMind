@@ -1,11 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { createServer, get } from 'node:http';
 import { mkdtempSync, mkdirSync, writeFileSync, truncateSync, realpathSync, rmSync, symlinkSync, linkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import * as acceptance from '../dist/controlled-acceptance.js';
 import { hash } from '../dist/storage.js';
+import { controlledFailure } from '../dist/controlled-failure.js';
+import { controlledValidation } from '../dist/controlled-observability.js';
 
 function fixture(t) {
   const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-fingerprint-')));
@@ -14,6 +18,25 @@ function fixture(t) {
 }
 const scan = (root, paths, options) => acceptance.controlledFingerprintsAsync
   ? acceptance.controlledFingerprintsAsync(root, paths, options) : Promise.resolve(acceptance.controlledFingerprints(root, paths));
+
+test('an actual bounded preservation deadline is typed as runtime environment failure without exposing its input path', async t => {
+  const root = fixture(t); mkdirSync(join(root, 'tree')); writeFileSync(join(root, 'tree/PRIVATE_PATH_CANARY.txt'), 'unchanged');
+  const original = fs.promises.lstat;
+  fs.promises.lstat = async function(...args) { await new Promise(resolve => setTimeout(resolve, 5)); return Reflect.apply(original, this, args); };
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(scan(root, ['tree/PRIVATE_PATH_CANARY.txt'], { limits: { max_ms: 1 } }), error => {
+      assert.ok(error instanceof acceptance.ControlledEvidenceScanTimeout);
+      assert.equal(error.code, 'EVIDENCE_SCAN_TIMEOUT');
+      assert.doesNotMatch(error.message, /PRIVATE_PATH_CANARY|select narrower/);
+      const classified = controlledFailure(error);
+      assert.equal(classified.code, 'EVIDENCE_SCAN_TIMEOUT'); assert.equal(classified.kind, 'environment'); assert.equal(classified.owner, 'runtime');
+      assert.equal(controlledValidation(error.code, error.message).owner, 'runtime');
+      assert.notEqual(controlledFailure(Object.assign(new Error('Untrusted error code'), { code: 'EVIDENCE_SCAN_TIMEOUT' })).code, 'EVIDENCE_SCAN_TIMEOUT');
+      return true;
+    });
+  } finally { fs.promises.lstat = original; syncBuiltinESMExports(); }
+});
 
 test('preservation hashing yields to an actual concurrent HTTP heartbeat instead of monopolizing its host', async t => {
   const root = fixture(t); mkdirSync(join(root, 'tree'));

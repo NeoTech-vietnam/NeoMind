@@ -20,6 +20,8 @@ import type { ProjectRecord } from './types.js';
 import { evidenceRecordFingerprint } from './evidence-inputs.js';
 import { hasUnfinishedCornellProse } from './cornell-content.js';
 import { assertCornellRecordView, withCornellRecordView, type CornellRecordView } from './cornell-record-view.js';
+import { assertCornellFormatProfile, cornellFormatProfileProblems, cornellFormatLayout,
+  type CornellFormatProfile } from './cornell-format-profile.js';
 
 export const cornellQuote =
   '<p align="center"><strong><em>"DO NOT JUST TALK ABOUT IT — SHOW IT"</em></strong></p>';
@@ -47,6 +49,8 @@ export interface CornellInput {
   path?: string;
   owner?: string;
   date?: string;
+  /** Backend-bound reviewed format compatibility, absent from model research input. */
+  format_profile?: CornellFormatProfile;
   context: string;
   constraints: string[];
   cues: string[];
@@ -777,10 +781,15 @@ function writeCornellNote(
   const practiceProcedure = input.practice.mode === 'manual'
     ? `Manual practice procedure (completion is not claimed):\n\n${input.practice.procedure!.map((step, index) => `${index + 1}. ${step}`).join('\n')}`
     : command(input.practice.command);
-  const body = `# Cornell Notes\n\n## Topic: ${input.topic}\n\n## Date: ${date}\n\n${cornellQuote}\n${researchHeader}\n## Context and Constraints\n\n${input.context}\n\n${input.constraints.map((item) => `- ${item}`).join('\n')}\n\n## Cue Column\n\n${input.cues.map((item) => `- ${item}`).join('\n')}\n\n## Main Notes\n\n${input.main_notes}\n\n## Demonstration\n\n${input.demonstration.body}\n\n${command(input.demonstration.command)}\n\n### Expected Result\n\n[expected] ${input.demonstration.expected}\n\n### Observed Result\n\n${input.demonstration.observed ? `[observed] ${input.demonstration.observed}\nEvidence: ${evidenceIds.join(', ')}` : '[expected] The demonstration has not been executed; no observed result is claimed.'}\n\n## Failure Cases\n\n${input.failure_cases.map((item) => `- ${item}`).join('\n')}\n\n## Practice\n\n[Exercise](${link(exercisePath)}) · [Answer](${link(answerPath)})${solutionPath ? ` · [Your solution](${link(solutionPath)})` : ''}\n\n${practiceProcedure}\n${cause}\n## Summary\n\n${input.summary}\n\n## Sources\n\n${sourceBody}\n`;
+  if (input.format_profile) assertCornellFormatProfile(root, input.format_profile);
+  const layout = input.format_profile ? cornellFormatLayout(input.format_profile, date) : undefined;
+  const constraintBody = input.constraints.map(item => `- ${item}`).join('\n');
+  const functionContract = layout ? `\n\n#### Function Contract\n\n${input.context}\n\n${constraintBody}` : '';
+  const body = `# Cornell Notes\n\n## Topic: ${input.topic}\n\n## Date: ${layout?.date ?? date}\n\n${cornellQuote}\n${researchHeader}\n${layout?.context_heading ?? '## Context and Constraints'}\n\n${input.context}\n\n${layout?.constraints_heading ?? ''}${constraintBody}${functionContract}\n\n${layout?.cue_heading ?? '## Cue Column'}\n\n${input.cues.map((item) => `- ${item}`).join('\n')}\n\n${layout?.notes_heading ?? '## Main Notes'}\n\n${input.main_notes}\n\n## Demonstration\n\n${input.demonstration.body}\n\n${command(input.demonstration.command)}\n\n### Expected Result\n\n[expected] ${input.demonstration.expected}\n\n### Observed Result\n\n${input.demonstration.observed ? `[observed] ${input.demonstration.observed}\nEvidence: ${evidenceIds.join(', ')}` : '[expected] The demonstration has not been executed; no observed result is claimed.'}\n\n## Failure Cases\n\n${input.failure_cases.map((item) => `- ${item}`).join('\n')}\n\n## Practice\n\n[Exercise](${link(exercisePath)}) · [Answer](${link(answerPath)})${solutionPath ? ` · [Your solution](${link(solutionPath)})` : ''}\n\n${practiceProcedure}\n${cause}\n${layout?.summary_heading ?? '## Summary'}\n\n${input.summary}\n\n## Sources\n\n${sourceBody}\n`;
   const citationErrors = sourceLinks(body, sources);
   if (citationErrors.length) throw new Error(citationErrors.join(' '));
   return withOperationLock(root, `cornell-${hash(path).slice(0, 32)}`, () => {
+    if (input.format_profile) assertCornellFormatProfile(root, input.format_profile);
     const proposed = {
       [path]: body,
       [exercisePath]: input.practice.exercise,
@@ -810,6 +819,7 @@ function writeCornellNote(
       ...(input.workflow_id ? { workflow_id: input.workflow_id } : {}),
       kind: input.kind,
       format: 'cornell-v1',
+      ...(input.format_profile ? { format_profile: structuredClone(input.format_profile) } : {}),
       artifact_path: path,
       artifact_hashes: artifacts,
       sources,
@@ -885,12 +895,14 @@ function writeCornellNote(
         if (current.meta.revision !== revision.expected_revision)
           throw new Error('Cornell revision is stale; read the current note before repair.');
         revisionSafety(root, current, Object.keys(artifacts));
+        if (input.format_profile) assertCornellFormatProfile(root, input.format_profile);
         patch.data = { ...patch.data, ...archiveCornellRevision(root, current, artifacts, requestHash, revision.reason, policy?.recover_owned_artifacts) };
         for (const [file, content] of Object.entries(proposed))
           atomicWrite(safePath(root, file), content);
       });
     }
     const writeCreated = (file: string, content: string) => {
+      if (input.format_profile) assertCornellFormatProfile(root, input.format_profile);
       if (policy?.recover_creation && existsSync(safePath(root, file)) && hash(readFileSync(safePath(root, file))) === hash(content)) return;
       atomicWrite(safePath(root, file), content);
     };
@@ -946,6 +958,7 @@ export function validateCornellNote(
   }
   try {
     const body = readFileSync(safePath(root, path), 'utf8');
+    if (data.format_profile !== undefined) problems.push(...cornellFormatProfileProblems(root, data.format_profile, body));
     if (data.research) {
       const research = data.research as NonNullable<CornellInput['research']>;
       try {

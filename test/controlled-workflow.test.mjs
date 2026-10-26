@@ -149,6 +149,16 @@ function scriptFor(name, stage, attempt, options, held) {
       }] : []), report({ artifacts: [output] })];
   }
   if (stage === 'verification') {
+    if (options.repeatedDiagnosis) {
+      const wrong = attempt <= 2;
+      return [call('project_read', { path: checker }), call('task_file_write', { path: checker,
+        content: `const fs=require('node:fs'),assert=require('node:assert/strict');assert.equal(Number(fs.readFileSync(process.argv[2],'utf8')),${wrong ? attempt + 1 : 1});console.log('independent checker version ${attempt}');\n` }),
+      call('project_read', { path: bad }), call('task_file_write', { path: bad, content: '2\n' }), call('check_run', {}),
+      report(wrong ? { outcome: attempt === 2 ? 'blocked' : 'failed', verdict: 'fail', artifacts: [checker,bad],
+        summary: 'Actual independent checker execution failed; this new saved checker state needs professional diagnosis.',
+        ...(attempt === 1 ? { failure_kind: 'unknown' } : {}) }
+        : { verdict: 'pass', artifacts: [checker,bad], negative_controls: ['The actual incorrect scalar fixture was rejected.'] })];
+    }
     const wrongChecker = (options.checkerFailure || options.legacyDiagnosis) && attempt === 1;
     const childCode = `require('node:fs').writeFileSync(${JSON.stringify(`${name}/verify/child.json`)},JSON.stringify({pid:process.pid,created_at:new Date(performance.timeOrigin).toISOString()}));setInterval(()=>{},1000);`;
     const content = options.slowChecker && attempt === (options.orphanHistory ? 2 : 1)
@@ -209,7 +219,13 @@ function scriptFor(name, stage, attempt, options, held) {
         return new Text('Review response ended; a concurrent outside edit must remain preserved.');
       }] : [])];
   }
-  if (stage === 'diagnosis') return [call('project_read', { path: checker }), report({ failure_kind: 'checker',
+  if (stage === 'diagnosis') return [
+    ...(options.repeatedDiagnosis ? [async () => {
+      const current = controlledStatus(held.root).find(run => run.requirement.startsWith(`Scenario: ${name}\n`));
+      const original = current.attempts.find(item => item.stage === 'diagnosis' && item.report_id);
+      if (original) held.firstDiagnosisRecord ??= getRecord(held.root, original.report_id);
+      return new Call('fixture-diagnosis-read', 'project_read', { path: checker });
+    }] : [call('project_read', { path: checker })]), report({ failure_kind: 'checker',
     ...(options.legacyDiagnosis ? { findings: ['failure_kind: checker. The scalar checker compares against two instead of the required one.'] } : {}) })];
   throw new Error(`Unexpected fixture stage ${stage}`);
 }
@@ -730,6 +746,90 @@ test('an authenticated legacy anchored diagnosis resumes its classified repair w
   assert.equal(done.diagnosis_reconciliations[0].report_id, diagnosis.report_id);
   assert.equal(done.repair_budget.product, 1); assert.equal(done.repair_budget.protocol, 0); assert.equal(done.repair_budget.environment, 0);
   const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.epoch_id === done.epoch_id);
+  assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true); assert.deepEqual(env.errors, []);
+});
+
+test('distinct sealed checker failures receive separate bounded strong diagnoses and close the same workflow', async t => {
+  const name = 'seconddiagnosis', env = await setup(t, { [name]: { repeatedDiagnosis: true, highRisk: true } });
+  const configPath = safePath(env.root, '.neomind/config.json');
+  atomicWrite(configPath, JSON.stringify({ ...JSON.parse(readFileSync(configPath, 'utf8')), repair_attempts: 3 }));
+  const initial = await submit(env.root, name);
+  const done = await until(env.root, initial.workflow_id, run => run.status === 'completed',
+    'a new independently failed checker checkpoint must receive its own diagnosis within the existing allowance', env.errors);
+  const diagnoses = done.attempts.filter(attempt => attempt.stage === 'diagnosis');
+  assert.equal(diagnoses.length, 2); assert.equal(done.diagnosis_sources.length, 2);
+  assert.equal(new Set(done.diagnosis_sources.map(source => source.key)).size, 2);
+  assert.equal(done.attempts.filter(attempt => attempt.stage === 'verification').length, 3);
+  assert.deepEqual(done.repair_budget, { schema_version: 1, product: 2, protocol: 0, environment: 0 });
+  assert.equal(done.repairs, 2); assert.equal(done.workflow_id, initial.workflow_id);
+  const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.epoch_id === done.epoch_id);
+  const policy = ensureRoutingPolicy(env.root);
+  for (const attempt of diagnoses) {
+    const receipt = readInvocation(env.root, attempt.invocation_id);
+    assert.equal(receipt.state, 'completed'); assert.equal(receipt.inference_completed, true);
+    assert.equal(receipt.role, 'manager'); assert.equal(receipt.requested_model, policy.strong_model);
+    assert.equal(receipt.task_id, task.meta.id);
+  }
+  assert.deepEqual(getRecord(env.root, diagnoses[0].report_id), env.held.firstDiagnosisRecord,
+    'The second failure cannot rewrite the first signed professional diagnosis.');
+  assert.equal(verifyControlledTask(env.root, task).ok, true);
+  assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true); assert.deepEqual(env.errors, []);
+});
+
+test('authenticated legacy blocked Verifier without failure_kind resumes a fresh diagnosis without resetting history or caps', async t => {
+  const name = 'legacyseconddiagnosis', env = await setup(t, { [name]: { repeatedDiagnosis: true, highRisk: true } });
+  const configPath = safePath(env.root, '.neomind/config.json');
+  atomicWrite(configPath, JSON.stringify({ ...JSON.parse(readFileSync(configPath, 'utf8')), repair_attempts: 3 }));
+  const write = fs.writeFileSync; let injected = false, initial, stopped;
+  // Emulate only the old controller's persisted lifetime-latch decision, after
+  // real signed Verifier/report completion and before a second diagnosis starts.
+  // No attempt, report, contract, counter or receipt is fabricated or rewritten.
+  fs.writeFileSync = function (path, ...args) {
+    if (!injected && typeof path === 'string' &&
+        /\/\.neomind\/controlled\/workflows\/[a-f0-9]{64}\.json\.[^/]+\.tmp$/.test(path.replaceAll('\\', '/')) &&
+        typeof args[0] === 'string') {
+      const value = JSON.parse(args[0]), last = value.attempts?.at(-1);
+      if (value.requirement?.startsWith(`Scenario: ${name}\n`) && value.status === 'queued' && value.phase === 'diagnosis' &&
+          value.diagnosis_sources?.length === 2 && value.attempts.filter(attempt => attempt.stage === 'diagnosis').length === 1 &&
+          last?.stage === 'verification' && last.report?.outcome === 'blocked' && last.report.failure_kind === undefined) {
+        injected = true;
+        const legacy = { ...value, status: 'blocked', phase: 'verification', diagnosis_sources: value.diagnosis_sources.slice(0, -1),
+          blocker: { kind: 'unknown', message: 'Diagnostic reconciliation exhausted. Injected legacy single-diagnosis policy stop; sealed report is unchanged.' } };
+        return write.call(this, path, JSON.stringify(legacy), ...args.slice(1));
+      }
+    }
+    return write.call(this, path, ...args);
+  };
+  syncBuiltinESMExports();
+  try {
+    initial = await submit(env.root, name);
+    stopped = await until(env.root, initial.workflow_id, run => run.status === 'blocked',
+      'the isolated old backend decision must stop after the second genuine failed Verifier', env.errors);
+  } finally { fs.writeFileSync = write; syncBuiltinESMExports(); }
+  assert.equal(injected, true); assert.equal(stopped.phase, 'verification');
+  const failed = stopped.attempts.at(-1), originalReport = getRecord(env.root, failed.report_id);
+  assert.equal(failed.state, 'completed'); assert.equal(failed.report.outcome, 'blocked');
+  assert.equal(failed.report.failure_kind, undefined);
+  const receipt = readInvocation(env.root, failed.invocation_id);
+  assert.equal(receipt.state, 'completed'); assert.equal(receipt.inference_completed, true);
+  assert.equal(stopped.repair_budget.product, 1); assert.equal(stopped.diagnosis_sources.length, 1);
+  const firstDiagnosis = stopped.attempts.find(attempt => attempt.stage === 'diagnosis');
+  const firstDiagnosisReport = getRecord(env.root, firstDiagnosis.report_id);
+  const contractHash = stopped.contract_hash, attempts = structuredClone(stopped.attempts), checks = structuredClone(stopped.checks);
+  await controlControlledWorkflow(env.root, { workflow_id: initial.workflow_id, action: 'resume' });
+  const done = await until(env.root, initial.workflow_id, run => run.status === 'completed',
+    'an omitted optional failure_kind must normalize to unknown only for the authenticated backend resume decision', env.errors);
+  assert.equal(done.contract_hash, contractHash); assert.equal(done.workflow_id, initial.workflow_id);
+  assert.deepEqual(done.attempts.slice(0, attempts.length), attempts);
+  assert.deepEqual(done.checks.slice(0, checks.length), checks);
+  assert.deepEqual(getRecord(env.root, failed.report_id), originalReport);
+  assert.deepEqual(getRecord(env.root, firstDiagnosis.report_id), firstDiagnosisReport);
+  assert.equal(done.attempts.filter(attempt => attempt.stage === 'diagnosis').length, 2);
+  assert.equal(done.diagnosis_sources.length, 2);
+  assert.deepEqual(done.repair_budget, { schema_version: 1, product: 2, protocol: 0, environment: 0 });
+  assert.equal(JSON.parse(readFileSync(configPath, 'utf8')).repair_attempts, 3);
+  const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.epoch_id === done.epoch_id);
+  assert.equal(verifyControlledTask(env.root, task).ok, true);
   assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true); assert.deepEqual(env.errors, []);
 });
 

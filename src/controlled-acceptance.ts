@@ -14,7 +14,10 @@ import { readCheckReconciliations, unresolvedControlledChecks, assertFreshVerifi
 import { controlledCornellSelection } from './controlled-cornell-selection.js';
 import { assertCompletedEvidenceDocumentationLineage } from './controlled-report-authority.js';
 import { verifyControlledExecutions } from './controlled-execution-evidence.js';
+import { ControlledEvidenceScanTimeout } from './controlled-evidence-error.js';
+export { ControlledEvidenceScanTimeout } from './controlled-evidence-error.js';
 import { latestControlledChecks, controlledCheckMatches } from './controlled-current-checks.js';
+import { captureControlledCheckerScope, controlledCheckerScopeCurrent, type ControlledCheckerScope } from './controlled-checker-scope.js';
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const roots = '.neomind/controlled/workflows';
@@ -52,7 +55,7 @@ function fingerprintBudget(options: FingerprintOptions, synchronous: boolean) {
   const check = (current?: string) => {
     if (current !== undefined) path = current;
     options.signal?.throwIfAborted();
-    if (performance.now() > deadline) throw new Error(`Controlled evidence exceeded its bounded scan time (${limits.max_ms} ms)${location()}; select narrower preservation inputs.`);
+    if (performance.now() > deadline) throw new ControlledEvidenceScanTimeout(limits.max_ms);
   };
   return { limits, check, listed: () => { check(); if (++listed > limits.max_entries) throw new Error(`Controlled evidence exceeds its directory entry limit (${limits.max_entries})${location()}.`); },
     add: (info: Stats | null, current: string) => {
@@ -274,7 +277,8 @@ export function materializeControlledEvidence(root: string, run: ControlledSnaps
     record_baseline: input.record_baseline, input_snapshot: input.input_snapshot, file_baseline: receipt.baseline,
     command: receipt.command, result: receipt.passed ? 'pass' : 'fail', exit_code: receipt.exit_code,
     expected_exit_code: receipt.expected_exit_code, negative: receipt.negative, purpose: receipt.purpose ?? 'self-check',
-    log_path: receipt.log_path, log_hash: receipt.log_sha256, at: receipt.at };
+    log_path: receipt.log_path, log_hash: receipt.log_sha256, at: receipt.at,
+    ...(receipt.checker_scope ? { checker_scope: receipt.checker_scope } : {}) };
   atomicWrite(safePath(root, path), JSON.stringify(data, null, 2) + '\n');
   return createRecord(root, { type: 'evidence', title: `${data.result}: ${receipt.title}`, owner: 'verifier', status: receipt.passed ? 'verified' : 'failed',
     links: [{ type: 'evidence-for', target: input.check_id }, { type: 'documents', target: contract.task_id }],
@@ -293,7 +297,7 @@ export function controlledAcceptanceBudget(root: string, maxMs = 8000) {
   } };
 }
 function evidenceProblems(root: string, run: ControlledSnapshot, contract: ControlledContract, receipt: ControlledCheckReceipt,
-  budget: ReturnType<typeof controlledAcceptanceBudget>, recordAt: RecordAt): void {
+  budget: ReturnType<typeof controlledAcceptanceBudget>, recordAt: RecordAt, checkerScope: ControlledCheckerScope): void {
   budget.check();
   const input = receipt.evidence_input;
   if (!input || !receipt.evidence_id) throw new Error('Actual check needs a materialized evidence record.');
@@ -302,13 +306,17 @@ function evidenceProblems(root: string, run: ControlledSnapshot, contract: Contr
       data.task_id !== contract.task_id || data.workflow_id !== run.workflow_id || data.result !== 'pass' ||
       data.execution_invocation_id !== receipt.invocation_id || !same(data.file_baseline, receipt.baseline) ||
       !same(data.command, receipt.command) || data.log_hash !== receipt.log_sha256 || data.log_path !== receipt.log_path ||
-      data.check_fingerprint !== evidenceRecordFingerprint(recordAt(input.check_id))) throw new Error('Typed check evidence no longer matches its actual receipt.');
+      data.check_fingerprint !== evidenceRecordFingerprint(recordAt(input.check_id)) ||
+      !same(data.checker_scope, receipt.checker_scope)) throw new Error('Typed check evidence no longer matches its actual receipt.');
+  if (!controlledCheckerScopeCurrent(receipt.checker_scope, checkerScope))
+    throw new Error('Approved checker scope changed after execution or lacks its post-execution freshness seal; fresh positive and negative checks are required.');
   if (!receipt.passed || receipt.cancelled || receipt.exit_code !== receipt.expected_exit_code ||
       hash(readFileSync(safePath(root, receipt.log_path))) !== receipt.log_sha256 ||
       !same(receipt.baseline, budget.fingerprints(Object.keys(receipt.baseline)))) throw new Error('Check evidence is failed, stale or incomplete.');
   const log = JSON.parse(readFileSync(safePath(root, receipt.log_path), 'utf8'));
   if (!same(log.command, receipt.command) || !same(log.baseline, receipt.baseline) || log.result?.exit_code !== receipt.exit_code ||
-      log.result?.cancelled || log.result?.timed_out || log.result?.output_limited || log.result?.error || log.pilot_error)
+      log.result?.cancelled || log.result?.timed_out || log.result?.output_limited || log.result?.error || log.pilot_error ||
+      !same(log.checker_scope, receipt.checker_scope))
     throw new Error('Check outcome does not match the backend command result.');
   budget.check();
   validateEvidenceInputs(root, input.input_snapshot, { files: receipt.baseline, record_fingerprints: input.record_baseline,
@@ -320,7 +328,8 @@ function evidenceProblems(root: string, run: ControlledSnapshot, contract: Contr
   }
   const saved = JSON.parse(readFileSync(safePath(root, String(data.receipt_path)), 'utf8'));
   if (!same(saved.file_baseline, data.file_baseline) || saved.result !== data.result || saved.log_hash !== data.log_hash ||
-      saved.execution_invocation_id !== data.execution_invocation_id || saved.controlled_check_id !== receipt.id)
+      saved.execution_invocation_id !== data.execution_invocation_id || saved.controlled_check_id !== receipt.id ||
+      !same(saved.checker_scope, receipt.checker_scope))
     throw new Error('Materialized execution receipt changed.');
   budget.check();
 }
@@ -376,11 +385,12 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
     const attemptChecks = run.checks.filter(item => item.attempt_id === verifier!.id);
     assertFreshVerifierAfterReconciliation(run, reconciliations, verifier!.id, attemptChecks);
     const checks = latestControlledChecks(attemptChecks, verifier!.id);
+    const checkerScope = captureControlledCheckerScope(contract.plan.verification_paths, budget.fingerprints);
     for (const planned of contract.plan.checks) for (const selected of [{ ...planned, negative: false }, ...(planned.negative_controls ?? []).map(value => ({ ...value, negative: true }))]) {
       budget.check();
       const result = checks.find(item => item.title === selected.title && controlledCheckMatches(item, selected));
       if (!result || result.invocation_id !== verifier!.invocation_id) throw new Error('Actual prescribed positive/negative execution evidence is missing.');
-      evidenceProblems(root, run, contract, result, budget, recordAt);
+      evidenceProblems(root, run, contract, result, budget, recordAt, checkerScope);
     }
     if (contract.precheck_review) {
       const precheck = [...run.attempts].reverse().find(item => item.purpose === 'check-review' && item.state === 'completed' && item.report?.verdict === 'pass');

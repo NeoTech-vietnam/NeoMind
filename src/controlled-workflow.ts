@@ -25,8 +25,8 @@ import { createCornellNote, validateCornellNote } from './notes.js';
 import { controlledFailure } from './controlled-failure.js';
 import { redactControlledValue } from './controlled-observability.js';
 import { classifyControlledDiagnosisReport } from './controlled-report-normalization.js';
-import { continuationObligations, controlledFingerprints, controlledFingerprintsAsync, executeControlledPilot, materializeControlledEvidence,
-  prepareControlledCheckEvidence, verifyControlledTask, controlledContractForTask, controlledAcceptanceBudget, type ContinuationObligations } from './controlled-acceptance.js';
+import { continuationObligations, controlledFingerprints, controlledFingerprintsAsync, ControlledEvidenceScanTimeout, executeControlledPilot, materializeControlledEvidence,
+  prepareControlledCheckEvidence, verifyControlledTask, controlledContractForTask, controlledAcceptanceBudget, controlledRecordView, type ContinuationObligations } from './controlled-acceptance.js';
 import { controlledProducerExecutionEvidence } from './controlled-execution-evidence.js';
 import { evidenceRecordFingerprint, type EvidenceInputSnapshot } from './evidence-inputs.js';
 import type { ProjectRecord } from './types.js';
@@ -39,10 +39,14 @@ import { assertControlledCheckInputs } from './controlled-check-preflight.js';
 import { ControlledOperationDrain } from './controlled-operation-drain.js';
 import { assertControlledPayloadCurrent, ControlledPayloadError, type ControlledPayloadSource } from './controlled-payload.js';
 import { persistControlledCornellNote, ControlledCornellWriteError } from './controlled-cornell-write.js';
+import { CornellFormatProfileError, resolveControlledCornellFormatProfile } from './cornell-format-profile.js';
+import { controlledCornellFormatContext } from './controlled-cornell-format-context.js';
+import { controlledDiagnosisDecision, type ControlledDiagnosisSource } from './controlled-diagnosis-policy.js';
 import { controlledCornellOwnedOverwriteRecovery } from './controlled-cornell-recovery.js';
 import { restoreControlledCornellOwnedArtifacts } from './controlled-cornell-restore.js';
 import { controlledReviewContext } from './controlled-review-context.js';
 import { latestControlledChecks, controlledCheckMatches } from './controlled-current-checks.js';
+import { captureControlledCheckerScope, controlledCheckerScopeCurrent, projectControlledCheckerScope, type ControlledCheckerScope } from './controlled-checker-scope.js';
 import { evidenceReportPaths, pendingEvidenceDocumentation, controlledChecksForPhase, type EvidenceDocumentationSource } from './controlled-report-phase.js';
 import { controlledCornellDirectories, controlledKnowledgeFreshness } from './controlled-cornell-selection.js';
 import { assertEvidenceDocumentationAuthority } from './controlled-report-authority.js';
@@ -67,6 +71,7 @@ export interface ControlledCheckReceipt {
   planned_command?: string[]; purpose?: 'self-check' | 'intended-use'; evidence_id?: string;
   evidence_input?: { check_id: string; check_fingerprint: string; record_baseline: Record<string, string>; input_snapshot: EvidenceInputSnapshot };
   pilot_receipt_path?: string; pilot_receipt_hash?: string;
+  checker_scope?: ControlledCheckerScope;
 }
 export interface ControlledContract { schema_version: 2; process: 'software-tools'; workflow_id: string; epoch_id: string;
   plan: ControlledPlan; plan_hash: string; task_id: string; requirement_ids: string[];
@@ -94,7 +99,8 @@ export interface ControlledSnapshot {
   cornell_results?: ControlledCornellResult[];
   check_reconciliations?: InterruptedCheckReconciliationLink[];
   pending_plan?: { plan: ControlledPlan; attempt_id: string; parent_fingerprint: string;
-    requirement_fingerprints: Record<string, string>; conflicts: ControlledPlanConflict[]; payload_source?: ControlledPayloadSource };
+    requirement_fingerprints: Record<string, string>; conflicts: ControlledPlanConflict[]; payload_source?: ControlledPayloadSource;
+    capture_failure?: { code: 'EVIDENCE_SCAN_TIMEOUT'; retry_started: boolean } };
   pending_documentation?: EvidenceDocumentationSource;
   /** Backend-authenticated repair of an earlier owned write, never a user-edit override. */
   pending_artifact_repair?: { kind: 'owned-cornell-overwrite'; note_ids: string[]; source_attempt_id: string;
@@ -102,6 +108,8 @@ export interface ControlledSnapshot {
       mode: 'canonical-restoration' | 'committed-generation' }[] };
   diagnosis_reconciliations?: { id: string; attempt_id: string; invocation_id: string; report_id: string;
     report_fingerprint: string; baseline_hash: string; failure_kind: FailureKind; source: 'anchored-finding'; index: number }[];
+  /** One bounded strong diagnosis request per immutable failed-attempt/checker checkpoint. */
+  diagnosis_sources?: ControlledDiagnosisSource[];
   local_executions?: { id: string; attempt_id: string; request_hash: string; title: string; state: 'running' | 'completed';
     pid?: number; intent_path: string; intent_sha256: string; result_path?: string; result_sha256?: string; passed?: boolean }[];
   pending_check_review?: boolean;
@@ -453,17 +461,29 @@ class Controller {
       if (!same(prior.plan, plan)) throw new Error('Saved contract is immutable.');
       return { saved: true, next: 'Finish the planning report; runtime dispatches the next stage.' };
     }
+    const capturePendingReceipt = () => ({ saved: true, contract_frozen: false,
+      runtime_capture_pending: true, owner: 'runtime',
+      next: 'The backend retained this exact validated plan and preservation scope. Save your completed professional planning report and finish this session. Do not resubmit or narrow the plan; the backend owns its bounded preservation capture retry.' });
+    if (!deferred && run.pending_plan?.capture_failure) {
+      if (!same(run.pending_plan.plan, plan) || !same(run.pending_plan.payload_source ?? null, source ?? null))
+        throw new ControlledToolError('STATE_UNCERTAIN', 'A validated plan is already retained for backend preservation capture. Preserve that exact plan and prepared source; finish the professional planning report instead of replacing runtime state.');
+      return capturePendingReceipt();
+    }
     const parent = getRecord(this.root, run.workflow_id);
     const original = run.continuation ? readNativeSoftwareContract(this.root, run.workflow_id)! : null;
     const requirementIds = [...new Set([...(original?.requirement_ids ?? []), String(parent.meta.data.requirement_id),
       ...(Array.isArray(parent.meta.data.requirement_ids) ? parent.meta.data.requirement_ids.filter((id): id is string => typeof id === 'string') : [])])];
     const parentFingerprint = evidenceRecordFingerprint(parent), requirementFingerprints = Object.fromEntries(requirementIds.map(id => [id, evidenceRecordFingerprint(getRecord(this.root, id))]));
-    const queue = (conflicts: ControlledPlanConflict[]) => {
+    const queue = (conflicts: ControlledPlanConflict[], captureFailure = false) => {
       assertActive(); run = readState(this.root, run.workflow_id);
       run.pending_plan = { plan, attempt_id: run.attempts.at(-1)!.id, parent_fingerprint: parentFingerprint,
         ...(source ? { payload_source: source } : {}),
-        requirement_fingerprints: requirementFingerprints, conflicts };
-      save(this.root, run, 'plan-waiting', 'Validated plan saved without a task or frozen inputs; runtime waits for active writer scopes.');
+        requirement_fingerprints: requirementFingerprints, conflicts,
+        ...(captureFailure ? { capture_failure: { code: 'EVIDENCE_SCAN_TIMEOUT' as const, retry_started: false } } : {}) };
+      save(this.root, run, 'plan-waiting', captureFailure
+        ? 'Validated plan retained without task or contract side effects; runtime owns preservation capture after the signed planning report completes.'
+        : 'Validated plan saved without a task or frozen inputs; runtime waits for active writer scopes.');
+      if (captureFailure) return capturePendingReceipt();
       return { saved: true, contract_frozen: false, waiting_for: conflicts,
         next: 'Save the completed planning report, then finish this session. The backend waits and freezes fresh inputs automatically; do not poll or resubmit the plan.' };
     };
@@ -475,9 +495,15 @@ class Controller {
     const knowledgeDirectory = original ? `${readCornellDestination(this.root).directory}/${run.workflow_id.toLowerCase()}` : undefined;
     controlledCornellDirectories(plan, knowledgeDirectory);
     const attemptId = run.attempts.at(-1)?.id, epoch = run.epoch_id;
-    const preservedHashes = await controlledFingerprintsAsync(this.root, [...new Set([...(plan.preservation_paths ?? []), ...(plan.input_paths ?? []),
-      ...(original ? ['.gitignore', '.agents/skills/leetcode-notes/assets/cornell-note-template.md', '.agents/skills/leetcode-notes/scripts/validate_notes.py']
-        .filter(path => existsSync(safePath(this.root, path))) : [])])], { signal });
+    let preservedHashes: Record<string, string>;
+    try {
+      preservedHashes = await controlledFingerprintsAsync(this.root, [...new Set([...(plan.preservation_paths ?? []), ...(plan.input_paths ?? []),
+        ...(original ? ['.gitignore', '.agents/skills/leetcode-notes/assets/cornell-note-template.md', '.agents/skills/leetcode-notes/scripts/validate_notes.py']
+          .filter(path => existsSync(safePath(this.root, path))) : [])])], { signal });
+    } catch (error) {
+      if (error instanceof ControlledEvidenceScanTimeout && !deferred) return queue([], true);
+      throw error;
+    }
     for (const step of plan.execution_steps ?? []) {
       const inputs = new Set([...Object.keys(preservedHashes), ...step.input_paths,
         ...(step.command[1] === '--version' ? [] : [step.command[1]!])]);
@@ -623,8 +649,37 @@ class Controller {
         const assertPending = () => { const current = readState(this.root, id);
           if (this.closed || signal.aborted || current.epoch_id !== epoch || current.status !== 'waiting' || current.contract_hash ||
               current.pending_plan?.attempt_id !== attemptId || current.attempts.at(-1)?.id !== attemptId)
-            throw new ControlledToolError('ACTOR_INACTIVE', 'The waiting plan changed owner or was cancelled before freezing.'); };
-        await this.plan(run, pending.plan, signal, assertPending, true, pending.payload_source);
+            throw new ControlledToolError('ACTOR_INACTIVE', 'The waiting plan changed owner or was cancelled before freezing.');
+          const retained = current.pending_plan;
+          const recordAt = controlledRecordView(this.root);
+          if (!retained || !same(retained.plan, pending.plan) || retained.parent_fingerprint !== pending.parent_fingerprint ||
+              !same(retained.requirement_fingerprints, pending.requirement_fingerprints) ||
+              !same(retained.payload_source ?? null, pending.payload_source ?? null) ||
+              evidenceRecordFingerprint(recordAt(id)) !== pending.parent_fingerprint ||
+              Object.entries(pending.requirement_fingerprints).some(([record, fingerprint]) => evidenceRecordFingerprint(recordAt(record)) !== fingerprint))
+            throw new ControlledToolError('STATE_UNCERTAIN', 'The retained plan no longer matches its original workflow or requirement fingerprints. Preserve the saved plan and current user edits; do not adopt a new baseline.'); };
+        if (pending.capture_failure) withOperationLock(this.root, `controlled-plan-${hash(id).slice(0, 32)}`, () => {
+          assertPending();
+          const current = readState(this.root, id), captured = current.pending_plan;
+          if (!captured || !same(captured.plan, pending.plan) || !same(captured.payload_source ?? null, pending.payload_source ?? null))
+            throw new ControlledToolError('STATE_UNCERTAIN', 'The retained preservation plan or prepared input changed before its backend retry.');
+          if (captured.payload_source) assertControlledPayloadCurrent(this.root, captured.payload_source);
+          this.reconcileRepairBudget(current);
+          if (captured.capture_failure?.retry_started || current.repair_budget!.environment >= 1)
+            throw new ControlledEvidenceScanTimeout(10000);
+          current.repair_budget!.environment++;
+          captured.capture_failure = { code: 'EVIDENCE_SCAN_TIMEOUT', retry_started: true };
+          save(this.root, current, 'repair', 'Backend routes environment to planning.');
+        });
+        try { await this.plan(run, pending.plan, signal, assertPending, true, pending.payload_source); }
+        catch (error) {
+          if (!(error instanceof ControlledEvidenceScanTimeout) || pending.capture_failure) throw error;
+          assertPending();
+          const current = readState(this.root, id);
+          current.pending_plan!.capture_failure = { code: 'EVIDENCE_SCAN_TIMEOUT', retry_started: false };
+          save(this.root, current, 'plan-capture-waiting', 'The signed pending plan is retained for one backend-owned preservation capture retry; no semantic resubmission or task side effects.');
+          continue;
+        }
         run = readState(this.root, id);
         if (!run.contract_hash) continue;
         run.phase = 'implementation'; run.status = 'queued';
@@ -802,7 +857,7 @@ class Controller {
           assertActive(); run = readState(this.root, id);
           try { return await this.plan(run, plan, attemptAbort.signal, assertActive, false, source); }
           catch (error) {
-            if (error instanceof ControlledPayloadError || error instanceof ControlledToolError) throw error;
+            if (error instanceof ControlledPayloadError || error instanceof ControlledToolError || error instanceof ControlledEvidenceScanTimeout) throw error;
             throw new ControlledToolError('PLAN_INVALID', error instanceof Error ? error.message : 'The semantic plan is invalid.');
           }
         },
@@ -821,6 +876,12 @@ class Controller {
                   generated.record_fingerprint !== evidenceRecordFingerprint(getRecord(this.root, noteId)) || !validateCornellNote(this.root, noteId).ok;
               }))
             throw new ControlledToolError('STATE_UNCERTAIN', 'The prepared managed Cornell artifacts no longer match their current backend generation. Preserve the current files for backend reconciliation; do not reconstruct the research payload or guess repair metadata.');
+          if ((stage === 'verification' || stage === 'review' && binding.review_purpose !== 'checker-readiness') &&
+              report.outcome === 'completed' && report.verdict === 'pass' && contract) {
+            const checks = this.currentChecks(current, contract);
+            if (checks.some(check => !check.checker_scope_current))
+              throw new ControlledToolError('INPUT_CHANGED', 'Approved checker files changed after execution or the historical checks lack a freshness seal. Rerun the prescribed positive and negative check groups before reporting pass; do not refresh old receipts.');
+          }
           if (active.report) {
             if (canonicalJson(active.report) !== canonicalJson(report)) throw new Error('Attempt already saved a different report.');
             return { saved: true, outcome: report.outcome };
@@ -871,9 +932,12 @@ class Controller {
           ])];
           if (title !== undefined && !availableTitles.includes(title))
             throw new ControlledToolError('INVALID_CHECK', `Choose an actual assigned evidence title or omit title for all bound evidence. Available titles: ${JSON.stringify(availableTitles)}.`);
-          const checks = currentControlledChecks(current).filter(check => title === undefined || check.title === title).slice(-16).map(check => {
+          const checks = (contract ? this.currentChecks(current, contract) : []).filter(check => title === undefined || check.title === title).slice(-16).map(check => {
             const log = JSON.parse(readFileSync(safePath(this.root, check.log_path), 'utf8'));
             return { evidence_kind: 'independent-check' as const, title: check.title, purpose: check.purpose ?? 'self-check', negative: check.negative, passed: check.passed,
+              observed_passed: check.observed_passed, checker_scope_current: check.checker_scope_current,
+              checker_scope: check.checker_scope ? { schema_version: 1, roots: check.checker_scope.roots,
+                sha256: check.checker_scope.sha256, file_count: Object.keys(check.checker_scope.files).length } : null,
               command: check.command, exit_code: check.exit_code, expected_exit_code: check.expected_exit_code,
               stdout: typeof log.result?.stdout === 'string' ? log.result.stdout.slice(-8000) : '',
               stderr: typeof log.result?.stderr === 'string' ? log.result.stderr.slice(-8000) : '',
@@ -923,7 +987,8 @@ class Controller {
             const completed = readState(this.root, id);
             // Repair workers may inspect old failing evidence, but Cornell
             // observations must never borrow a Verifier from before this producer.
-            const currentChecks = currentControlledCornellChecks(completed);
+            const selectedChecks = new Set(currentControlledCornellChecks(completed).map(check => check.id));
+            const currentChecks = this.currentChecks(completed, contract!).filter(check => selectedChecks.has(check.id));
             const evidenceIds = currentChecks.filter(check => !check.negative && check.passed)
               .map(check => check.evidence_id).filter((id): id is string => !!id);
             const sourceContext: ControlledCornellSourceContext = { workflow_id: id, epoch_id: completed.epoch_id,
@@ -936,10 +1001,12 @@ class Controller {
                 (binding.read_paths ?? ['.']).some(scope => scope === '.' || covers(path, [scope])) };
             const sources = normalizeControlledCornellSources(this.root, input.sources, sourceContext);
             const worked = bindControlledCornellDemonstration(input.worked_example, evidenceIds, stage === 'synthesis');
+            const formatProfile = stage === 'implementation' ? resolveControlledCornellFormatProfile(this.root, contract!) : undefined;
             const compiled = compileCornellResearch(this.root, { ...input, schema_version: 1, practice: bindControlledCornellPractice(input.practice, directory, binding.cornell_starter_allowed),
               sources: sources.sources, worked_example: worked, requirement_id: requirement.meta.id,
               expected_requirement_revision: requirement.meta.revision, workflow_id: id, task_id: contract!.task_id,
-              owner: role, output_dir: directory } as CornellResearchInput, { approved_source_files: sources.approved_source_files });
+              owner: role, output_dir: directory } as CornellResearchInput, { approved_source_files: sources.approved_source_files,
+                ...(formatProfile ? { format_profile: formatProfile } : {}) });
             const solutionPath = compiled.note.practice.solution_path;
             const solutionExisted = solutionPath ? existsSync(safePath(this.root, solutionPath)) : false;
             const note = persistControlledCornellNote(this.root, compiled, sourceContext,
@@ -959,7 +1026,8 @@ class Controller {
                 source_limitation: 'External URLs are recorded references; the runtime did not fetch or verify their contents.' } : {}) };
           } catch (error) {
             if (error instanceof ControlledCornellWriteError) throw new ControlledToolError('STATE_UNCERTAIN', error.message);
-            if (error instanceof ControlledToolError || error instanceof ControlledPayloadError) throw error;
+            if (error instanceof CornellFormatProfileError) throw new ControlledToolError(error.code, error.message);
+            if (error instanceof ControlledToolError || error instanceof ControlledPayloadError || error instanceof ControlledEvidenceScanTimeout) throw error;
             throw new ControlledToolError('CORNELL_INVALID', error instanceof Error ? error.message : 'Research did not satisfy the Cornell format.');
           }
         },
@@ -1030,6 +1098,10 @@ class Controller {
           saveStatus(this.root, contract!.task_id, 'submitted'); run.phase = 'verification';
         }
         else if (stage === 'verification') {
+          if (this.currentChecks(run, contract!).some(check => !check.checker_scope_current)) {
+            if (!this.repair(run, 'checker', 'Approved checker scope changed after the completed Verifier report, or historical checks lack their execution-time freshness seal. A fresh independent Verifier must inspect and rerun the prescribed groups; old report/check receipts were preserved.')) return;
+            continue;
+          }
           if (contract?.precheck_review && !this.checkApproval(run, contract)) {
             run.pending_check_review = true; run.phase = 'review'; run.status = 'queued'; save(this.root, run, 'check-review-needed', 'Original contract requires independent approval of exact checker bytes before executing pilots.'); continue;
           }
@@ -1039,7 +1111,7 @@ class Controller {
           const prescribed = controlledChecksForPhase(run, contract!).flatMap(check => [{ ...check, negative: false },
             ...(check.negative_controls ?? []).map(check => ({ ...check, negative: true }))]);
           const titles = new Set(prescribed.map(check => check.title));
-          const evidence = latestControlledChecks(run.checks, attempt.id).filter(check => titles.has(check.title));
+          const evidence = this.currentChecks(run, contract!).filter(check => titles.has(check.title));
           if (!evidence.length || evidence.some(check => !check.passed) || prescribed.some(expected =>
               !evidence.some(check => check.title === expected.title && controlledCheckMatches(check, expected))) || active.report.verdict !== 'pass') {
             if (!this.repair(run, active.report.failure_kind ?? 'unknown', active.report.summary)) return;
@@ -1089,6 +1161,10 @@ class Controller {
     const documentation = stage === 'implementation' ? run.pending_documentation : undefined;
     const operations = binding ? new Set(controlledToolNames(binding)) : new Set<string>();
     const reportPaths = contract ? evidenceReportPaths(contract.plan) : [];
+    const formatContext = stage === 'implementation' && operations.has('cornell_research_compile') && contract && !documentation
+      ? controlledCornellFormatContext(this.root, contract, run.cornell_results ?? [], { sourceAllowed: path =>
+        (controlledPublicReferencePath(path) || !!binding?.approved_inputs?.includes(path) && controlledSkillInputPath(path)) &&
+        (binding?.read_paths ?? ['.']).some(scope => scope === '.' || covers(path, [scope])) }) : '';
     return [
       `User requirement:\n${run.requirement}`,
       `Your stage: ${stage}. Use only the supplied semantic tools. Runtime owns identity, records, transitions and checks.`,
@@ -1113,13 +1189,14 @@ class Controller {
           ? 'The backend has already reconciled the Cornell generation from its exact durable provenance. Read the three managed artifacts and relevant implementation. Do not recreate research fields or rewrite the managed renderings. Save a fresh producer report about the current artifacts; no independent result or final acceptance is implied. The backend dispatches fresh Verifier and required Reviewer next.'
           : 'An earlier authenticated producer overwrote a compiler-owned Cornell rendering. Preserve it for backend reconciliation; do not reconstruct its payload or write its renderings directly.' : '',
       `Prior reports:\n${JSON.stringify(run.attempts.filter(item => item.report).slice(-4).map(item => ({ stage: item.stage, report: item.report })))}`,
+      formatContext,
       'Your current signed-session context establishes the active Bridge and model request. Use runtime_context only for missing execution facts; one completed snapshot suffices. Continue the role work after preflight_complete instead of repeating unchanged context queries. Optional executable paths must come from actual project configuration, never guessed locations. Missing optional languages do not invalidate the session. Client intake setup instructions do not become worker preconditions.',
       stage === 'planning' ? 'Declare required producer execution_steps before freeze. For requested post-check factual reports, declare evidence_report_paths as exact outputs also listed in documentation_paths. Preserve all promised output and independent check criteria.' : '',
       operations.has('task_run') ? 'Use the available task_run only for its bound producer operations. A blocked automatic-reuse candidate does not prohibit a separately scoped direct operation. Pass readable prepared JSON data by input_path without recopying serialized tool text; the backend captures its input baseline without changing the frozen command or output scope.' : '',
       documentation ? `Post-verification documentation purpose. Write ONLY these already promised report outputs: ${JSON.stringify(documentation.paths)}. Implementation, checker and Cornell files are read-only. Read check_evidence for the actual completed checkpoint commands, diagnostics, exits and limitations. Report its actual facts without claiming future final review, final verification or workflow closure. Save one assignment_report when the reports are complete. Backend runs fresh independent verification before required review and acceptance. This is a normal scheduled handoff, not a product repair or permission to change scope.` : '',
       stage === 'implementation' && !documentation && reportPaths.length ? `Promised final execution reports: ${JSON.stringify(reportPaths)}. Create their truthful implementation handoff before reporting this stage complete so the first check can fingerprint all declared outputs. State that independent results are pending; record only actual observations already available. The backend schedules their factual post-check completion separately, followed by fresh full verification. These handoff files do not establish acceptance.` : '',
       contract && (stage === 'review' || stage === 'verification' || documentation) ? `Current backend workflow evidence: ${JSON.stringify(controlledReviewContext(this.root, run, contract, reviewPurpose))}\nRead check_evidence({kind:"workflow"}) to refresh the original preservation and report lifecycle observations. This preserves only the declared historical coverage; do not require an invented whole-repository baseline. Genuine missing or changed required artifacts remain defects.` : '',
-      stage === 'synthesis' ? `Current actual evidence: ${JSON.stringify(currentControlledChecks(run).filter(check => !check.negative && check.passed).map(check => ({ title: check.title, evidence_id: check.evidence_id, source_uri: `record:${check.evidence_id}` })))}. Use check_evidence for bounded actual stdout/stderr; private runtime log files are not readable source files. The backend binds evidence and source metadata automatically; cite supplied source_uri or readable project files, and describe only facts supported by these checks.` : '',
+      stage === 'synthesis' && contract ? `Current actual evidence: ${JSON.stringify(this.currentChecks(run, contract).filter(check => !check.negative && check.passed).map(check => ({ title: check.title, evidence_id: check.evidence_id, source_uri: `record:${check.evidence_id}` })))}. Use check_evidence for bounded actual stdout/stderr; private runtime log files are not readable source files. The backend binds evidence and source metadata automatically; cite supplied source_uri or readable project files, and describe only facts supported by these checks.` : '',
       contract?.plan.procedure_candidate && (stage === 'synthesis' || stage === 'review' && reviewPurpose === 'final-product')
         ? `Current backend registry observation: ${JSON.stringify(controlledRegistrationEvidence(this.root, run, contract))}\nUse check_evidence({kind:"registration"}) to refresh this exact bound manifest observation. It is actual registry provenance, not a separate native signed receipt, independent contract review or automatic-reuse qualification.` : '',
       stage === 'verification' ? 'Independently inspect implementation, author only checker files, execute check_run, and report pass/fail. Include negative controls that prove bad output fails. Distinguish product defects from checker defects.' : '',
@@ -1221,7 +1298,7 @@ class Controller {
     } catch (error) {
       if (started) throw error; // An unobserved started process remains uncertain; never invent a result.
       notStarted = true;
-      startFailure = error instanceof ControlledExecutionError || error instanceof ControlledPayloadError ? { code: error.code, rule: error.message }
+      startFailure = error instanceof ControlledExecutionError || error instanceof ControlledPayloadError || error instanceof ControlledEvidenceScanTimeout ? { code: error.code, rule: error.message }
         : { code: signal.aborted ? 'ACTOR_INACTIVE' : 'CONTROLLED_OPERATION_FAILED',
           rule: signal.aborted ? 'The owned operation was cancelled before process start.' : 'The backend could not start this bound local operation.' };
     }
@@ -1272,6 +1349,12 @@ class Controller {
     return 'unknown';
   }
 
+  private currentChecks(run: ControlledSnapshot, contract: Contract) {
+    const checks = currentControlledChecks(run);
+    if (!checks.length) return [];
+    const current = captureControlledCheckerScope(contract.plan.verification_paths, paths => fingerprints(this.root, paths));
+    return checks.map(check => projectControlledCheckerScope(check, current));
+  }
   private async checks(id: string, attemptId: string, signal: AbortSignal, title?: string): Promise<unknown> {
     let run = readState(this.root, id);
     const contract = readContract(this.root, run), attempt = run.attempts.find(item => item.id === attemptId);
@@ -1287,6 +1370,7 @@ class Controller {
     });
     if (!selected.length) throw new Error('Choose a check title from the assigned plan.');
     assertControlledCheckInputs(this.root, contract.plan, selected);
+    let observedScope: ControlledCheckerScope | undefined;
     for (const check of selected) {
       // Recheck presence after an awaited command as well: a concurrent outside
       // deletion must retain actionable ownership instead of generic capture errors.
@@ -1295,7 +1379,10 @@ class Controller {
       const baseline = fingerprints(this.root, check.baseline_paths);
       const prior = latestControlledChecks(run.checks, attemptId).find(item => item.title === check.title);
       if (prior && !controlledCheckMatches(prior, check)) throw new Error('The latest check receipt differs from its immutable prescribed identity.');
-      if (prior && same(prior.baseline, baseline)) continue;
+      if (prior && same(prior.baseline, baseline)) {
+        observedScope ??= captureControlledCheckerScope(contract.plan.verification_paths, paths => fingerprints(this.root, paths));
+        if (controlledCheckerScopeCurrent(prior.checker_scope, observedScope)) continue;
+      }
       const checkId = randomUUID(), logPath = `.neomind/controlled/checks/${checkId}.log`;
       const purpose = !check.negative && 'purpose' in check && check.purpose === 'intended-use' ? 'intended-use' as const : 'self-check' as const;
       // A generic check's purpose describes its evidence, not its task family.
@@ -1319,7 +1406,12 @@ class Controller {
         try { pilot = await executeControlledPilot(this.root, run, checkId, pilotRoot, pilotNonce!, signal, deadline); }
         catch { pilotError = 'The intended-use pilot did not produce valid retained artifacts and passing independent validation/build/run results.'; }
       }
-      const log = JSON.stringify({ command, planned_command: check.command, purpose, baseline, result, pilot, pilot_error: pilotError }, null, 2) + '\n';
+      let checkerScope: ControlledCheckerScope | undefined, scopeFailure: unknown;
+      try { checkerScope = captureControlledCheckerScope(contract.plan.verification_paths, paths => fingerprints(this.root, paths)); }
+      catch (error) { scopeFailure = error; }
+      observedScope = checkerScope;
+      const log = JSON.stringify({ command, planned_command: check.command, purpose, baseline, result, pilot, pilot_error: pilotError,
+        checker_scope: checkerScope, ...(scopeFailure ? { checker_scope_error: 'CHECKER_SCOPE_CAPTURE_FAILED' } : {}) }, null, 2) + '\n';
       atomicWrite(safePath(this.root, logPath), log);
       run = readState(this.root, id);
       run.check_intents!.find(item => item.id === checkId)!.state = 'completed';
@@ -1327,18 +1419,21 @@ class Controller {
         command, planned_command: check.command, purpose, baseline, log_path: logPath, log_sha256: hash(log), exit_code: result.exit_code,
         expected_exit_code: check.expected_exit_code ?? 0, negative: check.negative,
         passed: result.exit_code === (check.expected_exit_code ?? 0) && !result.cancelled && !result.timed_out && !result.output_limited && !result.error && !pilotError &&
-          (!requiresPilotProof || !!pilot) && same(baseline, fingerprints(this.root, check.baseline_paths)),
+          (!requiresPilotProof || !!pilot) && !!checkerScope && same(baseline, fingerprints(this.root, check.baseline_paths)),
         cancelled: result.cancelled, at: now(), evidence_input: evidenceInput,
+        ...(checkerScope ? { checker_scope: checkerScope } : {}),
         ...(pilot ? { pilot_receipt_path: pilot.path, pilot_receipt_hash: pilot.sha256 } : {}) });
       const savedCheck = run.checks.at(-1)!;
       savedCheck.evidence_id = materializeControlledEvidence(this.root, run, contract, savedCheck);
       save(this.root, run, 'check-result', `${check.title}: ${run.checks.at(-1)!.passed ? 'passed' : 'failed'}.`);
+      if (scopeFailure) throw scopeFailure;
       if (signal.aborted) break;
     }
     run = readState(this.root, id);
     const phaseTitles = new Set(controlledChecksForPhase(run, contract).flatMap(check => [check.title, ...(check.negative_controls ?? []).map(check => check.title)]));
-    return { checks: latestControlledChecks(run.checks, attemptId).filter(item => phaseTitles.has(item.title))
-      .map(item => ({ title: item.title, passed: item.passed, exit_code: item.exit_code, evidence: item.log_path })) };
+    return { checks: this.currentChecks(run, contract).filter(item => phaseTitles.has(item.title))
+      .map(item => ({ title: item.title, passed: item.passed, observed_passed: item.observed_passed,
+        checker_scope_current: item.checker_scope_current, exit_code: item.exit_code, evidence: item.log_path })) };
   }
   /** Reconcile a precise legacy professional marker without rewriting its signed report. */
   private reconcileCompletedDiagnosis(run: ControlledSnapshot, contract: Contract): boolean | undefined {
@@ -1389,7 +1484,15 @@ class Controller {
     const budget = run.repair_budget!, max = readConfig(this.root).repair_attempts;
     run.blocker = { kind, message: message.slice(0, 2000) };
     if (kind === 'unknown' && !diagnosed) {
-      if (run.attempts.some(attempt => attempt.stage === 'diagnosis' && attempt.purpose !== 'specialist')) { this.block(run, kind, `Diagnostic reconciliation exhausted. ${message}`); return false; }
+      const decision = controlledDiagnosisDecision(run, max);
+      if (!decision.allowed) {
+        const reason = decision.reason === 'same-failure-source' ? 'This failed attempt and saved checker state already requested diagnosis.'
+          : decision.reason === 'diagnosis-budget-exhausted' ? `The existing ${max}-source diagnosis allowance is exhausted.`
+          : decision.reason === 'invalid-source-ledger' ? 'The saved diagnosis source lineage changed; backend reconciliation is required.'
+          : 'No new completed non-diagnosis failure source is available; recursive diagnosis is refused.';
+        this.block(run, kind, `Diagnostic reconciliation stopped. ${reason} ${message}`); return false;
+      }
+      run.diagnosis_sources = [...(run.diagnosis_sources ?? []), decision.source!];
       run.phase = 'diagnosis';
     } else if (kind === 'implementation' || kind === 'checker') {
       if (budget.product >= max) { this.block(run, kind, `Product/checker repair budget exhausted. ${message}`); return false; }
@@ -1569,12 +1672,16 @@ class Controller {
     if (job) return readState(this.root, id);
     if (!this.admitCheckEffects(run)) return run;
     this.reconcileRepairBudget(run);
-    const last = run.attempts.at(-1);
-    if (run.status === 'blocked' && run.blocker?.message.startsWith('Product/checker repair budget exhausted.') &&
-        (run.blocker.kind === 'implementation' || run.blocker.kind === 'checker')) {
-      // An explicit allowance increase resumes the already diagnosed repair,
-      // rather than rerunning an unchanged failed review. It never refunds usage.
-      if (run.repair_budget!.product >= readConfig(this.root).repair_attempts) return run;
+    const last = run.attempts.at(-1), blocker = run.blocker;
+    const diagnosticResume = run.status === 'blocked' && blocker?.kind === 'unknown' &&
+      (blocker.message.startsWith('Diagnostic reconciliation exhausted.') ||
+        blocker.message.startsWith('Diagnostic reconciliation stopped.'));
+    if (blocker && (diagnosticResume || run.status === 'blocked' && blocker.message.startsWith('Product/checker repair budget exhausted.') &&
+        (blocker.kind === 'implementation' || blocker.kind === 'checker'))) {
+      // Explicit resume reauthenticates the completed failed result. A legacy
+      // diagnostic stop requests bounded diagnosis, never a direct phase retry;
+      // a product allowance increase resumes its already diagnosed repair.
+      if (!diagnosticResume && run.repair_budget!.product >= readConfig(this.root).repair_attempts) return run;
       if (last && run.phase === 'diagnosis' && run.diagnosis_reconciliations?.some(entry => entry.attempt_id === last.id)) {
         run.owner_pid = process.pid; run.owner_instance = readHost(this.root).instance;
         const reconciled = this.reconcileCompletedDiagnosis(run, readContract(this.root, run));
@@ -1583,7 +1690,7 @@ class Controller {
           return run;
         }
       }
-      if (run.blocker.kind === 'implementation' && run.pending_artifact_repair?.kind === 'owned-cornell-overwrite') {
+      if (blocker.kind === 'implementation' && run.pending_artifact_repair?.kind === 'owned-cornell-overwrite') {
         const contract = readContract(this.root, run), pending = run.pending_artifact_repair;
         const valid = pending.note_ids.length > 0 && pending.note_ids.every(noteId => {
           const result = run.cornell_results?.findLast(item => item.note_id === noteId);
@@ -1600,7 +1707,7 @@ class Controller {
       }
       if (!last || last.state !== 'completed' || !last.report ||
           (last.report.outcome === 'completed' && last.report.verdict !== 'fail') ||
-          last.report.failure_kind !== run.blocker.kind || !last.invocation_id || !last.report_id) return run;
+          (last.report.failure_kind ?? 'unknown') !== blocker.kind || !last.invocation_id || !last.report_id) return run;
       const contract = readContract(this.root, run), report = getRecord(this.root, last.report_id);
       const receipt = readInvocation(this.root, last.invocation_id);
       if (last.report_fingerprint !== evidenceRecordFingerprint(report) ||
@@ -1617,8 +1724,10 @@ class Controller {
       // The completed failure is authenticated against its own signed binding.
       // It is not acceptance evidence under the newly selected project policy.
       run.owner_pid = process.pid; run.owner_instance = readHost(this.root).instance;
-      if (!this.repair(run, run.blocker.kind, last.report.summary)) return run;
-      save(this.root, run, 'resume', 'Explicit project repair allowance resumed the existing failed result with its next charged product/checker attempt.');
+      if (!this.repair(run, blocker.kind, last.report.summary)) return run;
+      save(this.root, run, 'resume', diagnosticResume
+        ? 'Authenticated diagnostic failure resumed through its bounded immutable source policy; no direct Verifier retry or repair allowance refund.'
+        : 'Explicit project repair allowance resumed the existing failed result with its next charged product/checker attempt.');
       this.schedule(id); return run;
     }
     if (last && ['running', 'starting'].includes(last.state)) {

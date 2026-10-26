@@ -37,6 +37,9 @@ test('validation traces contain the actual redacted rule and static repair owner
   assert.match(actual.rule, /disjoint/); assert.doesNotMatch(JSON.stringify(actual), /SECRET_TOKEN/);
   const backend = controlledValidation('STATE_UNCERTAIN', 'Preserve the current journal and reconcile the file intent.');
   assert.equal(backend.owner, 'runtime');
+  const format = controlledValidation('CORNELL_FORMAT_PROFILE_UNSUPPORTED', 'Restore the exact approved format asset; do not rewrite professional research.');
+  assert.equal(format.code, 'CORNELL_FORMAT_PROFILE_UNSUPPORTED'); assert.equal(format.owner, 'runtime');
+  assert.match(format.rule, /approved format asset/);
   const unknown = controlledValidation('SECRET_UNKNOWN_CODE', 'SECRET_UNKNOWN_PAYLOAD');
   assert.doesNotMatch(JSON.stringify(unknown), /SECRET_/);
   const schema = controlledResultFailure({ isError: true, content: [{ type: 'text', text: 'Input validation error: ' + JSON.stringify([

@@ -8,6 +8,7 @@ import { atomicWrite, getRecord, hash, loadRecords, now, readConfig, safePath, w
 import type { ProjectRecord } from './types.js';
 import { hasUnfinishedCornellProse, renderCornellClaimLabels } from './cornell-content.js';
 import { withCornellRecordView, type CornellRecordView } from './cornell-record-view.js';
+import { assertCornellFormatProfile, type CornellFormatProfile } from './cornell-format-profile.js';
 
 const prose = z.string().trim().min(8).max(32_000).refine(value => !hasUnfinishedCornellProse(value), 'Complete substantive prose is required.')
   .describe('Complete substantive prose. Discussion of TODO or placeholder validation is allowed; unfinished markers, filler and unexpanded template tokens are not.');
@@ -47,7 +48,7 @@ export const cornellResearchSchema = z.object({
 }).strict();
 export type CornellResearchInput = z.infer<typeof cornellResearchSchema>;
 /** Trusted backend source authorization; never part of model-supplied research. */
-export interface CornellSourcePolicy { approved_source_files: readonly string[] }
+export interface CornellSourcePolicy { approved_source_files: readonly string[]; format_profile?: CornellFormatProfile }
 export interface CompiledCornellResearch { input_hash: string; note: CornellInput; recipe_input: RecipeInput }
 export interface PreparedCornellResearch extends CompiledCornellResearch {
   status: 'prepared' | 'reused'; recipe_instance: ProjectRecord; existing_note_id?: string;
@@ -125,11 +126,15 @@ function compileCornellResearchWithRecords(root: string, value: CornellResearchI
     }
   }
   const fingerprint = recordFingerprint(requirement);
-  const inputHash = hash(cornellCanonical({ input, requirement_fingerprint: fingerprint }));
+  const formatProfile = sourcePolicy?.format_profile;
+  if (formatProfile) assertCornellFormatProfile(root, formatProfile);
+  const inputHash = hash(cornellCanonical({ input, requirement_fingerprint: fingerprint,
+    ...(formatProfile ? { format_profile: formatProfile } : {}) }));
   const questions = (items: CornellResearchInput['questions']) => items.map(item => `### ${item.id}: ${item.prompt}\n\nObjectives: ${item.objective_ids.join(', ')}\n`).join('\n');
   const answers = [...input.questions, ...input.practice.questions].map(item => `## ${item.id}\n\n${item.answer}\n`).join('\n');
   const compiled: CornellInput = {
     topic: input.topic, kind: 'research-note', date: input.date, owner: input.owner ?? 'curator',
+    ...(formatProfile ? { format_profile: structuredClone(formatProfile) } : {}),
     path: `${input.output_dir}/note.md`, workflow_id: input.workflow_id,
     requirement_ids: [requirement.meta.id], context: input.context, constraints: input.constraints,
     cues: input.questions.map(item => `${item.id} (${item.objective_ids.join(', ')}): ${item.prompt}`),

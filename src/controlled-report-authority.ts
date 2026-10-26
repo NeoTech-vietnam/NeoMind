@@ -5,6 +5,7 @@ import { evidenceRecordFingerprint, validateEvidenceInputs } from './evidence-in
 import { controlledAcceptanceBudget, controlledContractForTask, controlledRecordView, type ControlledRecordAt } from './controlled-acceptance.js';
 import { pendingEvidenceDocumentation, type EvidenceDocumentationSource } from './controlled-report-phase.js';
 import { ControlledToolError } from './controlled-tools.js';
+import { ControlledEvidenceScanTimeout } from './controlled-evidence-error.js';
 import type { ControlledContract, ControlledSnapshot, ControlledCheckReceipt } from './controlled-workflow.js';
 
 const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
@@ -16,7 +17,7 @@ export function assertEvidenceDocumentationAuthority(root: string, supplied: Con
   source: EvidenceDocumentationSource): Record<string, string> {
   try { return evidenceDocumentationAuthority(root, supplied, expected, source); }
   catch (error) {
-    if (error instanceof ControlledToolError) throw error;
+    if (error instanceof ControlledToolError || error instanceof ControlledEvidenceScanTimeout) throw error;
     throw new ControlledToolError('STATE_UNCERTAIN', 'The backend could not authenticate the original documentation checkpoint. Preserve its signed reports, execution logs and input snapshots for runtime reconciliation; do not construct replacement IDs or credentials.');
   }
 }

@@ -11,6 +11,8 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { controlledOperationDiagnostic } from '../dist/controlled-operation-diagnostic.js';
 import { createControlledMcpServer, ControlledToolError } from '../dist/controlled-tools.js';
 import { ControlledPayloadError } from '../dist/controlled-payload.js';
+import { ControlledEvidenceScanTimeout } from '../dist/controlled-evidence-error.js';
+import { controlledFailure } from '../dist/controlled-failure.js';
 
 const digest = text => createHash('sha256').update(text).digest('hex');
 const owned = module => fileURLToPath(new URL(`../dist/${module}`, import.meta.url));
@@ -123,4 +125,27 @@ test('actual MCP known content and schema errors retain their existing code with
     const failure = c.traces.find(event => event.status === 'failed');
     assert.equal(Object.hasOwn(failure, 'diagnostic'), false);
   }
+});
+
+test('actual MCP preserves only a trusted scan-timeout class as runtime-owned rather than blaming professional content', async t => {
+  const trusted = await diagnosticClient(t, { readEvidence() { throw new ControlledEvidenceScanTimeout(10000); } });
+  const response = await trusted.call(), result = JSON.parse(response.content[0].text);
+  assert.equal(response.isError, true);
+  assert.equal(result.code, 'EVIDENCE_SCAN_TIMEOUT');
+  assert.equal(result.validation.owner, 'runtime');
+  assert.match(result.error, /Keep the saved requirement and preservation scope unchanged/);
+  assert.equal(Object.hasOwn(trusted.traces.find(event => event.status === 'failed'), 'diagnostic'), false);
+  const untrusted = await diagnosticClient(t, { readEvidence() { throw Object.assign(new Error('SECRET_PROVIDER_ERROR'), { code: 'EVIDENCE_SCAN_TIMEOUT' }); } });
+  const unknown = JSON.parse((await untrusted.call()).content[0].text);
+  assert.equal(unknown.code, 'CONTROLLED_OPERATION_FAILED');
+  assert.doesNotMatch(JSON.stringify(unknown), /SECRET_PROVIDER_ERROR/);
+});
+
+test('the scheduler classifies a trusted changed prepared source as INPUT_CHANGED without exposing its contents', () => {
+  const failure = controlledFailure(new ControlledPayloadError('STALE_READ', 'SECRET_PREPARED_SOURCE changed after its retained observation.'));
+  assert.equal(failure.code, 'INPUT_CHANGED');
+  assert.equal(failure.owner, 'runtime');
+  assert.match(failure.next_action, /current inputs.*fresh owned evidence/);
+  assert.doesNotMatch(JSON.stringify(failure), /SECRET_PREPARED_SOURCE/);
+  assert.equal(controlledFailure(Object.assign(new Error('SECRET_PROVIDER_STALE_READ'), { code: 'STALE_READ' })).code, 'UNEXPECTED_RUNTIME_FAILURE');
 });

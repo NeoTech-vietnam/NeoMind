@@ -4,6 +4,7 @@ import { controlledContractForTask, controlledFingerprints, controlledRecordView
 import { controlledPublicReferencePath, controlledSkillInputPath, type ControlledReviewPurpose } from './controlled-tools.js';
 import type { ControlledContract, ControlledSnapshot } from './controlled-workflow.js';
 import { latestControlledChecks } from './controlled-current-checks.js';
+import { captureControlledCheckerScope, projectControlledCheckerScope } from './controlled-checker-scope.js';
 
 /** Current backend facts, not an agent verdict or a new historical baseline. */
 export function controlledReviewContext(root: string, supplied: ControlledSnapshot, expected?: ControlledContract,
@@ -30,7 +31,9 @@ export function controlledReviewContext(root: string, supplied: ControlledSnapsh
   const ordered = [...visible.filter(path => changes.includes(path)), ...visible.filter(path => !changes.includes(path))];
   const latest = (stage: string) => run.attempts.findLast(attempt => attempt.stage === stage && attempt.purpose !== 'specialist' && attempt.purpose !== 'check-review');
   const producer = latest('implementation'), verifier = latest('verification');
-  const currentChecks = verifier ? latestControlledChecks(run.checks, verifier.id) : [];
+  const selectedChecks = verifier ? latestControlledChecks(run.checks, verifier.id) : [];
+  const checkerScope = selectedChecks.length ? captureControlledCheckerScope(contract.plan.verification_paths, paths => controlledFingerprints(root, paths)) : undefined;
+  const currentChecks = checkerScope ? selectedChecks.map(check => projectControlledCheckerScope(check, checkerScope)) : [];
   const fresh = !!verifier && !!producer && run.attempts.indexOf(verifier) > run.attempts.indexOf(producer);
   // A public report.md named in plan.outputs remains a producer deliverable.
   // It is never confused with the backend final record created after review.
@@ -71,7 +74,9 @@ export function controlledReviewContext(root: string, supplied: ControlledSnapsh
       latest_verifier_completed: verifier?.state === 'completed' && verifier.report?.outcome === 'completed',
       positive_count: currentChecks.filter(check => !check.negative).length,
       negative_count: currentChecks.filter(check => check.negative).length,
-      journal_results_all_passed: currentChecks.length > 0 && currentChecks.every(check => check.passed),
+      journal_results_all_passed: currentChecks.length > 0 && currentChecks.every(check => check.observed_passed),
+      current_results_all_passed: currentChecks.length > 0 && currentChecks.every(check => check.passed),
+      checker_scope_current: currentChecks.length > 0 && currentChecks.every(check => check.checker_scope_current),
       authority: 'Read bound execution evidence for actual commands, diagnostics and negative-control meaning. These counts alone do not establish acceptance.' as const,
     },
     finalization: {

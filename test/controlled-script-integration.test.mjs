@@ -1,16 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { atomicWrite, hash, initialize, loadRecords, safePath } from '../dist/storage.js';
+import { atomicWrite, hash, initialize, loadRecords, safePath, getRecord, updateRecord } from '../dist/storage.js';
 import { ensureRoutingPolicy, readInvocation } from '../dist/routing.js';
 import { enableVSCodeHost } from '../dist/vscode-host.js';
 import { shutdownNative } from '../dist/native.js';
-import { startControlledHost, startControlledWorkflow, controlControlledWorkflow, controlledStatus } from '../dist/controlled-workflow.js';
+import { startControlledHost, startControlledWorkflow, controlControlledWorkflow, controlledStatus, controlledRepairBudget } from '../dist/controlled-workflow.js';
 import { verify } from '../dist/engineering.js';
 import { controlledProducerExecutionEvidence } from '../dist/controlled-execution-evidence.js';
-import { controlledAcceptanceBudget } from '../dist/controlled-acceptance.js';
+import { controlledAcceptanceBudget, ControlledEvidenceScanTimeout } from '../dist/controlled-acceptance.js';
 
 // The Bridge, signatures, MCP tools, files and child processes are real. The
 // model/editor responses below are deterministic fixtures, not account inference.
@@ -24,8 +26,10 @@ class Cancellation {
 }
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const script = 'source/generate.mjs', product = 'source/value.json', checker = 'checks/check.cjs', wrong = 'checks/wrong.json';
+const checkerHelper = 'checks/helper.cjs', generatedWrong = 'checks/generated-negative.json';
 const title = 'Generate scalar JSON';
 const preparedSource = 'prepared/generator-input.json';
+const preservationInput = 'preserved/input.txt', preparedPlan = 'prepared/plan.json';
 const alternatePreparedSource = 'prepared/same-content-other-source.json';
 const preparedInput = { values: [1, 2, 3], description: 'A real Markdown paragraph\n\nSecond paragraph.', expected_stdout: '{"value":6}\n' };
 const producer = `import {writeFileSync} from 'node:fs';
@@ -41,6 +45,17 @@ const oracle = `const fs=require('node:fs'),assert=require('node:assert/strict')
 assert.equal(process.argv.length,3,'generic checker argv must stay exact');
 assert.equal(JSON.parse(fs.readFileSync(process.argv[2],'utf8')).value,6);
 console.log('independent scalar verified');\n`;
+const helperOracle = `const fs=require('node:fs'),assert=require('node:assert/strict');
+const expected=require('./helper.cjs').expected;
+assert.equal(process.argv.length,3);
+assert.equal(JSON.parse(fs.readFileSync(process.argv[2],'utf8')).value,expected);
+console.log('independent helper verified scalar');\n`;
+const generatingOracle = `const fs=require('node:fs'),assert=require('node:assert/strict');
+const negative=process.argv[2]==='--negative-control';
+const path=negative?'${generatedWrong}':process.argv[2];
+assert.equal(JSON.parse(fs.readFileSync(path,'utf8')).value,6);
+if(!negative) fs.writeFileSync('${generatedWrong}',JSON.stringify({value:7}));
+console.log('positive check created the deliberately invalid fixture');\n`;
 function plan() {
   return { title: 'Bounded JSON producer', objective: 'Generate scalar six from structured input and independently reject wrong output.',
     rationale: 'Use an actual scoped project script without automatic procedure qualification.',
@@ -54,6 +69,16 @@ const call = (name, input = {}, capture, expectedError) => ({ name, input, captu
 const report = (stage, extra = {}) => call('assignment_report', { outcome: 'completed', summary: `Scoped ${stage} result saved.`,
   ...(stage === 'verification' || stage === 'review' ? { verdict: 'pass' } : {}), ...extra });
 function actions(stage, attempt, mode) {
+  if (stage === 'planning' && mode.startsWith('checker-scope-')) {
+    const proposed = plan();
+    if (mode === 'checker-scope-generated') proposed.checks[0].negative_controls[0].command =
+      [process.execPath, checker, '--negative-control', 'generated-fixture'];
+    return [call('workflow_plan', proposed), report(stage)];
+  }
+  if (stage === 'planning' && mode.startsWith('plan-scan-')) return [
+    call('workflow_plan', mode === 'plan-scan-stale-source' ? { input_path: preparedPlan }
+      : { ...plan(), preservation_paths: [preservationInput] }, 'plan-capture'), report(stage),
+  ];
   if (stage === 'planning') return [call('runtime_context', {}, 'context'), call('runtime_context', {}, 'context-replay'),
     call('workflow_plan', { ...plan(), ...(mode === 'producer-evidence' ? { risk: 'elevated' } : {}) }), report(stage)];
   if (stage === 'implementation') {
@@ -77,6 +102,21 @@ function actions(stage, attempt, mode) {
       ...(mode === 'prepared-input' ? [call('task_run', { title, input_path: alternatePreparedSource }, 'different-source-replay', 'OUTPUT_EXISTS')] : []),
       report(stage, failed ? { outcome: 'failed', failure_kind: 'implementation', findings: ['The real producer exited seven after creating its output.'] } : {})];
   }
+  if (stage === 'verification' && mode === 'checker-scope-edit') return [
+    call('project_read', { path: checker }), call('task_file_write', { path: checker, content: helperOracle }),
+    call('project_read', { path: checkerHelper }), call('task_file_write', { path: checkerHelper, content: 'module.exports={expected:6};\n' }),
+    call('project_read', { path: wrong }), call('task_file_write', { path: wrong, content: '{"value":7}\n' }),
+    call('check_run', {}, 'checker-first-run'), call('check_evidence', {}, 'checker-before-edit'),
+    call('project_read', { path: checkerHelper }), call('task_file_write', { path: checkerHelper, content: 'module.exports={expected:6}; // reviewed helper revision\n' }),
+    call('check_evidence', {}, 'checker-after-edit'),
+    call('assignment_report', { outcome: 'completed', verdict: 'pass', summary: 'An old pass must not borrow the changed checker helper.' }, 'checker-stale-report', 'INPUT_CHANGED'),
+    call('check_run', {}, 'checker-fresh-run'), call('check_evidence', {}, 'checker-fresh-evidence'), report(stage),
+  ];
+  if (stage === 'verification' && mode === 'checker-scope-generated') return [
+    call('project_read', { path: checker }), call('task_file_write', { path: checker, content: generatingOracle }),
+    call('project_read', { path: generatedWrong }, 'checker-generated-before'),
+    call('check_run', {}, 'checker-generated-group'), call('check_evidence', {}, 'checker-generated-evidence'), report(stage),
+  ];
   if (stage === 'verification') return [...(mode === 'producer-evidence' ? [
     call('check_evidence', { title }, 'producer-proof-verifier'),
     call('check_evidence', { title: 'Not a canonical evidence selector' }, 'unknown-producer-selector', 'INVALID_CHECK'),
@@ -102,6 +142,45 @@ async function fixture(t, mode = 'normal') {
   if (mode === 'prepared-input') for (const path of [preparedSource, alternatePreparedSource])
     atomicWrite(safePath(root, path), `${JSON.stringify(preparedInput, null, 2)}\n`);
   const conversations = new WeakMap(), counts = new Map(), captures = {}, errors = [], observed = [], progress = [];
+  const scan = { injected: 0, reads: 0, retryEntered: false, releaseRetry() {} };
+  if (mode.startsWith('plan-scan-')) {
+    atomicWrite(safePath(root, preservationInput), 'Keep every preserved byte.\n');
+    atomicWrite(safePath(root, preparedPlan), JSON.stringify({ ...plan(), preservation_paths: [preservationInput] }));
+    const original = fs.promises.lstat, originalOpen = fs.openSync, target = join(root, preservationInput);
+    let lockEdit = false;
+    fs.openSync = function(path, ...args) {
+      const descriptor = Reflect.apply(originalOpen, this, [path, ...args]);
+      const normalized = String(path).replaceAll('\\', '/');
+      if (mode === 'plan-scan-lock-requirement' && !lockEdit && normalized.startsWith(root.replaceAll('\\', '/') + '/.neomind/operations/') &&
+          /\/controlled-plan-[a-f0-9]{32}\.lock$/.test(normalized)) {
+        lockEdit = true;
+        const [current] = controlledStatus(root), parent = getRecord(root, current.workflow_id), requirement = getRecord(root, parent.meta.data.requirement_id);
+        updateRecord(root, requirement.meta.id, {}, requirement.body + '\nExternal edit after outer pending check, during retry lock acquisition.\n');
+        captures['requirement-edited-at-claim'] = true;
+      }
+      return descriptor;
+    };
+    fs.promises.lstat = async function(path, ...args) {
+      if (String(path).replaceAll('\\', '/') === target.replaceAll('\\', '/')) {
+        scan.reads++;
+        if (scan.injected < (mode === 'plan-scan-repeat' ? 2 : 1)) {
+          scan.injected++; throw new ControlledEvidenceScanTimeout(10000);
+        }
+        if (mode === 'plan-scan-retry-requirement' && !captures['requirement-edited-during-retry']) {
+          captures['requirement-edited-during-retry'] = true;
+          const [current] = controlledStatus(root), parent = getRecord(root, current.workflow_id), requirement = getRecord(root, parent.meta.data.requirement_id);
+          updateRecord(root, requirement.meta.id, {}, requirement.body + '\nExternal edit during the claimed asynchronous preservation retry.\n');
+        }
+        if (mode === 'plan-scan-restart' && !scan.retryEntered) {
+          scan.retryEntered = true;
+          await new Promise(resolve => { scan.releaseRetry = resolve; });
+        }
+      }
+      return Reflect.apply(original, this, [path, ...args]);
+    };
+    syncBuiltinESMExports();
+    t.after(() => { scan.releaseRetry(); fs.promises.lstat = original; fs.openSync = originalOpen; syncBuiltinESMExports(); });
+  }
   const started = performance.now();
   const api = { version: '1.109.0', workspace: { isTrusted: true, workspaceFolders: [{ uri: { scheme: 'file', fsPath: root } }] },
     LanguageModelTextPart: Text, LanguageModelToolCallPart: Call, LanguageModelToolResultPart: Result,
@@ -136,6 +215,16 @@ async function fixture(t, mode = 'normal') {
         } else {
           if (state.previous?.expectedError) throw new Error('A different prepared source unexpectedly borrowed the first execution result.');
           if (state.previous?.capture) captures[state.previous.capture] = JSON.parse(response.content[0].text);
+          if (state.previous?.capture === 'plan-capture') {
+            const [current] = controlledStatus(root);
+            captures['pending-side-effects'] = { tasks: loadRecords(root).filter(record => record.meta.type === 'task').length,
+              frozen: !!current.contract_hash, environment: current.repair_budget?.environment ?? 0 };
+            if (mode === 'plan-scan-stale-source') atomicWrite(safePath(root, preparedPlan), readFileSync(join(root, preparedPlan), 'utf8') + ' ');
+            if (mode === 'plan-scan-stale-requirement') {
+              const parent = getRecord(root, current.workflow_id), requirement = getRecord(root, parent.meta.data.requirement_id);
+              updateRecord(root, requirement.meta.id, {}, requirement.body + '\nExternal requirement edit before retry.\n');
+            }
+          }
         }
       }
       const action = state.actions[state.round++]; state.previous = action;
@@ -146,7 +235,7 @@ async function fixture(t, mode = 'normal') {
   let bridge = await enableVSCodeHost(api, root), owner = await startControlledHost(root);
   const stop = async () => { await owner.close(); await shutdownNative(root); await bridge.close(); };
   t.after(async () => { await stop(); assert.equal(dirname(root), parent); rmSync(root, { recursive: true, force: true }); });
-  return { root, captures, errors, observed, progress, started, closeOwner: () => owner.close(), restart: async () => {
+  return { root, captures, errors, observed, progress, started, scan, closeOwner: () => owner.close(), restart: async () => {
     await stop(); bridge = await enableVSCodeHost(api, root); owner = await startControlledHost(root);
   } };
 }
@@ -278,6 +367,141 @@ test('a missing negative fixture preflights the whole group before any checker r
   const contract = savedContract(env, done);
   assert.equal(verify(env.root, contract.task_id, 'accepted').ok, true);
 });
+
+test('a changed imported checker helper invalidates old observed passes until the same prescribed group runs freshly', async t => {
+  const env = await fixture(t, 'checker-scope-edit'), initial = await startControlledWorkflow(env.root, {
+    requirement: 'Generate scalar six and independently verify it with an imported checker helper and a deliberately wrong fixture.',
+    request_id: 'checker-helper-freshness',
+  });
+  const done = await until(env, initial.workflow_id, run => run.status === 'completed');
+  assert.deepEqual(env.errors, []);
+  const checks = name => env.captures[name].filter(item => item.evidence_kind === 'independent-check');
+  assert.equal(checks('checker-before-edit').length, 2);
+  assert.ok(checks('checker-before-edit').every(item => item.observed_passed && item.passed && item.checker_scope_current));
+  assert.ok(checks('checker-after-edit').every(item => item.observed_passed === true && item.passed === false && item.checker_scope_current === false));
+  assert.equal(env.captures['checker-stale-report'].code, 'INPUT_CHANGED');
+  assert.ok(checks('checker-fresh-evidence').every(item => item.observed_passed && item.passed && item.checker_scope_current));
+  assert.equal(done.checks.length, 4, 'Fresh positive and negative commands are retained alongside both original observations.');
+  assert.equal(done.attempts.filter(item => item.stage === 'verification').length, 1);
+  assert.deepEqual(done.repair_budget, { schema_version: 1, product: 0, protocol: 0, environment: 0 });
+  const contract = savedContract(env, done);
+  assert.ok(contract.plan.checks.every(check => !check.baseline_paths.includes(checkerHelper) &&
+    check.negative_controls.every(control => !control.baseline_paths.includes(checkerHelper))), 'The helper was covered by the approved scope, without changing the frozen explicit baseline.');
+  for (const [index, check] of done.checks.entries()) {
+    const expected = hash(index < 2 ? 'module.exports={expected:6};\n' : 'module.exports={expected:6}; // reviewed helper revision\n');
+    assert.equal(check.checker_scope.files[checkerHelper], expected);
+    const bytes = readFileSync(safePath(env.root, check.log_path));
+    assert.equal(hash(bytes), check.log_sha256, 'Old actual logs were never refreshed against new helper bytes.');
+    assert.deepEqual(JSON.parse(bytes.toString('utf8')).checker_scope, check.checker_scope);
+    assert.deepEqual(getRecord(env.root, check.evidence_id).meta.data.checker_scope, check.checker_scope);
+  }
+  assert.equal(verify(env.root, contract.task_id, 'accepted').ok, true);
+});
+
+test('positive-generated verifier fixture is sealed after execution and the negative checker only reads it before closure', async t => {
+  const env = await fixture(t, 'checker-scope-generated'), initial = await startControlledWorkflow(env.root, {
+    requirement: 'Generate scalar six; let its independent positive checker prepare an invalid verifier fixture, then reject it with the same checker.',
+    request_id: 'checker-post-execution-seal',
+  });
+  const done = await until(env, initial.workflow_id, run => run.status === 'completed');
+  assert.deepEqual(env.errors, []);
+  assert.equal(env.captures['checker-generated-before'].exists, false);
+  assert.equal(done.checks.length, 2);
+  assert.ok(done.checks.every(check => check.passed));
+  const generated = readFileSync(join(env.root, generatedWrong)), checksum = hash(generated);
+  assert.equal(JSON.parse(generated.toString('utf8')).value, 7);
+  assert.equal(done.checks[0].checker_scope.files[generatedWrong], checksum, 'The positive receipt seals its newly generated fixture after the command finishes.');
+  assert.deepEqual(done.checks[1].checker_scope, done.checks[0].checker_scope, 'The negative command only reads the now sealed verifier fixture.');
+  const evidence = env.captures['checker-generated-evidence'].filter(item => item.evidence_kind === 'independent-check');
+  assert.ok(evidence.every(check => check.observed_passed && check.passed && check.checker_scope_current));
+  assert.deepEqual(done.repair_budget, { schema_version: 1, product: 0, protocol: 0, environment: 0 });
+  const contract = savedContract(env, done);
+  assert.ok(contract.plan.checks.every(check => !check.baseline_paths.includes(generatedWrong) &&
+    check.negative_controls.every(control => !control.baseline_paths.includes(generatedWrong))));
+  assert.equal(verify(env.root, contract.task_id, 'accepted').ok, true);
+});
+
+test('a preservation timeout retains one professional plan and the backend retries its complete scope once before full closure', async t => {
+  const env = await fixture(t, 'plan-scan-once'), initial = await startControlledWorkflow(env.root, {
+    requirement: 'Generate scalar six while preserving the complete existing input unchanged, then independently verify it.',
+    request_id: 'plan-scan-backend-retry',
+  });
+  const done = await until(env, initial.workflow_id, run => run.status === 'completed');
+  assert.deepEqual(env.errors, []);
+  assert.equal(env.captures['plan-capture'].runtime_capture_pending, true);
+  assert.equal(env.captures['plan-capture'].owner, 'runtime');
+  assert.deepEqual(env.captures['pending-side-effects'], { tasks: 0, frozen: false, environment: 0 });
+  assert.equal(env.progress.filter(item => item.tool === 'workflow_plan').length, 1);
+  assert.equal(env.scan.injected, 1);
+  assert.deepEqual(done.repair_budget, { schema_version: 1, product: 0, protocol: 0, environment: 1 });
+  assert.deepEqual(controlledRepairBudget({ ...done, repair_budget: undefined }), done.repair_budget,
+    'Existing exact repair-event reconciliation must retain the charged environment allowance.');
+  assert.equal(done.pending_plan, undefined);
+  const contract = savedContract(env, done);
+  assert.deepEqual(contract.plan.preservation_paths, [preservationInput]);
+  assert.equal(contract.preserved_hashes[preservationInput], hash('Keep every preserved byte.\n'));
+  assert.equal(loadRecords(env.root).filter(record => record.meta.type === 'task').length, 1);
+  assert.equal(verify(env.root, contract.task_id, 'accepted').ok, true);
+});
+
+test('a repeated preservation timeout blocks as runtime environment failure without another Planner or task identity', async t => {
+  const env = await fixture(t, 'plan-scan-repeat'), initial = await startControlledWorkflow(env.root, {
+    requirement: 'Preserve all existing input bytes while generating and independently checking scalar six.', request_id: 'plan-scan-repeat',
+  });
+  const blocked = await until(env, initial.workflow_id, run => run.status === 'blocked');
+  assert.deepEqual(env.errors, []);
+  assert.equal(blocked.blocker.code, 'EVIDENCE_SCAN_TIMEOUT');
+  assert.equal(blocked.blocker.kind, 'environment');
+  assert.equal(blocked.blocker.owner, 'runtime');
+  assert.match(blocked.blocker.next_action, /Do not resubmit.*narrow.*increase limits/);
+  assert.equal(blocked.pending_plan.capture_failure.retry_started, true);
+  assert.equal(blocked.contract_hash, undefined);
+  assert.equal(env.scan.injected, 2);
+  assert.deepEqual(blocked.repair_budget, { schema_version: 1, product: 0, protocol: 0, environment: 1 });
+  assert.equal(env.progress.filter(item => item.tool === 'workflow_plan').length, 1);
+  assert.equal(blocked.attempts.filter(item => item.stage === 'planning').length, 1);
+  assert.equal(blocked.attempts[0].state, 'completed');
+  assert.equal(loadRecords(env.root).filter(record => record.meta.type === 'task').length, 0);
+});
+
+test('parallel receipts and an owner restart cannot refund or repeat a claimed preservation retry', async t => {
+  const env = await fixture(t, 'plan-scan-restart'), initial = await startControlledWorkflow(env.root, {
+    requirement: 'Keep existing input bytes and generate independently checked scalar six.', request_id: 'plan-scan-restart',
+  });
+  const claimed = await until(env, initial.workflow_id, () => env.scan.retryEntered);
+  assert.equal(claimed.pending_plan.capture_failure.retry_started, true);
+  assert.equal(claimed.repair_budget.environment, 1);
+  const receipts = await Promise.all([0, 1].map(() => startControlledWorkflow(env.root, { workflow_id: initial.workflow_id })));
+  assert.ok(receipts.every(receipt => receipt.workflow_id === initial.workflow_id));
+  const reads = env.scan.reads;
+  const closing = env.closeOwner(); env.scan.releaseRetry(); await closing;
+  await env.restart();
+  await controlControlledWorkflow(env.root, { workflow_id: initial.workflow_id, action: 'resume' });
+  const blocked = await until(env, initial.workflow_id, run => run.status === 'blocked');
+  assert.equal(blocked.blocker.code, 'EVIDENCE_SCAN_TIMEOUT');
+  assert.equal(env.scan.reads, reads, 'Restart may not start another scan after the durable allowance was claimed.');
+  assert.equal(blocked.repair_budget.environment, 1);
+  assert.equal(env.progress.filter(item => item.tool === 'workflow_plan').length, 1);
+  assert.equal(loadRecords(env.root).filter(record => record.meta.type === 'task').length, 0);
+});
+
+for (const mode of ['plan-scan-stale-source', 'plan-scan-stale-requirement', 'plan-scan-lock-requirement', 'plan-scan-retry-requirement'])
+  test(`pending capture refuses ${mode} before any task commit`, async t => {
+    const env = await fixture(t, mode), initial = await startControlledWorkflow(env.root, {
+      requirement: 'Preserve the requested input and independently check scalar six.', request_id: mode,
+    });
+    const stopped = await until(env, initial.workflow_id, run => ['uncertain', 'blocked', 'completed'].includes(run.status));
+    assert.notEqual(stopped.status, 'completed', 'A changed original obligation must never be adopted by an older retained professional plan.');
+    assert.deepEqual(env.errors, []);
+    assert.ok(['INPUT_CHANGED', 'STATE_UNCERTAIN'].includes(stopped.blocker.code));
+    assert.equal(stopped.contract_hash, undefined);
+    assert.equal(stopped.repair_budget.environment, mode === 'plan-scan-retry-requirement' ? 1 : 0);
+    assert.equal(env.scan.injected, 1);
+    assert.equal(env.progress.filter(item => item.tool === 'workflow_plan').length, 1);
+    assert.equal(loadRecords(env.root).filter(record => record.meta.type === 'task').length, 0);
+    if (mode === 'plan-scan-lock-requirement') assert.equal(env.captures['requirement-edited-at-claim'], true);
+    if (mode === 'plan-scan-retry-requirement') assert.equal(env.captures['requirement-edited-during-retry'], true);
+  });
 
 test('backend derives a prepared JSON read baseline without requiring planner bookkeeping or widening write scope', async t => {
   const env = await fixture(t, 'prepared-input');

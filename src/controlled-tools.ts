@@ -14,6 +14,7 @@ import { controlledPayloadSchema, resolveControlledPayload, assertControlledPayl
 import { controlledPlanExecutionStepSubmissionSchema, controlledPlanCheckSubmissionSchema } from './controlled-plan-submission.js';
 import { controlledPlanRequestSchemas, controlledPlanSubmissionGuide, type ControlledPlanRequestDefaults } from './controlled-plan-request.js';
 import { controlledOperationDiagnostic, type ControlledDiagnosticPhase } from './controlled-operation-diagnostic.js';
+import { ControlledEvidenceScanTimeout } from './controlled-evidence-error.js';
 
 export type ControlledStage = 'planning' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
 export type ControlledReviewPurpose = 'checker-readiness' | 'final-product';
@@ -217,6 +218,9 @@ export function controlledInstructions(binding: ControlledBinding): string {
       ? 'The backend supplies omitted plan title and objective from the saved user request. Focus on the professional rationale, unchanged acceptance criteria, scoped outputs and independent check design. You may provide an explicit title or objective when useful; never invent workflow identities or repeat metadata to establish ownership.\n'
       : '') +
     `Available operations: ${[...available].join(', ')}. Their actor, workflow, task, scope and authorization are already bound by the runtime. Supply semantic content and project-relative file paths.\n` +
+    (binding.stage === 'verification' || binding.stage === 'diagnosis'
+      ? 'For prepared UTF-8 JSON, read the actual file and JSON.parse it exactly once. Its parsed field strings are already semantic content. Never apply transport-unescaping, JSON-string decoding or blanket replacements of escaped quotes, backslashes or literal \\n to those strings or comparison fixtures. Preserve literal code fences and JSON/code escape sequences; compare actual decoded source content with actual rendered artifacts, not the serialized project_read/MCP display wrapper.\n'
+      : '') +
     'Your bound worker already executes through the enabled Bridge. runtime_context supplies one session snapshot when execution facts are needed; after preflight_complete, continue professional work without repeating unchanged queries. Optional executable paths must come from actual project configuration or documentation; never guess locations. Missing optional toolchains do not invalidate the session. Existing AGENTS/profile setup instructions address the parent intake client; credentials and workflow IDs remain private.\n' +
     (binding.stage === 'planning'
       ? 'Declare execution_steps only for required direct local scripts or fixed version observations. Native cornell_research_compile and procedure_run tools are not OS executables: request them through cornell_output_dir or eligible reuse, not command argv. Keep producer outputs separate from checker/fixture/report files in verification_paths. Put exact hidden skill assets and validators in input_paths; preservation_paths describes public unchanged files. Bind reuse {procedure_id,version,parameters} only after work_prepare reports exact eligibility. For newly delivered reusable scripts declare procedure_candidate (manifest without id/version/author); runtime registers it after checked completion without claiming qualification. For requested Cornell notes declare cornell_output_dir and all three note.md/exercises.md/answers.md outputs. If research is supplied as a prepared JSON file, name cornell_input_path; backend binds and loads that exact source for the worker. When a requested final execution report needs actual independent results, declare its exact evidence_report_paths within both outputs and documentation_paths. The backend schedules report completion after a verification checkpoint and then fresh verification; keep the primary Cornell trio out of these report paths.\n'
@@ -339,7 +343,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         await trace({ event: 'tool-result', tool: name, status: 'succeeded' });
         return { content: [{ type: 'text' as const, text: encoded }] };
       } catch (error) {
-        const known = error instanceof ControlledToolError || error instanceof ControlledPayloadError;
+        const known = error instanceof ControlledToolError || error instanceof ControlledPayloadError || error instanceof ControlledEvidenceScanTimeout;
         const validation = error instanceof z.ZodError ? controlledValidation('SCHEMA_INVALID', undefined, error.issues)
           : controlledValidation(known ? error.code : undefined, known ? error.message : undefined);
         const ownership = error instanceof ControlledToolError && error.ownership ? redactControlledValue(error.ownership) as Record<string, unknown> : {};
@@ -464,7 +468,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
           try { replaceWorkspaceFile(root, { path: args.path, content: args.content, expected_hash: currentHash,
             authorize: () => { activeAtCommit(); assertWritable(binding, args.path); } }); }
           catch (error) {
-            if (error instanceof ControlledToolError) throw error;
+            if (error instanceof ControlledToolError || error instanceof ControlledEvidenceScanTimeout) throw error;
             throw new ControlledToolError('INPUT_CHANGED', 'File replacement could not complete safely. Current edits and the operation history were preserved; read the file again.');
           }
           completeWrite(entry); state.reads[key(args.path)] = nextHash; saveState(state);
