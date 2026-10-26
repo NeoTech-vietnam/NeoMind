@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { hash, safePath } from './storage.js';
+import { expandControlledSchemaIssues } from './controlled-schema-diagnostics.js';
 
 const sensitiveKey = /password|token|secret|authorization|credential|cookie|api.?key|private.?key|connection.?string|headers|^(?:env|environment)$/i;
 const fileContent = /^(?:content|file_content|source_content|source_code|stdin|prepared_content)$/i;
@@ -85,8 +86,7 @@ for (const field of ['execution_steps', 'output_paths', 'max_output_bytes', 'arg
   'intent', 'implementation_instructions', 'verification_instructions']) schemaFields.add(field);
 interface SafeSchemaIssue { path: (string | number)[]; code: keyof typeof schemaMessages; message: string }
 function safeSchemaIssues(value: unknown): SafeSchemaIssue[] {
-  if (!Array.isArray(value)) return [];
-  return value.slice(0, 8).filter(issue => issue && typeof issue === 'object').map(issue => {
+  return expandControlledSchemaIssues(value, issue => {
     const code: keyof typeof schemaMessages = typeof issue.code === 'string' && Object.hasOwn(schemaMessages, issue.code)
       ? issue.code as keyof typeof schemaMessages : 'schema_mismatch';
     const path = (Array.isArray(issue.path) ? issue.path : []).slice(0, 8).map((part: unknown) =>
@@ -111,7 +111,8 @@ function sdkSchemaIssues(text: string): unknown[] {
       dotted = at >= 0 ? line.slice(at + 4) : '';
     const path = dotted.length <= 512 && /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*|\[\d{1,9}\])*$/.test(dotted)
       ? [...dotted.matchAll(/[A-Za-z_]\w*|\[(\d+)\]/g)].map(part => part[1] === undefined ? part[0] : Number(part[1])) : [];
-    const expected = /^Invalid input: expected ([a-z]+), received\b/.exec(message)?.[1];
+    const expected = /^Invalid input: expected ([a-z]+), received\b/.exec(message)?.[1]
+      ?? /^Expected (string|number|boolean|array|object|null|undefined|int|bigint)\.$/.exec(message)?.[1];
     const code = expected ? 'invalid_type' : /^Too small:/.test(message) ? 'too_small'
       : /^Too big:/.test(message) ? 'too_big' : /^Unrecognized keys?:/.test(message) ? 'unrecognized_keys'
         : /^Invalid (?:option|value):/.test(message) ? 'invalid_value'

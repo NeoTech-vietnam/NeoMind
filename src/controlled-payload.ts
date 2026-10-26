@@ -2,6 +2,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from '
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { controlledValidation } from './controlled-observability.js';
 
 export const CONTROLLED_PAYLOAD_MAX_BYTES = 1024 * 1024;
 export class ControlledPayloadError extends Error {
@@ -78,8 +79,19 @@ export function controlledPayloadSchema<T extends z.ZodRawShape>(semantic: z.Zod
   const advertisement = payloadAdvertisement(semanticInput, semanticOutput) as Record<string, unknown>;
   const optional = Object.fromEntries(Object.entries(semantic.shape).map(([name, field]) =>
     // A direct .optional() around a default still inserts that default in Zod 4.
-    // Identity preprocess keeps absent fields absent in the prepared-file arm.
-    [name, z.preprocess(value => value, field).optional()]));
+    // The wrapper retains the original field parse/transforms while keeping
+    // omitted fields absent and projecting union issues before SDK flattening.
+    [name, z.preprocess((value, context) => {
+      const parsed = z.safeParse(field, value);
+      if (parsed.success) return parsed.data;
+      for (const issue of parsed.error.issues) {
+        const leaves = issue.code === 'invalid_union' ? controlledValidation('SCHEMA_INVALID', undefined, [issue]).issues : undefined;
+        if (leaves?.length) for (const leaf of leaves)
+          context.addIssue({ code: 'custom', path: leaf.path, message: leaf.message });
+        else context.addIssue({ ...issue });
+      }
+      return z.NEVER;
+    }, z.unknown()).optional()]));
   const inputPath = z.string().min(1).max(1024)
     .describe('Existing readable project-relative JSON file containing the complete semantic request. The backend parses the file directly; supply only input_path when reusing prepared data. Do not copy JSON-escaped tool text or add override fields.').optional();
   const { $schema: _schema, ...sourceProperty } = z.toJSONSchema(inputPath, { io: 'input', target: 'draft-7' });
@@ -92,8 +104,14 @@ export function controlledPayloadSchema<T extends z.ZodRawShape>(semantic: z.Zod
         return;
       }
       const parsed = semantic.safeParse(value);
-      if (!parsed.success) for (const issue of parsed.error.issues)
-        context.addIssue({ code: 'custom', path: issue.path, message: issue.message });
+      if (!parsed.success) for (const issue of parsed.error.issues) {
+        // The SDK otherwise flattens a union to "Invalid input at practice"
+        // before the owned callback can project its concrete branch failures.
+        const leaves = issue.code === 'invalid_union' ? controlledValidation('SCHEMA_INVALID', undefined, [issue]).issues : undefined;
+        if (leaves?.length) for (const leaf of leaves)
+          context.addIssue({ code: 'custom', path: leaf.path, message: leaf.message });
+        else context.addIssue({ code: 'custom', path: issue.path, message: issue.message });
+      }
     }).meta({
       // The MCP SDK converts preprocessors with io=input. Advertise the typed
       // semantic values rather than erasing every field to an unknown schema.
