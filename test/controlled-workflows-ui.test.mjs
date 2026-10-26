@@ -44,24 +44,53 @@ function app(t) {
 function localCoordinator(a) {
   mkdirSync(join(a.root, '.github/agents'), { recursive: true });
   writeFileSync(join(a.root, '.github/agents/neomind-coordinator.agent.md'), '---\nname: "NeoMind Coordinator Agent"\n---\nProject Coordinator.\n');
-  a.vscode.commands.getCommands = async () => ['workbench.action.chat.newLocalChat', 'workbench.action.chat.open'];
+  a.vscode.commands.getCommands = async () => ['workbench.action.chat.openInSidebar', 'workbench.action.chat.newLocalChat', 'workbench.action.chat.open'];
   return () => a.commands.get(LOCAL_COORDINATOR_COMMAND)();
 }
 
-test('Local Coordinator waits for Local chat creation before selecting the profile and preserves model choice', async t => {
+test('Local Coordinator focuses the sidebar before creating Local chat from either focused chat location', async t => {
+  for (const initialFocus of ['editor', 'sidebar']) {
+    const a = app(t), open = localCoordinator(a), executed = [];
+    let focused = initialFocus, harness = 'copilot', profile = 'Ask', model = 'top-models';
+    a.vscode.commands.executeCommand = async (command, options) => {
+      executed.push([command, ...(options === undefined ? [] : [options])]);
+      if (command === 'workbench.action.chat.openInSidebar') focused = 'sidebar';
+      // Installed VS Code's editor-clear path can promote an empty Local session
+      // to its remembered harness; the sidebar path explicitly creates Local.
+      if (command === 'workbench.action.chat.newLocalChat') harness = focused === 'sidebar' ? 'local' : 'copilot';
+      if (command === 'workbench.action.chat.open') {
+        profile = options.mode;
+        if (options.modelSelector !== undefined) model = 'changed';
+      }
+    };
+    assert.equal((await open()).opened, true);
+    assert.equal(harness, 'local'); assert.equal(profile, 'NeoMind Coordinator Agent'); assert.equal(model, 'top-models');
+    assert.deepEqual(executed, [['workbench.action.chat.openInSidebar'], ['workbench.action.chat.newLocalChat'],
+      ['workbench.action.chat.open', { mode: 'NeoMind Coordinator Agent' }]]);
+    assert.deepEqual(a.calls, []);
+  }
+});
+
+test('Local Coordinator waits for the Chat view and Local chat before selecting the profile and preserves model choice', async t => {
   const a = app(t), open = localCoordinator(a), executed = [];
-  let localCreated;
+  let sidebarReady, localCreated;
+  const sidebar = new Promise(resolve => { sidebarReady = resolve; });
   const local = new Promise(resolve => { localCreated = resolve; });
   a.vscode.commands.executeCommand = async (...args) => {
     executed.push(args);
+    if (args[0] === 'workbench.action.chat.openInSidebar') await sidebar;
     if (args[0] === 'workbench.action.chat.newLocalChat') await local;
   };
   const pending = open();
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(executed, [['workbench.action.chat.newLocalChat']]);
+  assert.deepEqual(executed, [['workbench.action.chat.openInSidebar']]);
+  sidebarReady();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(executed, [['workbench.action.chat.openInSidebar'], ['workbench.action.chat.newLocalChat']]);
   localCreated();
   assert.deepEqual(await pending, { opened: true, target: 'local', profile: 'NeoMind Coordinator Agent', model_selection: 'user-picker' });
   assert.deepEqual(executed, [
+    ['workbench.action.chat.openInSidebar'],
     ['workbench.action.chat.newLocalChat'],
     ['workbench.action.chat.open', { mode: 'NeoMind Coordinator Agent' }],
   ]);
@@ -69,15 +98,28 @@ test('Local Coordinator waits for Local chat creation before selecting the profi
   assert.deepEqual(a.errors, []);
 });
 
-test('missing or failing Local chat command stops before profile launch without a generic fallback', async t => {
+test('missing or failing Chat view or Local chat command stops before profile launch without a generic fallback', async t => {
   const a = app(t), open = localCoordinator(a), executed = [];
   a.vscode.commands.executeCommand = async (...args) => { executed.push(args); throw new Error('PRIVATE_PROVIDER_ERROR'); };
   a.vscode.commands.getCommands = async () => ['workbench.action.chat.open'];
   assert.equal((await open()).error.code, 'LOCAL_CHAT_UNAVAILABLE');
   assert.deepEqual(executed, []);
-  a.vscode.commands.getCommands = async () => ['workbench.action.chat.newLocalChat', 'workbench.action.chat.open'];
+  const required = ['workbench.action.chat.openInSidebar', 'workbench.action.chat.newLocalChat', 'workbench.action.chat.open'];
+  for (const missing of required) {
+    a.vscode.commands.getCommands = async () => required.filter(command => command !== missing);
+    assert.equal((await open()).error.code, 'LOCAL_CHAT_UNAVAILABLE');
+    assert.deepEqual(executed, []);
+  }
+  a.vscode.commands.getCommands = async () => required;
   assert.equal((await open()).error.code, 'LOCAL_CHAT_UNAVAILABLE');
-  assert.deepEqual(executed, [['workbench.action.chat.newLocalChat']]);
+  assert.deepEqual(executed, [['workbench.action.chat.openInSidebar']]);
+  executed.length = 0;
+  a.vscode.commands.executeCommand = async (...args) => {
+    executed.push(args);
+    if (args[0] === 'workbench.action.chat.newLocalChat') throw new Error('PRIVATE_LOCAL_FAILURE');
+  };
+  assert.equal((await open()).error.code, 'LOCAL_CHAT_UNAVAILABLE');
+  assert.deepEqual(executed, [['workbench.action.chat.openInSidebar'], ['workbench.action.chat.newLocalChat']]);
   assert.equal(JSON.stringify(a.errors).includes('PRIVATE'), false);
 });
 
@@ -99,7 +141,7 @@ test('profile selection failure preserves the Local-only path and does not submi
   };
   const result = await open();
   assert.equal(result.opened, false); assert.equal(result.error.code, 'LOCAL_COORDINATOR_UNAVAILABLE');
-  assert.deepEqual(executed, [['workbench.action.chat.newLocalChat'], ['workbench.action.chat.open', { mode: 'NeoMind Coordinator Agent' }]]);
+  assert.deepEqual(executed, [['workbench.action.chat.openInSidebar'], ['workbench.action.chat.newLocalChat'], ['workbench.action.chat.open', { mode: 'NeoMind Coordinator Agent' }]]);
   assert.deepEqual(a.calls, []); assert.equal(JSON.stringify(result).includes('PRIVATE'), false);
 });
 

@@ -155,8 +155,13 @@ function activateControlledWorkflows(vscode, context, loadRuntime, { enabled = (
           throw new Error('Invalid profile.');
       } catch { fail('COORDINATOR_PROFILE_REQUIRED', 'Run neomind update --local for this project and review the NeoMind Coordinator profile before opening it.'); }
       const commands = typeof vscode.commands.getCommands === 'function' ? await vscode.commands.getCommands(true) : [];
-      if (!commands.includes('workbench.action.chat.newLocalChat') || !commands.includes('workbench.action.chat.open'))
-        fail('LOCAL_CHAT_UNAVAILABLE', 'This VS Code installation does not expose Local Copilot Chat. Enable or update Copilot Chat; NeoMind will not open another session type.');
+      if (!['workbench.action.chat.openInSidebar', 'workbench.action.chat.newLocalChat', 'workbench.action.chat.open'].every(command => commands.includes(command)))
+        fail('LOCAL_CHAT_UNAVAILABLE', 'This VS Code installation does not expose the Chat view and Local Copilot commands required by NeoMind. Enable or update Copilot Chat; NeoMind will not open another session type.');
+      openRoot(vscode, root);
+      // newLocalChat follows the last-focused chat widget. An empty chat editor
+      // can adopt its default harness while clearing; await its sidebar first.
+      try { await vscode.commands.executeCommand('workbench.action.chat.openInSidebar'); }
+      catch { fail('LOCAL_CHAT_UNAVAILABLE', 'VS Code could not focus the Chat view before creating Local Copilot Chat. No request was submitted.'); }
       openRoot(vscode, root);
       try { await vscode.commands.executeCommand('workbench.action.chat.newLocalChat'); }
       catch { fail('LOCAL_CHAT_UNAVAILABLE', 'VS Code could not create Local Copilot Chat. No alternative session was opened by NeoMind.'); }
