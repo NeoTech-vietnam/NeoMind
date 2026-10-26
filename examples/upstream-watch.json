@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "id": "rea",
+      "repository": "morluto/rea",
+      "ref": "main",
+      "commit": "e073f64be0a5a30c32d8b3cec23f9bd411080903",
+      "license": "MIT",
+      "package": {
+        "name": "rea-agents",
+        "version": "6.7.0",
+        "integrity": "sha512-yhIx2ioJYYT1C/tONfYeitC6LhnKmCh+ZwRUOgYuhSc733lGhkkt73zhug9WmLgxoMdKuqIYGCoBfD4fXkOhFw=="
+      }
+    }
+  ],
+  "discovery": [
+    { "query": "topic:ai-agents", "minimum_stars": 1000, "limit": 5 }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "cornell-evidence-note",
+  "version": "1.0.0",
+  "applicability": "Source-backed research, code analysis, guidance, root-cause investigation, and learning with a concrete demonstration and separate practice/answer artifacts. Structured research compiles objectives, methods, results, discussion and mapped questions into this same recipe.",
+  "limitations": [
+    "Format and provenance validation cannot establish semantic correctness.",
+    "External sources record their retrieval date; automatic remote freshness is unavailable.",
+    "Observed outcomes require actual passing evidence; expected results remain labelled expected.",
+    "Manual practice is supported only by validated structured research with explicit procedure steps; format validation does not execute those steps or establish learner completion."
+  ],
+  "parameter_schema": {
+    "note": "Complete CornellInput: visible path, topic, kind, context, constraints, cues, main_notes, sources, demonstration, failure_cases, practice, summary, optional engineering links. cornell_research_compile produces the optional research metadata and question/objective mapping deterministically; pass its recipe_input to existing recipe_prepare. Legacy CornellInput remains supported."
+  }
+}

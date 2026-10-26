@@ -1,0 +1,15 @@
+# Native assignment protocol
+
+These operations support local VS Code Copilot and Codex. Local handles identify unsigned role/scope claims; actual native delegation and independent execution still have to happen. Strict Bridge uses its signed lifecycle instead.
+
+1. Coordinator resumes the saved workflow. Call `assignment_bootstrap` once with its actual `workflow_id`, `profile_id: coordinator`, `role: manager`, stable `assignment_id` and objective. Omit `task_id`. Open its exact returned `open_input`; privately retain `handle`.
+2. For supporting software, follow [the software workflow](native-software.md). `workflow_plan` creates valid linked records from a semantic contract; `workflow_next` returns the next private handoff. Other native work uses `assignment_delegate` with profile, objective, optional scope and an issued opaque task selector. The backend derives role, workflow, task and correlation.
+3. Dispatch the returned `handoff.agent` through the actual native agent tool with `handoff.prompt` unchanged. The actual specialist opens its exact supplied `open_input`. Later scoped calls include `reported_assignment: handle`. Coordinator claims only its own packet.
+4. The specialist executes its bounded work and saves substantive `assignment_result` before returning the report ID. Its context contains permitted paths and result obligations. Implementation, verification and review are separate actual invocations; no worker writes manager closure paperwork.
+5. Coordinator passes the actual terminal callback to `workflow_next` or `assignment_followup`. The backend reuses a typed completed result or prepares a bounded follow-up preserving partial artifacts. Recovery permits at most two follow-ups per original lineage. A running or unknown native state waits without launching duplicates; a saved report alone does not prove the native invocation stopped.
+
+Opening and saving a result automatically record advisory lifecycle observations. `assignment_progress` is optional for a meaningful state change, with only handle, state and summary. Timer heartbeats and consecutive progress-only loops are unnecessary. Telemetry failures never block substantive work or durable reports. Expired observations become unknown; they do not establish ongoing execution or completion.
+
+A claim token opens a packet; only the returned handle's token authenticates scoped operations. Bootstrap, recover, open and low-level claim have no outer `reported_assignment`. Lost **unclaimed** packets use `assignment_recover` with actual packet ID and workflow ID. Claimed identities retain their history; fresh bounded recovery does not impersonate an old actor. Keep credentials out of final answers, records and diagnostic output.
+
+Low-level `assignment_prepare`, `assignment_claim`, `assignment_report` and raw `agent_activity` remain compatibility operations. Blank/null optional task IDs normalize to absent; non-task or foreign-workflow IDs are explicit errors. Prefer derived requests rather than guessing those values. Required native permissions and external approvals remain authoritative.

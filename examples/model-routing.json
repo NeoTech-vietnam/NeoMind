@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "platform": "copilot",
+  "runtime_version": "0.162.1",
+  "language_models_file": "C:/Users/TYH5HC/AppData/Roaming/Code/User/chatLanguageModels.json",
+  "strong_provider": "9localrouter",
+  "strong_model": "company-top-tier-model",
+  "worker_provider": "Bosch Model Farm",
+  "worker_models": ["gpt 4o-mini", "gemini-2.5-flash-lite"],
+  "strong_effort": "high",
+  "worker_effort": "low"
+}

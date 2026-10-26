@@ -1,0 +1,276 @@
+{
+  "name": "neomind-model-bridge",
+  "displayName": "NeoMind Agent Monitor",
+  "publisher": "neomind",
+  "version": "0.11.2",
+  "description": "An agent universe with plug-in and MCP controls, Earth FocusSpace, calendar planning, ambient sound and guarded 9router model controls.",
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "main": "./extension.cjs",
+  "activationEvents": [
+    "onUri",
+    "onLanguageModelTool:neomind_advance_workflow",
+    "onLanguageModelTool:neomind_controlled_workflow"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": false
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "categories": [
+    "Visualization",
+    "Machine Learning"
+  ],
+  "files": [
+    "extension.cjs",
+    "monitor.cjs",
+    "focus-host.cjs",
+    "focus-location.cjs",
+    "focus-youtube.cjs",
+    "focus-space.cjs",
+    "resources/monitor/monitor.js",
+    "resources/monitor/monitor.css",
+    "resources/monitor/universe.js",
+    "resources/monitor/focus-space.js",
+    "resources/monitor/focus-space.css",
+    "README.md",
+    "LICENSE.txt",
+    "plugin-panel.cjs",
+    "resources/monitor/plugins.js",
+    "resources/monitor/plugins.css",
+    "automation-panel.cjs",
+    "native-validation.cjs",
+    "native-dispatch.cjs",
+    "controlled-workflows.cjs",
+    "controlled-entry.cjs",
+    "resources/monitor/controlled.js",
+    "resources/monitor/controlled.css",
+    "resources/monitor/automation.js",
+    "resources/monitor/automation.css"
+  ],
+  "contributes": {
+    "languageModelTools": [
+      {
+        "name": "neomind_advance_workflow",
+        "toolReferenceName": "neomindAdvanceWorkflow",
+        "displayName": "Advance NeoMind Workflow",
+        "userDescription": "Advance the saved Local Copilot software workflow and run at most one backend-assigned specialist.",
+        "modelDescription": "Coordinator only: select the existing software workflow with workflow_id. The host obtains and privately retains its backend-issued Coordinator credential, derives and dispatches one exact specialist request, then reconciles its actual return. Repeat for the next substantive stage. For planning, records, final Cornell compilation, procedure registration or closure, supply the supported operation and its semantic parameters; the host injects authentication. Omit credentials, model labels, native prompts and task lifecycle fields. An observation describes only an actual prior native callback. Existing handle input remains compatible for older integrations.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "neomind",
+          "coordinator"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "reported_assignment": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^local-report-[a-f0-9]{40}$"
+                },
+                "token": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "id",
+                "token"
+              ]
+            },
+            "observation": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "packet_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^(?:local-report-[a-f0-9]{40}|\\s*)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "completed",
+                        "completed-without-output",
+                        "failed",
+                        "cancelled",
+                        "running",
+                        "unknown"
+                      ]
+                    },
+                    "observation_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "observation_id"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "workflow_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{1,119}-KNW-[0-9]{4,}$"
+            },
+            "operation": {
+              "type": "string",
+              "enum": [
+                "advance",
+                "workflow_plan",
+                "record_get",
+                "record_create",
+                "record_update",
+                "cornell_research_compile",
+                "note_create",
+                "note_validate",
+                "procedure_register",
+                "manager_finish"
+              ]
+            },
+            "parameters": {
+              "type": "object",
+              "description": "Semantic arguments of the selected supported MCP operation, omitting reported_assignment. Omit for advance."
+            }
+          },
+          "oneOf": [
+            {
+              "required": [
+                "workflow_id"
+              ]
+            },
+            {
+              "required": [
+                "reported_assignment"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "name": "neomind_controlled_workflow",
+        "toolReferenceName": "neomindControlledWorkflow",
+        "displayName": "Manage NeoMind Controlled Workflow",
+        "userDescription": "Give work to NeoMind's own agents, inspect its saved state, or pause, resume and cancel it.",
+        "modelDescription": "Send the user's requirement to the exact open workspace folder. NeoMind owns agent sessions, credentials, IDs, stage transitions and verification. Submit returns a durable receipt quickly; repeat unchanged submit to recover a lost response using its saved identity. Use returned workflow_id for status or controls. An intentional identical second task uses submit_new after the prior receipt is acknowledged by status/control. If the client cannot provide a stable fresh turn context, or that context was lost on restart, use Start another task in the Workflows panel; never invent request IDs or platform tokens. A status query without workflow_id lists saved controlled workflows in that exact project. Do not invoke native subagents or implement the accepted task separately. User-requested work and existing project policy define the authorized scope.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "neomind",
+          "workflow"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action",
+            "workspace_folder"
+          ],
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "submit",
+                "submit_new",
+                "status",
+                "pause",
+                "resume",
+                "cancel"
+              ]
+            },
+            "workspace_folder": {
+              "type": "string",
+              "description": "Exact absolute local workspace folder for this request. Required to avoid mixing projects in multi-root windows."
+            },
+            "requirement": {
+              "type": "string",
+              "maxLength": 20000,
+              "description": "The user's requested outcome and constraints. Use for submit or an intentional submit_new; retries of submit retain the saved intake identity."
+            },
+            "workflow_id": {
+              "type": "string",
+              "description": "An existing workflow ID returned by NeoMind. Required for pause, resume and cancel; optional for status."
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 256,
+              "description": "Optional short title for a new submit."
+            }
+          }
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "neomind.coordinator.openLocal",
+        "title": "NeoMind: Open Local Coordinator"
+      },
+      {
+        "command": "neomind.workflows.open",
+        "title": "NeoMind: Open Workflows"
+      },
+      {
+        "command": "neomind.bridge.enable",
+        "title": "NeoMind: Enable Model Bridge"
+      },
+      {
+        "command": "neomind.bridge.disable",
+        "title": "NeoMind: Disable Model Bridge"
+      },
+      {
+        "command": "neomind.monitor.open",
+        "title": "NeoMind: Open Agent Map"
+      },
+      {
+        "command": "neomind.plugins.open",
+        "title": "NeoMind: Manage Plug-ins"
+      },
+      {
+        "command": "neomind.automation.open",
+        "title": "NeoMind: Open Automation Library"
+      },
+      {
+        "command": "neomind.validation.copilot",
+        "title": "NeoMind: Validate Native Copilot Workflow"
+      }
+    ],
+    "configuration": {
+      "title": "NeoMind",
+      "properties": {
+        "neomind.bridge.runtimePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Absolute path to a trusted NeoMind package directory containing package.json and built dist. Read only from User settings."
+        }
+      }
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NeoTech-vietnam/NeoMind.git"
+  }
+}

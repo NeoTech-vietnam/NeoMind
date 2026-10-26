@@ -1,0 +1,76 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, readFileSync, realpathSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
+import { parse as toml } from 'smol-toml';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { initialize, atomicWrite, safePath, loadRecords } from '../dist/storage.js';
+import { installProject, doctor } from '../dist/installer.js';
+import { createMcpServer } from '../dist/mcp.js';
+import { adapterOutputs } from '../dist/adapters.js';
+
+test('controlled instruction surfaces distinguish backend-owned workers from client setup', t => {
+  const parent = realpathSync(tmpdir()), root = mkdtempSync(join(parent, 'neomind-worker-instructions-'));
+  t.after(() => { assert.equal(dirname(root), parent); rmSync(root, { recursive: true, force: true }); });
+  const config = { name: 'Worker instruction boundaries', platforms: ['codex', 'copilot'], copilot_integration: 'local' };
+  initialize(root, config);
+  atomicWrite(safePath(root, '.neomind/automation.json'), JSON.stringify({ schema_version: 1, manager_enabled: true,
+    documentation_required: true, automatic_pr: false, upstream: null, max_discussion_rounds: 3, execution_mode: 'neomind-controlled' }));
+  const surfaces = adapterOutputs(root, config).filter(output => output.path === 'AGENTS.md' ||
+    output.path === '.github/instructions/neomind.instructions.md' ||
+    /^\.(?:github|codex)\/agents\/neomind-/.test(output.path) || /\/skills\/neomind-[^/]+\/SKILL\.md$/.test(output.path));
+  assert.ok(surfaces.some(output => output.path === 'AGENTS.md'));
+  assert.equal(surfaces.filter(output => output.path.startsWith('.github/agents/')).length, 9);
+  assert.equal(surfaces.filter(output => output.path.startsWith('.codex/agents/')).length, 9);
+  for (const surface of surfaces) {
+    const instructions = surface.path.endsWith('.toml') ? toml(surface.content).developer_instructions : surface.content;
+    const workerIndex = instructions.indexOf('### Backend-owned session');
+    const clientIndex = instructions.indexOf('### Client intake');
+    assert.ok(workerIndex >= 0 && clientIndex > workerIndex, surface.path);
+    const worker = instructions.slice(workerIndex, clientIndex), client = instructions.slice(clientIndex);
+    assert.match(worker, /explicit runtime role and stage/, surface.path);
+    assert.match(worker, /backend-provided.*policy.*scope/, surface.path);
+    assert.match(worker, /supplied semantic tools/, surface.path);
+    assert.match(worker, /private \.neomind/, surface.path);
+    assert.match(worker, /actual.*(?:host|tool).*failure/i, surface.path);
+    assert.doesNotMatch(worker, /Read \.neomind\/guides|Enable the Model Bridge/, surface.path);
+    assert.match(client, /Enable the Model Bridge/, surface.path);
+    assert.match(client, /Read \.neomind\/guides\/controlled-workflows\.md/, surface.path);
+    assert.match(client, /manager_run/, surface.path);
+  }
+});
+
+test('explicit controlled adapters register both clients and preserve parent provider and unrelated MCP servers', async t => {
+  const parent = realpathSync(tmpdir()), root = mkdtempSync(join(parent, 'neomind-entrypoint-'));
+  t.after(() => { assert.equal(dirname(root), parent); rmSync(root, { recursive: true, force: true }); });
+  initialize(root, { name: 'Controlled adapters', platforms: ['codex', 'copilot'], copilot_integration: 'local' });
+  atomicWrite(safePath(root, '.neomind/automation.json'), JSON.stringify({ schema_version: 1, manager_enabled: true,
+    documentation_required: true, automatic_pr: false, upstream: null, max_discussion_rounds: 3, execution_mode: 'neomind-controlled' }));
+  atomicWrite(safePath(root, '.codex/config.toml'), 'model = "parent-model"\nmodel_provider = "parent-provider"\n');
+  atomicWrite(safePath(root, '.vscode/mcp.json'), JSON.stringify({ servers: { existing: { command: 'existing-provider' } } }));
+  const report = installProject(root, { copilot_integration: 'local' });
+  assert.equal(report.conflicts?.length ?? 0, 0);
+  const codex = toml(readFileSync(safePath(root, '.codex/config.toml'), 'utf8'));
+  assert.equal(codex.model, 'parent-model'); assert.equal(codex.model_provider, 'parent-provider');
+  assert.deepEqual(codex.mcp_servers.neomind.enabled_tools, ['manager_run', 'manager_status', 'manager_control']);
+  const codexInstructions = readFileSync(safePath(root, 'AGENTS.md'), 'utf8');
+  assert.match(codexInstructions, /discover the connected NeoMind tools/);
+  assert.match(codexInstructions, /ALL_TOOLS/);
+  const copilot = JSON.parse(readFileSync(safePath(root, '.vscode/mcp.json'), 'utf8'));
+  assert.equal(copilot.servers.existing.command, 'existing-provider');
+  assert.ok(copilot.servers.neomind.args.includes(root));
+  const instructions = readFileSync(safePath(root, '.github/agents/neomind-coordinator.agent.md'), 'utf8');
+  assert.match(instructions, /manager_run/); assert.match(instructions, /neomind-controlled/);
+  assert.doesNotMatch(instructions, /assignment_claim|assignment_open|assignment_progress/);
+  assert.ok(doctor(root).platforms.every(platform => platform.capabilities.some(capability => capability.capability === 'mcp' && capability.status === 'unverified')));
+  const server = createMcpServer(root), client = new Client({ name: 'controlled-entrypoint-fixture', version: '1' });
+  const [a, b] = InMemoryTransport.createLinkedPair(); await server.connect(b); await client.connect(a);
+  t.after(async () => { await client.close(); await server.close(); });
+  assert.ok((await client.listTools()).tools.some(tool => tool.name === 'manager_control'));
+  const before = loadRecords(root).length;
+  const result = await client.callTool({ name: 'manager_run', arguments: { requirement: 'Inspect this bounded source change.', execution_mode: 'neomind-controlled' } });
+  assert.equal(result.isError, true); assert.match(JSON.stringify(result), /bridge.*disabled|Enable Model Bridge/i);
+  assert.equal(loadRecords(root).length, before, 'a missing actual editor host must not create fake running work');
+});

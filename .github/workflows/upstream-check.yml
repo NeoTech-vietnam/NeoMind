@@ -1,0 +1,46 @@
+name: Upstream candidate checks
+
+on:
+  schedule:
+    - cron: '37 3 * * *'
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Runner for this metadata-only check
+        required: true
+        default: github-hosted
+        type: choice
+        options: [github-hosted, self-hosted-linux]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: neomind-upstream-candidates
+  cancel-in-progress: false
+
+jobs:
+  candidates:
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner == 'self-hosted-linux' && fromJSON('["self-hosted","linux","x64","neomind-upstreams"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Compare public source and npm metadata without adopting code
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/check-upstreams.mjs --manifest examples/upstream-watch.json --out artifacts/upstream-candidates/report.json
+      - name: Save candidate report, including failed checks
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: upstream-candidates-${{ github.run_id }}
+          path: |
+            artifacts/upstream-candidates/report.json
+            artifacts/upstream-candidates/report.md
+          if-no-files-found: warn
+          retention-days: 14
