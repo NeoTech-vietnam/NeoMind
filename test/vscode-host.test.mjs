@@ -41,13 +41,14 @@ function fake(root, respond = ({ messages }) => messages.at(-1).content?.[0] ins
   };
   return { api, get count() { return count; } };
 }
-async function setup(t, respond, policyPatch = {}) {
+async function setup(t, respond, policyPatch = {}, configureModel) {
   const root = mkdtempSync(join(tmpdir(), 'neomind-vscode-'));
   initialize(root, { project_id: 'HOST', name: 'Host test' });
   const policy = { ...ensureRoutingPolicy(root), strong_provider: 'test-vendor', worker_provider: 'worker-vendor',
     vscode_effort_policy: 'allow-unavailable', ...policyPatch };
   writeFileSync(join(root, '.neomind/routing.json'), JSON.stringify(policy));
   const model = fake(root, respond);
+  configureModel?.(model.api);
   const host = await enableVSCodeHost(model.api, root);
   t.after(async () => { await shutdownNative(root); await host.close(); rmSync(root, { recursive: true, force: true }); });
   return { root, model, host, policy };
@@ -91,6 +92,27 @@ test('failed owned host selection keeps private safe diagnostics and unchanged p
   assert.equal(failure.diagnostic.message_sha256, createHash('sha256').update(secret).digest('hex'));
   assert.ok(!JSON.stringify({ receipt, events }).includes(secret));
   assert.ok(!JSON.stringify(events).includes(root));
+});
+
+test('same-owner manager and developer reuse an exact live catalog handle when repeated SDK selection would hang', async t => {
+  let selections = 0, disposed = 0;
+  const env = await setup(t, undefined, {}, api => {
+    const select = api.lm.selectChatModels;
+    api.lm.onDidChangeChatModels = () => ({ dispose() { disposed++; } });
+    api.lm.selectChatModels = selector => {
+      selections++;
+      return selections === 1 ? select(selector) : new Promise(() => {});
+    };
+  });
+  writeFileSync(join(env.root, '.neomind/routing.json'), JSON.stringify({ ...env.policy,
+    worker_provider: env.policy.strong_provider, worker_models: [env.policy.strong_model] }));
+  const manager = await startNative(env.root, { role: 'manager', prompt: 'Inspect the project through the first live handle.' });
+  assert.equal((await ended(env.root, manager.id)).state, 'completed');
+  const worker = await startNative(env.root, { role: 'developer', prompt: 'Inspect through the same exact configured model.' });
+  assert.equal((await ended(env.root, worker.id)).state, 'completed');
+  assert.equal(selections, 1); assert.equal(env.model.count, 4);
+  assert.equal(readInvocation(env.root, worker.id).confirmed_model, env.policy.strong_model);
+  await env.host.close(); assert.equal(disposed, 1);
 });
 test('VS Code host selects exact vendor/ID, signs truthful provenance, resumes and rejects tampering', async t => {
   const { root, model } = await setup(t);

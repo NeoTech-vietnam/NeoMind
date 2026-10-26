@@ -15,6 +15,7 @@ import { controlledModelInput, controlledResultFailure, controlledLoopState, Con
 import { ModelCallProgress, type ModelCallTerminalReason } from './vscode-model-progress.js';
 import { ControlledObservationLoop } from './controlled-observation-loop.js';
 import { controlledOperationDiagnostic } from './controlled-operation-diagnostic.js';
+import { VSCodeModelSelection } from './vscode-model-selection.js';
 
 // VS Code is supplied by extension host, not imported into CLI or added as dependency.
 type VSCode = any;
@@ -59,6 +60,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
   if (!enabled()) throw new Error('Bridge root must be an exact open workspace folder.');
   const turns = new Map<string, Turn>(), conversations = new Map<string, Conversation>();
   let instance = '', closed = false;
+  const modelSelection = new VSCodeModelSelection(vscode.lm, () => !closed && enabled());
   async function traceControlled(turn: Turn, event: Record<string, unknown>): Promise<void> {
     if (!turn.controlled) return;
     try { await turn.controlled.callbacks.trace?.({ ...event, stage: turn.controlled.binding.stage, at: new Date().toISOString(),
@@ -243,13 +245,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
       if ([...turns.values()].some((turn) => turn.invocation === receipt.id))
         throw new Error('Invocation already owns a host turn.');
       const selector = vscodeSelection(root, receipt.role, receipt.requested_model, invocationPolicy(root, receipt));
-      let selectionTimer: NodeJS.Timeout | undefined;
-      let models: any[];
-      try {
-        models = await Promise.race([vscode.lm.selectChatModels(selector), new Promise((_, reject) => {
-          selectionTimer = setTimeout(() => reject(new Error('VS Code model selection timed out.')), 10000);
-        })]) as any[];
-      } finally { clearTimeout(selectionTimer); }
+      const models = await modelSelection.select(selector);
       if (closed || !enabled()) throw new Error('Host closed during model selection.');
       if (!models.length) return { unavailable: true };
       if (models.length !== 1 || models[0].id !== selector.id || models[0].vendor !== selector.vendor)
@@ -341,7 +337,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
       } catch { /* Diagnostic collection cannot replace the original failure. */ }
       throw error;
     }
-  });
+  }).catch(error => { modelSelection.close(); throw error; });
   instance = server.instance;
   const watchdog = setInterval(() => {
     for (const turn of turns.values()) if (!enabled() || Date.now() - turn.lastSeen > 90000)
@@ -351,6 +347,7 @@ export async function enableVSCodeHost(vscode: VSCode, workspaceRoot: string): P
   return { close: async () => {
     if (closed) return;
     closed = true;
+    modelSelection.close();
     clearInterval(watchdog);
     for (const turn of turns.values()) { stop(turn, 'interrupted', 'VS Code bridge disabled.', 'host-close'); turn.source.dispose(); }
     turns.clear(); conversations.clear(); await server.close();
