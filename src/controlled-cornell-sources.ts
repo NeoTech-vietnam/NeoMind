@@ -13,7 +13,7 @@ import { withCornellRecordView } from './cornell-record-view.js';
 // while Cornell's module is still initializing. Resolve its authoritative schema
 // only when an actual caller parses or advertises the worker tool.
 const semanticSource = z.lazy(() => cornellResearchSchema.shape.sources.element.omit({ record_id: true, sha256: true, retrieved_at: true })
-  .extend({ uri: z.string().min(1).max(2000).describe('A readable project file, HTTPS reference, or exact record: URI supplied by the runtime. Backend resolves provenance; do not invent record IDs, hashes or retrieval times.') }).strict());
+  .extend({ uri: z.string().min(1).max(2000).describe('For a local source, copy the exact canonical project-relative path returned by project_read, for example scripts/example.cjs. Do not use a file: URI, drive prefix, leading ./, backslashes or #line fragment; put line references in locator. Alternatively use an HTTPS reference or an exact record: URI supplied by the runtime. Backend resolves provenance; do not invent record IDs, hashes or retrieval times.') }).strict());
 export const controlledCornellSourceSchema = z.preprocess(value => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const { record_id: _record, sha256: _hash, retrieved_at: _time, ...semantic } = value as Record<string, unknown>;
@@ -56,7 +56,7 @@ export function controlledCornellResearchSchema(allowObserved = true, allowStart
     .extend({ schema_version: z.preprocess(() => 1, z.literal(1).default(1))
       .describe('Backend-owned format version; omit this field and the runtime supplies version 1.'),
       sources: z.array(controlledCornellSourceSchema).min(1).max(64), practice: allowStarter ? controlledCornellPracticeSchema : controlledPracticeWithoutStarter,
-      methods: cornellResearchSchema.shape.methods.describe(`${cornellResearchSchema.shape.methods.description} The compiled research narrative must include inline [S1], [S2], etc. citations referring to the source IDs declared in sources. These are source labels, not runtime record identities.`),
+      methods: cornellResearchSchema.shape.methods.describe(`${cornellResearchSchema.shape.methods.description} Include a plain prose claim with its declared basis and exact source-ledger citation, for example: [source-reported] The inspected implementation rejects unsafe integers [S1]. Keep the fixed label and citation syntax outside code fences; do not translate these keys or replace [S1] with a Markdown link alone. Select the truthful claim basis yourself; the backend never invents it. The compiled research narrative must include inline [S1], [S2], etc. citations referring to the source IDs declared in sources. These are source labels, not runtime record identities.`),
       worked_example: allowObserved ? controlledWorkedExample : controlledExpectedWorkedExample });
 }
 
