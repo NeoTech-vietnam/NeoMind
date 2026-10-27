@@ -308,6 +308,8 @@ async function setup(t, scenarios, existingRoot) {
         conversation = { name, stage, attempt, actions: scriptFor(name, stage, attempt, scenarios[name] ?? {}, held), round: 0 };
         conversations.set(messages, conversation);
         observed.push({ name, stage, attempt, tools: options.tools.map(tool => tool.name),
+          ...(scenarios[name]?.capturePlanningSchema && stage === 'planning'
+            ? { planningSchema: options.tools.find(tool => tool.name === 'workflow_plan').inputSchema } : {}),
           ...(scenarios[name]?.preparedCornell && stage === 'implementation'
             ? { compilerSchema: options.tools.find(tool => tool.name === 'cornell_research_compile').inputSchema } : {}),
           promptLayers: messages.filter(message => typeof message.content === 'string').map(message => message.content) });
@@ -378,6 +380,78 @@ async function until(root, workflow, predicate, message, errors = []) {
   assert.fail(`${message}: ${JSON.stringify({ status: snapshot.status, phase: snapshot.phase, errors })}`);
 }
 const submit = (root, name) => startControlledWorkflow(root, { requirement: `Scenario: ${name}\nCreate and independently verify the requested scalar.`, request_id: `fixture-${name}` });
+
+test('actual planner schema honors fresh registration opt-outs and explicit positive opt-in', async t => {
+  const cases = [
+    ['optout', 'Create a Cornell note; do not register a reusable procedure.', false],
+    ['without', 'Create a Cornell note without procedure registration.', false],
+    ['optin', 'Create the scalar and register its reusable procedure.', true],
+    ['pathoptin', 'Register scripts/generate.mjs as a reusable procedure.', true],
+    ['pathoptout', 'Do not register scripts/generate.mjs as a reusable procedure.', false],
+  ];
+  const hold = ({ Text }) => [async ({ token }) => {
+    while (!token.isCancellationRequested) await delay(10);
+    return new Text('Planning-schema observation only; no implementation requested by this fixture.');
+  }];
+  const env = await setup(t, Object.fromEntries(cases.map(([name]) => [name, { capturePlanningSchema: true, customActions: hold }])));
+  for (const [name, request, required] of cases) {
+    const initial = await startControlledWorkflow(env.root, { requirement: `Scenario: ${name}\n${request}`, request_id: `registration-${name}` });
+    await until(env.root, initial.workflow_id, () => env.observed.some(item => item.name === name), 'actual planner must receive its current MCP schema', env.errors);
+    const schema = env.observed.find(item => item.name === name).planningSchema;
+    assert.equal(Object.hasOwn(schema.properties, 'procedure_candidate'), required, request);
+    if (required) assert.ok(schema.anyOf.find(branch => !branch.required.includes('input_path')).required.includes('procedure_candidate'));
+    await controlControlledWorkflow(env.root, { workflow_id: initial.workflow_id, action: 'pause' });
+  }
+  assert.equal(loadRecords(env.root).some(record => record.meta.type === 'task'), false);
+});
+
+test('planning re-entry preserves an already frozen controlled candidate even without registration wording', async t => {
+  const name = 'frozencandidate';
+  const options = { capturePlanningSchema: true,
+    expectedToolError: (result, conversation) => conversation.round === 1
+      ? /expected nonoptional, received undefined at procedure_candidate|SCHEMA_INVALID/.test(JSON.stringify(result))
+      : conversation.round === 3 && /Saved contract is immutable/.test(JSON.stringify(result)),
+    customActions: ({ stage, attempt, held, call, Text }) => {
+      assert.equal(stage, 'planning');
+      if (attempt === 1) return [async ({ token }) => {
+        const run = controlledStatus(held.root).find(value => value.requirement.startsWith(`Scenario: ${name}\n`));
+        const context = ownedContext(held.root, run.attempts.at(-1).request_id);
+        const { controlledPlanSchema } = await import('../dist/controlled-tools.js');
+        // Compatibility fixture: use the unchanged trusted controller callback
+        // to save the candidate shape accepted by the previous public schema.
+        const legacy = controlledPlanSchema.parse(planFor(name, { registrationEvidence: true }));
+        const explicitEmpty = controlledPlanSchema.parse({ ...legacy, execution_steps: [] });
+        try { await Promise.all([context.callbacks.submitPlan(legacy), context.callbacks.submitPlan(explicitEmpty)]); }
+        catch (error) { held.admissionError = error.stack; throw error; }
+        assert.equal(loadRecords(held.root).filter(record => record.meta.type === 'task' && record.meta.data.epoch_id === run.epoch_id).length, 1,
+          'Equivalent concurrent admissions must create exactly one execution task.');
+        held.contractPath = safePath(held.root, `.neomind/controlled/workflows/${hash(run.workflow_id)}.${run.epoch_id}.contract.json`);
+        held.contractBytes = readFileSync(held.contractPath);
+        held.frozenPlan = JSON.parse(held.contractBytes).plan; held.frozen = true;
+        while (!token.isCancellationRequested) await delay(10);
+        return new Text('Old-format plan retained before its planning report.');
+      }];
+      const { procedure_candidate: _candidate, ...missing } = held.frozenPlan;
+      return [call('workflow_plan', missing), call('workflow_plan', held.frozenPlan),
+        call('workflow_plan', { ...held.frozenPlan, objective: 'A different objective must not replace the saved contract.' }), async ({ token }) => {
+        held.resubmitted = true;
+        while (!token.isCancellationRequested) await delay(10);
+        return new Text('Same frozen plan retained after re-entry.');
+      }];
+    },
+  };
+  const env = await setup(t, { [name]: options }), initial = await submit(env.root, name);
+  await until(env.root, initial.workflow_id, () => env.held.frozen, 'old-format candidate must be frozen through its actual owning callback', env.errors)
+    .catch(error => assert.fail(`${error.message}\n${env.held.admissionError ?? ''}`));
+  await controlControlledWorkflow(env.root, { workflow_id: initial.workflow_id, action: 'pause' });
+  await controlControlledWorkflow(env.root, { workflow_id: initial.workflow_id, action: 'resume' });
+  await until(env.root, initial.workflow_id, () => env.held.resubmitted, 'resumed planning must retain and accept the same frozen candidate', env.errors);
+  const schema = env.observed.filter(item => item.name === name).at(-1).planningSchema;
+  assert.ok(schema.properties.procedure_candidate);
+  assert.ok(schema.anyOf.find(branch => !branch.required.includes('input_path')).required.includes('procedure_candidate'));
+  assert.equal(env.held.expectedToolErrors.length, 2, 'Neither an omitted committed candidate nor a different objective can replace the saved plan.');
+  assert.deepEqual(readFileSync(env.held.contractPath), env.held.contractBytes);
+});
 async function submitContinuation(root, name) {
   const workflow = beginWorkflow(root, { requirement: `Scenario: ${name}\nCreate and independently verify the requested scalar.`, execution_mode: 'copilot-native' });
   const packet = prepareReportedAssignment(root, { workflow_id: workflow.meta.id, profile_id: 'coordinator', role: 'manager',
@@ -644,7 +718,9 @@ test('actual final Reviewer receives only latest Verifier evidence while identic
 
 test('actual final Reviewer receives the registered bound candidate through the existing signed Bridge tool set', async t => {
   const env = await setup(t, { registrationview: { highRisk: true, holdFinalReview: true, registrationEvidence: true } });
-  const initial = await submit(env.root, 'registrationview');
+  const initial = await startControlledWorkflow(env.root, {
+    requirement: 'Scenario: registrationview\nCreate and independently verify the scalar and register its reusable procedure.', request_id: 'fixture-registrationview',
+  });
   const reviewing = await until(env.root, initial.workflow_id, () => env.held.reviewEntered,
     'final Reviewer must receive actual registry provenance after checks and registration', env.errors);
   const evidence = env.held.registrationEvidence;

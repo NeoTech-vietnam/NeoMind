@@ -31,7 +31,7 @@ import { continuationObligations, controlledFingerprints, controlledFingerprints
 import { controlledProducerExecutionEvidence } from './controlled-execution-evidence.js';
 import { evidenceRecordFingerprint, type EvidenceInputSnapshot } from './evidence-inputs.js';
 import type { ProjectRecord } from './types.js';
-import { normalizeControlledPlanInput, controlledConsultationRole } from './controlled-plan-input.js';
+import { normalizeControlledPlanInput, controlledConsultationRole, controlledRegistrationRequested } from './controlled-plan-input.js';
 import { controlledPlanConflicts, type ControlledPlanConflict } from './controlled-plan-queue.js';
 import { controlledPlanningRecovery } from './controlled-recovery-context.js';
 import { controlledRegistrationEvidence } from './controlled-registration-evidence.js';
@@ -450,6 +450,8 @@ class Controller {
     const supplied = proposed.execution_steps === undefined && emptyExecutionDefault ? { ...proposed, execution_steps: [] } : proposed;
     const plan = validatePlan(this.root, normalizeControlledPlanInput(this.root, mergeOriginalCriteria(this.root, run, supplied),
       run.continuation ? readNativeSoftwareContract(this.root, run.workflow_id)?.plan.checks ?? [] : []));
+    if (!run.continuation && controlledRegistrationRequested(run.requirement) && !plan.procedure_candidate)
+      throw new Error('The original request requires a reusable procedure candidate using the actual producer and checker scripts.');
     if (run.continuation) {
       const original = readNativeSoftwareContract(this.root, run.workflow_id)!;
       for (const key of ['allowed_paths', 'verification_paths', 'outputs', 'documentation_paths'] as const)
@@ -468,7 +470,7 @@ class Controller {
     }
     if (run.contract_hash) {
       const prior = readContract(this.root, run);
-      if (!same(prior.plan, plan)) throw new Error('Saved contract is immutable.');
+      if (canonicalJson(prior.plan) !== canonicalJson(plan)) throw new Error('Saved contract is immutable.');
       return { saved: true, next: 'Finish the planning report; runtime dispatches the next stage.' };
     }
     const capturePendingReceipt = () => ({ saved: true, contract_frozen: false,
@@ -528,7 +530,7 @@ class Controller {
         run.attempts.at(-1)?.state !== (deferred ? 'completed' : 'running'))
       throw new Error('Planning owner changed while preservation inputs were captured.');
     if (run.contract_hash) {
-      if (!same(readContract(this.root, run).plan, plan)) throw new Error('Saved contract is immutable.');
+      if (canonicalJson(readContract(this.root, run).plan) !== canonicalJson(plan)) throw new Error('Saved contract is immutable.');
       return { saved: true, next: 'Finish the planning report; runtime dispatches the next stage.' };
     }
     const currentConflicts = controlledPlanConflicts(this.root, run.workflow_id, plan);
@@ -783,7 +785,10 @@ class Controller {
       const binding: ControlledBinding = { workflow_id: id, task_id: stage === 'planning' ? undefined : contract?.task_id,
         stage, role, implementation_paths: documentation?.paths ?? contract?.plan.allowed_paths ?? [], verification_paths: contract?.plan.verification_paths ?? [],
         ...(attempt.verification_purpose ? { verification_purpose: attempt.verification_purpose } : {}),
-        ...(stage === 'planning' ? { plan_defaults: { title: run.title,
+        ...(stage === 'planning' ? { procedure_registration_required: !!contract?.plan.procedure_candidate ||
+          controlledRegistrationRequested(run.requirement) || !!(run.continuation &&
+            continuationObligations(readNativeSoftwareContract(this.root, id)?.plan.acceptance_criteria ?? []).registration),
+          plan_defaults: { title: run.title,
           objective: run.requirement.length <= 8000 ? run.requirement
             : 'Implement the complete saved user requirement for this workflow; its scope and acceptance criteria remain authoritative.' } } : {}),
         ...(documentation ? { evidence_documentation: true, evidence_documentation_source_hash: hash(canonicalJson(documentation)) } : {}),

@@ -10,6 +10,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createControlledMcpServer, controlledPlanSchema, controlledReportSchema } from '../dist/controlled-tools.js';
 import { controlledCornellResearchSchema } from '../dist/controlled-cornell-sources.js';
+import { controlledCornellSubmissionSchema } from '../dist/controlled-cornell-submission.js';
 import { researchFixture } from './cornell-research-fixture.mjs';
 import { resolveControlledPayload, assertControlledPayloadCurrent, controlledPayloadSchema, CONTROLLED_PAYLOAD_MAX_BYTES } from '../dist/controlled-payload.js';
 
@@ -65,11 +66,12 @@ test('planning and assignment-report MCP boundaries consume prepared JSON and re
   const plan = proposedPlan(), report = { outcome: 'completed', summary: 'Finite pair plan is ready for independent implementation.' };
   const declared = (await c.client.listTools()).tools;
   for (const [name, schema] of [['workflow_plan', controlledPlanSchema], ['assignment_report', controlledReportSchema]]) {
+    const canonical = name === 'workflow_plan' ? schema.omit({ procedure_candidate: true }) : schema;
     const actual = declared.find(tool => tool.name === name).inputSchema;
     const hiddenPlanAliases = name === 'workflow_plan'
       ? ['intent', 'summary', 'implementation_instructions', 'verification_instructions', 'negative_controls'] : [];
-    assertPayloadBranches(actual, z.toJSONSchema(schema, { io: 'input' }).required ?? [], [...Object.keys(schema.shape), ...hiddenPlanAliases]);
-    assert.deepEqual(Object.keys(actual.properties).sort(), [...Object.keys(schema.shape), 'input_path'].sort(),
+    assertPayloadBranches(actual, z.toJSONSchema(canonical, { io: 'input' }).required ?? [], [...Object.keys(canonical.shape), ...hiddenPlanAliases]);
+    assert.deepEqual(Object.keys(actual.properties).sort(), [...Object.keys(canonical.shape), 'input_path'].sort(),
       'Known ingress aliases remain excluded from canonical advertised properties; arbitrary fields stay forbidden.');
     assert.equal(actual.properties.summary?.type ?? actual.properties.title?.type, 'string');
   }
@@ -322,7 +324,7 @@ test('actual Cornell MCP boundary loads prepared JSON without copying its serial
   t.after(async () => { await client.close(); await server.close(); });
   const result = await client.callTool({ name: 'cornell_research_compile', arguments: { input_path: 'scripts/research.json' } });
   const declared = (await client.listTools()).tools.find(tool => tool.name === 'cornell_research_compile').inputSchema;
-  const semanticSchema = controlledCornellResearchSchema(false, false);
+  const semanticSchema = controlledCornellSubmissionSchema(false, false);
   assertPayloadBranches(declared, z.toJSONSchema(semanticSchema, { io: 'input' }).required ?? [], Object.keys(semanticSchema.shape));
   assert.equal(declared.properties.topic.type, 'string');
   assert.equal(declared.properties.explanations.type, 'array');

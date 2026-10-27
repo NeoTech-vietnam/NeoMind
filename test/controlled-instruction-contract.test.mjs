@@ -34,7 +34,8 @@ test('read-only review instructions do not direct producer execution or recipe l
 test('planning describes future bindings while an executable producer receives its actual execution instructions', () => {
   const planner = controlledInstructions(binding('planning'));
   assert.match(planner, /execution_steps/);
-  assert.match(planner, /procedure_candidate/);
+  assert.doesNotMatch(planner, /procedure_candidate|Procedure subprocess stdin contract/);
+  assert.match(controlledInstructions(binding('planning', { procedure_registration_required: true })), /procedure_candidate/);
   const actor = binding('implementation', { execution_steps: [{ title: 'Generate', command: ['node', 'src/build.mjs'] }], procedure_bound: true });
   assert.ok(controlledToolNames(actor).includes('task_run'));
   assert.ok(controlledToolNames(actor).includes('procedure_run'));

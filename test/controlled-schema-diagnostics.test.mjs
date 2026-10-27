@@ -50,6 +50,69 @@ test('ordinary safe validation feedback remains unchanged and traversal uses onl
     [{code:'invalid_union',path:['practice']}]);assert.equal(reads,0);
 });
 
+test('Cornell submission field names remain actionable without exposing unknown keys', () => {
+  const result = controlledValidation('SCHEMA_INVALID', undefined, [
+    { code: 'invalid_type', path: ['practice', 'questions', 0, 'objective_indexes'], expected: 'array' },
+    { code: 'invalid_type', path: ['sources', 0, 'url'], expected: 'string' },
+    { code: 'invalid_type', path: ['questions', 0, 'question'], expected: 'string' },
+  ]);
+  assert.deepEqual(result.issues.map(issue => issue.path), [
+    ['practice', 'questions', 0, 'objective_indexes'], ['sources', 0, 'url'], ['questions', 0, 'question'],
+  ]);
+});
+
+test('real Zod length constraints retain safe numeric bounds and declared units', () => {
+  const schema=z.strictObject({questions:z.array(z.string()).min(2),summary:z.string().min(12),title:z.string().max(4)});
+  const parsed=schema.safeParse({questions:['One'],summary:'Short',title:'Long title'});
+  assert.equal(parsed.success,false);
+  const result=controlledValidation('SCHEMA_INVALID',undefined,parsed.error.issues);
+  assert.deepEqual(result.issues.map(({path,minimum,maximum,origin,unit,inclusive})=>({path,minimum,maximum,origin,unit,inclusive})),[
+    {path:['questions'],minimum:2,maximum:undefined,origin:'array',unit:'items',inclusive:true},
+    {path:['summary'],minimum:12,maximum:undefined,origin:'string',unit:'characters',inclusive:true},
+    {path:['title'],minimum:undefined,maximum:4,origin:'string',unit:'characters',inclusive:true},
+  ]);
+  assert.match(result.issues[0].message,/at least 2 items/);
+  assert.match(result.issues[1].message,/at least 12 characters/);
+  assert.match(result.issues[2].message,/at most 4 characters/);
+  const exclusive=controlledValidation('SCHEMA_INVALID',undefined,[{code:'too_small',path:['summary'],origin:'string',minimum:12,inclusive:false}]);
+  assert.match(exclusive.issues[0].message,/more than 12 characters/);
+  assert.equal(exclusive.issues[0].inclusive,false);
+  const encoded=controlledResultFailure({isError:true,content:[{type:'text',text:'Input validation error: '+JSON.stringify(parsed.error.issues)}]});
+  assert.deepEqual(encoded.issues,result.issues);
+});
+
+test('bound projection ignores hostile accessors and unsupported metadata without leaking raw text', () => {
+  let reads=0;const hostile={code:'too_small',path:['summary'],message:'SECRET_CUSTOM_VALUE'};
+  for(const key of ['minimum','maximum','origin','inclusive'])Object.defineProperty(hostile,key,{get(){reads++;throw Error('Getter must not run');}});
+  const result=controlledValidation('SCHEMA_INVALID',undefined,[hostile,
+    {code:'too_small',path:['summary'],origin:'string',minimum:Infinity,inclusive:'SECRET_INCLUSIVE'},
+    {code:'too_big',path:['summary'],origin:'SECRET_ORIGIN',maximum:8,inclusive:true},
+    {code:'too_small',path:['summary'],origin:'array',minimum:{toString(){throw Error('No coercion');}}},
+  ]);
+  assert.equal(reads,0);
+  assert.ok(result.issues.every(issue=>issue.minimum===undefined&&issue.maximum===undefined&&issue.origin===undefined));
+  assert.match(result.issues[0].message,/fewer items or characters/);
+  assert.doesNotMatch(JSON.stringify(result),/SECRET_|Infinity/);
+  const flat=controlledResultFailure({isError:true,content:[{type:'text',text:'Input validation error: Invalid arguments for tool research: Too small: expected string to have >=12 characters SECRET_CANARY at summary'}]});
+  assert.equal(flat.issues[0].minimum,undefined);assert.doesNotMatch(JSON.stringify(flat),/SECRET_CANARY/);
+});
+
+test('real MCP SDK min and max diagnostics retain only safe server length metadata', async t => {
+  const server=new McpServer({name:'bounded-size-diagnostics',version:'1'}),client=new Client({name:'size-test',version:'1'});
+  let called=0;const semantic=z.strictObject({questions:z.array(z.string()).min(2),summary:z.string().min(12),title:z.string().max(4)});
+  server.registerTool('research',{inputSchema:controlledPayloadSchema(semantic)},()=>{called++;return{content:[{type:'text',text:'{}'}]};});
+  const[a,b]=InMemoryTransport.createLinkedPair();await server.connect(b);await client.connect(a);
+  t.after(async()=>{await client.close();await server.close();});
+  const result=await client.callTool({name:'research',arguments:{questions:['One'],summary:'Short',title:'Long title'}});
+  assert.equal(result.isError,true);assert.equal(called,0);
+  const failure=controlledResultFailure(result);
+  assert.ok(failure.issues.some(issue=>issue.path[0]==='questions'&&issue.minimum===2&&issue.unit==='items'));
+  assert.ok(failure.issues.some(issue=>issue.path[0]==='summary'&&issue.minimum===12&&issue.unit==='characters'));
+  assert.ok(failure.issues.some(issue=>issue.path[0]==='title'&&issue.maximum===4&&issue.inclusive===true));
+  const valid=await client.callTool({name:'research',arguments:{questions:['One','Two'],summary:'Enough detail here',title:'Fits'}});
+  assert.notEqual(valid.isError,true);assert.equal(called,1);
+});
+
 test('real MCP SDK practice rejection preserves concrete safe union fields before the callback and does not weaken validation', async t => {
   const question=z.strictObject({objective_ids:z.array(z.string()),answer:z.string()});
   const semantic=z.strictObject({practice:z.union([

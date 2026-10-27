@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { createControlledMcpServer, controlledPlanSchema } from '../dist/controlled-tools.js';
+import { createControlledMcpServer, controlledPlanSchema, controlledInstructions } from '../dist/controlled-tools.js';
 import { controlledPlanRequestSchemas, controlledPlanSubmissionExample, controlledPlanSubmissionGuide } from '../dist/controlled-plan-request.js';
 import { controlledResultFailure } from '../dist/controlled-observability.js';
 
@@ -26,13 +26,14 @@ function actualRequest() {
     negative_controls: [{ name: 'Reject incorrect worked example', argv: ['node', 'checks/check.cjs', 'docs/cornell', '--negative-control', 'wrong-example'],
       expected_exit_code: 1, baseline_paths: [], fixture_description: 'The same checker must reject a deliberately incorrect worked example.' }] };
 }
-async function fixture(t, planDefaults = defaults) {
+async function fixture(t, planDefaults = defaults, registrationRequired = false) {
   const root = mkdtempSync(join(tmpdir(), 'neomind-plan-request-'));
   for (const folder of ['src', 'docs', 'checks']) mkdirSync(join(root, folder));
   writeFileSync(join(root, 'src/prepared-cornell.json'), JSON.stringify({ topic: 'Prepared professional research' }));
   const captured = [], traces = [];
   const server = createControlledMcpServer(root, { workflow_id: 'BOUND-REQUEST-WORKFLOW', invocation_id: 'BOUND-REQUEST-PLANNER',
     stage: 'planning', role: 'manager', implementation_paths: [], verification_paths: [], read_paths: ['.'],
+    procedure_registration_required: registrationRequired,
     ...(planDefaults === undefined ? {} : { plan_defaults: planDefaults }) }, {
     assertActive() {}, saveReport() { throw new Error('No report calls expected.'); },
     submitPlan(value, source) { captured.push({ value, source }); return { saved: true }; }, trace(event) { traces.push(event); },
@@ -43,6 +44,33 @@ async function fixture(t, planDefaults = defaults) {
   return { root, captured, traces, client, call: (input) => client.callTool({ name: 'workflow_plan', arguments: input }) };
 }
 const bytesHash = bytes => createHash('sha256').update(bytes).digest('hex');
+
+test('ordinary planning omits optional registry work while explicitly required registration remains strict', async t => {
+  const ordinary = await fixture(t), tool = (await ordinary.client.listTools()).tools.find(tool => tool.name === 'workflow_plan');
+  assert.equal(Object.hasOwn(tool.inputSchema.properties, 'procedure_candidate'), false);
+  const actor = { workflow_id: 'BOUND-REQUEST-WORKFLOW', stage: 'planning', role: 'manager', implementation_paths: [], verification_paths: [] };
+  assert.doesNotMatch(controlledInstructions(actor), /procedure_candidate|Procedure subprocess stdin contract/);
+  assert.equal((await ordinary.call(actualRequest())).isError, undefined);
+  assert.equal(ordinary.captured[0].value.procedure_candidate, undefined);
+
+  const required = await fixture(t, defaults, true), metadata = (await required.client.listTools()).tools.find(tool => tool.name === 'workflow_plan');
+  assert.ok(metadata.inputSchema.properties.procedure_candidate);
+  assert.ok(metadata.inputSchema.anyOf.find(branch => !branch.required.includes('input_path')).required.includes('procedure_candidate'));
+  assert.match(controlledInstructions({ ...actor, procedure_registration_required: true }), /procedure_candidate/);
+  assert.equal((await required.call(actualRequest())).isError, true, 'A real registration obligation cannot be silently omitted.');
+  assert.equal(required.captured.length, 0);
+  const candidate = { title: 'Requested reusable generator', description: 'Generate future scalar artifacts.',
+    script: 'src/generate.cjs', verification_script: 'checks/check.cjs', parameters: { destination: { type: 'string', path: true } },
+    outputs: [{ path: '{destination}/value.json' }], environment: { platforms: [process.platform], clients: ['copilot', 'codex'] },
+    effects: { write_roots: ['{destination}'], network: false, publication: false } };
+  assert.equal((await ordinary.call({ ...actualRequest(), procedure_candidate: candidate })).isError, true);
+  assert.equal(ordinary.captured.length, 1, 'An ordinary request cannot silently add registry side effects.');
+  assert.equal((await required.call({ ...actualRequest(), procedure_candidate: candidate })).isError, undefined);
+  assert.equal(required.captured[0].value.procedure_candidate.title, candidate.title);
+  assert.equal((await required.call({ ...actualRequest(), procedure_candidate: { ...candidate, environment: {} } })).isError, true,
+    'Explicit registration still validates substantive environment and effects.');
+  assert.equal(required.captured.length, 1);
+});
 
 test('actual Local0153 plan shape reaches canonical backend in one MCP call without model identity assembly', async t => {
   const f = await fixture(t), input = actualRequest(), before = JSON.stringify(input);

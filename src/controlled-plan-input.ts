@@ -9,6 +9,13 @@ const covers = (path: string, scopes: string[]) => scopes.some(scope => key(path
 const unique = (values: string[]) => [...new Map(values.map(value => [key(value), value])).values()];
 const consultationRuntimeRoles = { explorer: 'codebase-analyst', planner: 'requirements', architect: 'architect',
   researcher: 'researcher', curator: 'curator', 'component-owner': 'component-owner' } as const;
+/** Fresh user opt-in is an action request, not a historical contract keyword.
+ * Keep the legacy criteria matcher unchanged for committed obligations. */
+export function controlledRegistrationRequested(request: string): boolean {
+  return request.split(/[!?;\n]+|\.(?=\s|$)|\bbut\b/i).some(clause =>
+    /\bregister\b[\s\S]*\bprocedure\b/i.test(clause) &&
+    !/\b(?:do\s+not|don't|never|must\s+not|should\s+not|no\s+need\s+to|not\s+to)\s+(?:automatically\s+)?register\b/i.test(clause));
+}
 /** The same exact resolver validates new plans and dispatches frozen consultations. */
 export function controlledConsultationRole(role: unknown) {
   if (typeof role !== 'string' || !Object.hasOwn(consultationRuntimeRoles, role))

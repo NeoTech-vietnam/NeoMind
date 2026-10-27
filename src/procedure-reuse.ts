@@ -347,7 +347,7 @@ export function prepareWork(root: string, input: WorkPrepareInput): WorkPreparat
   const nextAction = decision === 'exact' ? 'Prepare a fresh authorized procedure run, then execute its current verification; historical success is not current evidence.'
     : decision === 'adapt' ? 'Assign the contract differences to the relevant expert; qualify a new version or obtain the missing confirmation before reuse.'
     : decision === 'blocked' ? 'Resolve the listed prerequisites or select a supported procedure; do not repeat unchanged execution attempts.'
-    : 'Use the scoped expert workflow, search existing tools, and capture an automation candidate after validated work.';
+    : 'Use the scoped expert workflow and search existing tools. Capture a candidate only when registration is part of the user request; otherwise deliver the requested work.';
   const selectedRef = selected && decision !== 'new' ? { id: selected.candidate.id, version: selected.candidate.version, contract_hash: selected.candidate.contract_hash, script_sha256: selected.candidate.script_sha256 } : undefined;
   const parameters = selectedRef ? selected!.parameters : structuredClone(input.parameters ?? {});
   const context = { original_request: input.request, intent_id: intent, parameters, outputs: input.outputs ?? [], environment: { platform: process.platform, arch: process.arch, node: process.versions.node, ...input.environment }, scope: input.scope ?? {}, procedure: selectedRef ?? null };

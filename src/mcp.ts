@@ -766,11 +766,11 @@ export function createMcpServer(root: string, binding: McpBinding = {}): McpServ
     // Creating/recovering packets requires no session; opening/claiming validates
     // packet credentials. Advertising a session here caused fabricated handles.
     const bootstrap = ['assignment_bootstrap', 'assignment_recover', 'assignment_open', 'assignment_claim'].includes(name);
-    // These public entrypoints ask the enabled editor owner to operate. They do
-    // not authenticate a worker. Old clients can retain the former optional
+    // Unbound management entrypoints accept user work regardless of the saved
+    // execution mode; they do not authenticate a worker. Old clients can retain the former optional
     // credential field; strip it as unknown input instead of resolving it as an
     // assignment or teaching the parent model to construct another credential.
-    const publicEntrypoint = controlledParent && ['manager_run', 'manager_status', 'manager_control'].includes(name);
+    const publicEntrypoint = !binding.invocation_id && ['manager_run', 'manager_status', 'manager_control'].includes(name);
     server.registerTool(
       name,
       {

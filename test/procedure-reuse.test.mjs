@@ -123,6 +123,8 @@ test('near matches find reference material but incompatible task intent never be
   const result = prepareWork(work.root, request({ request: 'Create an algorithm exercise on linked lists with Cornell notes.' }));
   assert.equal(result.intent_id, 'algorithm-exercise');
   assert.equal(result.decision, 'new');
+  assert.match(result.next_action, /Capture a candidate only when registration is part of the user request/);
+  assert.match(result.manager_brief, /otherwise deliver the requested work/);
   assert.equal(result.selected_procedure, undefined);
   assert.equal(result.candidates.length, 1);
   assert.ok(result.candidates[0].reasons.some(item => item.code === 'INTENT_MISMATCH'));

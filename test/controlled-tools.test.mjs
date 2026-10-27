@@ -124,7 +124,7 @@ test('controlled Cornell sources advertise only semantic citations and strip onl
     compileResearch(value) { captured.push(value); return { saved: true }; },
   });
   const declared = (await c.client.listTools()).tools.find(tool => tool.name === 'cornell_research_compile').inputSchema;
-  assert.deepEqual(Object.keys(declared.properties.sources.items.properties).sort(), ['id', 'locator', 'title', 'uri']);
+  assert.deepEqual(Object.keys(declared.properties.sources.items.properties).sort(), ['id', 'locator', 'title', 'uri', 'url']);
   const { requirement_id, expected_requirement_revision, workflow_id, task_id, owner, output_dir, ...semantic } = input;
   semantic.sources = [{ id: 'S1', title: 'Actual README provenance', uri: 'scripts/README-leetcode.md',
     record_id: 'invented-description', sha256: '0'.repeat(64), retrieved_at: 'invented timestamp' }];
@@ -280,6 +280,22 @@ test('blocked and failed substantive reports persist without task submission or 
   }
   assert.equal(c.reports.length, 2);
   assert.doesNotMatch(JSON.stringify(c.reports), /submit_task|invocation_id|workflow_id/);
+});
+
+test('planning reports bind saved plan metadata without interpreting invented artifact paths as delivered files', async t => {
+  const c = await connect(t, project(t), binding('planning'));
+  const artifacts = ['workflow_plan', '../../secret'];
+  const result = await c.call('assignment_report', { outcome: 'completed', summary: 'Saved the bounded professional plan for runtime review.', artifacts });
+  assert.equal(result.isError, undefined, JSON.stringify(result));
+  assert.deepEqual(c.reports[0].artifacts, []);
+  const requested = c.events.find(event => event.event === 'tool-request' && event.tool === 'assignment_report');
+  assert.deepEqual(requested.model_input.semantic.artifacts, artifacts, 'The original model request remains observable.');
+  for (const stage of ['implementation', 'review']) {
+    const actor = await connect(t, project(t), binding(stage));
+    const response = await actor.call('assignment_report', { outcome: 'completed', verdict: 'pass', summary: 'A report must retain the actual scoped artifact contract.', artifacts });
+    assert.equal(response.isError, true);
+    assert.equal(actor.reports.length, 0);
+  }
 });
 
 test('literal search accepts a file path and retains directory search and match limits', async t => {

@@ -82,10 +82,15 @@ const schemaMessages = {
 const schemaTypes = new Set(['string', 'number', 'boolean', 'array', 'object', 'null', 'undefined', 'int', 'bigint']);
 // Schema names, not model-provided dictionary keys. Unknown/sensitive names never enter traces.
 const schemaFields = new Set(('schema_version id version title objective rationale acceptance_criteria allowed_paths verification_paths outputs documentation_paths checks purpose command baseline_paths expected_exit_code timeout_ms negative_controls risk reuse procedure_id parameters procedure_candidate script verification_script dependencies effects write_roots read_roots network publication task_family environment input_paths preservation_paths specialists role cornell_output_dir path max_chars start_line query max_matches content outcome summary artifacts findings failure_kind verdict limitations requirement_id expected_requirement_revision workflow_id task_id owner topic date output_dir context constraints abstract learning_objectives text methods explanations heading body results discussion questions prompt objective_ids answer worked_example expected observed evidence_ids practice procedure steps solution_path starter sources uri retrieved_at locator record_id sha256 failure_cases').split(' '));
-for (const field of ['input_path', 'cornell_input_path', 'evidence_report_paths', 'after_evidence_reports']) schemaFields.add(field);
+for (const field of ['input_path', 'cornell_input_path', 'evidence_report_paths', 'after_evidence_reports',
+  'objective_indexes', 'question', 'url']) schemaFields.add(field);
 for (const field of ['execution_steps', 'output_paths', 'max_output_bytes', 'argv', 'name', 'fixture_description',
   'intent', 'implementation_instructions', 'verification_instructions']) schemaFields.add(field);
-interface SafeSchemaIssue { path: (string | number)[]; code: keyof typeof schemaMessages; message: string }
+interface SafeSchemaIssue {
+  path: (string | number)[]; code: keyof typeof schemaMessages; message: string;
+  minimum?: number; maximum?: number; origin?: 'string' | 'array';
+  unit?: 'characters' | 'items'; inclusive?: boolean;
+}
 function safeSchemaIssues(value: unknown): SafeSchemaIssue[] {
   return expandControlledSchemaIssues(value, issue => {
     const code: keyof typeof schemaMessages = typeof issue.code === 'string' && Object.hasOwn(schemaMessages, issue.code)
@@ -93,8 +98,21 @@ function safeSchemaIssues(value: unknown): SafeSchemaIssue[] {
     const path = (Array.isArray(issue.path) ? issue.path : []).slice(0, 8).map((part: unknown) =>
       typeof part === 'string' ? sensitiveKey.test(part) ? '[redacted-field]' : schemaFields.has(part) ? part : '[field]'
         : Number.isSafeInteger(part) && Number(part) >= 0 && Number(part) <= 1000000 ? Number(part) : '[index]');
-    return { path, code, message: code === 'invalid_type' && typeof issue.expected === 'string' && schemaTypes.has(issue.expected)
-      ? `Expected ${issue.expected}.` : schemaMessages[code] };
+    const result: SafeSchemaIssue = { path, code,
+      message: code === 'invalid_type' && typeof issue.expected === 'string' && schemaTypes.has(issue.expected)
+        ? `Expected ${issue.expected}.` : schemaMessages[code] };
+    const boundKey = code === 'too_small' ? 'minimum' : code === 'too_big' ? 'maximum' : undefined;
+    const bound = boundKey && issue[boundKey];
+    if (boundKey && typeof bound === 'number' && Number.isSafeInteger(bound) && bound >= 0 &&
+        (issue.origin === 'string' || issue.origin === 'array')) {
+      result[boundKey] = bound; result.origin = issue.origin;
+      result.unit = issue.origin === 'string' ? 'characters' : 'items';
+      if (typeof issue.inclusive === 'boolean') result.inclusive = issue.inclusive;
+      result.message = result.inclusive === undefined ? `Declared ${boundKey}: ${bound} ${result.unit}.`
+        : `Use ${code === 'too_small' ? result.inclusive ? 'at least' : 'more than'
+          : result.inclusive ? 'at most' : 'fewer than'} ${bound} ${result.unit}.`;
+    }
+    return result;
   });
 }
 function sdkSchemaIssues(text: string): unknown[] {
@@ -120,7 +138,13 @@ function sdkSchemaIssues(text: string): unknown[] {
           : /^Invalid (?:string|ISO |UUID|url|email|format)/.test(message) ? 'invalid_format'
             : /^Invalid number:.*multiple of/.test(message) ? 'not_multiple_of'
               : message === 'Invalid input' ? 'invalid_union' : 'custom';
-    return { path, code, expected }; // Never return raw messages, values, enum choices or unknown key names.
+    // The installed SDK flattens Zod metadata to this fixed length diagnostic.
+    // Parse only its bounded numeric/type fields; never return the raw message.
+    const size = /^Too (small|big): expected (string|array) to have (>=|>|<=|<)(\d{1,16}) (characters|items)$/.exec(message);
+    const bound = size && (size[1] === 'small' ? size[3]?.startsWith('>') : size[3]?.startsWith('<')) &&
+      (size[2] === 'string' ? size[5] === 'characters' : size[5] === 'items')
+      ? { [size[1] === 'small' ? 'minimum' : 'maximum']: Number(size[4]), origin: size[2], inclusive: size[3]?.endsWith('=') } : {};
+    return { path, code, expected, ...bound }; // Never return raw messages, values, enum choices or unknown key names.
   });
 }
 export function controlledValidation(code: unknown, rule?: unknown, schemaIssues?: unknown) {

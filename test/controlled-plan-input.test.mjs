@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createControlledMcpServer, controlledPlanSchema, controlledConsultationRoles } from '../dist/controlled-tools.js';
-import { normalizeControlledPlanInput, controlledConsultationRole } from '../dist/controlled-plan-input.js';
+import { normalizeControlledPlanInput, controlledConsultationRole, controlledRegistrationRequested } from '../dist/controlled-plan-input.js';
 import { initialize, atomicWrite, createRecord, loadRecords, hash, safePath } from '../dist/storage.js';
 import { prepareControlledCheckEvidence, controlledFingerprints } from '../dist/controlled-acceptance.js';
 import { randomUUID } from 'node:crypto';
@@ -32,6 +32,17 @@ function plan() {
     checks: [{ title: 'Independent check', command: ['node', 'checks/check.mjs', 'src/value.mjs'],
       negative_controls: [{ title: 'Reject invalid fixture', command: ['node', 'checks/check.mjs', 'checks/bad.json'], expected_exit_code: 1 }] }], risk: 'low' };
 }
+
+test('fresh registration opt-in requires a positive action and never turns explicit opt-out into consent', () => {
+  for (const request of ['Create a Cornell note; do not register a reusable procedure.',
+    'Create a Cornell note without procedure registration.', 'Create a Cornell note; do not automatically register a procedure.',
+    "Create a Cornell note; don't register a procedure.", 'Explain procedure registration in a Cornell note.',
+    'Do not register scripts/generate.mjs as a reusable procedure.'])
+    assert.equal(controlledRegistrationRequested(request), false, request);
+  for (const request of ['Create the scalar and register its reusable procedure.', 'Please register a reusable procedure.',
+    'Do not modify existing scripts, but register a new procedure.', 'Register scripts/generate.mjs as a reusable procedure.'])
+    assert.equal(controlledRegistrationRequested(request), true, request);
+});
 
 test('actual MCP canonicalizes reported Cornell tool steps, checker ownership and exact hidden input metadata before strict plan submission', async t => {
   const root = fixture(t), directory = 'docs/cornell', prepared = 'src/prepared-cornell.json';

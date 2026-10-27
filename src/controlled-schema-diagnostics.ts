@@ -1,4 +1,7 @@
-interface Candidate { code: unknown; path: unknown[]; expected: unknown }
+interface Candidate {
+  code: unknown; path: unknown[]; expected: unknown;
+  minimum: unknown; maximum: unknown; origin: unknown; inclusive: unknown;
+}
 const data = (value: object, key: string): unknown => {
   try { return Object.getOwnPropertyDescriptor(value, key)?.value; } catch { return undefined; }
 };
@@ -15,7 +18,9 @@ export function expandControlledSchemaIssues<T>(value: unknown, project: (issue:
       if (!issue || typeof issue !== 'object') continue;
       const rawPath = data(issue, 'path'), own = Array.isArray(rawPath) ? rawPath.slice(0, 8) : [];
       const path = (!relative && prefix.every((part, index) => own[index] === part) ? own : [...prefix, ...own]).slice(0, 8);
-      const leaf = { code: data(issue, 'code'), path, expected: data(issue, 'expected') };
+      const leaf = { code: data(issue, 'code'), path, expected: data(issue, 'expected'),
+        minimum: data(issue, 'minimum'), maximum: data(issue, 'maximum'),
+        origin: data(issue, 'origin'), inclusive: data(issue, 'inclusive') };
       if (leaf.code !== 'invalid_union' || depth === 6 || active.has(issue)) { result.push(leaf); continue; }
       active.add(issue);
       const errors = data(issue, 'errors'), legacy = data(issue, 'unionErrors');
