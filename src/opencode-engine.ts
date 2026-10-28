@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { userInfo } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { createOpencodeClient, type Config } from '@opencode-ai/sdk/v2/client';
+import { Agent, fetch as fixedFetch } from 'undici';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { commandEnvironment } from './command-runner.js';
@@ -182,6 +183,8 @@ export interface OpenCodeEngineOptions {
   onPrepared?(ref: OpenCodeSupervisionRef): void | Promise<void>;
   /** Bounded owner diagnostic only: no paths, identity, endpoint or credentials. */
   onStartupStage?(observation: OpenCodeStartupObservation): void;
+  /** Trusted transport fault seam; not part of a worker or wire payload. */
+  wrapControlFetch?(transport: typeof globalThis.fetch): typeof globalThis.fetch;
 }
 export interface OpenCodeOwnerReconciliation {
   state: 'stopped' | 'still_live' | 'uncertain'; proof_sha256?: string; owner_matches?: boolean;
@@ -541,7 +544,7 @@ async function startSupervisedEngine(root: string, invocationId: string, directo
   let exited = false, finishExit!: () => void;
   const exit = new Promise<void>(done => { finishExit = done; });
   child.once('error', () => { exited = true; finishExit(); }); child.once('exit', () => { exited = true; finishExit(); });
-  let closing: Promise<void> | undefined, failure: OpenCodeEngine['failure'], logOffset = 0;
+  let closing: Promise<void> | undefined, failure: OpenCodeEngine['failure'], logOffset = 0, dispatcher: Agent | undefined;
   const close = () => closing ??= (async () => {
     clearInterval(monitor); signal?.removeEventListener('abort', abort);
     child.off('message', observeStartup);
@@ -550,7 +553,7 @@ async function startSupervisedEngine(root: string, invocationId: string, directo
     await Promise.race([exit, new Promise<void>(done => { timer = setTimeout(done, 10000); })]); clearTimeout(timer);
     const state = await reconcileOpenCodeOwner(root, ref);
     if (state.state !== 'stopped') throw new Error('OpenCode shutdown has no authenticated ended proof; preserve the invocation for reconciliation.');
-  })();
+  })().finally(async () => { await dispatcher?.destroy().catch(() => {}); });
   const abort = () => { void close().catch(() => {}); };
   const logPath = join(directory, 'data/opencode/log/opencode.log');
   const inspectStorage = () => {
@@ -604,7 +607,20 @@ async function startSupervisedEngine(root: string, invocationId: string, directo
       if (exited) failed();
     });
     signal?.throwIfAborted();
-    const client = createOpencodeClient({ baseUrl: ready.url, directory,
+    // Node 24's bundled Undici 7 can crash on a paused SSE parser when its
+    // peer closes (nodejs/undici#5360). Pin the upstream fix and own this
+    // engine's connection pool instead of changing the global dispatcher.
+    dispatcher = new Agent();
+    const controlFetch: typeof globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request && !init ? input : new Request(input, init);
+      const response = await fixedFetch(request.url, { method: request.method, headers: [...request.headers.entries()],
+        ...(request.body ? { body: new Uint8Array(await request.arrayBuffer()) } : {}),
+        signal: request.signal, redirect: request.redirect, dispatcher });
+      // The SDK uses the standard Response surface; the pinned package has
+      // its own equivalent DOM type rather than Node's bundled declaration.
+      return response as unknown as Response;
+    };
+    const client = createOpencodeClient({ baseUrl: ready.url, directory, fetch: options.wrapControlFetch?.(controlFetch) ?? controlFetch,
       headers: { Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}` }, throwOnError: true });
     return { client, directory, instance, binary_sha256: binary.sha256, pid: ready.engine.pid,
       supervision: { ...ref, engine: ready.engine }, get failure() { return failure; }, close };

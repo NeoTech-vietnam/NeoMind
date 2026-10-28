@@ -19,7 +19,7 @@ class OpenCodeControlSetupError extends Error {
 }
 function setupTransportFailure(operation: string, error: unknown): boolean {
   return ['session-create', 'mcp-status', 'tool-list', 'event-subscribe'].includes(operation) &&
-    error instanceof TypeError && error.message === 'fetch failed';
+    (error instanceof TypeError && error.message === 'fetch failed' || error instanceof Error && error.name === 'TimeoutError');
 }
 
 /** OpenCode owns inference/tool iteration. This adapter binds one execution to the engineering runtime. */
@@ -78,16 +78,18 @@ export class OpenCodeSession {
           this.update({ host_instance: supervision.instance,
             opencode: { version: opencodeRuntimeVersion, binary_sha256: openCodeBinary().sha256,
               gateway_instance: supervision.instance, supervision } });
-        } });
+        }, wrapControlFetch: transport => this.wrapControlFetch(transport) });
       const permission = [{ permission: '*', pattern: '*', action: 'deny' as const },
         ...this.tools.map(name => ({ permission: `wf_${name}`, pattern: '*', action: 'allow' as const }))];
       operation = 'session-create';
       const session = await this.engine.client.session.create({ directory: this.engine.directory,
-        title: `WorkForce ${this.receipt.role}`, agent: 'workforce', permission });
+        title: `WorkForce ${this.receipt.role}`, agent: 'workforce', permission },
+        { signal: AbortSignal.any([this.controller.signal, AbortSignal.timeout(10000)]) });
       if (!session.data?.id) throw new Error('OpenCode did not return a session identity.');
       this.sessionId = session.data.id;
       operation = 'mcp-status';
-      const mcp = await this.engine.client.mcp.status({ directory: this.engine.directory });
+      const mcp = await this.engine.client.mcp.status({ directory: this.engine.directory },
+        { signal: AbortSignal.any([this.controller.signal, AbortSignal.timeout(10000)]) });
       if (mcp.data?.wf?.status !== 'connected') throw new Error('Bound WorkForce gateway is unavailable.');
       this.messageId = `msg_${randomBytes(16).toString('hex')}`;
       this.update({ confirmed_model: endpoint.model, model_provider: opencodeProviderId,
@@ -118,13 +120,16 @@ export class OpenCodeSession {
   protected createTurnObserver(client: OpenCodeEngine['client'], identity: OpenCodeTurnIdentity, options: OpenCodeTurnOptions): OpenCodeTurnObserver {
     return new OpenCodeTurnObserver(client, identity, options);
   }
+  /** Observes/faults the real pinned control transport in development tests. */
+  protected wrapControlFetch(transport: typeof globalThis.fetch): typeof globalThis.fetch { return transport; }
 
   private async perform(): Promise<void> {
     const engine = this.engine!, sessionID = this.sessionId!;
     let operation = 'tool-list';
     try {
       const endpoint = openCodeEndpoint(this.root, this.receipt);
-      const listed = await engine.client.tool.ids({ directory: engine.directory });
+      const listed = await engine.client.tool.ids({ directory: engine.directory },
+        { signal: AbortSignal.any([this.controller.signal, AbortSignal.timeout(10000)]) });
       const allowed = new Set(this.tools.map(name => `wf_${name}`));
       const toolMask = Object.fromEntries((listed.data ?? []).map(name => [name, allowed.has(name)]));
       for (const name of allowed) toolMask[name] = true;

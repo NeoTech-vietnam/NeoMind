@@ -16,6 +16,11 @@ import { localOpenAIProvider } from './helpers/local-openai-provider.mjs';
 // Real pinned engine, private gateway, native signatures and model tool loop.
 // The HTTP model peer is local scripted SSE: no paid provider or user workspace.
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+function wrapTransport(t, wrapper) {
+  const previous = OpenCodeSession.prototype.wrapControlFetch;
+  OpenCodeSession.prototype.wrapControlFetch = wrapper;
+  t.after(() => { OpenCodeSession.prototype.wrapControlFetch = previous; });
+}
 function project(t, provider) {
   const parent = resolve('artifacts/test-temp'); mkdirSync(parent, { recursive: true });
   const root = mkdtempSync(join(parent, 'wf-async-turn-'));
@@ -63,9 +68,9 @@ for (const lost of [false, true]) test(`real async native turn ${lost ? 'reconci
     call('assignment_report', { summary: 'Saved the actual scoped output.', product_findings: [] }),
     { text: 'complete' },
   ][index] ?? { text: 'unexpected extra request' }, 6);
-  const fixture = project(t, provider), originalFetch = globalThis.fetch;
+  const fixture = project(t, provider);
   let submissions = 0, synchronous = 0, injected = 0;
-  globalThis.fetch = async function (request, options) {
+  wrapTransport(t, originalFetch => async function (request, options) {
     const url = new URL(typeof request === 'string' ? request : request.url), method = request.method ?? options?.method;
     const response = await originalFetch(request, options);
     if (method === 'POST' && /\/prompt_async$/.test(url.pathname)) {
@@ -74,8 +79,7 @@ for (const lost of [false, true]) test(`real async native turn ${lost ? 'reconci
     }
     if (method === 'POST' && /\/message$/.test(url.pathname)) synchronous++;
     return response;
-  };
-  t.after(() => { globalThis.fetch = originalFetch; });
+  });
   if (lost) {
     const previous = OpenCodeSession.prototype.observeEvents;
     OpenCodeSession.prototype.observeEvents = async function (stream) {
@@ -143,9 +147,9 @@ test('partial tool name and SSE heartbeats cannot create completion or defeat th
 
 for (const operation of ['session-create', 'tool-list']) test(`a lost local ${operation} connection is a bounded pre-prompt failure, not a provider request or blind replay`, { timeout: 90000 }, async t => {
   const provider = await localOpenAIProvider(() => { throw new Error('No model prompt is authorized by this control-setup fault fixture.'); }, 1);
-  const fixture = project(t, provider), originalFetch = globalThis.fetch;
+  const fixture = project(t, provider);
   let faults = 0, submissions = 0, sessionCreates = 0;
-  globalThis.fetch = async function (request, options) {
+  wrapTransport(t, originalFetch => async function (request, options) {
     const url = new URL(typeof request === 'string' ? request : request.url), method = request.method ?? options?.method;
     if (method === 'POST' && /\/prompt_async$/.test(url.pathname)) submissions++;
     if (method === 'POST' && /\/session$/.test(url.pathname)) sessionCreates++;
@@ -158,8 +162,7 @@ for (const operation of ['session-create', 'tool-list']) test(`a lost local ${op
       throw new TypeError('fetch failed', { cause: Object.assign(new Error('Loopback control reply was lost.'), { name: 'SocketError', code: 'UND_ERR_SOCKET' }) });
     }
     return originalFetch(request, options);
-  };
-  t.after(() => { globalThis.fetch = originalFetch; });
+  });
   const receipt = await run(fixture);
   assert.equal(receipt.state, 'blocked'); assert.equal(receipt.inference_completed, false);
   assert.match(receipt.error, /^OPENCODE_CONTROL_SETUP_FAILED:/);
