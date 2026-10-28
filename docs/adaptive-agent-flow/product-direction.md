@@ -2,7 +2,7 @@
 
 Ngày ghi nhận: 28/10/2026. Nhánh: `hieu/adaptive-agent-flow`.
 
-Trạng thái: research và thảo luận thiết kế. Tài liệu ghi lại lựa chọn của người dùng cùng các đề xuất cần thảo luận; chưa phải đặc tả triển khai đã chốt.
+Trạng thái: đã thống nhất định hướng kiến trúc trong thảo luận ngày 28/10/2026; đang research và thiết kế chi tiết. Chưa triển khai runtime hay xác nhận tích hợp end-to-end. Chi tiết ranh giới và contract đề xuất nằm trong [thiết kế kiến trúc](architecture.md).
 
 ## Bối cảnh và phạm vi report
 
@@ -10,9 +10,9 @@ Người dùng muốn phát triển hướng riêng để có thể thử nghi�
 
 Trong trao đổi trước, controlled workflow được nhận xét là có nhiều vai, chế độ và bước quản lý. Mục tiêu của hướng mới là tìm mức quy trình vừa đủ để giảm bỏ sót và kiểm tra kết quả, đồng thời kiểm soát chi phí và độ phức tạp sử dụng. Đây là động lực thiết kế, chưa phải kết luận benchmark về hệ thống của Thạch.
 
-Report này lưu nội dung thảo luận sản phẩm, đặc biệt bốn định hướng người dùng nêu về Nimbalyst, phiên bản đầu, ranh giới NeoMind và memory/feedback. Đây là bản tổng hợp, không phải transcript nguyên văn.
+Report này lưu nội dung thảo luận sản phẩm, gồm định hướng ban đầu và các quyết định tiếp theo về hai môi trường chạy độc lập, SDK/runtime adapters và delegation. Đây là bản tổng hợp, không phải transcript nguyên văn.
 
-Nghiên cứu trước về workflow tùy biến, project memory và các repo tham khảo được lưu ở [report ngày 26/10/2026](https://github.com/NeoTech-vietnam/NeoMind/blob/543ef16/docs/research/adaptive-project-workflows-2026.md). Các nguồn trong report trước là khảo sát tài liệu/source tại thời điểm đó, chưa được chạy thử hay kiểm tra lại trong lần tổng hợp này.
+Nghiên cứu trước về workflow tùy biến, project memory và các repo tham khảo được lưu ở [report ngày 26/10/2026](../research/adaptive-project-workflows-2026.md), được sao chép từ commit `543ef16` để session local đọc được toàn bộ. Nội dung nghiên cứu được giữ, chỉ bổ sung chú thích lịch sử và đổi các links tới source không có trên nhánh này sang commit gốc. Report này và [thiết kế hiện tại](architecture.md) cập nhật các lựa chọn mới hơn. Các nguồn trong report cũ chưa được chạy thử hay kiểm tra lại trong lần tổng hợp này.
 
 ## 1. Nhu cầu và lý do
 
@@ -27,10 +27,17 @@ Adaptive flow hướng đến lựa chọn mức quy trình vừa đủ cho task
 | Nội dung | Định hướng |
 | --- | --- |
 | Cách phát triển | Research và thiết kế trước, cùng thảo luận để làm rõ nhu cầu rồi mới triển khai |
-| Công cụ làm việc | Tận dụng Nimbalyst để phối hợp với NeoMind |
-| Vai trò Nimbalyst | Quản lý/hiển thị session và task; visualize và điều khiển workflow qua tích hợp |
-| Vai trò NeoMind | Chứa và cung cấp quy tắc workflow, agents, skills, hooks và các thành phần cần thiết |
+| Công cụ làm việc | Tận dụng Nimbalyst; đồng thời hỗ trợ cách chạy standalone ngoài Nimbalyst |
+| Hai môi trường | Nimbalyst và standalone có session, run history và vòng đời độc lập; dùng chung định nghĩa flow và logic NeoMind |
+| Vai trò Nimbalyst | Host cho sessions bên trong Nimbalyst; extension visualize/điều khiển flow trong môi trường đó |
+| Vai trò NeoMind | Định nghĩa flow, agents, skills, hooks; core điều phối, kiểm tra điều kiện chuyển bước và lưu trạng thái |
+| Trải nghiệm chạy | Bấm Run/lệnh tương đương rồi theo dõi; chỉ can thiệp khi cần thông tin, quyết định hoặc xử lý blocker |
+| Runner standalone | Ưu tiên integration với agent runtime có sẵn qua Codex SDK/App Server, Claude Agent SDK và OpenCode SDK/server; transport cuối cùng cần thử nghiệm |
+| Chi phí/xác thực trước mắt | Ưu tiên đăng nhập tài khoản/subscription hiện có; không mặc định yêu cầu mua API key. Đường auth và quyền lợi subscription phải được kiểm chứng riêng cho mỗi runner |
+| Antigravity | Tạm hoãn tích hợp theo quyết định người dùng ngày 28/10/2026; giữ report nghiên cứu để tham khảo, không tiếp tục cài/test adapter trong phase hiện tại |
+| Delegation | Mặc định cấm session tự tạo subagent hoặc session con; flow core sở hữu quyết định chia việc |
 | Phiên bản đầu | Một workflow mặc định, có visualization trên Nimbalyst ngay từ đầu |
+| Nhóm công việc đầu tiên | Phát triển tính năng / sửa lỗi code, theo lựa chọn người dùng ngày 28/10/2026 |
 | Memory ban đầu | Dùng Markdown, tổ chức để truy xuất theo nhu cầu |
 | Memory về sau | Hướng đến SQLite làm trung tâm truy xuất nhanh hơn; cần thiết kế migration |
 | Đánh giá workflow | Người dùng đánh giá; lưu ý kiến và feedback qua các lần chạy |
@@ -39,21 +46,22 @@ Các hướng đã trao đổi trước, tiếp tục nghiên cứu: agents/skil
 
 Level cao hơn dự kiến có nhiều bước kiểm soát hoặc ngân sách lớn hơn; không mặc nhiên có chất lượng cao hơn. Agents/skills dùng chung có thể được chuyên môn hóa theo project. Cơ chế cải thiện nên tạo phiên bản ứng viên, giữ lịch sử và đánh giá trước khi áp dụng; cách tự động hóa phần này còn mở.
 
-## 3. Phân chia trách nhiệm đề xuất
+## 3. Phân chia trách nhiệm đã thống nhất
 
-| Lớp | Trách nhiệm đề xuất | Điểm cần xác minh |
+| Lớp | Trách nhiệm | Điểm cần xác minh |
 | --- | --- | --- |
-| Nimbalyst | Tạo/quản lý session, kết nối công cụ/provider, task board và giao diện extension | API tạo session, truyền input, đọc kết quả, lifecycle events, quyền và liên kết task |
-| NeoMind | Định nghĩa flow, vai agent, skills, điều kiện chuyển bước, bàn giao context, memory và feedback | Thành phần nào là instructions, thành phần nào cần code thực thi/kiểm tra |
-| Tích hợp | Ánh xạ workflow run/node sang task/session; đồng bộ lệnh điều khiển và trạng thái | Cơ chế extension/MCP/CLI phù hợp, lưu trạng thái và xử lý gián đoạn |
+| Nimbalyst host adapter | Gọi session API của host, ánh xạ run/node sang session/task, cung cấp events và kết quả | Đã đọc SDK/source, chưa chạy thử trên Nimbalyst thực tế; task API cần khảo sát riêng |
+| Standalone host adapters | Điều khiển Codex, Claude Code, OpenCode bằng interface phù hợp | Auth, model discovery, output, cancel/resume và delegation cần conformance riêng |
+| NeoMind core | Định nghĩa flow, chuyển bước, bàn giao context, lưu trạng thái, đánh giá đầu ra và feedback | Chi tiết flow mặc định và schema còn cần chốt |
+| Monitor/controls | Hiển thị tiến độ và gửi yêu cầu điều khiển tới core | Panel không tự làm scheduler hoặc giữ trạng thái run duy nhất |
 
-Ranh giới này là đề xuất, chưa chọn công nghệ hay xác nhận có sẵn adapter. Cần quyết định ai chịu trách nhiệm tạo session kế tiếp và kiểm tra điều kiện hoàn tất bước. Nếu chỉ hướng dẫn agent bằng skill thì không được coi đó là điều kiện đã được cưỡng chế bởi runtime.
+Core quyết định bước/session kế tiếp và kiểm tra điều kiện hoàn tất. Skills hướng dẫn công việc chuyên môn, không thay thế điều kiện được core kiểm tra. Host adapter thực hiện tạo session theo quyết định đó; worker mặc định không tự delegation.
 
-Nimbalyst tiếp tục sở hữu lịch sử session gốc. NeoMind dự kiến giữ các liên kết cần thiết để nối run, node, task, session, artifacts và feedback. Không cần sao chép toàn bộ transcript vào project memory để đạt mục tiêu liên tục context.
+Nimbalyst tiếp tục sở hữu lịch sử session gốc bên trong host; standalone dùng lịch sử của runtime tương ứng. NeoMind lưu liên kết run/node/task/session, artifacts, kết quả và feedback. Không mặc định đồng bộ/import session hoặc chuyển một run đang chạy giữa hai môi trường. Memory project có thể dùng chung các file Markdown với quy tắc ghi và freshness rõ ràng.
 
 ## 4. Phạm vi phiên bản đầu cần cùng chốt
 
-Yêu cầu đã có: một flow mặc định và visualization/điều khiển qua Nimbalyst. Luồng cụ thể vẫn cần chọn từ một công việc thực tế của người dùng.
+Yêu cầu đã có: một flow mặc định phục vụ **phát triển tính năng / sửa lỗi code**, chạy được trong hai môi trường độc lập, visualization/điều khiển qua Nimbalyst cho run bên trong host và output trạng thái cho standalone. Người dùng đã chọn nhóm công việc; task cụ thể dùng làm pilot chưa được chọn.
 
 Một ứng viên để thảo luận cho task lập trình:
 
@@ -61,14 +69,17 @@ Một ứng viên để thảo luận cho task lập trình:
 Làm rõ yêu cầu -> Lập kế hoạch -> Thực hiện -> Kiểm tra -> Người dùng đánh giá
 ```
 
-Đây là các bước logic, không đồng nghĩa mỗi bước tạo một agent/session riêng. Có thể cùng session cho các bước liên quan; cần thảo luận bước nào thực sự hưởng lợi từ session độc lập và phần context phải bàn giao.
+Đây là ví dụ chưa chốt, không phải flow bắt buộc. Các bước logic được ánh xạ sang session độc lập khi cần; tái sử dụng session chỉ trong cùng môi trường và khi bindings phù hợp. Default flow cần chỉ rõ bước nào dùng session mới, bước nào có thể tiếp tục session hiện có. Không yêu cầu người dùng bấm chuyển từng bước bình thường.
 
 Visualization đề xuất hiển thị flow đang chạy, bước hiện tại, task/session liên quan, kết quả và trạng thái chờ can thiệp. Giao diện chỉnh graph bằng kéo thả chưa được người dùng yêu cầu là điều kiện bắt buộc của phiên bản đầu.
 
 Tiêu chí nghiệm thu đề xuất:
 
 - Một yêu cầu thực tế đi qua flow mặc định và có đầu ra kiểm tra được.
+- Cùng định nghĩa flow có thể chạy riêng trong Nimbalyst và standalone, không cần nhìn thấy session của nhau.
 - Người dùng nhìn được bước đang chạy cùng task/session tương ứng trong Nimbalyst.
+- Đóng panel không được tự hủy run; vòng đời backend host cần kiểm chứng riêng. Standalone không cần VS Code hay Nimbalyst mở.
+- Delegation được chặn ở mức runtime/tool khi có khả năng; giới hạn chỉ bằng instructions phải được hiển thị rõ và chưa được coi là đạt yêu cầu cưỡng chế.
 - Kết quả kiểm tra và nhận xét người dùng được lưu, có thể tìm lại theo lần chạy.
 - Khi một bước thất bại, trạng thái hiển thị đúng và người dùng biết hành động tiếp theo.
 - Đánh giá mức chi phí/thời gian bằng dữ liệu có thể quan sát; ghi rõ trường nào chưa đo được.
@@ -93,11 +104,11 @@ SQLite về sau cần giữ IDs/provenance và import/export được dữ liệ
 
 ## 6. Câu hỏi nghiên cứu và thảo luận tiếp
 
-1. Task thực tế đầu tiên dùng để thiết kế flow mặc định là gì? Đầu ra nào khiến người dùng coi là hoàn thành?
-2. Bước kiểm tra do session/model độc lập thực hiện hay cùng session? Cần kiểm chứng bằng công cụ nào?
+1. Trong nhóm phát triển tính năng / sửa lỗi code đã chọn, task thực tế nào dùng làm pilot? Đầu ra nào khiến người dùng coi là hoàn thành?
+2. Bước nào bắt buộc session độc lập, công cụ kiểm chứng và output contract cụ thể là gì?
 3. Người dùng muốn chọn provider/model ở đâu; flow có model mặc định hay dùng lựa chọn từ Nimbalyst?
-4. Điều khiển phiên bản đầu cần những thao tác nào: bắt đầu, xác nhận kế hoạch, dừng, tiếp tục, chạy lại bước?
-5. Nimbalyst hỗ trợ chính xác API/event nào cho Dev Extension, session và task? Cần một thử nghiệm tích hợp nhỏ để xác nhận.
-6. Ai sở hữu trạng thái chuyển bước, và làm sao tránh tạo trùng session khi gián đoạn hoặc gửi lệnh lại?
+4. Những điều kiện nào cần người dùng can thiệp, ngân sách/repair mặc định là bao nhiêu?
+5. Nimbalyst session API đã có bằng chứng source; cần thử nghiệm host thực tế và khảo sát task integration.
+6. Core sở hữu trạng thái chuyển bước; cần thiết kế đối chiếu session và xử lý trường hợp kết quả chưa rõ để tránh tạo trùng khi gián đoạn.
 
-Chưa thực hiện triển khai, migration memory hay benchmark trong tài liệu này. Việc tiếp theo là chọn một task đại diện, mô tả hành trình người dùng, rồi khảo sát API Nimbalyst phục vụ đúng hành trình đó trước khi chốt kiến trúc.
+Chưa thực hiện triển khai, migration memory hay benchmark. Có [probe CLI](cli-invocation-probe.md) xác nhận khởi chạy/thu output nhưng chưa có inference thành công; đó không phải bằng chứng SDK hoặc workflow end-to-end đã hoạt động. Việc tiếp theo là chọn task đại diện, hoàn thiện contract flow và kiểm chứng adapters trong môi trường có auth/network phù hợp.
