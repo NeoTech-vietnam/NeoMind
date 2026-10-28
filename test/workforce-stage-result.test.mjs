@@ -61,9 +61,16 @@ test('typed WF product defects remain real repair findings and cannot target ano
 });
 
 for (const stage of ['review', 'verification', 'diagnosis']) test(`WF ${stage} requires its professional decision without exposing outcome`, async t => {
-  const { tools, reports, call } = await fixture(t, stage), schema = tools.find(tool => tool.name === 'assignment_report').inputSchema;
+  const { binding, tools, reports, call } = await fixture(t, stage), schema = tools.find(tool => tool.name === 'assignment_report').inputSchema;
   assert.equal(schema.properties.outcome, undefined);
   const field = stage === 'diagnosis' ? 'failure_kind' : 'verdict';
+  if (stage === 'diagnosis') {
+    const description = tools.find(tool => tool.name === 'assignment_report').description;
+    assert.match(description, /WF\.Tester executes frozen checks/);
+    assert.match(description, /Existing project tests/);
+    assert.match(description, /Unexecuted future Tester checks do not establish an environment failure/);
+    assert.match(controlledInstructions(binding), /stage-contract protocol mismatch/);
+  }
   assert.ok(JSON.stringify(schema).includes(field));
   assert.equal((await call('assignment_report', { summary: 'A decision has not yet been supplied.' })).isError, true);
   const saved = await call('assignment_report', { summary: 'Actual professional decision.', [field]: stage === 'diagnosis' ? 'unknown' : 'fail',

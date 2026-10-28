@@ -64,5 +64,10 @@ export function workforceStageHandoff(binding: ControlledBinding, available?: re
   }
   if (binding.stage === 'review') return `Review the product before WF.Tester executes ${checks}. Pending future test execution is expected. Supply your independent verdict; backend owns lifecycle and final acceptance.`;
   if (binding.stage === 'verification') return `You own the frozen independent checks ${checks}. Execute them through check_run and give your actual independent verdict; backend owns lifecycle and final acceptance.`;
+  if (binding.stage === 'diagnosis') return `Stage ownership is fixed: WF.FnD hands product outputs to WF.Reviewer, then WF.Tester executes frozen checks ${checks} through check_run. ` +
+    'This diagnosis is read-only; absence of task_run/check_run in this session is expected. Unexecuted future Tester checks do not establish an environment failure or missing authorization. ' +
+    'Classify an environment failure from an actual failed operation or observed missing prerequisite. A prior producer blocking its handoff solely on scheduled independent execution is a stage-contract protocol mismatch. ' +
+    'For that mismatch, report failure_kind:protocol and a fresh bounded handoff of the retained product by the original role; backend authenticates its source and effects before rebinding. ' +
+    'Supply findings and the professional cause; backend owns the stage outcome and final acceptance.';
   return 'Supply your assigned professional content; backend owns the stage outcome. Do not send outcome or treat later implementation/review/test obligations as missing tools for this stage.';
 }
