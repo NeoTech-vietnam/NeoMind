@@ -131,7 +131,7 @@ function assertPayloadPath(path: string): void {
       path.split('/').some(part => !part || part === '.' || part === '..' || /[. ]$/.test(part) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part)))
     throw new ControlledPayloadError('INVALID_PATH', 'input_path must name a canonical project-relative JSON file with forward slashes.');
   if (path.toLowerCase().split('/').some(part =>
-    ['.git', '.neomind', '.verythinker', '.taskforces', '.codex', '.claude', '.vscode', '.agents', '.cursor', 'node_modules'].includes(part) ||
+    ['.git', '.workforce', '.workforce-private', '.neomind', '.verythinker', '.taskforces', '.codex', '.claude', '.vscode', '.agents', '.cursor', 'node_modules'].includes(part) ||
     /^(?:\.env(?:\..*)?|auth\.json|credentials?(?:\.[^/]*)?|secrets?(?:\.[^/]*)?|id_(?:rsa|ed25519)(?:\.pub)?|[^/]+\.(?:pem|key|pfx|p12))$/.test(part)))
     throw new ControlledPayloadError('PRIVATE_PATH', 'Prepared payloads cannot read private runtime, client, credential or dependency files.');
 }

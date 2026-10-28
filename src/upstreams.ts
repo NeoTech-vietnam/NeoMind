@@ -255,7 +255,8 @@ function gitObjectHash(kind: string, bytes: Buffer): string {
   return createHash('sha1').update(`${kind} ${bytes.length}\0`).update(bytes).digest('hex');
 }
 function runGit(args: string[], cwd: string, deps: UpstreamDependencies = {}): Buffer {
-  const arguments_ = ['-c', 'protocol.ext.allow=never', '-c', 'protocol.file.allow=never',
+  const arguments_ = [...(process.platform === 'win32' ? ['-c', 'core.longpaths=true'] : []),
+    '-c', 'protocol.ext.allow=never', '-c', 'protocol.file.allow=never',
     '-c', 'credential.helper=', '-c', 'core.hooksPath=/dev/null', ...args];
   if (deps.git) return deps.git(arguments_, cwd);
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^GIT_/i.test(key)));

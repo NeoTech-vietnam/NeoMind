@@ -1,3 +1,5 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, symlinkSync, realpathSync, statSync, chmodSync, readdirSync } from 'node:fs';
@@ -8,7 +10,7 @@ import { parse as parseToml } from 'smol-toml';
 import { execFileSync } from 'node:child_process';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
-import { initialize, hash } from '../dist/storage.js';
+import { hash } from '../dist/storage.js';
 import { toolCatalog, ensureToolPolicy } from '../dist/tools.js';
 import { pluginRegistration, setPluginEnabled } from '../dist/plugin-control.js';
 import { installProject, updateProject } from '../dist/installer.js';
@@ -82,6 +84,8 @@ test('Codex block changes preserve every byte outside the managed block and expl
   assert.equal(first.status, 'connected');
   const configured = readFileSync(path, 'utf8');
   assert.ok(configured.startsWith(original));
+  assert.match(configured, /# BEGIN WORKFORCE context7\n/);
+  assert.doesNotMatch(configured, /# BEGIN NEOMIND context7/);
   assert.deepEqual(parseToml(configured).mcp_servers.context7.enabled_tools, ['resolve-library-id', 'query-docs']);
   assert.equal(parseToml(configured).mcp_servers.private.env.TOKEN, 'preserved');
   change(root, targets, 'context7', 'codex', false);
@@ -95,9 +99,11 @@ test('existing exact generated REA entries can be adopted and disconnected; auth
   const { root, targets } = fixture(t);
   const registration = pluginRegistration(root, 'rea'), path = join(root, '.codex/config.toml');
   const block = `# BEGIN NEOMIND rea\n[mcp_servers.rea]\ncommand = ${JSON.stringify(registration.server.command)}\nargs = ${JSON.stringify(registration.server.args)}\nenabled_tools = ${JSON.stringify(registration.tools)}\nenv = { ${Object.entries(registration.server.env).map(([key, value]) => `${JSON.stringify(key)} = ${JSON.stringify(value)}`).join(', ')} }\n# END NEOMIND rea`;
-  put(path, `# before\n${block}\n# after\n`);
+  const legacySource = `# before\n${block}\n# after\n`;
+  put(path, legacySource);
   assert.equal(status(root, targets, 'rea', 'codex').status, 'connected');
   change(root, targets, 'rea', 'codex', true);
+  assert.equal(readFileSync(path, 'utf8'), legacySource, 'Adoption preserves the exact historical marker and surrounding bytes.');
   change(root, targets, 'rea', 'codex', false);
   assert.equal(readFileSync(path, 'utf8'), '# before\n\n# after\n');
   const authored = '# Keep authored command\n[mcp_servers.rea]\ncommand = "my-wrapper"\nargs = []\n';
@@ -145,7 +151,9 @@ test('malformed JSONC, duplicate keys, malformed TOML and mixed managed blocks f
     assert.equal(readFileSync(targets.copilotVscode, 'utf8'), content);
   }
   const path = join(root, '.codex/config.toml');
-  for (const content of ['model = [', '# BEGIN NEOMIND rea\n[unrelated]\nvalue = 1\n# END NEOMIND rea\n']) {
+  for (const content of ['model = [', '# BEGIN NEOMIND rea\n[unrelated]\nvalue = 1\n# END NEOMIND rea\n',
+    '# BEGIN NEOMIND rea\n# BEGIN WORKFORCE rea\n[mcp_servers.rea]\ncommand = "authored"\n# END WORKFORCE rea\n# END NEOMIND rea\n',
+    '# BEGIN WORKFORCE rea\n# BEGIN WORKFORCE rea\n[mcp_servers.rea]\ncommand = "authored"\n# END WORKFORCE rea\n']) {
     put(path, content);
     assert.equal(status(root, targets, 'rea', 'codex').status, 'blocked');
     assert.throws(() => change(root, targets, 'rea', 'codex', true), /malformed|unrelated/i);
@@ -252,7 +260,8 @@ test('Windows connect and disconnect retain the protected security descriptor of
   const env = { ...process.env, NEOMIND_TEST_MCP_ACL: targets.copilotVscode };
   execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
     "$ErrorActionPreference='Stop'; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; " +
-    '$acl=New-Object System.Security.AccessControl.FileSecurity; $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); ' +
+    '$before=[System.IO.File]::GetAccessControl($env:NEOMIND_TEST_MCP_ACL); $changeOwner=$before.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value; ' +
+    '$acl=New-Object System.Security.AccessControl.FileSecurity; if($changeOwner){$acl.SetOwner($sid)}; $acl.SetAccessRuleProtection($true,$false); ' +
     "$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'FullControl','Allow'); $acl.AddAccessRule($rule); " +
     '[System.IO.File]::SetAccessControl($env:NEOMIND_TEST_MCP_ACL,$acl)'],
   { env, stdio: 'ignore', windowsHide: true, timeout: 10_000 });
@@ -269,13 +278,40 @@ test('Windows connect and disconnect retain the protected security descriptor of
   assert.equal(descriptor(), original);
 });
 
+test('Windows Modify-only owner settings update without WRITE_OWNER and retain their complete descriptor', { skip: process.platform !== 'win32' }, t => {
+  const { root, targets } = fixture(t);
+  put(targets.copilotVscode, '{"servers":{"private":{"command":"private","env":{"SECRET":"modify-only-fixture"}}}}\n');
+  const env = { ...process.env, NEOMIND_TEST_MCP_ACL: targets.copilotVscode, NEOMIND_TEST_MCP_PARENT: dirname(targets.copilotVscode) };
+  execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    "$ErrorActionPreference='Stop'; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; " +
+    '$before=[System.IO.Directory]::GetAccessControl($env:NEOMIND_TEST_MCP_PARENT); $changeOwner=$before.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value; ' +
+    '$acl=New-Object System.Security.AccessControl.DirectorySecurity; if($changeOwner){$acl.SetOwner($sid)}; $acl.SetAccessRuleProtection($true,$false); ' +
+    "$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'Modify','ContainerInherit,ObjectInherit','None','Allow'); $acl.AddAccessRule($rule); " +
+    '[System.IO.Directory]::SetAccessControl($env:NEOMIND_TEST_MCP_PARENT,$acl)'],
+  { env, stdio: 'ignore', windowsHide: true, timeout: 10_000 });
+  const facts = () => JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    "$ErrorActionPreference='Stop'; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=[System.IO.File]::GetAccessControl($env:NEOMIND_TEST_MCP_ACL); " +
+    '$sections=[System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Group; ' +
+    '$rules=@($acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]) | Where-Object {$_.IdentityReference.Value -eq $sid.Value -and $_.AccessControlType -eq \'Allow\'}); ' +
+    '[pscustomobject]@{ownerIsUser=($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -eq $sid.Value); takeOwnership=@($rules | Where-Object {($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::TakeOwnership) -ne 0}).Count; descriptor=$acl.GetSecurityDescriptorSddlForm($sections)} | ConvertTo-Json -Compress'],
+  { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 10_000 }));
+  const original = facts();
+  assert.equal(original.ownerIsUser, true); assert.equal(original.takeOwnership, 0);
+  assert.equal(change(root, targets, 'context7', 'copilot-vscode', true).status, 'connected');
+  assert.deepEqual(facts(), original);
+  assert.equal(parseJsonc(readFileSync(targets.copilotVscode, 'utf8')).servers.private.env.SECRET, 'modify-only-fixture');
+  assert.equal(change(root, targets, 'context7', 'copilot-vscode', false).status, 'disconnected');
+  assert.deepEqual(facts(), original);
+});
+
 test('Windows inherited MCP permissions remain exact across connection changes', { skip: process.platform !== 'win32' }, t => {
   const { root, targets } = fixture(t);
   put(targets.copilotVscode, '{"servers":{"private":{"command":"private","env":{"SECRET":"fixture-only"}}}}\n');
   const env = { ...process.env, NEOMIND_TEST_MCP_ACL: targets.copilotVscode, NEOMIND_TEST_MCP_PARENT: dirname(targets.copilotVscode) };
   execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
     "$ErrorActionPreference='Stop'; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; " +
-    '$acl=New-Object System.Security.AccessControl.DirectorySecurity; $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); ' +
+    '$before=[System.IO.Directory]::GetAccessControl($env:NEOMIND_TEST_MCP_PARENT); $changeOwner=$before.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value; ' +
+    '$acl=New-Object System.Security.AccessControl.DirectorySecurity; if($changeOwner){$acl.SetOwner($sid)}; $acl.SetAccessRuleProtection($true,$false); ' +
     "$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow'); $acl.AddAccessRule($rule); " +
     "$guests=New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-546'); " +
     "$deny=New-Object System.Security.AccessControl.FileSystemAccessRule($guests,'WriteData','ContainerInherit,ObjectInherit','None','Deny'); $acl.AddAccessRule($deny); " +

@@ -4,9 +4,12 @@ const { isAbsolute, join, resolve } = require('node:path');
 
 const ACTION = 'validate-native-copilot-workflow';
 const URI_PATH = '/native-copilot-validation';
-const COMMAND = 'neomind.validation.copilot';
+const COMMAND = 'workforce.validation.copilot';
+// Compatibility-only administration for retained NeoMind native workflows.
+// The current WorkForce extension does not activate this protocol or command.
 const SERVER_ID = 'mcp.config.usrlocal.neomind';
 const PROFILE = 'NeoMind Coordinator Agent';
+const PROFILE_FILE = '.github/agents/neomind-coordinator.agent.md';
 const REQUEST = 'native-copilot-validation.json';
 const PROMPT = 'native-copilot-prompt.txt';
 const RESULT = 'native-copilot-validation-result.json';
@@ -85,10 +88,10 @@ function stageNativeValidationRequest(storageRoot, input) {
       /"(?:token|claim_token)"\s*:\s*"[a-f0-9]{64}"/i.test(input.prompt))
     fail('INVALID_PROMPT', 'Stage a bounded reviewed native validation prompt without assignment credentials.');
   const project = realpathSync.native(input.project_root), runtime = realpathSync.native(input.runtime_root);
-  const profilePath = join(project, '.github/agents/neomind-coordinator.agent.md');
+  const profilePath = join(project, PROFILE_FILE);
   const profile = regularBytes(profilePath, 128_000), prompt = input.prompt.trim();
   if (!/^name:\s*["']?NeoMind Coordinator Agent["']?\s*$/m.test(profile.toString('utf8')))
-    fail('INVALID_PROFILE', 'Native validation requires the actual named NeoMind Coordinator profile.');
+    fail('INVALID_PROFILE', 'Legacy native validation requires the retained NeoMind Coordinator profile.');
   const created = new Date(), value = validateRequest({ schema_version: 1, action: ACTION,
     nonce: randomBytes(32).toString('hex'), created_at: created.toISOString(),
     expires_at: new Date(created.getTime() + 15 * 60_000).toISOString(),
@@ -149,14 +152,14 @@ function createNativeValidationHost({ vscode, context, loadRuntime }) {
       const folders = vscode.workspace.workspaceFolders?.filter(folder => folder.uri.scheme === 'file') ?? [];
       if (!folders.some(folder => samePath(realpathSync.native(folder.uri.fsPath), project)))
         fail('WORKSPACE_MISMATCH', 'Native validation must run in its exact authorized open project.');
-      const setting = vscode.workspace.getConfiguration('neomind.bridge').inspect('runtimePath')?.globalValue;
+      const setting = vscode.workspace.getConfiguration('workforce.bridge').inspect('runtimePath')?.globalValue;
       if (typeof setting !== 'string' || !isAbsolute(setting) || !samePath(realpathSync.native(setting), runtimeRoot) ||
-          JSON.parse(regularBytes(join(runtimeRoot, 'package.json'), 64_000).toString('utf8')).name !== 'neomind')
-        fail('RUNTIME_MISMATCH', 'Native validation requires the exact trusted NeoMind runtime from User settings.');
+          !['workforce', 'neomind'].includes(JSON.parse(regularBytes(join(runtimeRoot, 'package.json'), 64_000).toString('utf8')).name))
+        fail('RUNTIME_MISMATCH', 'Native validation requires the exact trusted WorkForce runtime from User settings.');
     };
     assertHostScope();
     const prompt = regularBytes(join(root, PROMPT), 32_000).toString('utf8');
-    const profile = regularBytes(join(project, '.github/agents/neomind-coordinator.agent.md'), 128_000);
+    const profile = regularBytes(join(project, PROFILE_FILE), 128_000);
     if (hash(prompt) !== request.prompt_sha256 || hash(profile) !== request.profile_sha256)
       fail('INPUT_CHANGED', 'The authorized prompt or Coordinator profile changed; stage a newly reviewed validation request.');
     const runtime = await loadRuntime(project);
@@ -168,7 +171,7 @@ function createNativeValidationHost({ vscode, context, loadRuntime }) {
     if (typeof runtime.getRuntimeBuildFingerprint !== 'function' || runtime.getRuntimeBuildFingerprint(runtimeRoot) !== request.expected_build_fingerprint)
       fail('RUNTIME_MISMATCH', 'The trusted runtime bytes changed after validation authorization.');
     if (!vscode.lm || typeof vscode.lm.invokeTool !== 'function')
-      fail('API_UNAVAILABLE', 'This VS Code host cannot invoke the actual configured NeoMind MCP tools.');
+      fail('API_UNAVAILABLE', 'This VS Code host cannot invoke the actual configured WorkForce MCP tools.');
     busy = true;
     const runId = hash(request.nonce).slice(0, 20), consumedPath = join(root, `native-copilot-validation-${hash(request.nonce)}.used`);
     let running = false, snapshot;
@@ -182,14 +185,14 @@ function createNativeValidationHost({ vscode, context, loadRuntime }) {
         project_root: project, runtime_root: runtimeRoot, extension_version: context.extension?.packageJSON?.version ?? null,
         chat_target: { mode: request.reuse_current_local_chat ? 'reuse-current-local-chat' : 'new-local-chat',
           expected_session_id: request.expected_local_session_id ?? null, host_selected_exact_session: false },
-        started_at: new Date().toISOString(), status: 'restarting-neomind-mcp' };
+        started_at: new Date().toISOString(), status: 'restarting-workforce-mcp' };
       writeResult(root, snapshot);
-      // The installed VS Code command is deliberately restricted to the known User-profile NeoMind definition.
+      // The installed VS Code command is deliberately restricted to the known User-profile WorkForce definition.
       // Trust/approval prompts remain under VS Code control; no autoTrustChanges or wildcard server is supplied.
       await vscode.commands.executeCommand('workbench.mcp.restartServer', SERVER_ID);
       await vscode.commands.executeCommand('workbench.mcp.startServer', SERVER_ID, { waitForLiveTools: true });
       const tools = (vscode.lm.tools ?? []).filter(tool => tool.name === 'mcp_neomind_runtime_info');
-      if (tools.length !== 1) fail('RUNTIME_TOOL_UNAVAILABLE', 'The actual NeoMind runtime_info tool is unavailable after MCP restart.');
+      if (tools.length !== 1) fail('RUNTIME_TOOL_UNAVAILABLE', 'The actual WorkForce runtime_info tool is unavailable after MCP restart.');
       const identity = parseIdentity(await vscode.lm.invokeTool(tools[0].name, { input: {}, toolInvocationToken: undefined }));
       if (!samePath(identity.project_root, project) || !samePath(identity.runtime_root, runtimeRoot) ||
           identity.build_fingerprint !== request.expected_build_fingerprint || typeof identity.server_instance_id !== 'string' ||
@@ -202,7 +205,7 @@ function createNativeValidationHost({ vscode, context, loadRuntime }) {
       // Recheck all mutable local authorization inputs before requesting native inference.
       validateRequest(request); assertHostScope();
       if (hash(regularBytes(join(root, PROMPT), 32_000)) !== request.prompt_sha256 ||
-          hash(regularBytes(join(project, '.github/agents/neomind-coordinator.agent.md'), 128_000)) !== request.profile_sha256 ||
+          hash(regularBytes(join(project, PROFILE_FILE), 128_000)) !== request.profile_sha256 ||
           runtime.getRuntimeBuildFingerprint(runtimeRoot) !== request.expected_build_fingerprint)
         fail('INPUT_CHANGED', 'The authorized prompt, Coordinator profile or trusted runtime changed before native launch.');
       // Generic newChat follows the remembered session provider and can select
@@ -220,7 +223,7 @@ function createNativeValidationHost({ vscode, context, loadRuntime }) {
         : `You are already assigned as this workflow's Coordinator. FIRST call assignment_bootstrap with exactly this JSON input: ${JSON.stringify(bootstrap)}\n` +
           'Then call assignment_open with the returned open_input unchanged. Omit outer reported_assignment on bootstrap/open; retain only the actual returned handle privately for later scoped calls. Bootstrap once in this invocation; do not reuse an earlier claimed Coordinator label or start manager_run.\n';
       const result = await vscode.commands.executeCommand('workbench.action.chat.open', {
-        mode: PROFILE, query: `[NeoMind native validation ${runId}]\nExisting workflow: ${request.workflow_id}.\n` +
+        mode: PROFILE, query: `[WorkForce native validation ${runId}]\nExisting workflow: ${request.workflow_id}.\n` +
           entry + prompt,
         blockOnResponse: true, preserveInput: true,
       });
@@ -254,11 +257,11 @@ function activateNativeValidation(vscode, context, loadRuntime) {
     try {
       const result = await action();
       vscode.window.showInformationMessage(result.status === 'workflow-completed'
-        ? 'NeoMind native Copilot validation observed saved workflow completion. Review its actual checks and report.'
-        : 'NeoMind native Copilot validation returned. Inspect the saved validation result for remaining work or app confirmation.');
+        ? 'WorkForce native Copilot validation observed saved workflow completion. Review its actual checks and report.'
+        : 'WorkForce native Copilot validation returned. Inspect the saved validation result for remaining work or app confirmation.');
       return result;
     } catch (error) {
-      vscode.window.showErrorMessage(error instanceof NativeValidationError ? error.message : 'NeoMind native validation could not start.');
+      vscode.window.showErrorMessage(error instanceof NativeValidationError ? error.message : 'WorkForce native validation could not start.');
     }
   };
   context.subscriptions.push(vscode.commands.registerCommand(COMMAND, () => invoke(host.run)));

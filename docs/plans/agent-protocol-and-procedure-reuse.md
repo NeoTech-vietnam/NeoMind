@@ -1,5 +1,7 @@
 # NeoMind agent protocol and procedure reuse implementation plan
 
+> **Historical roadmap; superseded for the WorkForce release.** Follow the [consolidated WorkForce plan](2026-10-28-workforce-final-plan.md) for current implementation decisions. Preserve the material below as provenance; do not reintroduce its native assignment handoffs, agent catalog or repair gates into the new controlled engine. Existing shipped procedure capabilities remain reusable as specified by the current plan.
+
 Status: design and implementation roadmap, 2026-10-24. Initial baseline: `codex/plugin-control-panel` including local alpha.7 work. Alpha.8 implementation is on `codex/procedure-automation`: project script registration/discovery, parameterized execution and qualification, SQLite/FTS5 intake, native assignment handles/results, source-candidate traceability and Automation Library. Read `docs/procedures.md` for the shipped interface. The roadmap also contains later hardening and evaluation work; its full set of phases and native-client pilots must not be inferred complete from the initial release or fixture results.
 
 The objective is to stop spending model reasoning on ownership fields, tool sequencing and report serialization, while letting proven procedures handle compatible repeat work. Extend the existing engineering core, recipe engine, indexing and native adapters rather than adding another orchestrator. Agents supply task-specific judgments and results; a deterministic module supplies valid context and calls the existing lifecycle operations.

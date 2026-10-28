@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { closeSync, fstatSync, lstatSync, openSync, readSync, readdirSync } from 'node:fs';
-import { agentProfiles, type AgentProfileId } from './agent-profiles.js';
+import { legacyAgentProfiles as agentProfiles, type AgentProfileId } from './agent-profiles.js';
 import { isNativeExecutionMode } from './execution-mode.js';
 import { nativeWorkflowRecord, strictRecord } from './engineering.js';
 import { atomicWrite, getRecord, loadRecords, now, readConfig, safePath, withLock, withOperationLock } from './storage.js';

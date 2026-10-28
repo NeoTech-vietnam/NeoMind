@@ -6,10 +6,10 @@ import { parse as parseJsonc } from 'jsonc-parser';
 import { createHash } from 'node:crypto';
 import { readRoutingPolicy, roleModelPolicy, strongRoles } from './routing.js';
 import { roleCapabilities, toolCatalog, readToolPolicy } from './tools.js';
-import { safePath } from './storage.js';
+import { safePath, readConfig } from './storage.js';
 import { resolveCatalogModel } from './model-catalog.js';
 import { readRoleUpstreamInstructions } from './upstreams.js';
-import { agentProfiles, agentDelegation, nativeActivityInstructions, nativeIdentityInstructions, type AgentProfile } from './agent-profiles.js';
+import { agentProfiles, legacyAgentProfiles, legacyAgentDelegation as agentDelegation, workforceProfileFileId, nativeActivityInstructions, nativeIdentityInstructions, type AgentProfile } from './agent-profiles.js';
 import { readCodexRouting } from './codex-routing.js';
 import { nativeHookOutputs } from './agent-hooks.js';
 import { reaToolsForRole, readReaSkillBundle } from './rea.js';
@@ -54,6 +54,8 @@ export function adapterNodeCommand(root: string, host = {
   try {
     const manifest = JSON.parse(readFileSync(safePath(root, '.neomind/install-manifest.json'), 'utf8'));
     for (const [path, key] of [
+      ['.workforce/mcp-server.json', ''], ['.vscode/mcp.json', 'servers.workforce'],
+      ['.mcp.json', 'mcpServers.workforce'],
       ['.neomind/mcp-server.json', ''], ['.vscode/mcp.json', 'servers.neomind'],
       ['.mcp.json', 'mcpServers.neomind'], ['.codex/config.toml', 'mcp'],
     ]) {
@@ -63,12 +65,12 @@ export function adapterNodeCommand(root: string, host = {
       let candidate: unknown;
       let owned = '';
       if (path!.endsWith('.toml')) {
-        owned = /# BEGIN (?:NEOMIND|TASKFORCES|VERYTHINKER) mcp\r?\n([\s\S]*?)\r?\n# END (?:NEOMIND|TASKFORCES|VERYTHINKER) mcp/.exec(source)?.[1] ?? '';
+        owned = /# BEGIN (?:WORKFORCE|NEOMIND|TASKFORCES|VERYTHINKER) mcp\r?\n([\s\S]*?)\r?\n# END (?:WORKFORCE|NEOMIND|TASKFORCES|VERYTHINKER) mcp/.exec(source)?.[1] ?? '';
         const value = /^command\s*=\s*("(?:[^"\\]|\\.)*")\s*$/m.exec(owned)?.[1];
         if (value) candidate = JSON.parse(value);
       } else {
         const object = parseJsonc(source);
-        const server = path === '.neomind/mcp-server.json' ? object?.servers?.neomind
+        const server = path === '.workforce/mcp-server.json' ? object?.servers?.workforce : path === '.neomind/mcp-server.json' ? object?.servers?.neomind
           : key!.split('.').reduce((value, part) => value?.[part], object);
         owned = entry.kind === 'file' ? source : JSON.stringify(server);
         candidate = server?.command;
@@ -112,7 +114,7 @@ export interface CodeGraphConfiguration {
   status: 'supported-for-fixture';
   command: string;
   args: string[];
-  report_path: '.neomind/optional/codegraph-conformance.json';
+  report_path: '.workforce/optional/codegraph-conformance.json' | '.neomind/optional/codegraph-conformance.json';
   report_hash: string;
   platform: string;
   architecture: string;
@@ -202,7 +204,7 @@ export function loadCodeGraphConfiguration(root: string): CodeGraphConfiguration
     config.enabled !== true ||
     config.package !== codeGraphProvider.package ||
     config.version !== codeGraphProvider.version ||
-    config.report_path !== '.neomind/optional/codegraph-conformance.json' ||
+    !['.workforce/optional/codegraph-conformance.json', '.neomind/optional/codegraph-conformance.json'].includes(config.report_path) ||
     typeof config.report_hash !== 'string' ||
     !/^[0-9a-f]{64}$/.test(config.report_hash) ||
     config.platform !== process.platform ||
@@ -327,7 +329,7 @@ const nativeCommonWorkflow = [
 ].join('\n\n');
 const copilotWorkflow = nativeCommonWorkflow;
 
-const codexDelegation = agentProfiles.filter(profile => profile.id !== 'coordinator')
+const codexDelegation = legacyAgentProfiles.filter(profile => profile.id !== 'coordinator')
   .map(profile => `neomind-${profile.id} (${profile.name}): ${profile.duty}`).join(' ');
 const codexWorkflow = `## NeoMind in Codex
 ${nativeCommonWorkflow}
@@ -398,7 +400,7 @@ function copilotRoleBody(body: string): string {
     .replaceAll('.neomind/guides/manager.md', '.neomind/guides/copilot-native.md')
 ;
 }
-const copilotSquad = agentProfiles;
+const copilotSquad = legacyAgentProfiles;
 const copilotNativeAdvanceTool = 'neomind.neomind-model-bridge/neomindAdvanceWorkflow';
 const copilotNativeAdvanceInstructions = `## Software workflow dispatch
 For native supporting software in local VS Code with NeoMind extension 0.9.4 or later, call neomindAdvanceWorkflow with only workflow_id for the existing workflow. The host opens and privately retains its backend-issued Coordinator credential, obtains the current stage, launches at most one exact native specialist request, and reconciles its actual callback. Call again for the returned substantive next stage; progress polling is optional. The configured model route stays with the named native profile.
@@ -432,8 +434,78 @@ function nativePluginTools(root: string, roles: readonly string[], client: Plugi
   });
 }
 
+export function workforceClientInstructions(platform: Platform): string {
+  const prefix = platform === 'copilot' ? 'workforce/' : '';
+  return `## WorkForce request entrypoint
+
+The user supplies an ordinary requirement. WorkForce owns the engineering process, worker sessions, model routing, tool execution, recovery and acceptance. This chat is an entrypoint, not a second orchestration engine.
+
+When the backend supplies a role, stage and bound semantic tools, follow that bounded assignment instead of client intake instructions. Do not resubmit its request or reopen setup from this guide.
+
+For a new user-request turn, call ${prefix}request_submit once with new_request: true and the user's full requirement verbatim. This expresses a new task even when the wording matches an older completed task. A retry after a lost tool reply in that same turn omits new_request, recovering the already saved admission instead of creating another task. Do not repeat new_request: true to repair an uncertain delivery. Resolve attached files/folders to actual workspace paths in context; the backend normalizes paths and file types. Do not invent missing attachment contents. Keep operational instructions and inferred obligations out of requirement. Retain the returned request ID and return its receipt. Do not spawn client-side specialists, claim assignments, construct IDs/credentials, write product files or poll progress in a loop.
+
+When the user requests progress, call ${prefix}request_status with the saved request ID and report actual artifacts, criteria and remaining work. When asked to pause, resume or cancel, use ${prefix}request_control for that same request. A genuine unanswered product question is answered through request_control; backend/tool failures are not missing user requirements. An uncertain submission is reconciled by status before a duplicate request is submitted.
+
+${platform === 'codex' ? 'Discover the connected WorkForce tools through the client tool search when tools are deferred. ' : ''}Use the exact open trusted workspace. WorkForce runs OpenCode workers against the configured top-models and worker-models custom endpoint aliases. This chat\'s selected model is independent of worker routing. Accepted work continues when this chat closes while VS Code stays open. Workspace trust and endpoint credentials require the user\'s actual authorization; never change global security settings or claim unexecuted checks.
+
+The team is WF.PM, WF.SWSD, WF.P-RES, WF.FnD, WF.Reviewer and WF.Tester. The backend tailors V-model/ASPICE obligations to the product and keeps independent review and testing separate from implementation. Each request has its own .workforce/requests folder. Historical NeoMind records retain their original identities and signed evidence. Read .workforce/guides/workforce.md for installation and operation.
+`;
+}
+
+function workforceAdapterOutputs(root: string, config: AdapterConfig): ManagedOutput[] {
+  const outputs: ManagedOutput[] = [], node = adapterNodeCommand(root);
+  const server = { type: 'stdio', command: node, args: [cliPath, 'mcp', '--project', root] };
+  const tools = ['request_submit', 'request_status', 'request_control'];
+  const optional = toolCatalog.flatMap(item => {
+    const registration = pluginRegistration(root, item.id);
+    return registration.status === 'ready' ? [{ id: item.id, registration }] : [];
+  });
+  for (const platform of config.platforms) {
+    const instructions = workforceClientInstructions(platform);
+    if (platform === 'copilot') {
+      outputs.push({ path: '.github/instructions/workforce.instructions.md', kind: 'file',
+        content: `---\ndescription: "WorkForce Local request entrypoint"\napplyTo: "**"\n---\n\n${instructions}` });
+      outputs.push(jsonEntry('.vscode/mcp.json', ['servers', 'workforce'], server));
+      outputs.push(jsonEntry('.vscode/settings.json', ['chat.permissions.default'], 'autoApprove'));
+      for (const profile of agentProfiles) {
+        const models = profile.id === 'coordinator' ? copilotModels(root, profile.modelRole) : null;
+        outputs.push({ path: `.github/agents/workforce-${workforceProfileFileId(profile.id)}.agent.md`, kind: 'file',
+          content: `---\nname: ${JSON.stringify(profile.name)}\ndescription: ${JSON.stringify(profile.duty)}\n${models ? `model: ${JSON.stringify(models.length === 1 ? models[0] : models)}\n` : ''}tools: ${JSON.stringify(profile.id === 'coordinator' ? tools.map(tool => `workforce/${tool}`) : ['workforce/request_status'])}\nagents: []\nuser-invocable: ${profile.id === 'coordinator'}\n---\n\n${instructions}\nRuntime responsibility: ${profile.name}. ${profile.procedure}\n` });
+      }
+      outputs.push({ path: '.workforce/mcp-server.json', kind: 'file', content: JSON.stringify({ schema_version: 1,
+        registration: 'workspace-configured; verify actual client discovery', destination: '.vscode/mcp.json', servers: { workforce: server } }, null, 2) + '\n' });
+    } else if (platform === 'codex') {
+      outputs.push({ path: 'AGENTS.md', kind: 'block', key: 'instructions', content: instructions });
+      outputs.push({ path: '.codex/config.toml', kind: 'block', key: 'mcp', content: `[mcp_servers.workforce]\ncommand = ${JSON.stringify(node)}\nargs = ${JSON.stringify(server.args)}\nrequired = true\nenabled_tools = ${JSON.stringify(tools)}\n` });
+      for (const profile of agentProfiles) outputs.push({ path: `.codex/agents/workforce-${workforceProfileFileId(profile.id)}.toml`, kind: 'file',
+        content: `name = ${JSON.stringify(`workforce-${workforceProfileFileId(profile.id)}`)}\ndescription = ${JSON.stringify(`${profile.name}: ${profile.duty}`)}\ndeveloper_instructions = ${JSON.stringify(`${instructions}\nRuntime responsibility: ${profile.name}. ${profile.procedure}`)}\n` });
+    } else {
+      outputs.push({ path: 'CLAUDE.md', kind: 'block', key: 'instructions', content: instructions });
+      outputs.push(jsonEntry('.mcp.json', ['mcpServers', 'workforce'], server));
+    }
+    for (const item of optional) {
+      const client = platform === 'copilot' ? 'copilot-vscode' : platform;
+      if (!pluginClientConnectionEnabled(root, item.id, client as PluginConnectionClient)) continue;
+      const entry = item.registration.server!;
+      if (platform === 'codex') outputs.push({ path: '.codex/config.toml', kind: 'block', key: item.id,
+        content: `[mcp_servers.${item.id}]\ncommand = ${JSON.stringify(entry.command)}\nargs = ${JSON.stringify(entry.args)}\nenabled_tools = ${JSON.stringify(item.registration.tools)}\n${entry.env ? `env = { ${Object.entries(entry.env).map(([key, value]) => `${JSON.stringify(key)} = ${JSON.stringify(value)}`).join(', ')} }\n` : ''}` });
+      else outputs.push(jsonEntry(platform === 'copilot' ? '.vscode/mcp.json' : '.mcp.json', [platform === 'copilot' ? 'servers' : 'mcpServers', item.id], { type: 'stdio', ...entry }));
+    }
+    // Upstream skills are copied byte-for-byte, never rebranded or rewritten.
+    const reaSkill = readReaSkillBundle(root);
+    if (reaSkill) for (const file of reaSkill.files) {
+      if (createHash('sha256').update(file.content, 'utf8').digest('hex') !== file.sha256) throw new Error('REA skill integrity changed.');
+      const prefix = platform === 'codex' ? '.agents' : platform === 'copilot' ? '.github' : '.claude';
+      outputs.push({ path: `${prefix}/skills/${reaSkill.name}/${file.path}`, kind: 'file', content: file.content });
+    }
+  }
+  return outputs;
+}
+
 export function adapterOutputs(root: string, config: AdapterConfig): ManagedOutput[] {
   root = resolve(root);
+  if (readConfig(root).execution_engine === 'opencode') return workforceAdapterOutputs(root, config);
+  const agentProfiles = legacyAgentProfiles;
   const outputs: ManagedOutput[] = [];
   const node = adapterNodeCommand(root);
   const server = {

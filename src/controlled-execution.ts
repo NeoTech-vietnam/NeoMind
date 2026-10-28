@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, extname, isAbsolute, join, posix, resolve } from 'node:path';
 import { z } from 'zod';
-import { runCommand, type CommandResult } from './command-runner.js';
+import { runCommand, type CommandResult, type CommandInput } from './command-runner.js';
 import { hash, safePath, withOperationLock } from './storage.js';
 import { validateProcedurePath } from './procedures.js';
 import { workspacePathLockKey } from './workspace.js';
@@ -65,7 +65,7 @@ const covers = (scope: string, path: string) => scope === '.' || key(scope) === 
 const unique = (values: string[]) => [...new Map(values.map(path => [key(path), path])).values()];
 function privatePath(path: string): boolean {
   return path.toLowerCase().split('/').some(part =>
-    ['.git', '.neomind', '.verythinker', '.taskforces', '.codex', '.claude', '.vscode', '.agents', '.cursor', 'node_modules'].includes(part) ||
+    ['.git', '.workforce', '.workforce-private', '.neomind', '.verythinker', '.taskforces', '.codex', '.claude', '.vscode', '.agents', '.cursor', 'node_modules'].includes(part) ||
     /^(?:\.env(?:\..*)?|auth\.json|credentials?(?:\.[^/]*)?|secrets?(?:\.[^/]*)?|id_(?:rsa|ed25519)(?:\.pub)?|[^/]+\.(?:pem|key|pfx|p12))$/.test(part));
 }
 function approvedSkillInput(path: string, binding: ControlledExecutionBinding): boolean {
@@ -356,6 +356,7 @@ export function rollbackControlledExecutionOutputs(prepared: PreparedControlledE
 /** A mediated host process, not an operating-system filesystem or network sandbox. */
 export async function runControlledExecution(prepared: PreparedControlledExecution, options: {
   assertActive(): void | Promise<void>; signal?: AbortSignal; onStart?: (pid: number) => void;
+  runner?: (input: CommandInput) => Promise<CommandResult>;
 }): Promise<ControlledExecutionResult> {
   await options.assertActive();
   // Re-prepare immediately before start so changed files, links and output collisions fail closed.
@@ -363,9 +364,13 @@ export async function runControlledExecution(prepared: PreparedControlledExecuti
   if (current.payload_hash !== prepared.payload_hash)
     throw new ControlledExecutionError('INPUT_CHANGED', 'Execution inputs or resolved executable changed before the owned process could start.');
   await options.assertActive();
-  const result = await runCommand({ command: current.command, cwd: current.cwd, stdin: current.stdin,
+  const result = await (options.runner ?? runCommand)({ command: current.command, cwd: current.cwd, stdin: current.stdin,
     timeout_ms: current.request.timeout_ms ?? 60000, max_output_bytes: current.request.max_output_bytes ?? 1024 * 1024,
     signal: options.signal, onStart: options.onStart });
+  return finishControlledExecution(current, result);
+}
+/** Finalize only an actually observed or authenticated durable process result. */
+export function finishControlledExecution(current: PreparedControlledExecution, result: CommandResult): ControlledExecutionResult {
   const after = (path: string, output = false): string | null => {
     try { return fingerprint(current.cwd, path, current.binding, true, output); } catch { return null; }
   };

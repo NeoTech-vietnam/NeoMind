@@ -47,10 +47,13 @@ import {
 } from './routing.js';
 import { roleCapabilities, resolveCapabilities, toolCatalog, type ProviderId } from './tools.js';
 import { VSCodeSession } from './vscode-session.js';
+import { OpenCodeSession } from './opencode-session.js';
+import { openCodeIntegrity, openCodeProtocolHash, openCodeVersion } from './execution-attestation.js';
 import { readHost, bridgeProtocol } from './vscode-wire.js';
 import { readRoleUpstreamInstructions } from './upstreams.js';
 import { ownedContext } from './controlled-context.js';
 import { controlledToolNames } from './controlled-tools.js';
+import { reconcileOpenCodeOwner } from './opencode-engine.js';
 
 const runtimeVersion = '0.162.1';
 const runtimeIntegrity =
@@ -587,6 +590,7 @@ function validateAcknowledgment(value: any, root: string, model: string, effort:
 class NativeSession {
   transport: RpcTransport | null = null;
   vscode: VSCodeSession | null = null;
+  opencode: OpenCodeSession | null = null;
   receipt: NativeReceipt;
   completion: Promise<void>;
   resolveCompletion!: () => void;
@@ -619,6 +623,7 @@ class NativeSession {
     if (this.closing) return this.closing;
     this.closing = (async () => {
       await this.vscode?.close();
+      await this.opencode?.close();
       if (this.transport && !this.transport.closed && this.receipt.native_thread_id)
         await this.transport
           .request('thread/unsubscribe', { threadId: this.receipt.native_thread_id })
@@ -710,6 +715,19 @@ class NativeSession {
       bindManagerInvocation(this.root, this.receipt.workflow_id, this.receipt.id);
     }
     await this.vscode.run();
+  }
+  async beginOpenCode(): Promise<void> {
+    this.opencode = new OpenCodeSession(this.root, this.receipt, patch => this.update(patch), async (state, error) => {
+      if (state !== 'completed') { this.settle(state, error); return; }
+      try {
+        if (canonicalJson(invocationConfigurationHashes(this.root, this.receipt)) !== canonicalJson(this.receipt.configuration_hashes))
+          throw new Error('WorkForce configuration changed during inference.');
+        await this.finishInference();
+      } catch (failure) { this.settle('blocked', cleanError(failure)); }
+    });
+    await this.opencode.open();
+    this.update({ state: 'running' });
+    await this.opencode.run();
   }
   async begin(runtime: RuntimeInfo, resumeThread?: string): Promise<void> {
     this.transport = new RpcTransport(runtime, this.root, this.options.rpc_timeout_ms ?? 30000);
@@ -1021,6 +1039,7 @@ async function startOwned(
 ): Promise<NativeReceipt> {
   root = resolve(root);
   requireRoutingPolicy(root);
+  await reconcileWorkForceInvocations(root);
   const receipt = withOperationLock(root, 'native-dispatch', () => {
     const receipts = allReceipts(root);
     if (input.request_id) {
@@ -1037,7 +1056,8 @@ async function startOwned(
       }
     }
     const running = receipts.filter((receipt) => invocationIsActive(receipt));
-    const abandoned = running.find((receipt) => !ownerIsAlive(receipt.owner_pid));
+    const abandoned = running.find((receipt) => !ownerIsAlive(receipt.owner_pid) &&
+      (receipt.issuer !== 'workforce-opencode' || !input.workflow_id || receipt.workflow_id === input.workflow_id));
     if (abandoned)
       throw new Error(
         `Native invocation ${abandoned.id} has an absent owner; reconcile it before dispatching more work.`,
@@ -1065,14 +1085,33 @@ async function startOwned(
         if (controlled.binding.workflow_id !== input.workflow_id || controlled.binding.role !== input.role ||
             controlled.binding.task_id !== input.task_id) throw new Error('Controlled invocation context differs from backend dispatch.');
         created.controlled_execution = { schema_version: 1, epoch_id: controlled.epoch_id, stage: controlled.binding.stage,
+          ...(controlled.binding.process_contract ? { process_contract: controlled.binding.process_contract } : {}),
           ...(controlled.binding.evidence_documentation ? { documentation_source_sha256: controlled.binding.evidence_documentation_source_hash } : {}),
           routing_policy: structuredClone(requireRoutingPolicy(root)), tool_contract: { version: 3,
             local_execution: controlledToolNames(controlled.binding).includes('task_run'),
             qualified_procedure: controlledToolNames(controlled.binding).includes('procedure_run'),
             evidence_documentation: controlled.binding.evidence_documentation === true,
-            research: controlledToolNames(controlled.binding).includes('cornell_research_compile') } };
+            research: controlledToolNames(controlled.binding).includes('cornell_research_compile'),
+            ...(controlledToolNames(controlled.binding).includes('capability_invoke') ? { capabilities: true } : {}),
+            ...(controlled.binding.planning_result === 'backend' ? { planning_result: 'backend' as const } : {}) } };
+        if (controlled.model_tier === 'strong' && readConfig(root).execution_engine === 'opencode') {
+          const policy = created.controlled_execution.routing_policy;
+          policy.role_models = { ...policy.role_models, [input.role]: { model: policy.strong_model,
+            effort: policy.strong_effort, ...(policy.strong_provider ? { provider: policy.strong_provider } : {}) } };
+          created.requested_model = policy.strong_model;
+          created.reasoning_effort = policy.strong_effort;
+          created.routing_sha256 = hash(canonicalJson(policy));
+        }
         created.native_tool_scope = controlledToolNames(controlled.binding);
         created.gateway_policy_sha256 = hash(canonicalJson(created.native_tool_scope));
+        if (readConfig(root).execution_engine === 'opencode') {
+          created.issuer = 'workforce-opencode';
+          created.execution_mode = 'opencode-local';
+          created.identity_provenance = 'local-opencode';
+          created.client_version = openCodeVersion;
+          created.protocol_sha256 = openCodeProtocolHash;
+          created.runtime_integrity = openCodeIntegrity;
+        }
       }
     }
     persist(root, created);
@@ -1107,7 +1146,8 @@ async function startOwned(
           });
       }
     }
-    if (receipt.issuer === 'neomind-vscode-lm') await session.beginVSCode();
+    if (receipt.issuer === 'workforce-opencode') await session.beginOpenCode();
+    else if (receipt.issuer === 'neomind-vscode-lm') await session.beginVSCode();
     else {
       const runtime = await (options.runtime ?? ensureNativeRuntime)(root);
       await session.begin(runtime, prior?.native_thread_id ?? undefined);
@@ -1138,10 +1178,18 @@ export async function waitNative(root: string, id: string, waitMs = 10000): Prom
 }
 export async function interruptNative(root: string, id: string): Promise<NativeReceipt> {
   root = resolve(root);
-  const receipt = readInvocation(root, id);
+  let receipt = readInvocation(root, id);
   if (!invocationIsActive(receipt) && receipt.state !== 'blocked') return receipt;
   const session = active.get(`${root}:${id}`);
   if (!session) {
+    if (receipt.issuer === 'workforce-opencode') {
+      await reconcileWorkForceInvocations(root, receipt.workflow_id ?? undefined);
+      receipt = readInvocation(root, id);
+      if (!invocationIsActive(receipt) && receipt.state !== 'blocked') return receipt;
+      // A PID becoming absent is not evidence that engine descendants stopped.
+      // Only its authenticated supervisor exit proof permits automatic replay.
+      throw new Error('WorkForce engine shutdown is not yet confirmed by its owned supervisor; retain the checkpoint until reconciliation.');
+    }
     if (ownerIsAlive(receipt.owner_pid))
       throw new Error(
         'The live native transport is owned by another process. Interrupt it through that owner.',
@@ -1175,6 +1223,32 @@ export async function interruptNative(root: string, id: string): Promise<NativeR
   if (active.has(`${root}:${id}`))
     session.settle('interrupted', 'Native invocation interrupted by its owner.');
   return readInvocation(root, id);
+}
+
+/** Recover new-engine receipts from an authenticated owned-process exit, never
+ * PID absence or a model-authored report. Old signed histories remain unchanged. */
+export async function reconcileWorkForceInvocations(root: string, workflowId?: string): Promise<
+  { id: string; state: 'stopped' | 'still_live' | 'uncertain'; proof_sha256?: string }[]> {
+  root = resolve(root);
+  const results: { id: string; state: 'stopped' | 'still_live' | 'uncertain'; proof_sha256?: string }[] = [];
+  for (const prior of allReceipts(root)) {
+    if (prior.issuer !== 'workforce-opencode' || !invocationIsActive(prior) && prior.state !== 'blocked' ||
+        workflowId && prior.workflow_id !== workflowId || active.has(`${root}:${prior.id}`)) continue;
+    const ref = prior.opencode?.supervision;
+    if (!ref || ref.invocation_id !== prior.id) { results.push({ id: prior.id, state: 'uncertain' }); continue; }
+    const observed = await reconcileOpenCodeOwner(root, ref);
+    results.push({ id: prior.id, state: observed.state, ...(observed.proof_sha256 ? { proof_sha256: observed.proof_sha256 } : {}) });
+    if (observed.state !== 'stopped' || !observed.proof_sha256) continue;
+    withOperationLock(root, 'native-dispatch', () => {
+      const current = readInvocation(root, prior.id);
+      if (current.signature !== prior.signature || !invocationIsActive(current) && current.state !== 'blocked' || active.has(`${root}:${prior.id}`)) return;
+      current.state = 'interrupted'; current.inference_completed = false;
+      current.error ??= 'The owned OpenCode supervisor confirmed engine/process-tree exit. Partial results are preserved for a new bounded attempt; no completed inference is inferred.';
+      current.opencode!.interruption_proof_sha256 = observed.proof_sha256;
+      persist(root, current);
+    });
+  }
+  return results;
 }
 async function resumeOwned(
   root: string,

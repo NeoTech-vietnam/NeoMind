@@ -20,6 +20,8 @@ import { fileURLToPath } from 'node:url';
 import { threadId } from 'node:worker_threads';
 import { deserialize, serialize as serializeSnapshot } from 'node:v8';
 import { parse, stringify } from 'yaml';
+import { workforceRoot, storageAliases, readStorageLayout, layoutPath, recordIdentityPath,
+  managedRecordDirectories, ensureRequestInLayout, recordRequest, groupedRecordPath, writeRequestFolder } from './storage-layout.js';
 import {
   linkTypes,
   recordTypes,
@@ -33,11 +35,11 @@ import {
 export const resourceRoot = fileURLToPath(new URL('../resources/', import.meta.url));
 export const now = () => new Date().toISOString();
 export const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
-// New records use NeoMind paths. Explicit legacy aliases read existing bytes
+// New records use WorkForce paths. Explicit legacy aliases read existing bytes
 // without rewriting signed receipts or historical record metadata.
-export const managedRoot = '.neomind';
+export const managedRoot = workforceRoot;
 export const legacyManagedRoot = '.verythinker';
-export const legacyManagedRoots = ['.taskforces', legacyManagedRoot] as const;
+export const legacyManagedRoots = storageAliases;
 export function assertNoStorageMigration(root: string): void {
   if ([managedRoot, ...legacyManagedRoots].some((name) => existsSync(join(resolve(root), `${name}-migration.lock`))))
     throw new Error('Storage migration is active; stop writers and retry after migration completes.');
@@ -56,7 +58,7 @@ function remapLegacyManaged(base: string, path: string): string {
   const head = separator === -1 ? path : path.slice(0, separator);
   if (![managedRoot, ...legacyManagedRoots].includes(head)) return path;
   const physical = resolveManagedRoot(base);
-  return physical + (separator === -1 ? '' : path.slice(separator));
+  return layoutPath(base, physical, path);
 }
 export function safePath(root: string, path: string): string {
   if (isAbsolute(path)) throw new Error('Use a project-relative path.');
@@ -129,6 +131,7 @@ function validateConfig(config: ProjectConfig): void {
     new Set(config.platforms).size !== config.platforms.length ||
     (config.copilot_integration !== undefined && config.copilot_integration !== 'local') ||
     (config.codex_routing !== undefined && !['inherit', '9router'].includes(config.codex_routing)) ||
+    (config.execution_engine !== undefined && !['opencode', 'vscode-lm'].includes(config.execution_engine)) ||
     !Number.isSafeInteger(config.max_workers) ||
     config.max_workers < 1 ||
     config.max_workers > 3 ||
@@ -159,15 +162,16 @@ export function initialize(root: string, options: Partial<ProjectConfig> = {}): 
   mkdirSync(root, { recursive: true });
   const configPath = safePath(root, '.neomind/config.json');
   if (existsSync(configPath)) return readConfig(root);
-  const project_id = options.project_id ?? `NM-${randomUUID().slice(0, 8).toUpperCase()}`;
+  const project_id = options.project_id ?? `WF-${randomUUID().slice(0, 8).toUpperCase()}`;
   if (!/^[A-Z][A-Z0-9-]{0,31}$/.test(project_id))
     throw new Error('Project ID must use uppercase letters, digits, and hyphens.');
   const config: ProjectConfig = {
     schema_version: 1,
     project_id,
-    name: options.name ?? 'NeoMind project',
+    name: options.name ?? 'WorkForce project',
     profile: options.profile ?? 'basic',
     platforms: options.platforms ?? ['copilot'],
+    execution_engine: options.execution_engine ?? 'opencode',
     ...(options.copilot_integration ? { copilot_integration: options.copilot_integration } : {}),
     ...(options.codex_routing ? { codex_routing: options.codex_routing } : {}),
     models: options.models ?? { economy: null, balanced: null, strong: null },
@@ -182,7 +186,7 @@ export function initialize(root: string, options: Partial<ProjectConfig> = {}): 
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   if (!ignoreExists)
     atomicWrite(ignorePath, 'cache/\nruns/\ncontributions/\n*.lock\n*.tmp\n');
-  mkdirSync(safePath(root, '.neomind/records'), { recursive: true });
+  mkdirSync(safePath(root, `${managedRoot}/shared/records`), { recursive: true });
   return config;
 }
 export function withLock<T>(root: string, action: () => T): T {
@@ -433,19 +437,24 @@ function parseRecordBytes(bytes: Buffer, path: string): { meta: Metadata; body: 
 export function loadRecords(root: string): ProjectRecord[] {
   readConfig(root);
   const seen = new Set<string>();
-  return filesUnder(root, '.neomind/records')
+  const physical = resolveManagedRoot(root), layout = readStorageLayout(root, physical);
+  return managedRecordDirectories(root, physical).flatMap(directory => filesUnder(root, directory))
     .filter((p) => p.endsWith('.md'))
     .map((path) => {
       const { meta, body } = parseRecordBytes(readFileSync(safePath(root, path)), path);
       if (seen.has(meta.id)) throw new Error(`Duplicate record ID: ${meta.id}`);
       seen.add(meta.id);
-      return { meta, body, path: path.replaceAll('\\', '/') };
+      return { meta, body, path: recordIdentityPath(layout, path.replaceAll('\\', '/')) };
     });
 }
 export function getRecord(root: string, id: string): ProjectRecord {
   const record = loadRecords(root).find((r) => r.meta.id === id);
   if (!record) throw new Error(`Record not found: ${id}`);
   return record;
+}
+/** UI/host lookup uses backend-owned membership; a title change never renames the folder. */
+export function requestFolderForWorkflow(root: string, workflowId: string) {
+  return readStorageLayout(root, resolveManagedRoot(root)).requests.find(item => item.workflow_id === workflowId);
 }
 function canonicalBody(body: string): string {
   return body.replaceAll('\r\n', '\n').trim() + '\n';
@@ -537,7 +546,17 @@ export function createRecord(root: string, input: CreateRecord): ProjectRecord {
     validateMetadata(record.meta);
     sequence[input.type] = number;
     atomicWrite(sequencePath, JSON.stringify(sequence, null, 2) + '\n');
-    record.path = `.neomind/records/${record.meta.id}.md`;
+    const physical = resolveManagedRoot(root);
+    if (physical === managedRoot) {
+      const layout = readStorageLayout(root, physical);
+      if (['manager-workflow', 'lightweight-workflow', 'workforce-request'].includes(String(record.meta.data.kind))) {
+        const request = ensureRequestInLayout(layout, record);
+        writeRequestFolder(root, physical, request);
+      }
+      const request = recordRequest(layout, record, records);
+      record.path = groupedRecordPath(record, request);
+      atomicWrite(safePath(root, `${managedRoot}/storage-layout.json`), JSON.stringify(layout, null, 2) + '\n');
+    } else record.path = `.neomind/records/${record.meta.id}.md`;
     atomicWrite(safePath(root, record.path), serialize(record));
     return record;
   });
@@ -638,9 +657,9 @@ export function appendEvent(root: string, run: string, event: Record<string, unk
 }
 export function sourceHash(root: string): string {
   return hash(
-    filesUnder(root, '.neomind/records')
-      .filter((p) => p.endsWith('.md'))
-      .map((p) => `${p}:${hash(readFileSync(safePath(root, p)))}`)
+    loadRecords(root)
+      .map(record => `${record.path}:${hash(readFileSync(safePath(root, record.path)))}`)
+      .sort()
       .join('\n'),
   );
 }

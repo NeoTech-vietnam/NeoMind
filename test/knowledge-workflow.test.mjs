@@ -1,4 +1,6 @@
 import test from 'node:test';
+// Publication tests retain their historical native workflow and physical root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
@@ -9,7 +11,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createMcpServer } from '../dist/mcp.js';
 import {
-  initialize, installProject, ensureRoutingPolicy, beginWorkflow, discussWorkflow,
+  installProject, ensureRoutingPolicy, beginWorkflow, discussWorkflow,
   decideWorkflow, finishWorkflow, workflowStatus, createRecord, updateRecord, getRecord, loadRecords,
   reviewRecord, recordFingerprint, startTask, resumeTask, runCheck, archiveEvidence, submitTask,
   reviewTask, assignmentReport, createCornellNote, hash,
@@ -29,7 +31,8 @@ function project(t, publication = 'project-branch', policyOverrides = {
 }) {
   const root = mkdtempSync(join(tmpdir(), 'neomind-knowledge-workflow-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  initialize(root, { project_id: 'PRIVATE-KNOWLEDGE-WORKFLOW', profile: 'basic' });
+  initialize(root, { project_id: 'PRIVATE-KNOWLEDGE-WORKFLOW', profile: 'basic',
+    platforms: ['copilot'], copilot_integration: 'local' });
   ensureRoutingPolicy(root);
   installProject(root);
   // Archive transport has its own integration suite; isolate this publication contract.

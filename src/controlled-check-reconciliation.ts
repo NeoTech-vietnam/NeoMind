@@ -58,7 +58,7 @@ function interruptedReceipt(root: string, run: ControlledSnapshot, contract: Con
   if (!attempt?.invocation_id || attempt.stage !== 'verification' || attempt.state !== 'interrupted')
     throw new Error('Only an actually interrupted bound Verifier check may receive maintenance reconciliation.');
   const receipt = readInvocation(root, attempt.invocation_id);
-  if (receipt.issuer !== 'neomind-vscode-lm' || receipt.state !== 'interrupted' || receipt.inference_completed ||
+  if (!isControlledExecutionReceipt(receipt) || receipt.state !== 'interrupted' || receipt.inference_completed ||
       !['verifier', 'check-executor'].includes(receipt.role) || receipt.workflow_id !== run.workflow_id || receipt.task_id !== contract.task_id ||
       receipt.request_id !== attempt.request_id || receipt.controlled_execution?.epoch_id !== run.epoch_id || receipt.controlled_execution.stage !== 'verification')
     throw new Error('The signed interrupted Verifier does not match this exact workflow, task, epoch and attempt.');
@@ -150,7 +150,7 @@ export function prepareInterruptedCheckReconciliation(root: string, run: Snapsho
       Object.values(producer.bound_hashes).some(value => value === 'missing') ||
       !equal(producer.bound_hashes, fingerprints(Object.keys(producer.bound_hashes)))) throw new Error('The current completed producer artifacts or report changed.');
   const native = readInvocation(root, producer.invocation_id);
-  if (native.issuer !== 'neomind-vscode-lm' || native.state !== 'completed' || !native.inference_completed || native.role !== 'developer' ||
+  if (!isControlledExecutionReceipt(native) || native.state !== 'completed' || !native.inference_completed || native.role !== 'developer' ||
       native.workflow_id !== run.workflow_id || native.task_id !== contract.task_id || native.request_id !== producer.request_id ||
       native.controlled_execution?.epoch_id !== run.epoch_id || native.controlled_execution.stage !== 'implementation')
     throw new Error('The actual completed producer does not match this execution.');
@@ -175,3 +175,4 @@ export function recheckBeforeReconciledResume(root: string, run: Snapshot, ledge
       throw new Error('Reconciled interruption observations changed before fresh verification; preserve unknown outcome and reassess effects.');
   }
 }
+import { isControlledExecutionReceipt } from './execution-attestation.js';

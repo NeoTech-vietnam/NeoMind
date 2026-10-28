@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   verify:
-    runs-on: [self-hosted, linux, x64, neomind-ci]
+    runs-on: [self-hosted, linux, x64, workforce-ci]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -21,6 +21,8 @@ jobs:
           cache: npm
       - name: Install locked project dependencies
         run: npm ci
+      - name: Prepare pinned offline engine bootstrap
+        run: npm run engine:bootstrap
       - name: Build and run the repository tests
         run: npm test
       - name: Verify the installed runtime lifecycle

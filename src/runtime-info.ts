@@ -13,13 +13,17 @@ export function getRuntimeBuildFingerprint(runtimeRoot: string = packageRoot): s
     const directory = join(runtimeRoot, relative);
     if (!existsSync(directory)) return;
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      // Dependency contents are pinned by the bootstrap lock and distribution
+      // integrity inventory. Do not rescan thousands of vendored package files
+      // for every CLI process; hash our executable resources and lock instead.
+      if (entry.isDirectory() && entry.name === 'node_modules') continue;
       const name = `${relative}/${entry.name}`;
       if (entry.isDirectory()) collect(name, accept);
       else if (entry.isFile() && accept(name)) files.push(name);
     }
   };
   collect('dist', name => name.endsWith('.js'));
-  collect('resources', name => name.endsWith('.md') || name.endsWith('.json'));
+  collect('resources', name => /\.(?:md|json|js|mjs|cjs|py)$/.test(name));
   for (const name of files.sort()) {
     digest.update(name).update('\0').update(readFileSync(join(runtimeRoot, name))).update('\0');
   }

@@ -9,12 +9,12 @@ const connectionStates = new Set(['connected', 'disconnected', 'missing', 'confl
 const availabilityStates = new Set(['disabled', 'missing', 'installed', 'ready', 'blocked']);
 const text = value => typeof value === 'string' ? value.slice(0, 120) : null;
 const knownFailures = new Map([
-  ['Plug-in configuration cannot change while an invocation is active. Interrupt or reconcile it first.', 'Finish, interrupt or reconcile active NeoMind work before changing plug-ins.'],
+  ['Plug-in configuration cannot change while an invocation is active. Interrupt or reconcile it first.', 'Finish, interrupt or reconcile active WorkForce work before changing plug-ins.'],
   ['Enable the plug-in before installing it.', 'Enable this plug-in first, then install its pinned version.'],
   ['Enable the plug-in before probing it.', 'Enable this plug-in before running the direct MCP probe.'],
   ['Enable CodeGraph before verifying it.', 'Enable CodeGraph before verifying its conformance.'],
   ['CodeGraph native conformance currently supports Windows only.', 'CodeGraph native conformance currently supports Windows only. The other plug-ins remain available on Linux.'],
-  ['Run CodeGraph verification with the supported Node CLI.', 'CodeGraph conformance needs the supported Node CLI. Run neomind plugins probe codegraph in this project, then refresh this panel.'],
+  ['Run CodeGraph verification with the supported Node CLI.', 'CodeGraph conformance needs the supported Node CLI. Run workforce plugins probe codegraph in this project, then refresh this panel.'],
   ['CodeGraph fixture conformance did not pass all twelve checks. Review the installed package and platform prerequisites.', 'CodeGraph conformance failed. Check its installed package and prerequisites before connecting it.'],
   ['Plug-in MCP verification failed. Check its pinned installation, prerequisite and required tools.', 'The direct MCP probe failed. Check the pinned installation and its runtime prerequisites, then retry.'],
   ['Local-only policy disables approved provider package downloads.', 'Project network policy is local-only. Enable downloads in your project policy before installing a missing package, then retry.'],
@@ -37,18 +37,18 @@ function actionFailure(error) {
 function renderPluginPanelHtml({ cspSource, script, style, nonce }) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource}; script-src 'nonce-${nonce}'; img-src ${cspSource}; base-uri 'none'; form-action 'none';">
-<link rel="stylesheet" href="${style}"><title>NeoMind Plug-ins</title></head><body>
-<header><div><p class="eyebrow">NEOMIND · INTEGRATIONS</p><h1>Plug-in control</h1><p>Choose the tools your agents can use.</p></div><button id="refresh" type="button">Refresh status</button></header>
+<link rel="stylesheet" href="${style}"><title>WorkForce Plug-ins</title></head><body>
+<header><div><p class="eyebrow">WORKFORCE · INTEGRATIONS</p><h1>Plug-in control</h1><p>Choose the tools your agents can use.</p></div><button id="refresh" type="button">Refresh status</button></header>
 <main><section class="connection-settings" aria-labelledby="connections-heading"><div><h2 id="connections-heading">Client connections</h2><p>Codex and Copilot CLI use this workspace and your home configuration. Select the MCP settings file for your active VS Code profile.</p></div><button id="select-vscode" type="button">Choose VS Code MCP file…</button><p id="vscode-target" role="status">VS Code profile file not selected</p></section>
 <p id="notice" role="status" aria-live="polite">Reading project configuration…</p><div id="plugins" class="plugin-grid" aria-label="Available plug-ins"></div>
-<section class="help"><h2>After changing a connection</h2><p>Enable → Install pinned version → Probe MCP → Connect. Restart the affected MCP server and start a new chat. A connected configuration is not proof that the client has started or used the server. Probe starts a direct MCP check and records its result.</p><p>Disable revokes the NeoMind provider before removing owned client registrations. Edited or conflicting entries are preserved and reported for manual review. Running client processes may retain a connection until restarted.</p><p>Installation downloads only the catalog's pinned package. Your project network policy still applies. CodeGraph verification runs isolated C/C++ conformance checks on Windows. Started installation or verification may finish after closing this panel.</p></section></main>
+<section class="help"><h2>After changing a connection</h2><p>Enable → Install pinned version → Probe MCP → Connect. Restart the affected MCP server and start a new chat. A connected configuration is not proof that the client has started or used the server. Probe starts a direct MCP check and records its result.</p><p>Disable revokes the WorkForce provider before removing owned client registrations. Edited or conflicting entries are preserved and reported for manual review. Running client processes may retain a connection until restarted.</p><p>Installation downloads only the catalog's pinned package. Your project network policy still applies. CodeGraph verification runs isolated C/C++ conformance checks on Windows. Started installation or verification may finish after closing this panel.</p></section></main>
 <script nonce="${nonce}" src="${script}"></script></body></html>`;
 }
 
 /** All paths and action dispatch are native-owned. The webview only chooses catalog IDs. */
 function createPluginHost({ vscode, context, runtime, root, alive, post }) {
   let busy = false;
-  const storageKey = `neomind.plugins.vscodeMcp:${root}`;
+  const storageKey = `workforce.plugins.vscodeMcp:${root}`;
   const targets = () => {
     const selected = context.workspaceState?.get(storageKey);
     return { codex: join(root, '.codex', 'config.toml'), copilotCli: join(homedir(), '.copilot', 'mcp-config.json'),
@@ -127,11 +127,11 @@ function createPluginHost({ vscode, context, runtime, root, alive, post }) {
           } catch { unresolved++; }
         }
         if (!alive()) return;
-        notice = unresolved ? 'NeoMind provider disabled. Some client entries could not be removed; review their status and restart affected clients.'
-          : 'NeoMind provider disabled and owned registrations removed. Restart affected clients to close existing MCP processes.';
+        notice = unresolved ? 'WorkForce provider disabled. Some client entries could not be removed; review their status and restart affected clients.'
+          : 'WorkForce provider disabled and owned registrations removed. Restart affected clients to close existing MCP processes.';
       } else if (message.action === 'enable') {
         await runtime.setPluginEnabled(root, message.plugin, true);
-        notice = 'NeoMind provider enabled. Connect the clients you want to use, then restart their MCP servers.';
+        notice = 'WorkForce provider enabled. Connect the clients you want to use, then restart their MCP servers.';
       } else if (message.action === 'install') {
         await runtime.installPlugin(root, message.plugin);
         notice = 'Pinned package installed. Probe the MCP server, then connect your clients when ready.';
@@ -153,8 +153,8 @@ function createPluginHost({ vscode, context, runtime, root, alive, post }) {
       if (['enable', 'disable', 'install', 'probe', 'connect', 'disconnect'].includes(message.action) && typeof runtime.updateProject === 'function') {
         try {
           const refreshed = await runtime.updateProject(root);
-          if (refreshed?.conflicts?.length) notice += ' Edited generated profiles were preserved; review NeoMind update candidates.';
-        } catch { notice += ' Generated profiles need a manual neomind update before the next chat.'; }
+          if (refreshed?.conflicts?.length) notice += ' Edited generated profiles were preserved; review WorkForce update candidates.';
+        } catch { notice += ' Generated profiles need a manual workforce update before the next chat.'; }
       }
       if (!alive()) return;
       try { await snapshot(); }
@@ -191,7 +191,7 @@ function activatePluginPanel(vscode, context, loadRuntime) {
         if (typeof runtime[name] !== 'function') throw new Error('old-runtime');
       }
       const resources = vscode.Uri.file(join(__dirname, 'resources', 'monitor'));
-      const current = vscode.window.createWebviewPanel('neomind.plugins', 'NeoMind Plug-ins', vscode.ViewColumn?.One ?? 1,
+      const current = vscode.window.createWebviewPanel('workforce.plugins', 'WorkForce Plug-ins', vscode.ViewColumn?.One ?? 1,
         { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [resources] });
       panel = current;
       const asset = name => current.webview.asWebviewUri(vscode.Uri.file(join(resources.fsPath, name)));
@@ -201,11 +201,11 @@ function activatePluginPanel(vscode, context, loadRuntime) {
       const messages = current.webview.onDidReceiveMessage(message => host.handle(message));
       current.onDidDispose(() => { messages?.dispose(); if (panel === current) { panel = undefined; generation++; } });
       await host.handle({ type: 'plugin-action', action: 'refresh' });
-    } catch { if (token === generation) vscode.window.showErrorMessage('NeoMind plug-in control requires a trusted open folder and a current installed NeoMind runtime. Check the User runtimePath setting.'); }
+    } catch { if (token === generation) vscode.window.showErrorMessage('WorkForce plug-in control requires a trusted open folder and a current installed WorkForce runtime. Check the User runtimePath setting.'); }
     finally { opening = false; }
   }
   const disposable = { dispose: stop };
-  context.subscriptions.push(vscode.commands.registerCommand('neomind.plugins.open', open), vscode.workspace.onDidChangeWorkspaceFolders(stop), disposable);
+  context.subscriptions.push(vscode.commands.registerCommand('workforce.plugins.open', open), vscode.workspace.onDidChangeWorkspaceFolders(stop), disposable);
   return disposable;
 }
 module.exports = { activatePluginPanel, createPluginHost, renderPluginPanelHtml };

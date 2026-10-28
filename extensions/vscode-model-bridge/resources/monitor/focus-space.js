@@ -1,8 +1,8 @@
-/* Original NeoMind FocusSpace UI. Provider requests are mediated by the extension host. */
+/* Original WorkForce FocusSpace UI. Provider requests are mediated by the extension host. */
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.NeoMindFocusSpace = api;
+  else root.WorkForceFocusSpace = api;
 })(typeof window !== 'undefined' ? window : globalThis, function () {
   'use strict';
   const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
@@ -311,7 +311,7 @@
     listen(window, 'message', event => {
       if (!alive || !youtubeFrame || event.source !== youtubeFrame.contentWindow || event.origin !== youtubeOrigin) return;
       const value = plain(event.data);
-      if (value.type !== 'neomind-youtube') return;
+      if (value.type !== 'workforce-youtube') return;
       if (value.event === 'error') {
         const code = Number(value.code); stopYouTube();
         setText('fs-youtube-status', code === 153 ? 'YouTube error 153: player identity was rejected. Choose Open on YouTube.' : 'This video cannot play here. Try another video or Open on YouTube.');
@@ -340,7 +340,7 @@
       if (byId('focus-space')) byId('focus-space').dataset.sound = playing ? 'playing' : 'paused';
       if (byId('fs-background-audio')) byId('fs-background-audio').hidden = view !== 'universe' || !backgroundAudioShown;
       setText('fs-background-track', { orbital: 'Orbital drift', shore: 'Quiet shore', rain: 'Distant rain' }[playlist]);
-      setText('fs-background-status', playing ? 'Playing across NeoMind views' : 'Paused · resume when ready');
+      setText('fs-background-status', playing ? 'Playing across WorkForce views' : 'Paused · resume when ready');
       for (const id of ['fs-volume', 'fs-background-volume']) if (byId(id)) byId(id).value = String(Math.round(volume * 100));
     }
     function haltAudio() {

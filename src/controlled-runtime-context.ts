@@ -1,7 +1,7 @@
 import { accessSync, constants, realpathSync, statSync, readFileSync } from 'node:fs';
 import { basename, delimiter, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { hash, now, resourceRoot } from './storage.js';
+import { hash, now, resourceRoot, readConfig } from './storage.js';
 import { runCommand } from './command-runner.js';
 
 export const controlledRuntimeQuerySchema = z.strictObject({
@@ -10,21 +10,24 @@ export const controlledRuntimeQuerySchema = z.strictObject({
 });
 export type ControlledRuntimeQuery = z.infer<typeof controlledRuntimeQuerySchema>;
 export const controlledGuidePath = '.neomind/guides/controlled-workflows.md';
-function guideMetadata(bytes: Buffer) {
-  return { path: controlledGuidePath, exists: true, source: 'trusted-installed-runtime',
+export const workforceGuidePath = '.workforce/guides/workforce.md';
+function guideMetadata(bytes: Buffer, workforce = false) {
+  return { path: workforce ? workforceGuidePath : controlledGuidePath, exists: true, source: 'trusted-installed-runtime',
     project_private_file_read: false, sha256: hash(bytes), size_bytes: bytes.length };
 }
 
 /** Context references the trusted guide without repeating its instructions. */
-export function controlledRuntimeContextGuide() {
-  return guideMetadata(readFileSync(join(resourceRoot, 'guides/controlled-workflows.md')));
+export function controlledRuntimeContextGuide(processContract?: string) {
+  const workforce = processContract === 'workforce/v1';
+  return guideMetadata(readFileSync(join(resourceRoot, workforce ? 'guides/workforce.md' : 'guides/controlled-workflows.md')), workforce);
 }
 
 /** A logical documentation resource, never a read through the project's private namespace. */
-export function controlledRuntimeGuide(start = 1, maximum = 64000) {
-  const bytes = readFileSync(join(resourceRoot, 'guides/controlled-workflows.md'));
+export function controlledRuntimeGuide(start = 1, maximum = 64000, processContract?: string) {
+  const workforce = processContract === 'workforce/v1';
+  const bytes = readFileSync(join(resourceRoot, workforce ? 'guides/workforce.md' : 'guides/controlled-workflows.md'));
   const excerpt = bytes.toString('utf8').split(/\r?\n/).slice(start - 1).join('\n');
-  return { ...guideMetadata(bytes),
+  return { ...guideMetadata(bytes, workforce),
     start_line: start, text: excerpt.slice(0, maximum), truncated: excerpt.length > maximum };
 }
 const names = { node: ['node'], python: ['python3', 'python'], c11: ['gcc', 'clang'], cpp17: ['g++', 'clang++'] } as const;
@@ -59,7 +62,7 @@ function resolveCandidate(program: Program, path: string): { path: string } | { 
     return rejected('NOT_FOUND', 'The supplied executable was not found or is not executable.');
   }
 }
-function executable(program: Program, candidate?: string): { path: string | null; rejected_candidate?: RejectedCandidate } {
+function executable(program: Program, candidate?: string, installedToolchains = false): { path: string | null; rejected_candidate?: RejectedCandidate } {
   let rejected_candidate: RejectedCandidate | undefined;
   if (candidate !== undefined) {
     const checked = resolveCandidate(program, candidate);
@@ -74,6 +77,15 @@ function executable(program: Program, candidate?: string): { path: string | null
     const checked = resolveCandidate(program, resolve(directory, `${name}${process.platform === 'win32' ? '.exe' : ''}`));
     if ('path' in checked) return { ...checked, ...(rejected_candidate ? { rejected_candidate } : {}) };
   }
+  // VS Code can inherit a PATH older than an already-installed MSYS2 toolchain.
+  // Observe only known compiler executables; never install or run a discovery shell.
+  if (installedToolchains && process.platform === 'win32' && (program === 'c11' || program === 'cpp17')) {
+    const drive = /^[a-z]:$/i.test(process.env.SystemDrive ?? '') ? process.env.SystemDrive! : 'C:';
+    for (const distribution of ['ucrt64', 'mingw64', 'clang64']) for (const name of names[program]) {
+      const checked = resolveCandidate(program, `${drive}/msys64/${distribution}/bin/${name}.exe`);
+      if ('path' in checked) return { ...checked, ...(rejected_candidate ? { rejected_candidate } : {}) };
+    }
+  }
   return { path: null, ...(rejected_candidate ? { rejected_candidate } : {}) };
 }
 
@@ -82,10 +94,12 @@ export function controlledPythonExecutable(): string | null { return executable(
 
 /** Fixed version observations: no worker-supplied argv, environment or shell. */
 export async function controlledToolchain(root: string, query: ControlledRuntimeQuery, signal?: AbortSignal) {
+  let installedToolchains = false;
+  try { installedToolchains = readConfig(root).execution_engine === 'opencode'; } catch { /* Historical uninitialized observations use PATH only. */ }
   const observations = await Promise.all((Object.keys(names) as Program[]).map(async program => {
     let diagnostic: { rejected_candidate?: RejectedCandidate } = {};
     try {
-      const resolved = executable(program, program === 'node' ? undefined : query.executables?.[program]);
+      const resolved = executable(program, program === 'node' ? undefined : query.executables?.[program], installedToolchains);
       diagnostic = resolved.rejected_candidate ? { rejected_candidate: resolved.rejected_candidate } : {};
       const path = resolved.path;
       if (!path) return { program, available: false, executable: null, ...diagnostic,

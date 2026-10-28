@@ -27,7 +27,8 @@ export function controlledStatusView(root: string, run: ControlledSnapshot) {
   if (run.contract_hash && /^[a-f0-9-]{36}$/.test(run.epoch_id)) try {
     const bytes = readFileSync(safePath(root, `.neomind/controlled/workflows/${hash(run.workflow_id)}.${run.epoch_id}.contract.json`));
     const contract = JSON.parse(bytes.toString('utf8'));
-    if (hash(bytes) === run.contract_hash && contract.schema_version === 2 && contract.workflow_id === run.workflow_id &&
+    if (hash(bytes) === run.contract_hash && (contract.schema_version === 2 && run.process_contract === 'software-tools/v2' ||
+        contract.schema_version === 3 && contract.process === 'workforce' && run.process_contract === 'workforce/v1') && contract.workflow_id === run.workflow_id &&
         contract.epoch_id === run.epoch_id && typeof contract.task_id === 'string') {
       const task = getRecord(root, contract.task_id);
       if (task.meta.type === 'task' && task.meta.data.workflow_id === run.workflow_id && task.meta.data.epoch_id === run.epoch_id) {

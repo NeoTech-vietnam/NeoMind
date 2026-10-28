@@ -1,17 +1,16 @@
 {
-  "name": "neomind-model-bridge",
-  "displayName": "NeoMind Agent Monitor",
-  "publisher": "neomind",
-  "version": "0.11.6",
-  "description": "An agent universe with plug-in and MCP controls, Earth FocusSpace, calendar planning, ambient sound and guarded 9router model controls.",
+  "name": "workforce-model-bridge",
+  "displayName": "WorkForce Universe",
+  "publisher": "workforce",
+  "version": "0.12.0",
+  "description": "A request-centered V-model workspace with autonomous engineering agents, verified products and 9router controls.",
   "engines": {
-    "vscode": "^1.109.0"
+    "vscode": "^1.143.0"
   },
   "main": "./extension.cjs",
   "activationEvents": [
     "onUri",
-    "onLanguageModelTool:neomind_advance_workflow",
-    "onLanguageModelTool:neomind_controlled_workflow"
+    "onLanguageModelTool:workforce_request"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -56,130 +55,15 @@
   "contributes": {
     "languageModelTools": [
       {
-        "name": "neomind_advance_workflow",
-        "toolReferenceName": "neomindAdvanceWorkflow",
-        "displayName": "Advance NeoMind Workflow",
-        "userDescription": "Advance the saved Local Copilot software workflow and run at most one backend-assigned specialist.",
-        "modelDescription": "Coordinator only: select the existing software workflow with workflow_id. The host obtains and privately retains its backend-issued Coordinator credential, derives and dispatches one exact specialist request, then reconciles its actual return. Repeat for the next substantive stage. For planning, records, final Cornell compilation, procedure registration or closure, supply the supported operation and its semantic parameters; the host injects authentication. Omit credentials, model labels, native prompts and task lifecycle fields. An observation describes only an actual prior native callback. Existing handle input remains compatible for older integrations.",
+        "name": "workforce_request",
+        "toolReferenceName": "workforceRequest",
+        "displayName": "WorkForce Request",
+        "userDescription": "Submit a request to WorkForce, inspect its progress, or answer a question and continue.",
+        "modelDescription": "Submit the user's ordinary requirement to the exact open workspace. WorkForce owns planning, agent sessions, implementation, independent review/testing and recovery. Return the saved receipt; do not implement the accepted request separately. Use status or pause/resume/cancel with its returned workflow_id. Include answer on resume only for a pending genuine user question. Retrying submit recovers its saved identity; submit_new explicitly creates another request after the previous receipt was acknowledged. Never invent identifiers or credentials. The user request and project policy define the authorized scope.",
         "canBeReferencedInPrompt": true,
         "tags": [
-          "neomind",
-          "coordinator"
-        ],
-        "inputSchema": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "reported_assignment": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "pattern": "^local-report-[a-f0-9]{40}$"
-                },
-                "token": {
-                  "type": "string",
-                  "pattern": "^[a-f0-9]{64}$"
-                }
-              },
-              "required": [
-                "id",
-                "token"
-              ]
-            },
-            "observation": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "packet_id": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "pattern": "^(?:local-report-[a-f0-9]{40}|\\s*)$"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "state": {
-                      "type": "string",
-                      "enum": [
-                        "completed",
-                        "completed-without-output",
-                        "failed",
-                        "cancelled",
-                        "running",
-                        "unknown"
-                      ]
-                    },
-                    "observation_id": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 160
-                    }
-                  },
-                  "required": [
-                    "state",
-                    "observation_id"
-                  ]
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "workflow_id": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{1,119}-KNW-[0-9]{4,}$"
-            },
-            "operation": {
-              "type": "string",
-              "enum": [
-                "advance",
-                "workflow_plan",
-                "record_get",
-                "record_create",
-                "record_update",
-                "cornell_research_compile",
-                "note_create",
-                "note_validate",
-                "procedure_register",
-                "manager_finish"
-              ]
-            },
-            "parameters": {
-              "type": "object",
-              "description": "Semantic arguments of the selected supported MCP operation, omitting reported_assignment. Omit for advance."
-            }
-          },
-          "oneOf": [
-            {
-              "required": [
-                "workflow_id"
-              ]
-            },
-            {
-              "required": [
-                "reported_assignment"
-              ]
-            }
-          ]
-        }
-      },
-      {
-        "name": "neomind_controlled_workflow",
-        "toolReferenceName": "neomindControlledWorkflow",
-        "displayName": "Manage NeoMind Controlled Workflow",
-        "userDescription": "Give work to NeoMind's own agents, inspect its saved state, or pause, resume and cancel it.",
-        "modelDescription": "Send the user's requirement to the exact open workspace folder. NeoMind owns agent sessions, credentials, IDs, stage transitions and verification. Submit returns a durable receipt quickly; repeat unchanged submit to recover a lost response using its saved identity. Use returned workflow_id for status or controls. An intentional identical second task uses submit_new after the prior receipt is acknowledged by status/control. If the client cannot provide a stable fresh turn context, or that context was lost on restart, use Start another task in the Workflows panel; never invent request IDs or platform tokens. A status query without workflow_id lists saved controlled workflows in that exact project. Do not invoke native subagents or implement the accepted task separately. User-requested work and existing project policy define the authorized scope.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "neomind",
-          "workflow"
+          "workforce",
+          "request"
         ],
         "inputSchema": {
           "type": "object",
@@ -211,12 +95,22 @@
             },
             "workflow_id": {
               "type": "string",
-              "description": "An existing workflow ID returned by NeoMind. Required for pause, resume and cancel; optional for status."
+              "description": "An existing workflow ID returned by WorkForce. Required for pause, resume and cancel; optional for status."
             },
             "title": {
               "type": "string",
               "maxLength": 256,
               "description": "Optional short title for a new submit."
+            },
+            "answer": {
+              "type": "string",
+              "maxLength": 20000,
+              "description": "The user answer to the selected request pending question; use with resume."
+            },
+            "question_id": {
+              "type": "string",
+              "maxLength": 256,
+              "description": "Exact pending question ID returned by WorkForce status. Required with answer; never invent or replace it."
             }
           }
         }
@@ -224,46 +118,38 @@
     ],
     "commands": [
       {
-        "command": "neomind.coordinator.openLocal",
-        "title": "NeoMind: Open Local Coordinator"
+        "command": "workforce.pm.openLocal",
+        "title": "WorkForce: Open Local WF.PM"
       },
       {
-        "command": "neomind.workflows.open",
-        "title": "NeoMind: Open Workflows"
+        "command": "workforce.bridge.enable",
+        "title": "WorkForce: Connect Workspace"
       },
       {
-        "command": "neomind.bridge.enable",
-        "title": "NeoMind: Enable Model Bridge"
+        "command": "workforce.bridge.disable",
+        "title": "WorkForce: Disconnect Workspace"
       },
       {
-        "command": "neomind.bridge.disable",
-        "title": "NeoMind: Disable Model Bridge"
+        "command": "workforce.monitor.open",
+        "title": "WorkForce: Open Universe"
       },
       {
-        "command": "neomind.monitor.open",
-        "title": "NeoMind: Open Agent Map"
+        "command": "workforce.plugins.open",
+        "title": "WorkForce: Manage Plug-ins"
       },
       {
-        "command": "neomind.plugins.open",
-        "title": "NeoMind: Manage Plug-ins"
-      },
-      {
-        "command": "neomind.automation.open",
-        "title": "NeoMind: Open Automation Library"
-      },
-      {
-        "command": "neomind.validation.copilot",
-        "title": "NeoMind: Validate Native Copilot Workflow"
+        "command": "workforce.automation.open",
+        "title": "WorkForce: Open Automation Library"
       }
     ],
     "configuration": {
-      "title": "NeoMind",
+      "title": "WorkForce",
       "properties": {
-        "neomind.bridge.runtimePath": {
+        "workforce.bridge.runtimePath": {
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "Absolute path to a trusted NeoMind package directory containing package.json and built dist. Read only from User settings."
+          "description": "Absolute path to a trusted WorkForce package directory containing package.json and built dist. Read only from User settings."
         }
       }
     }

@@ -6,7 +6,7 @@ import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 const { createAutomationHost, renderAutomationPanelHtml } = createRequire(import.meta.url)('../extensions/vscode-model-bridge/automation-panel.cjs');
 function app(t, { aliasedRoot = false } = {}) {
-  const directory = mkdtempSync(join(tmpdir(), 'neomind-automation-panel-'));
+  const directory = mkdtempSync(join(tmpdir(), 'workforce-automation-panel-'));
   const root = aliasedRoot ? `${directory}-alias` : directory;
   if (aliasedRoot) symlinkSync(directory, root, process.platform === 'win32' ? 'junction' : 'dir');
   t.after(() => {
@@ -87,6 +87,6 @@ test('panel ships isolated CSP/assets and safe text rendering through the extens
   const source = readFileSync(new URL('../extensions/vscode-model-bridge/resources/monitor/automation.js', import.meta.url), 'utf8');
   assert.equal(source.includes('innerHTML'), false);
   const manifest = JSON.parse(readFileSync(new URL('../extensions/vscode-model-bridge/package.json', import.meta.url), 'utf8'));
-  assert.ok(manifest.contributes.commands.some(item => item.command === 'neomind.automation.open'));
+  assert.ok(manifest.contributes.commands.some(item => item.command === 'workforce.automation.open'));
   for (const path of ['automation-panel.cjs', 'resources/monitor/automation.js', 'resources/monitor/automation.css']) assert.ok(manifest.files.includes(path));
 });

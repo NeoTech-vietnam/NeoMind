@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { existsSync, readFileSync, readdirSync, lstatSync, realpathSync } from 'node:fs';
+import { isAbsolute, resolve, join } from 'node:path';
+import { homedir } from 'node:os';
 import { z } from 'zod';
 import { resolveCatalogModel } from './model-catalog.js';
-import { agentProfiles } from './agent-profiles.js';
+import { agentProfiles, legacyAgentProfiles } from './agent-profiles.js';
 import {
   hash, atomicWrite, readConfig, safePath, withOperationLock,
 } from './storage.js';
@@ -13,6 +14,7 @@ import {
 import {
   routerBaseUrl, checkRouterHealth, listRouterModels, probeRouter,
 } from './router-probe.js';
+import { configuredOpenCodeEndpoint } from './opencode-engine.js';
 
 const roles = [...strongRoles, ...workerRoles];
 const text = z.string().trim().min(1).max(256).refine(value => !/[\r\n\0]/.test(value));
@@ -27,6 +29,62 @@ const routerSchema = z.object({
   catalog_provider: text.default('9Router'),
 }).strict();
 export type RouterConfiguration = z.infer<typeof routerSchema>;
+
+const workforceRoles: NativeRole[] = ['manager', 'requirements', 'architect', 'developer', 'reviewer', 'verifier'];
+function checkedModelCatalog(root: string, path: string) {
+  if (!isAbsolute(path) || /[\x00-\x1f]/.test(path)) throw new Error('Choose an existing absolute VS Code model catalog file.');
+  let actual: string;
+  try { actual = realpathSync.native(path); const info = lstatSync(actual);
+    if (!info.isFile() || info.size > 4 * 1024 * 1024) throw new Error(); }
+  catch { throw new Error('The selected VS Code model catalog is unavailable.'); }
+  const policy = { ...requireRoutingPolicy(root), language_models_file: actual };
+  const catalog: unknown = JSON.parse(readFileSync(actual, 'utf8'));
+  if (!Array.isArray(catalog)) throw new Error('The selected VS Code model catalog must be an array.');
+  const candidates = new Set<string>();
+  for (const value of catalog) {
+    if (!value || typeof value !== 'object' || value.vendor !== 'customendpoint') continue;
+    for (const model of Array.isArray(value.models) ? value.models : [])
+      if (model && typeof model.id === 'string') candidates.add(model.id);
+    if (value.settings && typeof value.settings === 'object' && !Array.isArray(value.settings))
+      Object.keys(value.settings).forEach(model => candidates.add(model));
+  }
+  const available = [...candidates].filter(model => {
+    try {
+      configuredOpenCodeEndpoint(root, 'manager', { ...policy, role_models: { ...policy.role_models,
+        manager: { model, provider: 'customendpoint' } } }); return true;
+    } catch { return false; }
+  });
+  if (!available.length) throw new Error('The selected catalog has no unambiguous supported custom endpoint. Existing routing was preserved.');
+  const models: string[] = [], unresolved: { role: NativeRole; model: string }[] = [];
+  for (const role of workforceRoles) {
+    try { models.push(configuredOpenCodeEndpoint(root, role, policy).model); }
+    catch { unresolved.push({ role, model: roleModelPolicy(root, role, policy).models[0]! }); }
+  }
+  return { path: actual, policy, models: [...new Set(models)], available_models: available,
+    unresolved_roles: unresolved, selections_valid: !unresolved.length };
+}
+/** Store only the catalog pointer; credentials remain in the user's existing catalog. */
+export function configureWorkForceModelCatalog(root: string, input: { path: string }) {
+  return withOperationLock(root, 'native-dispatch', () => withOperationLock(root, 'routing-policy', () => {
+    assertIdle(root);
+    const value = checkedModelCatalog(root, input.path);
+    atomicWrite(safePath(root, '.workforce/routing.json'), JSON.stringify(value.policy, null, 2) + '\n');
+    return { path: value.path, models: value.models, available_models: value.available_models,
+      unresolved_roles: value.unresolved_roles, selections_valid: value.selections_valid,
+      credential_storage: 'existing-user-catalog' as const };
+  }));
+}
+/** Discovery never overwrites an authored choice or prints catalog contents. */
+export function discoverWorkForceModelCatalog(root: string): { path: string | null; candidates: string[] } {
+  const policy = requireRoutingPolicy(root);
+  if (policy.language_models_file) return { path: null, candidates: [] };
+  const base = process.platform === 'win32' ? process.env.APPDATA : process.platform === 'darwin'
+    ? join(homedir(), 'Library', 'Application Support') : process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config');
+  const candidates = [...new Set(base ? ['Code', 'Code - Insiders'].flatMap(name => {
+    try { return [checkedModelCatalog(root, join(base, name, 'User', 'chatLanguageModels.json')).path]; } catch { return []; }
+  }) : [])];
+  return { path: candidates.length === 1 ? candidates[0]! : null, candidates };
+}
 
 function activeInvocations(root: string): { id: string; role: NativeRole; state: string; controlled?: true }[] {
   const directory = safePath(root, '.neomind/native/receipts');
@@ -94,6 +152,7 @@ export function setRoleModel(root: string, input: {
     policy.role_models = { ...policy.role_models, [selection.role]: {
       model, ...(provider ? { provider } : {}), effort,
     } };
+    if (readConfig(root).execution_engine === 'opencode') configuredOpenCodeEndpoint(root, selection.role, policy);
     atomicWrite(safePath(root, '.neomind/routing.json'), JSON.stringify(policy, null, 2) + '\n');
     return { role: selection.role, model, ...(provider ? { provider } : {}),
       reasoning_effort: effort, applies_to: 'next-invocation', routing_sha256: hash(canonicalJson(policy)) };
@@ -102,10 +161,12 @@ export function setRoleModel(root: string, input: {
 
 export function modelControlStatus(root: string) {
   const config = readConfig(root);
+  const profiles = config.execution_engine === 'opencode' ? agentProfiles : legacyAgentProfiles;
+  const visibleRoles = config.execution_engine === 'opencode' ? profiles.map(profile => profile.modelRole) : roles;
   return {
     native_routing: { platforms: config.platforms, codex: config.codex_routing ?? 'inherit' },
-    roles: roles.map(role => ({ ...roleModelPolicy(root, role) })),
-    agent_profiles: agentProfiles.map(profile => ({ id: profile.id, name: profile.name,
+    roles: [...new Set(visibleRoles)].map(role => ({ ...roleModelPolicy(root, role) })),
+    agent_profiles: profiles.map(profile => ({ id: profile.id, name: profile.name,
       roles: [...profile.roles], model_role: profile.modelRole, description: profile.duty,
       native_tools: [...profile.nativeTools] })),
     active_invocations: activeInvocations(root),

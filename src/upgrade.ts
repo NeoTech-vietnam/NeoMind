@@ -34,8 +34,8 @@ export interface UpgradeResult {
   schema_version: 1;
   status: 'upgraded';
   root: string;
-  target: { name: 'neomind'; version: string };
-  previous: { name: 'neomind' | 'taskforces' | 'verythinker'; version: string }[];
+  target: { name: 'workforce'; version: string };
+  previous: { name: 'workforce' | 'neomind' | 'taskforces' | 'verythinker'; version: string }[];
   dependency_section: 'dependencies' | 'devDependencies';
   /** Saved package.json spec: an exact registry version or a project-relative file: archive. */
   dependency_spec: string;
@@ -48,6 +48,8 @@ export interface UpgradeResult {
   backups: { path: string; backup: string | null }[];
   update: InstallReport;
   conflicts: InstallReport['conflicts'];
+  /** Run only after this upgrade's lease is released; no silent record/config migration. */
+  migration: { required: boolean; target_engine: 'opencode'; command: string[] };
 }
 
 export class UpgradeError extends Error {
@@ -80,8 +82,8 @@ function projectRoot(input: string): string {
     throw new Error('The explicit project root must contain a regular package.json.');
   const pkg = JSON.parse(readFileSync(manifest, 'utf8'));
   if (!pkg || typeof pkg !== 'object' || Array.isArray(pkg)) throw new Error('Invalid package.json.');
-  if (['neomind', 'taskforces', 'verythinker'].includes(pkg.name))
-    throw new Error('Refusing to replace the tool source checkout or a package named neomind/verythinker.');
+  if (['workforce', 'neomind', 'taskforces', 'verythinker'].includes(pkg.name))
+    throw new Error('Refusing to replace the tool source checkout or a package named workforce/neomind/verythinker.');
   for (let directory = root; ; directory = dirname(directory)) {
     const path = join(directory, 'package.json');
     if (existsSync(path)) {
@@ -118,10 +120,10 @@ function targetSpec(root: string, target: string): string {
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Target .tgz must be a regular local file.');
     return realpathSync(path);
   }
-  if (target.startsWith('@')) throw new Error('Scoped target packages are unsupported; only neomind is allowed.');
+  if (target.startsWith('@')) throw new Error('Scoped target packages are unsupported; only workforce is allowed.');
   if (!/^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$/.test(target))
     throw new Error('Only a safe version/tag or a regular local .tgz is accepted; URLs, git, aliases and flags are unsupported.');
-  return `neomind@${target}`;
+  return `workforce@${target}`;
 }
 
 /**
@@ -147,10 +149,10 @@ export function upgradeProject(root: string, target: string, options: UpgradeOpt
       const temporary = realpathSync(tmpdir());
       if (inside(join(root, 'node_modules'), temporary))
         throw new Error('The temporary directory must be outside project node_modules.');
-      recovery = mkdtempSync(join(temporary, 'neomind-upgrade-'));
+      recovery = mkdtempSync(join(temporary, 'workforce-upgrade-'));
       const runner = join(recovery, 'upgrade-runner.mjs');
       copyFileSync(fileURLToPath(new URL('../scripts/upgrade-runner.mjs', import.meta.url)), runner);
-      const lockPath = safePath(root, '.neomind/operations/package-upgrade.lock');
+      const lockPath = safePath(root, '.workforce/operations/package-upgrade.lock');
       const lease = JSON.parse(readFileSync(lockPath, 'utf8'));
       const configuration = join(recovery, 'config.json');
       const resultPath = join(recovery, 'result.json');

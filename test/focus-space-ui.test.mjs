@@ -102,7 +102,7 @@ function harness(saved = {}, options = {}) {
   class Clock extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
   const source = readFileSync(new URL('../extensions/vscode-model-bridge/resources/monitor/focus-space.js', import.meta.url), 'utf8');
   runInNewContext(source, { window, document, navigator: window.navigator, URL, Date: Clock, console, setTimeout: window.setTimeout, clearTimeout: window.clearTimeout, setInterval: window.setInterval, clearInterval: window.clearInterval });
-  const ui = window.NeoMindFocusSpace.create({ vscode, onViewChange: view => viewChanges.push(view), getTransitionOrigin: options.getTransitionOrigin });
+  const ui = window.WorkForceFocusSpace.create({ vscode, onViewChange: view => viewChanges.push(view), getTransitionOrigin: options.getTransitionOrigin });
   const answer = (request, data, ok = true) => window.emit('message', { data: { type: 'focus-space-result', action: request.action, request_id: request.request_id, ok, ...(ok ? { data } : { error: data }) } });
   async function flush() { for (let count = 0; count < 8; count++) await Promise.resolve(); }
   async function advance(ms) { now += ms; for (const [id, task] of [...timeouts]) if (task.at <= now) { timeouts.delete(id); task.fn(); } for (const task of [...intervals.values()]) task.fn(); await flush(); }
@@ -249,11 +249,11 @@ test('opaque VS Code origin requests a real HTTP player document instead of load
   const frame = app.elements.get('fs-youtube-player').children[0];
   assert.equal(frame.src, 'http://127.0.0.1:34567/player/fixture-token');
   frame.contentWindow = {};
-  app.window.emit('message', { origin: 'https://untrusted.example', source: frame.contentWindow, data: { type: 'neomind-youtube', event: 'error', code: 153 } });
+  app.window.emit('message', { origin: 'https://untrusted.example', source: frame.contentWindow, data: { type: 'workforce-youtube', event: 'error', code: 153 } });
   assert.equal(app.elements.get('fs-youtube-player').children.length, 1, 'Unrelated origins cannot affect the player');
-  app.window.emit('message', { origin: 'http://127.0.0.1:34567', source: {}, data: { type: 'neomind-youtube', event: 'error', code: 153 } });
+  app.window.emit('message', { origin: 'http://127.0.0.1:34567', source: {}, data: { type: 'workforce-youtube', event: 'error', code: 153 } });
   assert.equal(app.elements.get('fs-youtube-player').children.length, 1, 'Unrelated frames cannot affect the player');
-  app.window.emit('message', { origin: 'http://127.0.0.1:34567', source: frame.contentWindow, data: { type: 'neomind-youtube', event: 'error', code: 153 } });
+  app.window.emit('message', { origin: 'http://127.0.0.1:34567', source: frame.contentWindow, data: { type: 'workforce-youtube', event: 'error', code: 153 } });
   assert.match(app.elements.get('fs-youtube-status').textContent, /153.*Open on YouTube/);
   assert.equal(app.elements.get('fs-youtube-player').children.length, 0);
   assert.equal(app.messages.at(-1).action, 'youtube-player-stop');

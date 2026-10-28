@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync } 
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { controlledRuntimeGuide, controlledRuntimeContextGuide, controlledToolchain } from '../dist/controlled-runtime-context.js';
+import { initialize } from '../dist/storage.js';
 
 test('runtime context references trusted guide metadata without repeating setup instructions', () => {
   const metadata = controlledRuntimeContextGuide(), full = controlledRuntimeGuide();
@@ -100,4 +101,19 @@ test('an actual LLVM clang++ alias retains C++ driver invocation when its realpa
   assert.equal(cpp.executable, alias); assert.deepEqual(cpp.command, [alias, '--version']);
   assert.match(cpp.stdout, /clang version/i);
   assert.equal(cpp.rejected_candidate, undefined);
+});
+
+test('WorkForce observes installed MSYS2 C/C++ tools even when the editor PATH predates installation', { skip: process.platform !== 'win32' }, async t => {
+  const drive = /^[a-z]:$/i.test(process.env.SystemDrive ?? '') ? process.env.SystemDrive : 'C:';
+  const available = ['ucrt64', 'mingw64', 'clang64'].some(name => existsSync(`${drive}/msys64/${name}/bin/gcc.exe`) || existsSync(`${drive}/msys64/${name}/bin/clang.exe`));
+  if (!available) { t.skip('No installed MSYS2 toolchain on this Windows host.'); return; }
+  const { root } = fixture(t);
+  initialize(root, { execution_engine: 'opencode' });
+  const observed = await controlledToolchain(root, {});
+  for (const program of ['c11', 'cpp17']) {
+    const compiler = observed.observations.find(item => item.program === program);
+    assert.equal(compiler.available, true); assert.equal(compiler.exit_code, 0);
+    assert.match(compiler.executable, /msys64[\\/](ucrt64|mingw64|clang64)[\\/]bin[\\/]/i);
+    assert.deepEqual(compiler.command, [compiler.executable, '--version']);
+  }
 });

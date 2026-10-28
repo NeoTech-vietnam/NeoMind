@@ -4,9 +4,9 @@ import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { assertNoStorageMigration, atomicWrite, createRecord, getRecord, hash, loadRecords, now, safePath } from './storage.js';
 import { captureEvidenceInputs, evidenceRecordFingerprint, validateEvidenceInputs } from './evidence-inputs.js';
-import { readInvocation, routingProblems } from './routing.js';
+import { readInvocation, routingProblems, canonicalJson } from './routing.js';
 import { validateCornellNote } from './notes.js';
-import { resolveProcedure } from './procedures.js';
+import { resolveProcedure, validateProcedureParameters } from './procedures.js';
 import { runCommand, type CommandResult } from './command-runner.js';
 import type { ControlledContract, ControlledSnapshot, ControlledCheckReceipt } from './controlled-workflow.js';
 import type { Gate, ProjectRecord, Verification } from './types.js';
@@ -225,8 +225,11 @@ function contractForTask(root: string, task: ProjectRecord, recordAt: RecordAt, 
   const run = JSON.parse(readFileSync(safePath(root, `${roots}/${hash(id)}.json`), 'utf8')) as ControlledSnapshot;
   const bytes = readFileSync(safePath(root, `${roots}/${hash(id)}.${epoch}.contract.json`), 'utf8');
   const contract = JSON.parse(bytes) as ControlledContract;
-  if (run.schema_version !== 1 || run.workflow_id !== id || run.epoch_id !== epoch || run.process_contract !== 'software-tools/v2' ||
-      contract.schema_version !== 2 || contract.workflow_id !== id || contract.epoch_id !== epoch || contract.task_id !== task.meta.id ||
+  const workforce = run.process_contract === 'workforce/v1';
+  if (run.schema_version !== 1 || run.workflow_id !== id || run.epoch_id !== epoch ||
+      (workforce ? contract.schema_version !== 3 || contract.process !== 'workforce' || run.transport !== 'opencode'
+        : run.process_contract !== 'software-tools/v2' || contract.schema_version !== 2 || contract.process !== 'software-tools') ||
+      task.meta.data.process_contract !== run.process_contract || contract.workflow_id !== id || contract.epoch_id !== epoch || contract.task_id !== task.meta.id ||
       hash(bytes) !== run.contract_hash || contract.plan_hash !== hash(JSON.stringify(contract.plan)) || task.meta.data.controlled_contract_hash !== run.contract_hash)
     throw new Error('Controlled task, journal and immutable contract do not match.');
   const parent = recordAt(id);
@@ -234,6 +237,10 @@ function contractForTask(root: string, task: ProjectRecord, recordAt: RecordAt, 
     throw new Error('Workflow does not point to this controlled execution.');
   for (const key of ['acceptance_criteria', 'allowed_paths', 'verification_paths', 'outputs', 'documentation_paths'] as const)
     if (!same(task.meta.data[key], contract.plan[key])) throw new Error(`Controlled task ${key} changed after planning.`);
+  if (workforce && 'request_kind' in contract.plan && (task.meta.data.request_kind !== contract.request_kind ||
+      contract.request_kind !== contract.plan.request_kind || !same(task.meta.data.allowed_urls, contract.plan.allowed_urls) ||
+      !same(contract.verification_levels, contract.plan.verification_levels)))
+    throw new Error('WorkForce assurance, destination permissions or verification levels changed after planning.');
   if (!same(task.meta.links.filter(link => link.type === 'satisfies').map(link => link.target).sort(), [...contract.requirement_ids].sort()))
     throw new Error('Controlled execution must retain all requirement links.');
   for (const [id, fingerprint] of Object.entries(contract.requirement_fingerprints)) {
@@ -337,7 +344,7 @@ function evidenceProblems(root: string, run: ControlledSnapshot, contract: Contr
 
 /** One evaluator is used by controller closure and public task verification. No accepted flag is proof. */
 export function verifyControlledTask(root: string, task: ProjectRecord, gate: Gate = 'accepted'): Verification | null {
-  if (task.meta.data.process_contract !== 'software-tools/v2') return null;
+  if (!['software-tools/v2', 'workforce/v1'].includes(String(task.meta.data.process_contract))) return null;
   const findings: Verification['findings'] = [];
   const add = (code: string, message: string) => findings.push({ code, record: task.meta.id, message });
   const budget = controlledAcceptanceBudget(root);
@@ -345,6 +352,7 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
     const recordAt = controlledRecordView(root, budget.check);
     task = currentTask(task, recordAt);
     const { run, contract } = contractForTask(root, task, recordAt, budget.check);
+    const workforce = run.process_contract === 'workforce/v1';
     if (['cancelled', 'uncertain', 'interrupted'].includes(run.status)) throw new Error('Controlled effects require reconciliation before acceptance.');
     if (['ready', 'design-ready'].includes(gate)) return { ok: true, gate, findings, checked_at: now() };
     const reconciliations = readCheckReconciliations(root, run, contract);
@@ -352,19 +360,41 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
         run.local_executions?.some(operation => operation.state !== 'completed'))
       throw new Error('An active replacement session or unresolved check effect still needs reconciliation.');
     verifyControlledExecutions(root, run, contract, { checkBudget: budget.check, fingerprints: budget.fingerprints });
+    if (workforce && contract.plan.reuse) {
+      const selected = contract.plan.reuse, procedure = resolveProcedure(root, selected.procedure_id, selected.version);
+      const parameters = validateProcedureParameters(root, procedure, selected.parameters);
+      const producers = new Set(run.attempts.filter(attempt => attempt.stage === 'implementation').map(attempt => attempt.invocation_id));
+      const executed = procedure.runs.find(execution => run.procedure_runs?.some(saved => saved.id === execution.id && saved.status === 'succeeded') &&
+        execution.status === 'succeeded' && execution.observation === 'local-process' && execution.contract_hash === procedure.contract_hash &&
+        execution.request_id === `${run.epoch_id}:procedure:${procedure.contract_hash}` && producers.has(execution.actor) &&
+        canonicalJson(execution.parameters) === canonicalJson(parameters) && execution.outputs?.length && execution.outputs.every(output =>
+          budget.fingerprints([output.path])[output.path] === output.sha256));
+      if (!executed) throw new Error('The bound reusable procedure lacks its actual successful current-instance execution; selection alone cannot establish reuse.');
+    }
     if (contract.plan.execution_steps?.some(step => !run.local_executions?.some(operation =>
         operation.title === step.title && operation.state === 'completed' && operation.passed)))
       throw new Error('A declared producer operation lacks its actual successful execution result.');
-    const latest = (stage: string) => [...run.attempts].reverse().find(item => item.stage === stage && item.purpose !== 'check-review' && item.purpose !== 'specialist');
+    const latest = (stage: string) => [...run.attempts].reverse().find(item => item.stage === stage && item.purpose !== 'check-review' && item.purpose !== 'design-review' && item.purpose !== 'specialist');
     const producer = latest('implementation'), verifier = latest('verification'), reviewer = latest('review'), synthesis = latest('synthesis');
+    const contentAssessment = (attempt: typeof verifier, paths: string[]): boolean => {
+      const proof = attempt?.content_assessment;
+      if (!attempt?.invocation_id || !attempt.report_id || !proof || proof.mode !== 'complete-current-text' ||
+          proof.invocation_id !== attempt.invocation_id ||
+          canonicalJson(recordAt(attempt.report_id).meta.data.content_assessment) !== canonicalJson(proof)) return false;
+      const current = budget.fingerprints(paths);
+      return paths.every(path => proof.artifact_hashes[path] === current[path]);
+    };
+    const designReviewer = workforce ? run.attempts.findLast(item => item.stage === 'review' && item.purpose === 'design-review') : undefined;
     const required = [producer, verifier, ...(gate === 'accepted' && contract.reviewer_required ? [reviewer] : []),
+      ...(gate === 'accepted' && workforce ? [latest('requirements'), latest('design')] : []),
+      ...(gate === 'accepted' && contract.design_review_required ? [designReviewer] : []),
       ...(gate === 'accepted' && contract.knowledge_directory ? [synthesis] : [])];
     for (const attempt of required) {
       budget.check();
       if (!attempt?.invocation_id || attempt.state !== 'completed' || !attempt.report_id || attempt.report?.outcome !== 'completed') throw new Error('Required independently completed result is missing.');
       const receipt = readInvocation(root, attempt.invocation_id), report = recordAt(attempt.report_id);
       if (routingProblems(root, attempt.role, receipt.id, { workflow_id: run.workflow_id, task_id: contract.task_id, require_completed: true }).length ||
-          receipt.issuer !== 'neomind-vscode-lm' || !receipt.inference_completed || receipt.state !== 'completed' || receipt.task_id !== contract.task_id ||
+          !isControlledExecutionReceipt(receipt) || !receipt.inference_completed || receipt.state !== 'completed' || receipt.task_id !== contract.task_id ||
           receipt.request_id !== attempt.request_id || receipt.controlled_execution?.epoch_id !== run.epoch_id || receipt.controlled_execution.stage !== attempt.stage ||
           report.meta.data.invocation_id !== receipt.id || report.meta.data.epoch_id !== run.epoch_id || report.meta.data.task_id !== contract.task_id ||
           report.meta.data.workflow_id !== run.workflow_id || report.meta.owner !== attempt.role || !same(report.meta.data.artifact_hashes, attempt.bound_hashes))
@@ -382,12 +412,25 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
     if (producer!.invocation_id === verifier!.invocation_id || reviewer?.invocation_id === producer!.invocation_id || reviewer?.invocation_id === verifier!.invocation_id)
       throw new Error('Verification and review must use independent sessions.');
     if (run.attempts.indexOf(verifier!) <= run.attempts.indexOf(producer!)) throw new Error('Independent verification must follow the latest producer result.');
+    if (workforce && (run.attempts.indexOf(latest('requirements')!) >= run.attempts.indexOf(latest('design')!) ||
+        run.attempts.indexOf(latest('design')!) >= run.attempts.indexOf(producer!) ||
+        run.attempts.indexOf(reviewer!) <= run.attempts.indexOf(producer!) || run.attempts.indexOf(reviewer!) >= run.attempts.indexOf(verifier!)))
+      throw new Error('WorkForce requires current SWSD/design, then independent product review before independent testing.');
+    if (contract.design_review_required && (!designReviewer || designReviewer.report?.verdict !== 'pass' ||
+        run.attempts.indexOf(designReviewer) <= run.attempts.indexOf(latest('design')!) ||
+        run.attempts.indexOf(designReviewer) >= run.attempts.indexOf(producer!)))
+      throw new Error('The elevated-risk design requires an independently passed review before implementation.');
     if (gate === 'accepted' && controlledVerificationPurpose(run, contract) !== 'final-contract')
       throw new Error('The promised factual report still needs its bounded handoff and fresh full final-contract verification.');
     if (verifier!.report?.verdict !== 'pass' || gate === 'accepted' && contract.reviewer_required && reviewer?.report?.verdict !== 'pass') throw new Error('Independent verification or required review did not pass.');
     const attemptChecks = run.checks.filter(item => item.attempt_id === verifier!.id);
     assertFreshVerifierAfterReconciliation(run, reconciliations, verifier!.id, attemptChecks);
     const checks = latestControlledChecks(attemptChecks, verifier!.id);
+    if (workforce && !contract.plan.checks.length && (!['document', 'research'].includes(contract.request_kind ?? '') ||
+        !same(Object.keys(verifier!.bound_hashes ?? {}).sort(), [...contract.plan.outputs].sort()) ||
+        !same(Object.keys(reviewer!.bound_hashes ?? {}).sort(), [...contract.plan.outputs].sort()) ||
+        !contentAssessment(verifier, contract.plan.outputs) || !contentAssessment(reviewer, contract.plan.outputs)))
+      throw new Error('Non-executable verification requires independent full-output text assessments bound to the current artifacts.');
     const checkerScope = captureControlledCheckerScope(contract.plan.verification_paths, budget.fingerprints);
     for (const planned of contract.plan.checks) for (const selected of [{ ...planned, negative: false }, ...(planned.negative_controls ?? []).map(value => ({ ...value, negative: true }))]) {
       budget.check();
@@ -483,12 +526,13 @@ export function verifyControlledTask(root: string, task: ProjectRecord, gate: Ga
             throw new Error('Primary Cornell output did not consume its immutable prepared research source.');
           const current = budget.fingerprints(paths.all);
           if (paths.rendered.some(path => artifacts[path] !== current[path]) ||
-              paths.all.some(path => !positive.some(check => check.baseline[path] === current[path])) ||
+              (workforce ? !contentAssessment(verifier, paths.rendered) || !contentAssessment(reviewer, paths.rendered)
+                : paths.all.some(path => !positive.some(check => check.baseline[path] === current[path]))) ||
               !!practice?.solution_path && producer!.bound_hashes?.[practice.solution_path] !== current[practice.solution_path])
             throw new Error('Current passing positive check baselines must cover every primary Cornell artifact.');
         }
       }
-      if (contract.reviewer_required && run.attempts.indexOf(reviewer!) < Math.max(run.attempts.indexOf(verifier!), synthesis ? run.attempts.indexOf(synthesis) : -1))
+      if (!workforce && contract.reviewer_required && run.attempts.indexOf(reviewer!) < Math.max(run.attempts.indexOf(verifier!), synthesis ? run.attempts.indexOf(synthesis) : -1))
         throw new Error('Independent final review must follow verification and requested synthesis.');
     }
     budget.check();
@@ -551,3 +595,4 @@ export async function executeControlledPilot(root: string, run: ControlledSnapsh
   if (!validation.passed || solutions.some(solution => !solution.compile.passed || !solution.run.passed)) throw new Error('Actual intended-use note validation or fresh C11/C++17 execution failed.');
   return { path, sha256: hash(bytes) };
 }
+import { isControlledExecutionReceipt } from './execution-attestation.js';

@@ -451,7 +451,7 @@ const circuit = readFileSync(resolve(out, 'load-switch.cir'), 'utf8');
 for (const expected of ['DC ' + p.supply_v, 'drain ' + p.load_ohm, 'Ron=' + p.on_ohm, 'Roff=' + p.off_ohm]) assert.ok(circuit.includes(expected), 'Circuit parameter mismatch: ' + expected);
 let native = 'not requested'; let spice = 'not requested';
 if (p.compiler) {
-  const family = p.compiler_family ?? 'gcc'; const build = resolve(existsSync('.neomind') ? '.neomind/cache/recipe-native' : '.neomind/cache/recipe-native', randomUUID()); mkdirSync(build, {recursive: true});
+  const family = p.compiler_family ?? 'gcc'; const managed = ['.workforce', '.neomind', '.taskforces', '.verythinker'].find(root => existsSync(resolve(root, 'config.json'))) ?? '.workforce'; const build = resolve(managed, 'cache/recipe-native', randomUUID()); mkdirSync(build, {recursive: true});
   for (const name of ['controller.c', 'controller.h', 'firmware-test.c']) copyFileSync(resolve(out, name), resolve(build, name));
   const executable = resolve(build, process.platform === 'win32' ? 'firmware-test.exe' : 'firmware-test');
   const args = family === 'dmc' ? ['controller.c', 'firmware-test.c', '-mn', '-wx', '-ofirmware-test.exe'] : ['-std=c11', '-Wall', '-Wextra', '-Werror', 'controller.c', 'firmware-test.c', '-o', executable];

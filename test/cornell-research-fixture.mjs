@@ -1,7 +1,9 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { initialize, updateRecord } from '../dist/storage.js';
+import { updateRecord } from '../dist/storage.js';
 import { beginWorkflow } from '../dist/manager.js';
 
 export function researchFixture(t) {

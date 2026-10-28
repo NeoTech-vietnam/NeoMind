@@ -53,7 +53,7 @@ export function verifyControlledExecutions(root: string, run: ControlledSnapshot
         proof.workflow_id !== run.workflow_id || proof.epoch_id !== run.epoch_id || proof.contract_hash !== run.contract_hash ||
         proof.task_id !== contract.task_id || proof.attempt_id !== operation.attempt_id || proof.invocation_id !== attempt?.invocation_id)
       throw new Error('A local operation belongs to another actor, task or immutable execution.');
-    if (attempt?.role !== 'developer' || attempt.stage !== 'implementation' || receipt?.issuer !== 'neomind-vscode-lm' ||
+    if (attempt?.role !== 'developer' || attempt.stage !== 'implementation' || !receipt || !isControlledExecutionReceipt(receipt) ||
         receipt.role !== 'developer' || receipt.task_id !== contract.task_id || receipt.workflow_id !== run.workflow_id ||
         receipt.controlled_execution?.epoch_id !== run.epoch_id || receipt.controlled_execution.stage !== 'implementation' ||
         (result.execution?.passed ?? false) !== operation.passed)
@@ -127,3 +127,4 @@ export function controlledProducerExecutionEvidence(root: string, run: Controlle
       ...(!current ? { limitation: 'Current inputs or outputs differ from the saved producer result or could not be revalidated. This observation cannot support the current result.' } : {}) };
   });
 }
+import { isControlledExecutionReceipt } from './execution-attestation.js';

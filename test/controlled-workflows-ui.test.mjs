@@ -43,7 +43,11 @@ function app(t) {
 
 function localCoordinator(a) {
   mkdirSync(join(a.root, '.github/agents'), { recursive: true });
-  writeFileSync(join(a.root, '.github/agents/neomind-coordinator.agent.md'), '---\nname: "NeoMind Coordinator Agent"\n---\nProject Coordinator.\n');
+  writeFileSync(join(a.root, '.github/agents/workforce-pm.agent.md'), '---\nname: "WF.PM"\n---\nProject Coordinator.\n');
+  let permission = 'default';
+  a.permissionUpdates = [];
+  a.vscode.ConfigurationTarget = { Workspace: 2 };
+  a.vscode.workspace.getConfiguration = (section, uri) => { assert.equal(section, 'chat'); assert.equal(uri.fsPath, a.root); return { get: key => { assert.equal(key, 'permissions.default'); return permission; }, update: async (key, value, target) => { a.permissionUpdates.push([key, value, target]); permission = value; } }; };
   a.vscode.commands.getCommands = async () => ['workbench.action.chat.openInSidebar', 'workbench.action.chat.newLocalChat', 'workbench.action.chat.open'];
   return () => a.commands.get(LOCAL_COORDINATOR_COMMAND)();
 }
@@ -64,9 +68,10 @@ test('Local Coordinator focuses the sidebar before creating Local chat from eith
       }
     };
     assert.equal((await open()).opened, true);
-    assert.equal(harness, 'local'); assert.equal(profile, 'NeoMind Coordinator Agent'); assert.equal(model, 'top-models');
+    assert.equal(harness, 'local'); assert.equal(profile, 'WF.PM'); assert.equal(model, 'top-models');
+    assert.deepEqual(a.permissionUpdates, [['permissions.default', 'autoApprove', 2]], 'Permissions are written to the exact workspace, never global settings.');
     assert.deepEqual(executed, [['workbench.action.chat.openInSidebar'], ['workbench.action.chat.newLocalChat'],
-      ['workbench.action.chat.open', { mode: 'NeoMind Coordinator Agent' }]]);
+      ['workbench.action.chat.open', { mode: 'WF.PM' }]]);
     assert.deepEqual(a.calls, []);
   }
 });
@@ -88,14 +93,24 @@ test('Local Coordinator waits for the Chat view and Local chat before selecting 
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(executed, [['workbench.action.chat.openInSidebar'], ['workbench.action.chat.newLocalChat']]);
   localCreated();
-  assert.deepEqual(await pending, { opened: true, target: 'local', profile: 'NeoMind Coordinator Agent', model_selection: 'user-picker' });
+  assert.deepEqual(await pending, { opened: true, target: 'local', profile: 'WF.PM', model_selection: 'user-picker', permission_default: 'autoApprove' });
   assert.deepEqual(executed, [
     ['workbench.action.chat.openInSidebar'],
     ['workbench.action.chat.newLocalChat'],
-    ['workbench.action.chat.open', { mode: 'NeoMind Coordinator Agent' }],
+    ['workbench.action.chat.open', { mode: 'WF.PM' }],
   ]);
   assert.deepEqual(a.calls, [], 'Opening chat must not submit a workflow or change routing.');
   assert.deepEqual(a.errors, []);
+});
+
+test('Local WF.PM reports an enforced permission default without bypassing organization policy or changing the chosen model', async t => {
+  const a = app(t), open = localCoordinator(a), executed = [], warnings = [];
+  a.vscode.workspace.getConfiguration = () => ({ get: () => 'default', update: async () => { throw new Error('PRIVATE policy details'); } });
+  a.vscode.window.showWarningMessage = async message => warnings.push(message);
+  a.vscode.commands.executeCommand = async (...args) => executed.push(args);
+  const result = await open(); assert.equal(result.opened, true); assert.equal(result.permission_default, 'default');
+  assert.match(warnings[0], /did not apply/); assert.equal(JSON.stringify(warnings).includes('PRIVATE'), false);
+  assert.deepEqual(executed.at(-1), ['workbench.action.chat.open', { mode: 'WF.PM' }]);
 });
 
 test('missing or failing Chat view or Local chat command stops before profile launch without a generic fallback', async t => {
@@ -141,7 +156,7 @@ test('profile selection failure preserves the Local-only path and does not submi
   };
   const result = await open();
   assert.equal(result.opened, false); assert.equal(result.error.code, 'LOCAL_COORDINATOR_UNAVAILABLE');
-  assert.deepEqual(executed, [['workbench.action.chat.openInSidebar'], ['workbench.action.chat.newLocalChat'], ['workbench.action.chat.open', { mode: 'NeoMind Coordinator Agent' }]]);
+  assert.deepEqual(executed, [['workbench.action.chat.openInSidebar'], ['workbench.action.chat.newLocalChat'], ['workbench.action.chat.open', { mode: 'WF.PM' }]]);
   assert.deepEqual(a.calls, []); assert.equal(JSON.stringify(result).includes('PRIVATE'), false);
 });
 
@@ -394,6 +409,19 @@ test('controls require explicit saved workflow identity and never accept credent
   assert.equal(rejected.error.code, 'INVALID_REQUEST'); assert.equal(a.calls.length, 3);
 });
 
+test('answer controls preserve the server-issued question identity and reject missing or detached question IDs', async t => {
+  const a = app(t);
+  const response = await a.invoke({ action: 'resume', workspace_folder: a.root, workflow_id: workflowId, answer: 'docs/source.md', question_id: 'question-one' });
+  assert.equal(response.workflows[0].workflow_id, workflowId);
+  assert.deepEqual(a.calls.at(-1)[2], { workflow_id: workflowId, action: 'resume', answer: 'docs/source.md', question_id: 'question-one' });
+  const count = a.calls.length;
+  for (const input of [{ answer: 'No issued question' }, { question_id: 'question-one' }, { answer: 'Wrong action', question_id: 'question-one', action: 'pause' }]) {
+    const result = await a.invoke({ action: 'resume', workspace_folder: a.root, workflow_id: workflowId, ...input });
+    assert.equal(result.error.code, 'INVALID_REQUEST');
+  }
+  assert.equal(a.calls.length, count);
+});
+
 test('queued, waiting, interrupted and uncertain state are preserved without inferred completion', () => {
   const values = ['queued', 'waiting', 'interrupted', 'uncertain'].map((status, index) => ({ workflow_id: `workflow-${index}`, status, events: [] }));
   assert.deepEqual(publicStatus({ workflows: values }).workflows.map(value => value.status), values.map(value => value.status));
@@ -432,9 +460,10 @@ test('controlled panel uses isolated CSP, safe rendering and packaged tool regis
   assert.equal(source.includes('innerHTML'), false);
   const manifest = JSON.parse(readFileSync(new URL('../extensions/vscode-model-bridge/package.json', import.meta.url), 'utf8'));
   assert.ok(manifest.contributes.languageModelTools.some(value => value.name === TOOL_NAME));
-  assert.ok(manifest.contributes.commands.some(value => value.command === 'neomind.workflows.open'));
-  assert.ok(manifest.contributes.commands.some(value => value.command === LOCAL_COORDINATOR_COMMAND && value.title === 'NeoMind: Open Local Coordinator'));
-  assert.match(html, /id="local-coordinator"/);
-  assert.match(html, /model picker/);
-  for (const file of ['controlled-workflows.cjs', 'controlled-entry.cjs', 'resources/monitor/controlled.js', 'resources/monitor/controlled.css']) assert.ok(manifest.files.includes(file));
+  assert.ok(manifest.contributes.commands.some(value => value.command === 'workforce.monitor.open'));
+  assert.equal(manifest.contributes.commands.some(value => value.command.endsWith('.workflows.open')), false);
+  assert.ok(manifest.contributes.commands.some(value => value.command === LOCAL_COORDINATOR_COMMAND && value.title === 'WorkForce: Open Local WF.PM'));
+  assert.match(html, /id="open-local"/);
+  assert.match(html, /Local WF.PM/);
+  for (const file of ['controlled-workflows.cjs', 'controlled-entry.cjs', 'resources/monitor/monitor.js', 'resources/monitor/monitor.css']) assert.ok(manifest.files.includes(file));
 });

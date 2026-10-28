@@ -61,7 +61,8 @@ export function controlledModelInput(tool: string, input: any): Record<string, u
   return { input_sha256: digest, semantic: redactControlledValue(input) };
 }
 const contentCodes = new Set(['PLAN_INVALID', 'INVALID_PATH', 'PRIVATE_PATH', 'SCOPE_DENIED', 'READ_REQUIRED', 'INVALID_FILE', 'INVALID_EXECUTION', 'OUTPUT_EXISTS',
-  'INVALID_CHECK', 'CHECK_INPUT_MISSING', 'CORNELL_INVALID', 'GENERATED_ARTIFACT', 'VERDICT_REQUIRED', 'SCHEMA_INVALID', 'INVALID_PAYLOAD']);
+  'INVALID_CHECK', 'CHECK_INPUT_MISSING', 'CORNELL_INVALID', 'GENERATED_ARTIFACT', 'VERDICT_REQUIRED', 'SCHEMA_INVALID', 'INVALID_PAYLOAD',
+  'INPUT_SEARCH_REQUIRED', 'TECHNICAL_INCIDENT', 'QUESTION_PENDING', 'QUESTION_STALE', 'ANSWER_CONFLICT', 'NO_PENDING_QUESTION', 'INVALID_CONTEXT']);
 const runtimeCodes = new Set(['ACTOR_INACTIVE', 'INPUT_CHANGED', 'STALE_READ', 'STATE_UNCERTAIN', 'PROTOCOL_ERROR', 'UNSUPPORTED_STAGE', 'EVIDENCE_SCAN_TIMEOUT',
   'CORNELL_FORMAT_PROFILE_UNSUPPORTED',
   'CORNELL_CANONICAL_INVALID', 'CORNELL_VALIDATOR_UNAVAILABLE',
@@ -82,7 +83,8 @@ const schemaMessages = {
 const schemaTypes = new Set(['string', 'number', 'boolean', 'array', 'object', 'null', 'undefined', 'int', 'bigint']);
 // Schema names, not model-provided dictionary keys. Unknown/sensitive names never enter traces.
 const schemaFields = new Set(('schema_version id version title objective rationale acceptance_criteria allowed_paths verification_paths outputs documentation_paths checks purpose command baseline_paths expected_exit_code timeout_ms negative_controls risk reuse procedure_id parameters procedure_candidate script verification_script dependencies effects write_roots read_roots network publication task_family environment input_paths preservation_paths specialists role cornell_output_dir path max_chars start_line query max_matches content outcome summary artifacts findings failure_kind verdict limitations requirement_id expected_requirement_revision workflow_id task_id owner topic date output_dir context constraints abstract learning_objectives text methods explanations heading body results discussion questions prompt objective_ids answer worked_example expected observed evidence_ids practice procedure steps solution_path starter sources uri retrieved_at locator record_id sha256 failure_cases').split(' '));
-for (const field of ['input_path', 'cornell_input_path', 'evidence_report_paths', 'after_evidence_reports',
+for (const field of ['category', 'missing', 'why_cannot_infer', 'criterion', 'searched_paths', 'start_char',
+  'input_path', 'cornell_input_path', 'evidence_report_paths', 'after_evidence_reports',
   'objective_indexes', 'question', 'url']) schemaFields.add(field);
 for (const field of ['execution_steps', 'output_paths', 'max_output_bytes', 'argv', 'name', 'fixture_description',
   'intent', 'implementation_instructions', 'verification_instructions']) schemaFields.add(field);

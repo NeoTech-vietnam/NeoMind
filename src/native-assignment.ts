@@ -2,7 +2,7 @@ import { existsSync, readFileSync, chmodSync } from 'node:fs';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { atomicWrite, getRecord, hash, loadRecords, now, readConfig, safePath, withOperationLock, updateRecord } from './storage.js';
 import { nativeWorkflowRecord, recordFingerprint, workRecordProblems } from './engineering.js';
-import { agentProfiles, type AgentProfileId } from './agent-profiles.js';
+import { legacyAgentProfiles as agentProfiles, type AgentProfileId } from './agent-profiles.js';
 import { roleCapabilities } from './tools.js';
 
 export interface ReportedAssignment {

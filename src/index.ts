@@ -51,7 +51,9 @@ export { delegateAssignment, inspectNativeAssignment } from './native-assignment
 export { followUpNativeAssignment } from './native-recovery.js';
 export * from './native-software.js';
 export * from './runtime-info.js';
-export { migrateStorage, type StorageMigration } from './migration.js';
+export * from './workforce-requests.js';
+export * from './workforce-connection.js';
+export { migrateStorage, rollbackStorageMigration, type StorageMigration, type StorageMigrationOptions } from './migration.js';
 export { upgradeProject, UpgradeError } from './upgrade.js';
 export type { UpgradeResult, UpgradeOptions, UpgradePhase } from './upgrade.js';
 export { installProject, updateProject, doctor, configureCodeGraph } from './installer.js';

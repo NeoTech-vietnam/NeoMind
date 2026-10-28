@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { hash, retryWindowsFileOperation, safePath } from './storage.js';
-import { listProcedures, validateProcedureParameters, validateProcedurePath, type ProcedureManifest } from './procedures.js';
+import { hash, retryWindowsFileOperation, safePath, readConfig } from './storage.js';
+import { listProcedures, discoverProcedures, validateProcedureParameters, validateProcedurePath,
+  type ProcedureManifest, type ProcedureDiscoveryIssue } from './procedures.js';
 
 /** Discovery is advisory: this module never imports or executes a retrieved script. */
 export interface WorkPrepareInput {
@@ -63,6 +64,8 @@ export interface WorkPreparation {
   manager_brief: string;
   next_action: string;
   execution_authorized: false;
+  retrieval?: { source: 'sqlite' | 'canonical' | 'unavailable'; incident?: 'PROCEDURE_INDEX_UNAVAILABLE' };
+  registry?: { state: 'available' | 'degraded' | 'unavailable'; issues: ProcedureDiscoveryIssue[] };
 }
 
 const indexPath = '.neomind/cache/procedures.sqlite';
@@ -95,10 +98,20 @@ export function normalizeProcedureQuery(value: string): string {
 function words(value: string): string[] {
   return [...new Set(normalizeProcedureQuery(value).split(' ').filter((word) => word && !stopWords.has(word)))].slice(0, 40);
 }
+/** Advisory task-family inference retains positive domain words before synonym
+ * expansion. Negated generation clauses are not an authorization to reuse. */
+function affirmativeIntentClauses(request: string): string[] {
+  const text = request.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase();
+  return text.split(/[;,\n.!?]+|\b(?:but|however|nhung|tuy nhien)\b/).filter(clause =>
+    !/\b(?:do\s+not|does\s+not|don['’]t|must\s+not|never|no\s+need\s+to|khong|dung|chang)\s+(?:(?:need|can|muon|phai)(?:\s+to)?\s+)?(?:create|generate|make|add|choose|select|build|implement|export|want|need|have|get|tao|them|chon|sinh|xuat|co)\b/.test(clause) &&
+    !/\b(?:no|not)\s+(?:(?:a|an|any|new|another|more)\s+)*(?:leetcode|algorithm|exercise|bai tap)\b/.test(clause));
+}
 function inferredIntent(request: string): string {
-  const text = normalizeProcedureQuery(request);
+  const clauses = affirmativeIntentClauses(request), text = normalizeProcedureQuery(clauses.join(' '));
   if (/\bexport\b/.test(text) && /\b(?:cornell|notes?|ghi chu)\b/.test(text)) return 'cornell-export';
-  if (/\bexercise\b/.test(text) && /\b(?:algorithm|linked list|c11|cpp|c\+\+)\b/.test(text)) return 'algorithm-exercise';
+  const leetCodeGeneration = clauses.some(clause => /\bleetcode\b/.test(clause) &&
+    /\b(?:new|next|another|create|generate|make|add|choose|select|solve|implement|tao|them|chon|giai|moi|tiep theo)\b/.test(clause));
+  if (leetCodeGeneration || /\bexercise\b/.test(text) && /\b(?:algorithm|linked list|c11|cpp|c\+\+)\b/.test(text)) return 'algorithm-exercise';
   if (/\bcornell\b/.test(text)) return 'cornell-note';
   if (/\bconfig\b/.test(text) && /\bpersistence\b/.test(text)) return 'software-config-persistence';
   if (/\bhysteresis\b/.test(text)) return 'embedded-hysteresis-load-control';
@@ -328,9 +341,39 @@ function inspect(root: string, manifest: ProcedureManifest, input: WorkPrepareIn
 /** Prepare a new request or retry. The supplied request ID remains stable; every execution gets its own runner-owned run ID. */
 export function prepareWork(root: string, input: WorkPrepareInput): WorkPreparation {
   validateInput(input);
-  const manifests = listProcedures(root); // Always reload authoritative artifacts; SQLite does not establish eligibility.
-  const retrieval = retrieve(root, manifests, input.request);
-  const requested = input.procedure_id ? manifests.filter((item) => item.id === input.procedure_id && (!input.procedure_version || item.version === input.procedure_version)) : undefined;
+  // Uninitialized historical registries keep their strict API behavior. A bad
+  // optional source in WorkForce must not prevent an unrelated implementation.
+  let workforce = false;
+  try { workforce = readConfig(root).execution_engine === 'opencode'; } catch { /* No WorkForce opt-in. */ }
+  const discovered = workforce ? discoverProcedures(root) : undefined;
+  const manifests = discovered?.manifests ?? listProcedures(root);
+  const sourceIncident = discovered !== undefined && discovered.state !== 'available';
+  const canonicalRetrieval = () => {
+    const query = words(input.request);
+    return new Map(manifests.flatMap(manifest => {
+      const terms = new Set(words(`${manifest.title} ${manifest.description} ${manifest.keywords.join(' ')}`));
+      const score = query.filter(word => terms.has(word)).length;
+      return score ? [[`${manifest.id}@${manifest.version}`, score] as [string, number]] : [];
+    }));
+  };
+  let retrieval: Map<string, number>, cacheIncident = false;
+  try {
+    // Do not replace a complete derived index with a partial registry view.
+    retrieval = sourceIncident ? canonicalRetrieval() : retrieve(root, manifests, input.request);
+  }
+  catch (error) {
+    if (!workforce) throw error;
+    // The cache grants no authority. Canonical manifests, current hashes,
+    // qualification, scope and permissions are still inspected below.
+    retrieval = canonicalRetrieval();
+    cacheIncident = true;
+  }
+  // An explicitly requested latest version cannot silently downgrade around a
+  // malformed release. An explicitly pinned healthy release stays selectable.
+  const requestedUnavailable = !!input.procedure_id && discovered?.issues.some(issue => issue.procedure_id === input.procedure_id &&
+    (!input.procedure_version || issue.version === input.procedure_version || issue.path.split('/').at(-1) === input.procedure_id));
+  const requested = input.procedure_id ? requestedUnavailable ? []
+    : manifests.filter((item) => item.id === input.procedure_id && (!input.procedure_version || item.version === input.procedure_version)) : undefined;
   const inferred = inferredIntent(input.request);
   const intent = input.intent_id ?? (inferred !== 'unspecified' ? inferred : requested?.[0]?.task_family ?? 'unspecified');
   const tags = new Set((input.tags ?? []).map(normalizeProcedureQuery));
@@ -351,12 +394,18 @@ export function prepareWork(root: string, input: WorkPrepareInput): WorkPreparat
   const selectedRef = selected && decision !== 'new' ? { id: selected.candidate.id, version: selected.candidate.version, contract_hash: selected.candidate.contract_hash, script_sha256: selected.candidate.script_sha256 } : undefined;
   const parameters = selectedRef ? selected!.parameters : structuredClone(input.parameters ?? {});
   const context = { original_request: input.request, intent_id: intent, parameters, outputs: input.outputs ?? [], environment: { platform: process.platform, arch: process.arch, node: process.versions.node, ...input.environment }, scope: input.scope ?? {}, procedure: selectedRef ?? null };
-  const limitations = selected?.candidate.reasons.map((reason) => `${reason.code}: ${reason.message}`).join(' ') ?? (input.procedure_id ? 'Requested procedure/version is unavailable.' : 'No applicable saved procedure was found.');
+  const limitations = selected?.candidate.reasons.map((reason) => `${reason.code}: ${reason.message}`).join(' ') ?? (input.procedure_id ? 'Requested procedure/version is unavailable; it has not been selected or authorized.'
+    : sourceIncident ? 'Authoritative procedure discovery is incomplete; this does not establish that no reusable tool exists.' : 'No applicable saved procedure was found.');
+  const registryNotice = sourceIncident ? `Optional procedure registry ${discovered!.state}: ${discovered!.issues.length} invalid or inaccessible entries were excluded without modifying source files. ${input.procedure_id && !selectedRef
+    ? 'The explicitly requested procedure is unavailable; restore it or select an independently validated version.'
+    : 'Continue ordinary implementation or use only a validated selected version under its unchanged qualification and scope checks.'} Never execute an excluded procedure or bypass its validation through the direct runner.` : '';
   return { request_id: input.request_id ?? `request-${randomUUID()}`, original_request: input.request, intent_id: intent,
     context_digest: hash(canonical(context)), decision, parameters,
     candidates: candidates.slice(0, input.limit ?? 10).map((item) => item.candidate),
     ...(selectedRef ? { selected_procedure: selectedRef } : {}), execution_authorized: false,
-    manager_brief: `Intent: ${intent}. Decision: ${decision}. ${selectedRef ? `Procedure: ${selectedRef.id}@${selectedRef.version} (${selectedRef.contract_hash}).` : ''} ${limitations} ${nextAction}`.trim(), next_action: nextAction };
+    retrieval: { source: discovered?.state === 'unavailable' ? 'unavailable' : sourceIncident || cacheIncident ? 'canonical' : 'sqlite', ...(cacheIncident ? { incident: 'PROCEDURE_INDEX_UNAVAILABLE' as const } : {}) },
+    ...(discovered ? { registry: { state: discovered.state, issues: discovered.issues } } : {}),
+    manager_brief: `Intent: ${intent}. Decision: ${decision}. ${selectedRef ? `Procedure: ${selectedRef.id}@${selectedRef.version} (${selectedRef.contract_hash}).` : ''} ${limitations} ${registryNotice} ${cacheIncident ? 'Disposable search index unavailable; discovery used authoritative manifests with all eligibility checks retained.' : ''} ${nextAction}`.trim(), next_action: nextAction };
 }
 function compareVersion(a: string, b: string): number {
   const left = a.split('.').map(Number), right = b.split('.').map(Number);

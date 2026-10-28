@@ -15,9 +15,11 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { tmpdir, userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-const names = ['neomind', 'taskforces', 'verythinker'];
+const names = ['workforce', 'neomind', 'taskforces', 'verythinker'];
+const roots = ['.workforce', '.neomind', '.taskforces', '.verythinker'];
 const sections = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
 const settled = new Set(['completed', 'failed', 'interrupted', 'blocked', 'orphaned']);
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
@@ -117,7 +119,7 @@ function validateConfiguration(path) {
   const cfg = json(path);
   if (cfg?.schema_version !== 1 || !isAbsolute(cfg.root ?? '') ||
       !isAbsolute(cfg.recovery_path ?? '') || !isAbsolute(cfg.result_path ?? '') ||
-      !['.neomind', '.taskforces', '.verythinker'].includes(cfg.managed_root) ||
+      !roots.includes(cfg.managed_root) ||
       !Number.isSafeInteger(cfg.supervisor_pid) || cfg.supervisor_pid < 1 ||
       typeof cfg.lock_token !== 'string' || !cfg.lock_token)
     throw new Error('Invalid runner configuration.');
@@ -138,8 +140,8 @@ function validateConfiguration(path) {
   if (isAbsolute(cfg.spec)) {
     if (!/\.tgz$/i.test(cfg.spec)) throw new Error('Local targets must be .tgz files.');
     regular(cfg.spec);
-  } else if (!/^neomind@[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$/.test(cfg.spec)) {
-    throw new Error('Only neomind versions/tags and absolute local .tgz files are supported; scoped packages are unsupported.');
+  } else if (!/^workforce@[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$/.test(cfg.spec)) {
+    throw new Error('Only workforce versions/tags and absolute local .tgz files are supported; scoped packages are unsupported.');
   }
   return cfg;
 }
@@ -167,9 +169,9 @@ function validateRoot() {
     throw new Error('Only npm projects are supported.');
   for (const name of ['yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb'])
     if (existsSync(join(root, name))) throw new Error(`Non-npm lockfile ${name} requires manual package-manager migration.`);
-  if (existsSync(join(root, '.neomind-migration.lock')))
+  if (roots.some(name => existsSync(join(root, `${name}-migration.lock`))))
     throw new Error('Storage migration is active; stop it before upgrading.');
-  if (['.neomind', '.taskforces', '.verythinker'].some(name => name !== managed && existsSync(join(root, name))))
+  if (roots.some(name => name !== managed && existsSync(join(root, name))))
     throw new Error('Both managed storage roots exist; resolve them before upgrading.');
   localPath(root, directory(join(root, managed)));
   regular(localPath(root, join(root, managed, 'config.json')));
@@ -187,10 +189,10 @@ function validateRoot() {
     }
     // Reject renamed npm aliases too: their install/remove ownership is ambiguous.
     if (deps && Object.entries(deps).some(([key, value]) =>
-      !names.includes(key) && typeof value === 'string' && /^npm:(?:neomind|taskforces|verythinker)(?:@|$)/.test(value)))
-      throw new Error('Renamed neomind/verythinker dependency aliases are unsupported.');
+      !names.includes(key) && typeof value === 'string' && /^npm:(?:workforce|neomind|taskforces|verythinker)(?:@|$)/.test(value)))
+      throw new Error('Renamed workforce/verythinker dependency aliases are unsupported.');
   }
-  if (!matches.length) throw new Error('No direct local neomind or verythinker dependency exists.');
+  if (!matches.length) throw new Error('No direct local workforce or verythinker dependency exists.');
   const dependencySection = matches[0].section;
   if (!['dependencies', 'devDependencies'].includes(dependencySection) ||
       matches.some((entry) => entry.section !== dependencySection))
@@ -202,7 +204,7 @@ function validateRoot() {
       names.some((name) => key === name || key.startsWith(`${name}@`)) || hasToolOverride(child));
   }
   if (hasToolOverride(pkg.overrides))
-    throw new Error('NeoMind/VeryThinker npm overrides require manual review before package replacement.');
+    throw new Error('WorkForce/VeryThinker npm overrides require manual review before package replacement.');
   for (const name of names) {
     const installed = join(root, 'node_modules', name);
     if (!matches.some((entry) => entry.name === name) && existsSync(installed))
@@ -228,8 +230,21 @@ function inspectPackage(name, expectedVersion) {
 
 function assertQuiescent() {
   const { root, managed_root: managed, lock_token: token, supervisor_pid: pid } = configuration;
-  if (existsSync(join(root, '.neomind-migration.lock')))
+  if (roots.some(name => existsSync(join(root, `${name}-migration.lock`))))
     throw new Error('Storage migration lock is present.');
+  // The editor host owns both legacy LM and WorkForce OpenCode sessions. An
+  // idle but enabled host could dispatch while package files are replaced.
+  const key = createHash('sha256').update(`${userInfo().username}\0${realpathSync.native(root)}`).digest('hex');
+  for (const prefix of ['neomind-vscode', 'workforce-vscode']) {
+    const path = join(tmpdir(), `${prefix}-${key}`, 'host.json');
+    if (!existsSync(path)) continue;
+    const descriptor = json(regular(path));
+    if (descriptor.root !== realpathSync.native(root) || !Number.isSafeInteger(descriptor.pid) || descriptor.pid < 1)
+      throw new Error('Editor host identity is indeterminate; disable the project host before upgrading.');
+    try { process.kill(descriptor.pid, 0); }
+    catch (error) { if (error.code === 'ESRCH') continue; throw new Error('Editor host liveness is indeterminate.'); }
+    throw new Error('An editor execution owner is active; disable the WorkForce/NeoMind host before upgrading.');
+  }
   const base = join(root, managed);
   const leasePath = join(base, 'operations', 'package-upgrade.lock');
   const lease = json(localPath(base, regular(leasePath)));
@@ -397,8 +412,8 @@ function pack(cli, spec, folder, expectedName, expectedVersion) {
 function validateInstalledManifest(section, target, durable) {
   const { root } = configuration;
   const pkg = json(localPath(root, regular(join(root, 'package.json'))));
-  const spec = pkg[section]?.neomind;
-  if (typeof spec !== 'string') throw new Error('npm did not save neomind in the original dependency section.');
+  const spec = pkg[section]?.workforce;
+  if (typeof spec !== 'string') throw new Error('npm did not save workforce in the original dependency section.');
   if (durable) {
     const path = spec.startsWith('file:') ? spec.slice(5) : '';
     if (!path || isAbsolute(path) || !equalPath(resolve(root, path), durable))
@@ -407,19 +422,19 @@ function validateInstalledManifest(section, target, durable) {
     throw new Error('npm did not save the exact pinned registry version.');
   }
   for (const key of sections)
-    if ((key !== section && Object.hasOwn(pkg[key] ?? {}, 'neomind')) || Object.hasOwn(pkg[key] ?? {}, 'taskforces') || Object.hasOwn(pkg[key] ?? {}, 'verythinker'))
+    if ((key !== section && Object.hasOwn(pkg[key] ?? {}, 'workforce')) || Object.hasOwn(pkg[key] ?? {}, 'neomind') || Object.hasOwn(pkg[key] ?? {}, 'taskforces') || Object.hasOwn(pkg[key] ?? {}, 'verythinker'))
       throw new Error('npm left an ambiguous or legacy tool dependency in package.json.');
-  inspectPackage('neomind', target.version);
+  inspectPackage('workforce', target.version);
   // shrinkwrap takes precedence over package-lock; do not inspect the hidden npm cache lock.
   const lockPath = ['npm-shrinkwrap.json', 'package-lock.json'].map((name) => join(root, name))
     .find((path) => existsSync(path));
   if (lockPath) {
     const lock = json(localPath(root, regular(lockPath)));
-    const entry = lock.packages?.['node_modules/neomind'] ?? lock.dependencies?.neomind;
+    const entry = lock.packages?.['node_modules/workforce'] ?? lock.dependencies?.workforce;
     if (!entry || ((!durable || lock.packages) && entry.version !== target.version))
-      throw new Error('npm lock target does not match the installed neomind version.');
-    if (lock.packages?.['']?.[section]?.neomind !== undefined &&
-        lock.packages[''][section].neomind !== spec)
+      throw new Error('npm lock target does not match the installed workforce version.');
+    if (lock.packages?.['']?.[section]?.workforce !== undefined &&
+        lock.packages[''][section].workforce !== spec)
       throw new Error('npm lock root dependency does not match package.json.');
     if (durable) {
       const resolved = entry.resolved ?? entry.version;
@@ -447,10 +462,10 @@ function performUpgrade() {
   checkpoint('backup');
   journal.backups = backupProject();
   checkpoint('stage-target');
-  const target = pack(cli, configuration.spec, 'target', 'neomind');
+  const target = pack(cli, configuration.spec, 'target', 'workforce');
   journal.target = target;
   const durable = isAbsolute(configuration.spec) ? cacheTarget(target) : undefined;
-  const installSpec = durable ?? `neomind@${target.version}`;
+  const installSpec = durable ?? `workforce@${target.version}`;
   journal.install_spec = installSpec;
   if (durable) journal.durable_target = durable;
   checkpoint('stage-old');
@@ -486,10 +501,10 @@ function performUpgrade() {
     '--ignore-scripts', '--no-audit', '--no-fund'], 'npm install');
   checkpoint('verify');
   const dependencySpec = validateInstalledManifest(dependencySection, target, durable);
-  const installed = inspectPackage('neomind', target.version);
+  const installed = inspectPackage('workforce', target.version);
   assertQuiescent();
   checkpoint('update');
-  const output = runNode([installed.cli, 'update', '--project', root, '--json'], 'new neomind update', process.env);
+  const output = runNode([installed.cli, 'update', '--project', root, '--json'], 'new workforce update', process.env);
   let update;
   try { update = JSON.parse(output); }
   catch { throw new Error('The new CLI update exited successfully but did not return valid JSON.'); }
@@ -505,7 +520,7 @@ function performUpgrade() {
     schema_version: 1,
     status: 'upgraded',
     root,
-    target: { name: 'neomind', version: target.version },
+    target: { name: 'workforce', version: target.version },
     previous: previous.map(({ name, version }) => ({ name, version })),
     dependency_section: dependencySection,
     dependency_spec: dependencySpec,
@@ -515,6 +530,10 @@ function performUpgrade() {
     backups: journal.backups.map(({ path, backup }) => ({ path, backup })),
     update,
     conflicts: update.conflicts,
+    migration: {
+      required: configuration.managed_root !== '.workforce' || json(join(root, configuration.managed_root, 'config.json')).execution_engine !== 'opencode',
+      target_engine: 'opencode', command: ['workforce', 'migrate', '--project', root],
+    },
   };
   checkpoint('complete');
   return result;

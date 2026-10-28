@@ -1,3 +1,5 @@
+// Retained NeoMind native protocol only; the WorkForce extension does not
+// activate this tool. WorkForce requests use its backend-owned engine instead.
 const { createHash, randomUUID } = require('node:crypto');
 const { lstatSync, readFileSync, realpathSync } = require('node:fs');
 const { isAbsolute, join, relative, resolve } = require('node:path');
@@ -214,7 +216,7 @@ function createNativeDispatchHost({ vscode, context, loadRuntime }) {
         let manifest;
         try { manifest = JSON.parse(regular(join(runtimeRoot, 'package.json'), 64_000)); } catch { fail('RUNTIME_MISMATCH', 'The trusted runtime package cannot be validated.'); }
         const runtime = await guarded(() => loadRuntime(project));
-        if (manifest.name !== 'neomind' || manifest.version !== identity.package_version || typeof runtime.getRuntimeBuildFingerprint !== 'function' ||
+        if (!['workforce', 'neomind'].includes(manifest.name) || manifest.version !== identity.package_version || typeof runtime.getRuntimeBuildFingerprint !== 'function' ||
             runtime.getRuntimeBuildFingerprint(runtimeRoot) !== identity.build_fingerprint)
           fail('RUNTIME_MISMATCH', 'The serving MCP runtime bytes differ from the trusted installed NeoMind build.');
         scope = { project, runtimeRoot, runtime, identity, folders: folders.map(folder => localPath(folder.uri.fsPath)).sort().join('\0') };

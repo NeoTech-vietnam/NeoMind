@@ -4,7 +4,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, 
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import { runCommand } from './command-runner.js';
-import { safePath, withOperationLock } from './storage.js';
+import { safePath, withOperationLock, resolveManagedRoot } from './storage.js';
 
 /** Local execution is a reviewed host process, not a filesystem or network sandbox. */
 export const procedureExecutionLimitations = [
@@ -106,7 +106,7 @@ function canonical(value: unknown): string {
 function checkedPath(root: string, path: string, internal = false): string {
   if (!path || path.includes('\\') || path.includes('\0') || isAbsolute(path) || /^[a-z]:/i.test(path) || path.split('/').some(part => !part || part === '.' || part === '..' || part.includes(':') || /[.\s]$/.test(part) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part)))
     throw new Error('Procedure paths must be canonical project-relative forward-slash paths.');
-  if (!internal && ['.git', '.neomind', '.taskforces', '.verythinker'].includes(path.split('/')[0]!.toLowerCase())) throw new Error('Procedure effects cannot target Git or NeoMind managed storage.');
+  if (!internal && ['.git', '.workforce', '.workforce-private', '.neomind', '.taskforces', '.verythinker'].includes(path.split('/')[0]!.toLowerCase())) throw new Error('Procedure effects cannot target Git or WorkForce managed storage.');
   const base = resolve(root), target = internal ? safePath(root, path) : resolve(base, path), rel = relative(base, target);
   if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('Procedure path escapes the project.');
   let cursor = base;
@@ -272,6 +272,45 @@ export function listProcedures(root: string): ProcedureManifest[] {
     }
   }
   return result;
+}
+export interface ProcedureDiscoveryIssue {
+  code: 'PROCEDURE_REGISTRY_UNAVAILABLE' | 'PROCEDURE_ENTRY_UNAVAILABLE';
+  path: string; procedure_id?: string; version?: string;
+}
+export interface ProcedureDiscovery {
+  state: 'available' | 'degraded' | 'unavailable'; manifests: ProcedureManifest[]; issues: ProcedureDiscoveryIssue[];
+}
+/** Advisory WorkForce discovery excludes invalid entries without editing them.
+ * Execution and explicit strict listing still validate their complete sources. */
+export function discoverProcedures(root: string): ProcedureDiscovery {
+  const manifests: ProcedureManifest[] = [], issues: ProcedureDiscoveryIssue[] = [];
+  const registry = `${resolveManagedRoot(root)}/procedures`;
+  let ids: string[];
+  try {
+    const directory = checkedPath(root, registry, true);
+    if (!existsSync(directory)) return { state: 'available', manifests, issues };
+    ids = readdirSync(directory).sort();
+  } catch {
+    return { state: 'unavailable', manifests, issues: [{ code: 'PROCEDURE_REGISTRY_UNAVAILABLE', path: registry }] };
+  }
+  for (const id of ids) {
+    let releases: string[];
+    try {
+      identifier.parse(id);
+      releases = readdirSync(checkedPath(root, `${registry}/${id}`, true)).sort();
+    } catch {
+      issues.push({ code: 'PROCEDURE_ENTRY_UNAVAILABLE', path: `${registry}/${id}`,
+        ...(identifier.safeParse(id).success ? { procedure_id: id } : {}) }); continue;
+    }
+    for (const release of releases) {
+      try { version.parse(release); manifests.push(resolveProcedure(root, id, release)); }
+      catch {
+        issues.push({ code: 'PROCEDURE_ENTRY_UNAVAILABLE', path: `${registry}/${id}/${release}`,
+          procedure_id: id, ...(version.safeParse(release).success ? { version: release } : {}) });
+      }
+    }
+  }
+  return { state: issues.length ? manifests.length ? 'degraded' : 'unavailable' : 'available', manifests, issues };
 }
 function event(root: string, manifest: ProcedureManifest, status: ProcedureStatus, who: string, reason: string): void {
   const at = new Date().toISOString(), id = randomUUID();

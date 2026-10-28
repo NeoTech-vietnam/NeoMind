@@ -8,14 +8,14 @@ export type AgentProfileId = 'coordinator' | 'explorer' | 'researcher' | 'planne
 export interface AgentProfile {
   readonly id: AgentProfileId;
   readonly name: string;
-  readonly roles: readonly NativeRole[];
+  readonly roles: readonly [NativeRole, ...NativeRole[]];
   readonly modelRole: NativeRole;
   readonly nativeTools: readonly AgentNativeTool[];
   readonly duty: string;
   readonly procedure: string;
 }
 
-export const agentProfiles = [
+export const legacyAgentProfiles = [
   {
     id: 'coordinator', name: 'NeoMind Coordinator Agent',
     roles: ['manager', 'curator', 'release'], modelRole: 'manager',
@@ -91,7 +91,25 @@ Outputs: actionable unresolved findings with location, severity, rationale and a
   },
 ] as const satisfies readonly AgentProfile[];
 
-export const coordinatorAgentName = agentProfiles[0].name;
+const workforceNames: Partial<Record<AgentProfileId, string>> = {
+  coordinator: 'WF.PM', planner: 'WF.SWSD', architect: 'WF.P-RES',
+  implementer: 'WF.FnD', reviewer: 'WF.Reviewer', verifier: 'WF.Tester',
+};
+export function workforceProfileFileId(id: string): string {
+  return ({ coordinator: 'pm', planner: 'swsd', architect: 'p-res', implementer: 'fnd', reviewer: 'reviewer', verifier: 'tester' } as Record<string, string>)[id] ?? id;
+}
+export const agentProfiles: readonly AgentProfile[] = (['coordinator', 'planner', 'architect', 'implementer', 'reviewer', 'verifier'] as const)
+  .map(id => legacyAgentProfiles.find(profile => profile.id === id)!)
+  .map(profile => ({ ...profile, name: workforceNames[profile.id]!,
+    procedure: profile.id === 'coordinator'
+      ? `Receive the full user requirement and its actual file/folder context. Submit it once through workforce request_submit. The WorkForce runtime owns planning, worker sessions, tools, recovery and acceptance. Return the durable receipt and useful artifact links. Forward a user's answer to the same pending request, and use request_status or request_control when requested. The runtime WF.PM applies the V-model, finds qualified existing tools, delegates only applicable duties, and escalates insufficient worker capability to top-models. Save substantive results through the tools actually bound to this session.`
+      : `Fulfil the backend-assigned ${workforceNames[profile.id]} responsibility within its current scope. Read the actual request, applicable criteria and source artifacts. Use the semantic tools provided for this assignment. Return one substantive result with findings, artifact references and actual limitations. Backend binds identity and persists state. Independent review and testing stay separate from implementation. ${profile.id === 'implementer' ? 'Preserve user edits and create useful product outputs; report concrete capability findings so the runtime can continue with top-models.' : profile.id === 'verifier' ? 'Verify the delivered revision independently; repair only checker artifacts in the assigned verification scope. Use project tools and observed results.' : profile.id === 'reviewer' ? 'Review specifications, design, implementation and applicable standards independently. Source review precedes independent testing and does not claim future test results.' : 'Resolve the assigned requirements/design decisions and verification coverage; tailor non-applicable work with rationale.'}`,
+  }));
+
+export const coordinatorAgentName = agentProfiles[0]!.name;
+export const legacyCoordinatorAgentName = legacyAgentProfiles[0].name;
+export const legacyAgentDelegation = legacyAgentProfiles.filter(profile => profile.id !== 'coordinator')
+  .map(profile => `${profile.name}: ${profile.duty}`).join(' ');
 
 export const nativeIdentityInstructions = `## Native assignment protocol
 Only a manager-workflow saved in copilot-native or codex-native mode uses the assignment protocol below. A lightweight-workflow uses lightweight_checkpoint and .neomind/guides/lightweight.md; do not call assignment_bootstrap, assignment_open, assignment_report, assignment_result or manager_finish, and do not require Cornell closure. Existing strict workflows retain their signed Bridge lifecycle and do not use this unsigned protocol.

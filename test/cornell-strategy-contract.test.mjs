@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { researchFixture } from './cornell-research-fixture.mjs';
 import { compileCornellResearch, cornellResearchSchema, cornellCanonical } from '../dist/cornell-workflow.js';
 import { createCornellNote, previewCornellArtifacts } from '../dist/notes.js';
-import { createRecord,safePath,hash,getRecord,loadRecords } from '../dist/storage.js';
+import { createRecord, safePath, hash, getRecord, loadRecords } from '../dist/storage.js';
 import { recordFingerprint } from '../dist/engineering.js';
 import { controlledCornellResult } from '../dist/controlled-cornell-sources.js';
 import { persistControlledCornellNote } from '../dist/controlled-cornell-write.js';

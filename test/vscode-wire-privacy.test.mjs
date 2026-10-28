@@ -36,10 +36,12 @@ test('Windows descriptor creation replaces foreign token-default grants when tem
   mkdirSync(isolatedTemp);
   execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
     "$ErrorActionPreference='Stop'; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; " +
-    "$acl=New-Object System.Security.AccessControl.DirectorySecurity; $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); " +
+    '$before=[System.IO.Directory]::GetAccessControl($env:NEOMIND_TEST_ACL_DIRECTORY); $changeOwner=$before.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value; ' +
+    "$acl=New-Object System.Security.AccessControl.DirectorySecurity; if($changeOwner){$acl.SetOwner($sid)}; $acl.SetAccessRuleProtection($true,$false); " +
     "$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'FullControl','None','None','Allow'); $acl.AddAccessRule($rule); " +
     '[System.IO.Directory]::SetAccessControl($env:NEOMIND_TEST_ACL_DIRECTORY,$acl)'],
   { env: { ...process.env, NEOMIND_TEST_ACL_DIRECTORY: isolatedTemp }, stdio: 'ignore', windowsHide: true, timeout: 10_000 });
+  assert.deepEqual(aclFacts(isolatedTemp), { ownerIsUser: true, protected: true, foreignAllows: 0 });
   // A child with no inherited ACL uses its token's default DACL. Real Windows
   // tokens can include explicit SYSTEM/Admin Allows even for a non-admin user.
   execFileSync(process.execPath, ['--input-type=module', '-e',

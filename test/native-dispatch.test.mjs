@@ -275,7 +275,7 @@ test('Coordinator-only actions return safe Cornell references without launching 
   for (const secret of [manager.token, packet().claim_token, packet().handoff.prompt, 'PRIVATE-FAKE-LAUNCH-PROMPT']) assert.equal(visible.includes(secret), false);
 });
 
-test('extension registers the contributed tool and returns only sanitized host results', async t => {
+test('legacy dispatch remains sanitized when explicitly invoked but is not contributed to new chats', async t => {
   const app = fixture(t, { responses: [{ status: 'ready_for_closure', workflow_id: workflowId, token: manager.token }] });
   activateNativeDispatch(app.vscode, app.context, app.loadRuntime);
   assert.equal(app.registered[0].name, TOOL_NAME);
@@ -284,8 +284,7 @@ test('extension registers the contributed tool and returns only sanitized host r
   assert.equal(JSON.stringify(result).includes(manager.token), false);
   const manifest = require('../extensions/vscode-model-bridge/package.json');
   const contribution = manifest.contributes.languageModelTools.find(tool => tool.name === TOOL_NAME);
-  assert.equal(contribution.toolReferenceName, 'neomindAdvanceWorkflow');
-  assert.equal(`${manifest.publisher}.${manifest.name}/${contribution.toolReferenceName}`, 'neomind.neomind-model-bridge/neomindAdvanceWorkflow');
-  assert.equal(contribution.inputSchema.additionalProperties, false);
+  assert.equal(contribution, undefined, 'New Local chats have only the backend-owned WorkForce request tool.');
+  assert.deepEqual(manifest.contributes.languageModelTools.map(tool => tool.name), ['workforce_request']);
   assert.equal(manifest.files.includes('native-dispatch.cjs'), true);
 });

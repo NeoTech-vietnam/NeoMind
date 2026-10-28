@@ -1,3 +1,5 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -7,7 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createControlledMcpServer, controlledPlanSchema, controlledConsultationRoles } from '../dist/controlled-tools.js';
 import { normalizeControlledPlanInput, controlledConsultationRole, controlledRegistrationRequested } from '../dist/controlled-plan-input.js';
-import { initialize, atomicWrite, createRecord, loadRecords, hash, safePath } from '../dist/storage.js';
+import { atomicWrite, createRecord, loadRecords, hash, safePath } from '../dist/storage.js';
 import { prepareControlledCheckEvidence, controlledFingerprints } from '../dist/controlled-acceptance.js';
 import { randomUUID } from 'node:crypto';
 import { ensureRoutingPolicy } from '../dist/routing.js';

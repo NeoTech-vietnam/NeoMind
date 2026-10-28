@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -6,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createMcpServer } from '../dist/mcp.js';
-import { initialize, installProject, getRecord, loadRecords } from '../dist/index.js';
+import { installProject, getRecord, loadRecords } from '../dist/index.js';
 import { cornellFixture } from './cornell-fixture.mjs';
 
 function workRecord(role, result) {
@@ -20,7 +21,7 @@ test('native MCP completes a researched, reviewed and checked local-only cycle w
     assert.equal(dirname(root), parent);
     rmSync(root, { recursive: true, force: true });
   });
-  initialize(root, { project_id: 'AUTONOMOUS-CYCLE', profile: 'software', platforms: ['copilot'] });
+  initialize(root, { project_id: 'AUTONOMOUS-CYCLE', profile: 'software', platforms: ['copilot'], copilot_integration: 'local' });
   installProject(root);
   mkdirSync(join(root, 'src')); mkdirSync(join(root, 'docs'));
   // These writes represent the native editor, not an inference or signed capability call.

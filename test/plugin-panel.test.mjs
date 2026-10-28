@@ -87,7 +87,7 @@ test('refused provider revocation does not disconnect any client', async () => {
   await app.send('disable', { plugin: 'rea' });
   assert.equal(app.calls.some(item => item[0] === 'connection'), false);
   assert.equal(app.calls.some(item => item[0] === 'update'), false);
-  assert.ok(app.sent.some(item => item.error && item.message.includes('active NeoMind work')));
+  assert.ok(app.sent.some(item => item.error && item.message.includes('active WorkForce work')));
 });
 
 test('disable adopts only exact existing unmanaged connections before revocation', async () => {
@@ -115,7 +115,7 @@ test('a blocked connection snapshot cannot prevent provider revocation and does 
   assert.equal(app.calls.find(item => item[0] === 'enable')[3], false);
   assert.equal(app.calls.filter(item => item[0] === 'connection' && item[2].connected).length, 0);
   assert.equal(app.calls.filter(item => item[0] === 'connection' && !item[2].connected).length, 3);
-  assert.ok(app.sent.some(item => item.type === 'plugin-notice' && item.message.includes('NeoMind provider disabled') && item.message.includes('Status refresh is unavailable')));
+  assert.ok(app.sent.some(item => item.type === 'plugin-notice' && item.message.includes('WorkForce provider disabled') && item.message.includes('Status refresh is unavailable')));
   assert.equal(JSON.stringify(app.sent).includes('SECRET'), false);
 });
 
@@ -156,12 +156,12 @@ test('installation errors show fixed actionable text without provider secrets or
 });
 
 test('panel entry registers and disposes while runtime loading cannot create a stale panel', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'neomind-panel-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = mkdtempSync(join(tmpdir(), 'workforce-panel-')); t.after(() => rmSync(root, { recursive: true, force: true }));
   let open, changed, finish; let panels = 0;
   const loaded = new Promise(resolve => { finish = resolve; });
   const context = { subscriptions: [] };
   const vscode = { workspace: { isTrusted: true, workspaceFolders: [{ uri: { scheme: 'file', fsPath: root } }], onDidChangeWorkspaceFolders: fn => { changed = fn; return { dispose() {} }; } },
-    commands: { registerCommand: (id, fn) => { assert.equal(id, 'neomind.plugins.open'); open = fn; return { dispose() {} }; } }, window: { createWebviewPanel() { panels++; }, showErrorMessage() {} } };
+    commands: { registerCommand: (id, fn) => { assert.equal(id, 'workforce.plugins.open'); open = fn; return { dispose() {} }; } }, window: { createWebviewPanel() { panels++; }, showErrorMessage() {} } };
   const panel = activatePluginPanel(vscode, context, async () => loaded);
   const operation = open(); await open(); changed(); finish({}); await operation;
   assert.equal(panels, 0); panel.dispose();

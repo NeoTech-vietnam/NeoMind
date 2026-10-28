@@ -7,6 +7,8 @@ import { roleCapabilities } from './tools.js';
 import { controlledToolNames, type ControlledStage } from './controlled-tools.js';
 import { listUpstreams } from './upstreams.js';
 import { onlyAddedRequiredNeoMindMcp } from './codex-required-compatibility.js';
+import { isControlledExecutionReceipt, openCodeVersion } from './execution-attestation.js';
+import type { OpenCodeSupervisionRef } from './opencode-engine.js';
 import {
   atomicWrite,
   getRecord,
@@ -78,15 +80,19 @@ const routingPolicySchema = z
 export type RoutingPolicy = z.infer<typeof routingPolicySchema>;
 export interface NativeReceipt {
   controlled_execution?: { schema_version: 1; epoch_id: string; stage: ControlledStage; routing_policy: RoutingPolicy; documentation_source_sha256?: string;
+    process_contract?: 'software-tools/v2' | 'workforce/v1';
     tool_contract?: { version: 2; local_execution: boolean; qualified_procedure: boolean } |
-      { version: 3; local_execution: boolean; qualified_procedure: boolean; evidence_documentation: boolean; research: boolean } };
+      { version: 3; local_execution: boolean; qualified_procedure: boolean; evidence_documentation: boolean; research: boolean;
+        capabilities?: boolean; planning_result?: 'backend' } };
   schema_version: 1;
-  issuer: 'neomind-codex-app-server' | 'neomind-vscode-lm' |
+  issuer: 'workforce-opencode' | 'neomind-codex-app-server' | 'neomind-vscode-lm' |
     'taskforces-codex-app-server' | 'taskforces-vscode-lm' |
     'verythinker-codex-app-server' | 'verythinker-vscode-lm';
-  execution_mode: 'native' | 'protocol-fixture' | 'vscode-extension-host';
+  execution_mode: 'native' | 'protocol-fixture' | 'vscode-extension-host' | 'opencode-local';
   host_instance?: string;
-  identity_provenance?: 'local-vscode-extension-host';
+  identity_provenance?: 'local-vscode-extension-host' | 'local-opencode';
+  opencode?: { version: string; binary_sha256: string; gateway_instance: string; protocol?: string; response_message_id?: string;
+    supervision?: OpenCodeSupervisionRef; interruption_proof_sha256?: string };
   effort_support?: 'unavailable';
   id: string;
   receipt_path: string;
@@ -150,8 +156,10 @@ export function defaultRoutingPolicy(): RoutingPolicy {
     enabled: true,
     platform: 'copilot',
     runtime_version: '0.162.1',
-    strong_model: 'claude-opus-4.6',
-    worker_models: ['gpt-5.4'],
+    strong_model: 'top-models',
+    worker_models: ['worker-models'],
+    strong_provider: 'customendpoint',
+    worker_provider: 'customendpoint',
     strong_effort: 'high',
     worker_effort: 'low',
   };
@@ -173,6 +181,12 @@ export function ensureRoutingPolicy(root: string): RoutingPolicy {
     const existing = readRoutingPolicy(root);
     if (existing) return existing;
     const policy = defaultRoutingPolicy();
+    if (readConfig(root).execution_engine !== 'opencode') {
+      // Historical projects retain their existing execution contract until the
+      // explicit WorkForce migration selects the new engine and endpoint aliases.
+      policy.strong_model = 'claude-opus-4.6'; policy.worker_models = ['gpt-5.4'];
+      delete policy.strong_provider; delete policy.worker_provider;
+    }
     atomicWrite(
       safePath(root, '.neomind/routing.json'),
       JSON.stringify(policy, null, 2) + '\n',
@@ -290,12 +304,12 @@ export function readInvocation(root: string, id: string): NativeReceipt {
   const { signature, ...unsigned } = value;
   if (
     value.schema_version !== 1 ||
-    !['neomind-codex-app-server', 'neomind-vscode-lm',
+    !['workforce-opencode', 'neomind-codex-app-server', 'neomind-vscode-lm',
       'taskforces-codex-app-server', 'taskforces-vscode-lm',
       'verythinker-codex-app-server', 'verythinker-vscode-lm'].includes(value.issuer) ||
     value.id !== id ||
     value.project_id !== readConfig(root).project_id ||
-    ![`.neomind/native/receipts/${id}.json`, `.taskforces/native/receipts/${id}.json`, `.verythinker/native/receipts/${id}.json`].includes(value.receipt_path) ||
+    ![`.workforce/native/receipts/${id}.json`, `.neomind/native/receipts/${id}.json`, `.taskforces/native/receipts/${id}.json`, `.verythinker/native/receipts/${id}.json`].includes(value.receipt_path) ||
     !/^[a-f0-9]{64}$/.test(value.key_id)
   )
     throw new Error('Native invocation receipt identity is invalid.');
@@ -386,8 +400,39 @@ export function observeInvocation(
   const historicalNamespace = receipt.issuer.startsWith('verythinker-') ? 'verythinker'
     : receipt.issuer.startsWith('taskforces-') ? 'taskforces' : 'neomind';
   const vscode = receipt.issuer.endsWith('-vscode-lm');
+  const opencode = receipt.issuer === 'workforce-opencode';
   let expectedModel: string | undefined = vscode ? undefined : receipt.requested_model;
-  if (vscode) {
+  if (opencode) {
+    if (!isControlledExecutionReceipt(receipt) || receipt.native_sandbox !== null ||
+        !receipt.native_thread_id?.startsWith('ses_') || !receipt.native_turn_id?.startsWith('msg_') ||
+        receipt.client_version !== openCodeVersion || receipt.effort_support !== 'unavailable' || receipt.confirmed_reasoning_effort !== null)
+      errors.push('WorkForce OpenCode execution provenance is invalid.');
+    if (receipt.model_provider !== 'workforce-router') errors.push('WorkForce engine selected an unexpected provider.');
+    if (!receipt.controlled_execution || receipt.gateway_policy_sha256 !== hash(canonicalJson(receipt.native_tool_scope)))
+      errors.push('WorkForce execution requires a bound tool contract and gateway.');
+    const toolContract = receipt.controlled_execution?.tool_contract;
+    if (!toolContract || toolContract.version !== 3 || typeof toolContract.local_execution !== 'boolean' ||
+        typeof toolContract.qualified_procedure !== 'boolean' || typeof toolContract.evidence_documentation !== 'boolean' ||
+        typeof toolContract.research !== 'boolean' || toolContract.capabilities !== undefined && typeof toolContract.capabilities !== 'boolean' ||
+        toolContract.planning_result !== undefined && (toolContract.planning_result !== 'backend' ||
+          receipt.controlled_execution?.process_contract !== 'workforce/v1' || receipt.controlled_execution.stage !== 'planning' || receipt.role !== 'manager') ||
+        toolContract.capabilities && receipt.controlled_execution?.process_contract !== 'workforce/v1' || toolContract.evidence_documentation &&
+        (!/^[a-f0-9]{64}$/.test(receipt.controlled_execution?.documentation_source_sha256 ?? '') ||
+         receipt.role !== 'developer' || receipt.controlled_execution?.stage !== 'implementation' ||
+         toolContract.local_execution || toolContract.qualified_procedure || toolContract.research))
+      errors.push('WorkForce tool contract is invalid.');
+    if (receipt.controlled_execution && toolContract?.version === 3) {
+      const operations = controlledToolNames({ role: receipt.role, stage: receipt.controlled_execution.stage,
+        process_contract: receipt.controlled_execution.process_contract,
+        plugin_capabilities: toolContract.capabilities === true,
+        ...(toolContract.planning_result ? { planning_result: toolContract.planning_result } : {}),
+        workflow_id: receipt.workflow_id!, implementation_paths: [], verification_paths: [],
+        evidence_documentation: toolContract.evidence_documentation, cornell_bound: toolContract.research,
+        execution_steps: toolContract.local_execution ? undefined : [], procedure_bound: toolContract.qualified_procedure });
+      if (canonicalJson(receipt.native_tool_scope) !== canonicalJson(operations))
+        errors.push('WorkForce invocation-bound gateway scope differs from its role contract.');
+    }
+  } else if (vscode) {
     if (receipt.execution_mode !== 'vscode-extension-host' ||
         receipt.identity_provenance !== 'local-vscode-extension-host' ||
         !/^[a-f0-9]{64}$/.test(receipt.host_instance ?? '') ||
@@ -418,6 +463,8 @@ export function observeInvocation(
       errors.push('Controlled tool contract version is invalid.');
     const controlledOperations = receipt.controlled_execution ? controlledToolNames({ role: receipt.role,
       stage: receipt.controlled_execution.stage, workflow_id: receipt.workflow_id!, implementation_paths: [], verification_paths: [],
+      process_contract: receipt.controlled_execution.process_contract,
+      plugin_capabilities: toolContract?.version === 3 && toolContract.capabilities === true,
       evidence_documentation: toolContract?.version === 3 && toolContract.evidence_documentation,
       ...(toolContract?.version === 3 ? { cornell_bound: toolContract.research } : {}),
       ...(toolContract ? { execution_steps: toolContract.local_execution ? undefined : [], procedure_bound: toolContract.qualified_procedure } : {}) }) : [];
@@ -476,14 +523,14 @@ export function observeInvocation(
       'Worker fallback requires native evidence that the preceding configured model was unavailable.',
     );
   if (
-    (!vscode && receipt.confirmed_reasoning_effort !== policy.reasoning_effort) ||
+    (!vscode && !opencode && receipt.confirmed_reasoning_effort !== policy.reasoning_effort) ||
     receipt.reasoning_effort !== policy.reasoning_effort
   )
     errors.push('Native reasoning effort does not match the role policy.');
-  if (!vscode && policy.strong && receipt.native_sandbox !== 'readOnly')
+  if (!vscode && !opencode && policy.strong && receipt.native_sandbox !== 'readOnly')
     errors.push('Strategic role lacks native acknowledgment of read-only shell access.');
   if (
-    (!vscode && receipt.client_version !== '0.162.1') ||
+    (!vscode && !opencode && receipt.client_version !== '0.162.1') ||
     !receipt.model_provider ||
     !receipt.native_thread_id ||
     !receipt.native_turn_id

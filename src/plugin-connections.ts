@@ -108,8 +108,15 @@ function writeConfiguration(path: string, value: string, expectedHash: string): 
           "$ErrorActionPreference='Stop'; $stage='read-source'; try { " +
           '$sections=[System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Group; ' +
           '$acl=[System.IO.File]::GetAccessControl($env:NEOMIND_MCP_ACL_SOURCE); ' +
-          "$sddl=$acl.GetSecurityDescriptorSddlForm($sections); $stage='copy-descriptor'; $replacement=New-Object System.Security.AccessControl.FileSecurity; " +
-          '$replacement.SetSecurityDescriptorSddlForm($sddl,$sections); ' +
+          "$sddl=$acl.GetSecurityDescriptorSddlForm($sections); $stage='copy-descriptor'; " +
+          // Reapplying an unchanged owner/group still asks Windows for
+          // WRITE_OWNER. A user-owned settings directory may grant Modify
+          // without that right. Preserve those fields and change only the DACL
+          // when their existing identities already match; verify all fields below.
+          '$targetAcl=[System.IO.File]::GetAccessControl($env:NEOMIND_MCP_ACL_TEMP); $applySections=[System.Security.AccessControl.AccessControlSections]::Access; ' +
+          'if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $targetAcl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { $applySections=$applySections -bor [System.Security.AccessControl.AccessControlSections]::Owner }; ' +
+          'if ($acl.GetGroup([System.Security.Principal.SecurityIdentifier]).Value -ne $targetAcl.GetGroup([System.Security.Principal.SecurityIdentifier]).Value) { $applySections=$applySections -bor [System.Security.AccessControl.AccessControlSections]::Group }; ' +
+          '$replacement=New-Object System.Security.AccessControl.FileSecurity; $replacement.SetSecurityDescriptorSddlForm($sddl,$applySections); ' +
           '[System.IO.File]::SetAccessControl($env:NEOMIND_MCP_ACL_TEMP,$replacement); ' +
           "$stage='verify-descriptor'; $copied=[System.IO.File]::GetAccessControl($env:NEOMIND_MCP_ACL_TEMP); $copySddl=$copied.GetSecurityDescriptorSddlForm($sections); " +
           'if ($sddl -cne $copySddl) { ' +
@@ -197,7 +204,7 @@ function expected(root: string, plugin: Plugin, client: PluginConnectionClient):
   return { ...(client === 'copilot-cli' ? { type: 'local', tools: registration.tools.length ? registration.tools : ['*'] } : { type: 'stdio' }),
     command, args, ...(env && Object.keys(env).length ? { env } : {}) };
 }
-interface EntryState { value?: unknown; digest?: string; installerDigest?: string; start?: number; end?: number; managedBlock: boolean }
+interface EntryState { value?: unknown; digest?: string; installerDigest?: string; start?: number; end?: number; managedBlock: boolean; marker?: 'WORKFORCE' | 'NEOMIND' }
 function inspect(source: string | undefined, plugin: Plugin, client: PluginConnectionClient): EntryState {
   if (source === undefined) return { managedBlock: false };
   if (client !== 'codex') {
@@ -211,7 +218,11 @@ function inspect(source: string | undefined, plugin: Plugin, client: PluginConne
   const parent = object.mcp_servers;
   if (parent !== undefined && (!parent || typeof parent !== 'object' || Array.isArray(parent))) throw new Error('MCP server container must be a table.');
   const value = (parent as Record<string, unknown> | undefined)?.[plugin];
-  const begin = `# BEGIN NEOMIND ${plugin}`, finish = `# END NEOMIND ${plugin}`;
+  const markers = (['WORKFORCE', 'NEOMIND'] as const).filter(marker =>
+    source.includes(`# BEGIN ${marker} ${plugin}`) || source.includes(`# END ${marker} ${plugin}`));
+  if (markers.length > 1) throw new Error('Managed MCP markers are malformed or mixed.');
+  const marker = markers[0] ?? 'WORKFORCE';
+  const begin = `# BEGIN ${marker} ${plugin}`, finish = `# END ${marker} ${plugin}`;
   const start = source.indexOf(begin), stop = source.indexOf(finish);
   if (start < 0 && stop < 0) return { value, ...(value !== undefined ? { digest: hash(canonical(value)) } : {}), managedBlock: false };
   if (start < 0 || stop < start || source.indexOf(begin, start + begin.length) >= 0 || source.indexOf(finish, stop + finish.length) >= 0 ||
@@ -222,7 +233,7 @@ function inspect(source: string | undefined, plugin: Plugin, client: PluginConne
       !Object.hasOwn(blockParent, plugin) || canonical((blockParent as Record<string, unknown>)[plugin]) !== canonical(value))
     throw new Error('Managed MCP block contains unrelated or conflicting settings.');
   const originalBody = source.slice(start + begin.length, stop).replace(/^\r?\n/, '').replace(/\r?\n$/, '');
-  return { value, digest: hash(canonical(value)), installerDigest: hash(originalBody), start, end: stop + finish.length, managedBlock: true };
+  return { value, digest: hash(canonical(value)), installerDigest: hash(originalBody), start, end: stop + finish.length, managedBlock: true, marker };
 }
 function installerOwns(root: string, plugin: Plugin, client: PluginConnectionClient, path: string, state: EntryState): boolean {
   if (client === 'copilot-cli') return false;
@@ -252,7 +263,8 @@ function body(plugin: Plugin, value: unknown): string {
 function edit(source: string | undefined, plugin: Plugin, client: PluginConnectionClient, state: EntryState, value?: unknown): string {
   if (client !== 'codex') return applyEdits(source ?? '{}\n', modify(source ?? '{}\n', [client === 'copilot-vscode' ? 'servers' : 'mcpServers', plugin], value,
     { formattingOptions: { insertSpaces: true, tabSize: 2, eol: source?.includes('\r\n') ? '\r\n' : '\n' } }));
-  const block = value === undefined ? '' : `# BEGIN NEOMIND ${plugin}\n${body(plugin, value)}\n# END NEOMIND ${plugin}`;
+  const marker = state.marker ?? 'WORKFORCE';
+  const block = value === undefined ? '' : `# BEGIN ${marker} ${plugin}\n${body(plugin, value)}\n# END ${marker} ${plugin}`;
   if (state.start !== undefined) return `${source!.slice(0, state.start)}${block}${source!.slice(state.end)}`;
   if (state.value !== undefined) throw new Error('Authored Codex MCP tables cannot be replaced or removed.');
   return `${source ?? ''}${source && !source.endsWith('\n') ? '\n' : ''}${source ? '\n' : ''}${block}\n`;

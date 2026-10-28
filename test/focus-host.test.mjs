@@ -86,14 +86,14 @@ test('focus host keeps calendar and YouTube credentials in SecretStorage and ret
   assert.deepEqual(app.sent.at(-1).data, { calendarConfigured: false, youtubeConfigured: false });
   app.prompts.push(calendarSecret);
   await app.send('calendar-connect', { windowStart: '2030-01-01T00:00:00Z' });
-  assert.equal(app.storage.get('neomind.focus.calendarFeed'), calendarSecret);
+  assert.equal(app.storage.get('workforce.focus.calendarFeed'), calendarSecret);
   assert.equal(app.calls.find(call => call[0] === 'calendar-feed')[1], calendarSecret);
   assert.equal(app.sent.at(-1).data.configured, true);
   await app.send('calendar-refresh');
   assert.equal(app.calls.filter(call => call[0] === 'calendar-feed').length, 2);
   app.prompts.push(youtubeSecret);
   await app.send('youtube-configure');
-  assert.equal(app.storage.get('neomind.focus.youtubeApiKey'), youtubeSecret);
+  assert.equal(app.storage.get('workforce.focus.youtubeApiKey'), youtubeSecret);
   await app.send('youtube-search', { query: 'instrumental' });
   const search = app.calls.find(call => call[0] === 'youtube-search');
   assert.equal(search[1], 'instrumental');
@@ -102,7 +102,7 @@ test('focus host keeps calendar and YouTube credentials in SecretStorage and ret
   assert.equal(app.sent.at(-1).data.videos[0].id, 'M7lc1UVf-VE');
   assert.ok(app.calls.filter(call => call[0] === 'input').every(call => call[1].password === true));
   await app.send('calendar-disconnect');
-  assert.equal(app.storage.has('neomind.focus.calendarFeed'), false);
+  assert.equal(app.storage.has('workforce.focus.calendarFeed'), false);
   assert.equal(app.sent.at(-1).data.configured, false);
   noSecrets(app.sent);
 });
@@ -166,7 +166,7 @@ test('focus host never reflects private provider errors even when they begin wit
     async focusWeather() { throw new Error(`Weather upstream failed: ${calendarSecret}`); },
     async focusYouTubeSearch() { throw new Error(`YouTube upstream failed with key ${youtubeSecret}`); },
   });
-  app.storage.set('neomind.focus.youtubeApiKey', youtubeSecret);
+  app.storage.set('workforce.focus.youtubeApiKey', youtubeSecret);
   await app.send('weather', { latitude: 0, longitude: 0 });
   await app.send('youtube-search', { query: 'ambient' });
   assert.equal(app.sent.length, 2);
@@ -261,7 +261,7 @@ test('calendar disconnect revokes a delayed connection fetch and suppresses its 
   await app.send('calendar-disconnect', {}, 'disconnect');
   release.resolve({ events: [{ id: 'stale' }], warnings: [], slots: [] }); await connect;
   assert.equal(signal.aborted, true);
-  assert.equal(app.storage.has('neomind.focus.calendarFeed'), false);
+  assert.equal(app.storage.has('workforce.focus.calendarFeed'), false);
   assert.deepEqual(app.sent.map(message => message.action), ['calendar-disconnect']);
   assert.equal(app.sent[0].data.configured, false);
 });
@@ -271,7 +271,7 @@ test('new calendar imports cancel older refreshes and prevent old agendas from r
   const app = harness(t, { focusCalendarFeed(feed, message, options) {
     signal = options.signal; entered.resolve(); return release.promise;
   } });
-  app.storage.set('neomind.focus.calendarFeed', calendarSecret);
+  app.storage.set('workforce.focus.calendarFeed', calendarSecret);
   const refresh = app.send('calendar-refresh', {}, 'refresh'); await entered.promise;
   await app.send('calendar-import', { ics: 'BEGIN:VCALENDAR\nEND:VCALENDAR' }, 'import');
   release.resolve({ events: [{ id: 'outdated-feed' }], warnings: [], slots: [] }); await refresh;
@@ -290,7 +290,7 @@ test('calendar disconnect cancels the native credential prompt and ignores a lat
   const app = harness(t, { CancellationTokenSource, showInputBox(options, value) {
     token = value; entered.resolve(); return prompt.promise;
   } });
-  app.storage.set('neomind.focus.calendarFeed', calendarSecret);
+  app.storage.set('workforce.focus.calendarFeed', calendarSecret);
   const connect = app.send('calendar-connect', {}, 'connect'); await entered.promise;
   await app.send('calendar-disconnect', {}, 'disconnect');
   prompt.resolve(calendarSecret); await connect;
@@ -298,7 +298,7 @@ test('calendar disconnect cancels the native credential prompt and ignores a lat
   assert.equal(token.isCancellationRequested, true);
   assert.equal(disposed, 1);
   assert.equal(app.calls.some(call => call[0] === 'calendar-feed'), false);
-  assert.equal(app.storage.has('neomind.focus.calendarFeed'), false);
+  assert.equal(app.storage.has('workforce.focus.calendarFeed'), false);
   assert.deepEqual(app.sent.map(message => message.action), ['calendar-disconnect']);
 });
 
@@ -319,7 +319,7 @@ test('calendar unlink waits for an in-flight SecretStorage write and deletes the
   assert.equal(unlinked, false, 'Unlink cannot complete before an earlier storage write settles.');
   release.resolve(); await Promise.all([connect, disconnect]);
   assert.deepEqual(order, ['store-start', 'store-end', 'delete']);
-  assert.equal(app.storage.has('neomind.focus.calendarFeed'), false);
+  assert.equal(app.storage.has('workforce.focus.calendarFeed'), false);
   assert.deepEqual(app.sent.map(message => message.action), ['calendar-disconnect']);
 });
 

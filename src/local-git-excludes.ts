@@ -5,6 +5,21 @@ import { spawnSync } from 'node:child_process';
 import { retryWindowsFileOperation } from './storage.js';
 
 const localPatterns = [
+  '.workforce/',
+  '.workforce-backups/',
+  '.workforce-staging-*/',
+  '.workforce-migration*.json*',
+  '.workforce-migration.lock',
+  '.neomind-migration.lock',
+  '.verythinker-migration.lock',
+  '.taskforces-migration.lock',
+  '.github/agents/workforce-*.agent.md',
+  '.github/hooks/workforce.json',
+  '.github/skills/workforce-*/',
+  '.github/instructions/workforce.instructions.md',
+  '.codex/agents/workforce-*.toml',
+  '.agents/skills/workforce-*/',
+  '**/*.workforce-update*',
   '.neomind/',
   '.github/agents/neomind-*.agent.md',
   '.github/agents/neomind-*.agent.md.neomind-update*',
@@ -48,13 +63,15 @@ export function ensureLocalGitExclusions(root: string): LocalGitExclusions {
     encoding: 'utf8', env: environment, windowsHide: true, timeout: 5000, maxBuffer: 65536,
   });
   if (git.error || git.status !== 0)
-    return { changed: false, warning: 'NeoMind local Git exclusions were not installed: Git is unavailable or the project is not in an accessible Git working tree. No repository was initialized.' };
+    return { changed: false, warning: 'WorkForce local Git exclusions were not installed: Git is unavailable or the project is not in an accessible Git working tree. No repository was initialized.' };
   const paths = git.stdout.trimEnd().split(/\r?\n/);
   if (paths.length !== 3 || paths.some(path => !isAbsolute(path)))
-    return { changed: false, warning: 'NeoMind local Git exclusions were not installed: Git returned unsupported repository paths.' };
+    return { changed: false, warning: 'WorkForce local Git exclusions were not installed: Git returned unsupported repository paths.' };
   const [top, common, gitExclude] = paths as [string, string, string];
   let lock: number | undefined;
   let lockPath: string | undefined;
+  let legacyLock: number | undefined;
+  let legacyLockPath: string | undefined;
   let temporary: string | undefined;
   let outcome: LocalGitExclusions = { changed: false };
   try {
@@ -68,7 +85,7 @@ export function ensureLocalGitExclusions(root: string): LocalGitExclusions {
       throw new Error('Git info directory is not a regular directory.');
     mkdirSync(directory, { recursive: true });
     const path = join(directory, 'exclude');
-    lockPath = `${path}.neomind.lock`;
+    lockPath = `${path}.workforce.lock`;
     const deadline = Date.now() + 2000;
     while (lock === undefined) {
       try { lock = openSync(lockPath, 'wx'); }
@@ -78,6 +95,16 @@ export function ensureLocalGitExclusions(root: string): LocalGitExclusions {
       }
     }
     writeFileSync(lock, JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }) + '\n');
+    // Coordinate with still-installed NeoMind versions during an upgrade.
+    legacyLockPath = `${path}.neomind.lock`;
+    while (legacyLock === undefined) {
+      try { legacyLock = openSync(legacyLockPath, 'wx'); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || Date.now() >= deadline) throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+      }
+    }
+    writeFileSync(legacyLock, JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }) + '\n');
     const initial = entry(path);
     if (initial && (!initial.isFile() || initial.isSymbolicLink()))
       throw new Error('Git exclude is not a regular file.');
@@ -87,15 +114,18 @@ export function ensureLocalGitExclusions(root: string): LocalGitExclusions {
     const source = body.toString('utf8');
     const existing = new Set(source.split(/\r?\n/));
     const prefix = projectDirectory ? `${literalDirectory(projectDirectory)}/` : '';
-    const missing = localPatterns.map(pattern => `/${prefix}${pattern}`).filter(pattern => !existing.has(pattern));
+    // A nested project keeps protected engine/job state beside itself. The
+    // reserved cache name must also be ignored from the enclosing Git root.
+    const missing = [...localPatterns.map(pattern => `/${prefix}${pattern}`), '.workforce-private/']
+      .filter(pattern => !existing.has(pattern));
     if (!missing.length) {
       outcome = { path, changed: false };
       return outcome;
     }
     const eol = /\r?\n/.exec(source)?.[0] ?? '\n';
-    const addition = Buffer.from(['# NeoMind local installation: generated files', ...missing, '', ''].join(eol));
+    const addition = Buffer.from(['# WorkForce local installation: generated files', ...missing, '', ''].join(eol));
     const next = Buffer.concat([previous.subarray(0, bomLength), addition, body]);
-    temporary = `${path}.${randomUUID()}.neomind.tmp`;
+    temporary = `${path}.${randomUUID()}.workforce.tmp`;
     writeFileSync(temporary, next, { flag: 'wx', mode: initial ? initial.mode & 0o777 : 0o666 });
     // A user's editor need not honor our lock. Never replace a changed baseline.
     const current = entry(path);
@@ -106,7 +136,7 @@ export function ensureLocalGitExclusions(root: string): LocalGitExclusions {
     outcome = { path, changed: true };
     return outcome;
   } catch {
-    outcome = { changed: false, warning: 'NeoMind local Git exclusions could not be updated safely. Existing exclusions were preserved; inspect Git metadata, permissions or exclude.neomind.lock, then retry neomind update.' };
+    outcome = { changed: false, warning: 'WorkForce local Git exclusions could not be updated safely. Existing exclusions were preserved; inspect Git metadata, permissions or exclude.workforce.lock/exclude.neomind.lock, then retry workforce update.' };
     return outcome;
   } finally {
     let cleanupFailed = false;
@@ -118,6 +148,10 @@ export function ensureLocalGitExclusions(root: string): LocalGitExclusions {
     if (lock !== undefined) {
       try { closeSync(lock); } catch { cleanupFailed = true; }
       if (lockPath) removeOwned(lockPath);
+    }
+    if (legacyLock !== undefined) {
+      try { closeSync(legacyLock); } catch { cleanupFailed = true; }
+      if (legacyLockPath) removeOwned(legacyLockPath);
     }
     if (cleanupFailed) outcome.warning = `${outcome.warning ? `${outcome.warning} ` : ''}Temporary Git-exclusion cleanup did not finish; inspect the Git metadata before retrying.`;
   }

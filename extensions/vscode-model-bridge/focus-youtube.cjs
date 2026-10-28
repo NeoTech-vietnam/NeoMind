@@ -20,13 +20,13 @@ function selection(input) {
 
 function playerDocument(chosen, nonce) {
   const data = JSON.stringify(chosen).replaceAll('<', '\\u003c');
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="strict-origin-when-cross-origin"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NeoMind YouTube player</title><style>html,body{margin:0;background:#08111c;color:#d8e9f8;font:14px system-ui;height:100%}#player{width:100%;height:calc(100% - 32px);min-height:200px}#status{height:24px;margin:4px 8px}</style></head><body><div id="player"></div><p id="status" role="status">Loading YouTube. Playback starts only when you press Play.</p><script nonce="${nonce}">
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="strict-origin-when-cross-origin"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WorkForce YouTube player</title><style>html,body{margin:0;background:#08111c;color:#d8e9f8;font:14px system-ui;height:100%}#player{width:100%;height:calc(100% - 32px);min-height:200px}#status{height:24px;margin:4px 8px}</style></head><body><div id="player"></div><p id="status" role="status">Loading YouTube. Playback starts only when you press Play.</p><script nonce="${nonce}">
 const chosen=${data};let player,terminal=false;const status=document.getElementById('status');
-function report(event,code){parent.postMessage({type:'neomind-youtube',event,code},'*')}
+function report(event,code){parent.postMessage({type:'workforce-youtube',event,code},'*')}
 // The official API also includes the embedding document URL in its own player
 // parameters. Remove the capability path before loading that API, in addition
 // to the origin-only HTTP referrer policy. This keeps the real origin unchanged.
-history.replaceState(null,'','/neomind-youtube/player');
+history.replaceState(null,'','/workforce-youtube/player');
 function fail(message,code){if(terminal)return;terminal=true;clearTimeout(readyDeadline);try{player?.destroy()}catch{}status.textContent=message;report('error',code)}
 const readyDeadline=setTimeout(function(){fail('YouTube did not become ready. Reload the link or choose Open on YouTube.',0)},30000);
 window.onYouTubeIframeAPIReady=function(){if(terminal)return;const vars={autoplay:0,playsinline:1,origin:window.location.origin};if(chosen.list){vars.list=chosen.list;vars.listType='playlist'}player=new YT.Player('player',{host:'https://www.youtube.com',...(chosen.video?{videoId:chosen.video}:{}),playerVars:vars,events:{onReady:function(){if(terminal){try{player?.destroy()}catch{}return}clearTimeout(readyDeadline);status.textContent='Press Play to listen.';report('ready',0)},onStateChange:function(e){if(!terminal&&[-1,0,1,2,3,5].includes(e.data))report('state',e.data)},onError:function(e){fail(Number(e.data)===153?'YouTube could not identify this player. Use Open on YouTube.':'This video cannot play here. Try another video or Open on YouTube.',Number.isSafeInteger(e.data)?e.data:0)},onAutoplayBlocked:function(){if(!terminal)status.textContent='Press Play in the visible player.'}}});};
@@ -41,7 +41,7 @@ setTimeout(function(){fail('This player session expired. Load the link again.',0
 async function createYouTubePlayer({ url, signal, asExternalUri } = {}) {
   const chosen = selection(url);
   if (signal?.aborted) throw new Error('YouTube loading was cancelled.');
-  const route = `/neomind-youtube/${randomBytes(32).toString('base64url')}`;
+  const route = `/workforce-youtube/${randomBytes(32).toString('base64url')}`;
   const nonce = randomBytes(24).toString('base64');
   const document = playerDocument(chosen, nonce);
   let local, expiry, closing, ended = false;

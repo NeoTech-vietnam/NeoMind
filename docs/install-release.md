@@ -1,89 +1,108 @@
-# Install the NeoMind runtime and VS Code extension
+# Install the WorkForce runtime and VS Code extension
 
-Candidate `v0.1.0-alpha.14` pairs the packages below. It remains a source-branch candidate until the GitHub release and its validation report are published after actual-client acceptance.
+This guide describes candidate **`workforce-v0.2.0-alpha.1`**: runtime **`workforce@0.2.0-alpha.1`** with extension **`workforce.workforce-model-bridge@0.12.0`**. It is not a claim that the candidate has been publicly released or passed installed-client acceptance. Use the matching assets and validation report once published in the [existing GitHub repository's releases](https://github.com/NeoTech-vietnam/NeoMind/releases). Earlier NeoMind releases remain unchanged.
 
-| Download | Purpose |
+| Asset | Purpose |
 | --- | --- |
-| `neomind-0.1.0-alpha.14.tgz` | NeoMind CLI, MCP server and shared runtime |
-| `neomind-agent-monitor-0.11.6.vsix` | Agent universe, Automation Library, plug-in controls and Earth FocusSpace |
-| `SHA256SUMS.txt` | SHA-256 digests for the installable assets |
+| `workforce-runtime-0.2.0-alpha.1-windows-x64.tgz` | Native Windows x64 runtime, dependencies and engine |
+| `workforce-runtime-0.2.0-alpha.1-linux-x64.tgz` | Native Linux x64 runtime, dependencies and engine |
+| `workforce-model-bridge-0.12.0.vsix` | WorkForce Universe, Local WF.PM and workspace owner |
+| `SHA256SUMS` | SHA-256 digests for the paired artifacts/reports |
+| `release-manifest.json` and validation reports | Exact versions, engine pins, platform checks and acceptance evidence |
 
-When published, download both packages from the [same GitHub release](https://github.com/NeoTech-vietnam/NeoMind/releases/tag/v0.1.0-alpha.14). These packages do not require npm registry or VS Code Marketplace publication. Node.js 24 or 26+, npm, Git and desktop VS Code 1.109+ are required. The release's `release-validation.json` identifies its Windows and Ubuntu CI results and remaining native-client verification gaps. Optional REA requires Node 24.11+ or 26+. Workflows using the approved LeetCode Cornell format also require Python 3 on the enabled VS Code Bridge process PATH; generic research notes do not require that optional validator.
+Portable runtimes include the pinned OpenCode **1.19.4** SDK/platform binary and locked engine bootstrap. They do not install a missing engine dependency inside your first request. Node.js **24.x or 26+**, Git, `tar` and VS Code **1.143+** are prerequisites. Optional checkers may need the project's compiler/Python/toolchain; setup must identify such requirements before dispatch. Linux core/package evidence does not establish Linux VS Code desktop support.
 
-## 1. Install the runtime
+## 1. Extract the matching native runtime
 
-Open a terminal in the download directory. On Windows PowerShell:
-
-```powershell
-Get-FileHash ./neomind-0.1.0-alpha.14.tgz -Algorithm SHA256
-Get-FileHash ./neomind-agent-monitor-0.11.6.vsix -Algorithm SHA256
-npm install --global ./neomind-0.1.0-alpha.14.tgz
-neomind --help
-npm root --global
-```
-
-Compare the hashes with `SHA256SUMS.txt`. The last command prints the global module directory; the runtime directory is its `neomind` child. Keep the downloaded tarball for repeatable offline installation. Bash users can verify with `sha256sum --check SHA256SUMS.txt`, then run the same npm/NeoMind commands.
-
-## 2. Install the VS Code extension
+Keep the runtime outside your project and use a new versioned directory. Windows PowerShell:
 
 ```powershell
-code --install-extension ./neomind-agent-monitor-0.11.6.vsix --force
+Get-FileHash .\workforce-runtime-0.2.0-alpha.1-windows-x64.tgz -Algorithm SHA256
+Get-FileHash .\workforce-model-bridge-0.12.0.vsix -Algorithm SHA256
+New-Item -ItemType Directory -Path D:\tools\WorkForce\0.2.0-alpha.1 -Force
+tar -xzf .\workforce-runtime-0.2.0-alpha.1-windows-x64.tgz -C D:\tools\WorkForce\0.2.0-alpha.1
+$wfRuntime = 'D:\tools\WorkForce\0.2.0-alpha.1\workforce'
+node "$wfRuntime\dist\cli.js" --version
 ```
 
-Alternatively use **Extensions: Install from VSIX** in VS Code. Set the **User** setting `neomind.bridge.runtimePath` to the absolute runtime directory from step 1. It must contain `package.json` and `dist`; workspace overrides are ignored. For a typical Windows global npm installation, this is `%APPDATA%/npm/node_modules/neomind`. Use your actual path rather than copying someone else's username or drive.
+Compare the printed hashes with `SHA256SUMS`. The extracted directory must contain `package.json`, `dist`, `node_modules`, `resources/opencode-bootstrap` and `distribution-manifest.json`. Keep the original archive and checksums for repeatable installation.
 
-## 3. Initialize or update your project
+Linux shell:
 
-Open the intended project folder as a trusted VS Code workspace. For a new installation:
+```sh
+sha256sum --check SHA256SUMS
+mkdir -p "$HOME/.local/share/workforce/0.2.0-alpha.1"
+tar -xzf workforce-runtime-0.2.0-alpha.1-linux-x64.tgz -C "$HOME/.local/share/workforce/0.2.0-alpha.1"
+wf_runtime="$HOME/.local/share/workforce/0.2.0-alpha.1/workforce"
+node "$wf_runtime/dist/cli.js" --version
+```
+
+Do not use the Windows engine asset on Linux or the Linux engine asset on Windows. Node remains a separately installed prerequisite.
+
+## 2. Install the paired extension
 
 ```powershell
-neomind init --local --platforms copilot --project D:/path/to/project
+code --install-extension .\workforce-model-bridge-0.12.0.vsix --force
 ```
 
-For an existing NeoMind project:
+Alternatively use **Extensions: Install from VSIX**. Set the VS Code **User** setting `workforce.bridge.runtimePath` to the extracted `workforce` directory, such as `D:\tools\WorkForce\0.2.0-alpha.1\workforce`. Workspace overrides of this trusted runtime path are ignored.
+
+When replacing NeoMind, disconnect its previous owner and disable the previous extension in the intended workspace before connecting WorkForce. The new publisher/extension identity does not share another extension's SecretStorage: reconnect private calendar feeds or YouTube API keys from WorkForce when needed. Provider credentials in your existing custom endpoint catalog are preserved.
+
+## 3. Initialize or migrate the exact project
+
+For a new project:
 
 ```powershell
-neomind update --local --project D:/path/to/project
+node "$wfRuntime\dist\cli.js" init --local --platforms copilot,codex --name MyProject --project D:\path\to\project
 ```
 
-Use the matching path on your system. `--local` adds managed exclusions to `.git/info/exclude`, preserves existing exclusions and leaves `.gitignore` untouched. Edited generated integrations are preserved as conflicts with review candidates. Inspect the command output before replacing an edited candidate. Existing records and model policies are retained.
-
-## 4. Configure MCP and open the universe
-
-Keep your existing NeoMind MCP definition when upgrading and restart that server after installation. New Copilot projects receive a project MCP definition during initialization. If configuring MCP yourself, invoke the installed `dist/cli.js` using Node with `mcp --project /absolute/project/path`; an explicit project path also works when the client cannot resolve `${workspaceFolder}`.
-
-Run **Developer: Reload Window**, then **NeoMind: Open Agent Map**. Choose **Enter Earth · Focus Space** for the countdown, calendar, weather and music controls. Use the universe inspector for existing 9router model controls; this release does not replace your provider credentials. [FocusSpace setup](focus-space.md) explains calendar feeds, optional YouTube search keys and browser location permission.
-
-The extension's model bridge remains an explicit opt-in. Installing the extension does not enable automated inference. The Universe shows fresh identified native hook observations and reported activity, with optional static history. Reload the client and start a new session after regenerating profiles; hooks require the client's normal trust controls.
-
-### NeoMind-owned workflows with Local Copilot or Codex
-
-Run **NeoMind: Enable Model Bridge** in the exact project window. Enable the trusted installed runtime and approve model access when VS Code requests it. A reload stops the Bridge; enable it again afterwards.
-
-- **Local Copilot:** run **NeoMind: Open Local Coordinator**, check that the chat says **Local**, and choose your custom-endpoint alias, such as `top-models`. This command preserves your model and permission choices.
-- **Codex:** use the generated NeoMind instructions to discover the MCP management tools. Submit through `manager_run`; inspect through `manager_status` and pause, resume or cancel through `manager_control`.
-- **Panel:** run **NeoMind: Open Workflows** to submit work and inspect the same saved workflows and runtime journal.
-
-For projects using `neomind-controlled`, these are three entrances to the same VS Code-owned runtime. Closing a chat or panel does not stop accepted work. Closing VS Code stops its owned sessions and checks; reopening requires Bridge activation and checkpoint reconciliation. The chat's selected model handles intake; workers use the configured role models through the Bridge. An observed `customendpoint / top-models` identifies the selected alias, not proof of the router's upstream model.
-
-Public management calls need the request or workflow ID, not assignment credentials. Workers receive private backend bindings and semantic tools; do not copy legacy claim tokens or `reported_assignment` into management calls. Use the receipt's actual workflow ID to continue existing work.
-
-## 5. Enable the new agent and notes features
-
-Add Codex alongside Copilot when needed:
+For an existing NeoMind project, first stop its active sessions and keep its old runtime/extension available as a backup. Then use the matching WorkForce CLI:
 
 ```powershell
-neomind init --local --platforms copilot,codex --project D:/path/to/project
-neomind validate --project D:/path/to/project --json
+node "$wfRuntime\dist\cli.js" migrate --project D:\path\to\project
+node "$wfRuntime\dist\cli.js" update --local --project D:\path\to\project
+node "$wfRuntime\dist\cli.js" doctor --project D:\path\to\project
 ```
 
-Existing workflows keep their saved execution mode. Workflows explicitly using `codex-native` use the generated expert profiles and inherit the parent model/provider by default. Optional direct Codex 9router routing requires a Responses-compatible gateway; see the [agent platform guide](agent-platform.md). This is separate from NeoMind-owned workers using the VS Code Bridge described above.
+Explicit WorkForce migration selects its new engine/integration for future execution. Historical workflows retain their saved contract, scope, signatures and provenance. Migration preserves an original hash-bound backup; request records are organized under `.workforce/requests/`, while shared or ambiguous historical records stay separate. See [migration and recovery details](workforce-install.md).
 
-Cornell notes use `00_note/NeoMind` beneath the current project by default. For a separate notes repository, configure its existing root explicitly, then preview the reviewed note before copying it:
+`init --local` and `update --local` add managed rules to `.git/info/exclude`, preserve existing exclusions and leave `.gitignore` untouched. Already tracked files remain tracked. User-edited integrations and MCP entries become review conflicts rather than being silently overwritten. Review any reported conflicts before enabling a competing owner.
 
-```powershell
-neomind cornell configure --project D:/path/to/project --data '{"notes_root":"D:/workspace/NeoLearning","directory":"00_note/NeoMind"}'
-neomind cornell export-plan --project D:/path/to/project --data '{"note_id":"PROJECT-KNW-0002","expected_revision":1}'
+## 4. Connect once in Universe
+
+Open the intended folder as a trusted VS Code workspace. Run **Developer: Reload Window** after replacing the VSIX, then **WorkForce: Open Universe**.
+
+Use **Connect WorkForce**. WorkForce binds the exact project and trusted runtime, resolves the selected custom endpoint catalog, and checks the configured aliases through a real bounded model/tool probe. A successful proof is cached against the relevant build/configuration rather than repeating before every request. Configuration or an installed version alone must not appear as successful model access.
+
+Keep your existing `top-models` and `worker-models` choices in 9router. If WorkForce cannot identify a unique existing VS Code catalog, use **Choose model catalog** and select that profile's `chatLanguageModels.json` through the native picker. This retains provider keys in the catalog and stores only its selected path in project routing. It does not require manually copying credentials into chat or editing protocol payloads. Endpoint/model access belongs to your existing provider configuration; an alias does not attest the actual upstream model.
+
+Use **WorkForce: Open Local WF.PM**. The command creates a **Local** Copilot chat with `WF.PM`, preserves your model picker and sets `chat.permissions.default` to `autoApprove` for that workspace where supported. VS Code Trust, first-use approvals and organization policy remain effective. It does not change global approval settings.
+
+Approved exact workspace/runtime/build connections can restore after reload and reconcile saved work. A changed trusted runtime or revoked connection requires the corresponding new approval. **WorkForce: Disconnect Workspace** revokes the owner and stops its execution.
+
+## 5. Give WorkForce a normal request
+
+Write your requirement in Local WF.PM, Codex with the generated MCP integration, or Universe's request box. Relevant attachment context must resolve to real files/folders. Do not supply assignment tokens, synthetic IDs, claim credentials or special protocol prompts.
+
+All entrances submit to the same request runtime. The chat entry submits/follows the request; runtime-owned workers implement, review and test it. The UI displays each request's V-model stages, products, criteria and findings. Draft outputs are accessible while checks continue. Only accepted results are completed.
+
+MCP exposes `request_submit`, `request_status` and `request_control`. The extension's Local tool is **WorkForce Request**. A model may discover that tool and pass the complete ordinary requirement; the user should not have to write JSON. Restart an affected MCP server and use a fresh chat after integration changes so discovery matches the installed version.
+
+Closing chat or switching to Focus Space does not cancel accepted work while VS Code remains open. Closing VS Code stops the model, dispatch and owned checks; reopening reconciles the durable checkpoint before continuing. Ambient audio retains its existing view-switch behavior. YouTube still follows visible-player and provider restrictions.
+
+## Source/npm development installs
+
+The portable GitHub asset is the supported no-deferred-download runtime. From a source checkout, prepare the engine bootstrap before use:
+
+```sh
+npm ci
+npm run engine:bootstrap
+npm test
+npm run runtime:package
+npm run extension:package
 ```
 
-Replace the example note ID/revision with the saved note's values. Follow the [Cornell workflow](cornell-workflow.md) for deterministic research generation, independent review, export application and an explicit push to a separate review branch. The [REA guide](rea.md) covers optional analysis installation; [upstream checks](upstream-checks.md) covers GitHub schedules and manual self-hosted Linux runners. Schedules become active only after their workflow reaches the repository's default branch.
+An npm tarball installation resolves production dependencies during installation and needs the matching prepared bootstrap; it is not an excuse for downloading missing packages in a request. `npm run package:smoke` checks installed package mechanics without inference. Its pass does not establish Copilot Local/Codex/panel acceptance. The release validation report must separately identify those actual client journeys and remaining incidents.
+
+For the `codex/workforce-vmodel` branch, its normal push CI builds native candidate assets after the same Windows/Ubuntu regression jobs pass. Download the corresponding `workforce-candidate-Windows-*` or `workforce-candidate-Linux-*` CI artifact to inspect its runtime, VSIX, checksums and extracted-package report. These are review candidates; the workflow has read-only repository permissions and does not create a release.

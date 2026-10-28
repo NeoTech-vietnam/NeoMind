@@ -1,5 +1,6 @@
-import { spawn } from 'node:child_process';
-import { isAbsolute, resolve } from 'node:path';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { isAbsolute, resolve, dirname, basename, join, delimiter } from 'node:path';
+import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 
 export interface CommandInput {
@@ -43,6 +44,30 @@ export function commandEnvironment(extra: Record<string, string> = {}): NodeJS.P
   return environment;
 }
 
+/** Windows npm shims cannot be spawned directly. Invoke their existing Node CLI
+ * with argv intact, rather than interpreting authored arguments with cmd.exe. */
+export function commandLaunch(command: string[], env: NodeJS.ProcessEnv = process.env): { executable: string; args: string[] } {
+  const program = command[0]!;
+  if (!isAbsolute(program) && program !== basename(program)) return { executable: program, args: command.slice(1) };
+  if (process.platform !== 'win32' || !/^(?:npm|npx)(?:\.cmd)?$/i.test(basename(program)))
+    return { executable: program, args: command.slice(1) };
+  const name = basename(program).replace(/\.cmd$/i, '').toLowerCase();
+  const pathValue = Object.entries(env).find(([key]) => key.toUpperCase() === 'PATH')?.[1] ?? '';
+  const directories = isAbsolute(program) ? [dirname(program)] : pathValue.split(delimiter).filter(isAbsolute);
+  for (const directory of directories) {
+    const shim = join(directory, `${name}.cmd`), script = join(directory, 'node_modules', 'npm', 'bin', `${name}-cli.js`);
+    try {
+      if (!lstatSync(shim).isFile() || !lstatSync(script).isFile() ||
+          JSON.parse(readFileSync(join(directory, 'node_modules/npm/package.json'), 'utf8')).name !== 'npm') continue;
+      const node = [join(directory, 'node.exe'), ...(basename(process.execPath).toLowerCase() === 'node.exe' ? [process.execPath] : []),
+        ...pathValue.split(delimiter).filter(isAbsolute).map(path => join(path, 'node.exe'))]
+        .find(path => existsSync(path) && lstatSync(path).isFile());
+      if (node) return { executable: node, args: [script, ...command.slice(1)] };
+    } catch { /* Only a complete installed npm toolchain is eligible. */ }
+  }
+  throw new Error('The Windows npm Node CLI is unavailable. Repair the existing Node/npm installation before running this command.');
+}
+
 /** A mediated local process, not an operating-system filesystem or network sandbox. */
 export async function runCommand(input: CommandInput): Promise<CommandResult> {
   if (!Array.isArray(input.command) || !input.command.length || !input.command[0]?.trim() ||
@@ -60,9 +85,18 @@ export async function runCommand(input: CommandInput): Promise<CommandResult> {
   const result: CommandResult = { exit_code: null, signal: null, stdout: '', stderr: '', cancelled: false,
     timed_out: false, output_limited: false, error: null, duration_ms: 0 };
   if (input.signal?.aborted) return { ...result, cancelled: true, error: 'Command cancelled before start.' };
+  let launch: { executable: string; args: string[] };
+  try { launch = commandLaunch(input.command, env); }
+  catch { return { ...result, error: 'The installed Windows npm launcher could not be resolved without a shell.' }; }
   return await new Promise(resolveResult => {
-    const child = spawn(input.command[0]!, input.command.slice(1), { cwd: input.cwd, shell: false,
-      windowsHide: true, detached: process.platform !== 'win32', env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let child: ChildProcessWithoutNullStreams;
+    try { child = spawn(launch.executable, launch.args, { cwd: input.cwd, shell: false,
+      windowsHide: true, detached: process.platform !== 'win32', env, stdio: ['pipe', 'pipe', 'pipe'] }); }
+    catch (error) {
+      const code = String((error as NodeJS.ErrnoException).code ?? 'unknown');
+      resolveResult({ ...result, error: `Command could not start (${/^[A-Z_0-9]{1,32}$/.test(code) ? code : 'unknown'}).`, duration_ms: Date.now() - started });
+      return;
+    }
     child.stdin.on('error', () => {});
     child.stdin.end(input.stdin);
     const stdout: Buffer[] = [], stderr: Buffer[] = [];

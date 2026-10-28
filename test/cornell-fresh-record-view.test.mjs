@@ -1,10 +1,12 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { syncBuiltinESMExports } from 'node:module';
-import { initialize, createRecord, loadRecords, atomicWrite, safePath, now } from '../dist/storage.js';
+import { createRecord, loadRecords, atomicWrite, safePath, now } from '../dist/storage.js';
 import { runCheck } from '../dist/engineering.js';
 import { createCornellNote, validateCornellNote } from '../dist/notes.js';
 import { cornellFixture } from './cornell-fixture.mjs';

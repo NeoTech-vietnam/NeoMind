@@ -1,7 +1,7 @@
 import type { ControlledSnapshot } from './controlled-workflow.js';
 
 const limits = { invocations: 4, note_ids: 8, identifier: 256, model: 96, diagnostic: 256 } as const;
-const states = new Set(['queued', 'running', 'waiting', 'paused', 'interrupted', 'uncertain', 'blocked', 'cancelled', 'completed']);
+const states = new Set(['queued', 'running', 'waiting', 'needs_input', 'paused', 'interrupted', 'uncertain', 'blocked', 'cancelled', 'completed']);
 
 function identifier(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 && value.length <= limits.identifier &&
@@ -22,8 +22,9 @@ function text(value: unknown, limit: number): string | undefined {
 /** Identify only the owned runtime result; legacy manager handoffs retain their contract. */
 export function isControlledCommandSnapshot(value: unknown): value is ControlledSnapshot {
   return value !== null && typeof value === 'object' &&
-    'process_contract' in value && value.process_contract === 'software-tools/v2' &&
-    'transport' in value && value.transport === 'vscode-lm';
+    'process_contract' in value && 'transport' in value &&
+    (value.process_contract === 'software-tools/v2' && value.transport === 'vscode-lm' ||
+     value.process_contract === 'workforce/v1' && value.transport === 'opencode');
 }
 
 /** Public command acknowledgement, not the internal journal or a completion claim. No I/O. */

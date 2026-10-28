@@ -1,10 +1,12 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { initialize, hash } from '../dist/storage.js';
+import { hash } from '../dist/storage.js';
 import { trackUpstream, cloneUpstream, readUpstreamSkillBundle } from '../dist/upstreams.js';
 
 async function fixture(t, body = '\ufeff---\r\nname: original\r\n---\r\nRead [guide](references/guide.md).\r\n', reference = '# Original guide\r\n') {

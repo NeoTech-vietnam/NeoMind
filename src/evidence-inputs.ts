@@ -14,7 +14,7 @@ import {
 } from './storage.js';
 import type { ProjectRecord } from './types.js';
 import { isNativeExecutionMode } from './execution-mode.js';
-import { agentProfiles } from './agent-profiles.js';
+import { legacyAgentProfiles as agentProfiles } from './agent-profiles.js';
 
 const store = '.neomind/evidence/inputs';
 const digest = /^[a-f0-9]{64}$/;

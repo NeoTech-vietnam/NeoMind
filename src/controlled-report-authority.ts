@@ -58,7 +58,7 @@ function evidenceDocumentationAuthority(root: string, supplied: ControlledSnapsh
       throw new ControlledToolError('STATE_UNCERTAIN', 'The source stage lacks its completed signed result and artifact binding.');
     const receipt = readInvocation(root, attempt.invocation_id), report = recordAt(attempt.report_id);
     if (routingProblems(root, attempt.role, receipt.id, { workflow_id: run.workflow_id, task_id: contract.task_id, require_completed: true }).length ||
-        receipt.issuer !== 'neomind-vscode-lm' || receipt.state !== 'completed' || !receipt.inference_completed ||
+        !isControlledExecutionReceipt(receipt) || receipt.state !== 'completed' || !receipt.inference_completed ||
         receipt.workflow_id !== run.workflow_id || receipt.task_id !== contract.task_id || receipt.role !== attempt.role ||
         receipt.request_id !== attempt.request_id || receipt.controlled_execution?.epoch_id !== run.epoch_id ||
         receipt.controlled_execution.stage !== attempt.stage || report.meta.type !== 'knowledge' || report.meta.owner !== attempt.role ||
@@ -181,3 +181,4 @@ function authenticateCheckEvidence(root: string, run: ControlledSnapshot, contra
       saved.execution_invocation_id !== data.execution_invocation_id || saved.controlled_check_id !== check.id || !same(saved.checker_scope, check.checker_scope))
     throw new ControlledToolError('STATE_UNCERTAIN', 'The source materialized execution receipt changed.');
 }
+import { isControlledExecutionReceipt } from './execution-attestation.js';

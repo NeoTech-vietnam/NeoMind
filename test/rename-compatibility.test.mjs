@@ -1,10 +1,12 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { generateKeyPairSync, sign, randomUUID } from 'node:crypto';
-import { initialize, hash } from '../dist/storage.js';
+import { hash, retryWindowsFileOperation } from '../dist/storage.js';
 import { canonicalJson, readInvocation } from '../dist/routing.js';
 import { migrateStorage } from '../dist/migration.js';
 import { installProject, updateProject } from '../dist/installer.js';
@@ -37,15 +39,15 @@ test('legacy signed receipts retain exact bytes and verify before and after phys
     write(root, `.neomind/native/receipts/${id}.json`, body);
     receipts.push({ id, body, issuer });
   }
-  renameSync(join(root, '.neomind'), join(root, '.verythinker'));
+  retryWindowsFileOperation(() => renameSync(join(root, '.neomind'), join(root, '.verythinker')));
   for (const item of receipts) assert.equal(readInvocation(root, item.id).issuer, item.issuer);
   migrateStorage(root);
   for (const item of receipts) {
-    assert.equal(readFileSync(join(root, `.neomind/native/receipts/${item.id}.json`), 'utf8'), item.body);
+    assert.equal(readFileSync(join(root, `.workforce/native/receipts/${item.id}.json`), 'utf8'), item.body);
     assert.equal(readInvocation(root, item.id).issuer, item.issuer);
   }
   const item = receipts[0];
-  write(root, `.neomind/native/receipts/${item.id}.json`, item.body.replace('Historical invocation', 'Tampered invocation'));
+  write(root, `.workforce/native/receipts/${item.id}.json`, item.body.replace('Historical invocation', 'Tampered invocation'));
   assert.throws(() => readInvocation(root, item.id), /signature/);
 });
 

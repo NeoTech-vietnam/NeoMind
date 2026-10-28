@@ -27,6 +27,7 @@ import {
   withOperationLock,
 } from './storage.js';
 import type { ProjectRecord } from './types.js';
+import { workForceEditablePath } from './workforce-paths.js';
 
 const digest = /^[a-f0-9]{64}$/;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -103,18 +104,26 @@ function covers(reference: string, path: string): boolean {
   path = fold(path);
   return reference === '.' || path === reference || path.startsWith(`${reference}/`);
 }
-function ordinaryPath(path: string): void {
+export class WorkspacePathPolicyError extends Error {
+  constructor() { super('This target is protected host configuration, agent instructions or credentials; it is not a writable product path.'); }
+}
+export function assertWorkspaceEditablePath(path: string, policy?: 'workforce-product'): void {
   canonical(path);
+  if (policy === 'workforce-product') {
+    if (!workForceEditablePath(path)) throw new WorkspacePathPolicyError();
+    return;
+  }
   const lower = fold(path);
   if (
     lower.split('/').some((part) =>
-      ['.git', '.neomind', '.taskforces', '.verythinker', '.codex', '.claude', '.github', '.vscode', '.agents', '.cursor', '.gemini', 'node_modules'].includes(part) ||
+      ['.git', '.workforce', '.workforce-private', '.neomind', '.taskforces', '.verythinker', '.codex', '.claude', '.github', '.vscode', '.agents', '.cursor', '.gemini', 'node_modules'].includes(part) ||
       /^(?:\.env(?:\..*)?|credentials?|secrets?|id_rsa|id_ed25519)$/.test(part) ||
       /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/.test(part)) ||
     /(?:^|\/)(?:agents(?:\.override)?\.md|claude\.md|gemini\.md|skill\.md|copilot-instructions\.md|\.cursorrules|[^/]+\.(?:agent|instructions)\.md)$/.test(lower) ||
     /\.(?:pem|key|pfx|p12)$/.test(lower)
   ) throw new Error('File writes cannot change managed storage, agent instructions/configuration, tools, or credentials.');
 }
+function ordinaryPath(path: string): void { assertWorkspaceEditablePath(path); }
 function physical(root: string, path: string): string {
   const target = safePath(root, path);
   let cursor = target;
@@ -146,8 +155,8 @@ function expected(root: string, path: string, checksum: string | null): Buffer |
   return bytes;
 }
 /** Shared filesystem checks for trusted, role-bound writers; authorization stays with their controller. */
-export function workspaceFileBytes(root: string, path: string): Buffer | null {
-  ordinaryPath(path);
+export function workspaceFileBytes(root: string, path: string, policy?: 'workforce-product'): Buffer | null {
+  assertWorkspaceEditablePath(path, policy);
   return fileBytes(root, path);
 }
 export function workspaceContentBytes(content: string): Buffer {
@@ -165,8 +174,10 @@ export function workspaceContentBytes(content: string): Buffer {
  */
 export function replaceWorkspaceFile(root: string, input: {
   path: string; content: string; expected_hash: string | null; mode?: number; authorize: () => void;
+  /** Trusted controller choice, never accepted from a model tool payload. */
+  policy?: 'workforce-product';
 }): { sha256: string; previous_hash: string | null } {
-  ordinaryPath(input.path);
+  assertWorkspaceEditablePath(input.path, input.policy);
   const next = workspaceContentBytes(input.content);
   if (input.expected_hash !== null && (typeof input.expected_hash !== 'string' || !digest.test(input.expected_hash)))
     throw new Error('File replacement needs a current content hash.');

@@ -1,3 +1,5 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
@@ -6,7 +8,7 @@ import { join, dirname } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createMcpServer } from '../dist/mcp.js';
-import { initialize, atomicWrite, safePath, loadRecords, createRecord } from '../dist/storage.js';
+import { atomicWrite, safePath, loadRecords, createRecord } from '../dist/storage.js';
 
 test('controlled public entrypoints omit worker credentials and ignore stale client credential fields', async t => {
   const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-public-entry-')));

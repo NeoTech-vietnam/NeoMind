@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { agentProfiles } from './agent-profiles.js';
+import { agentProfiles, legacyAgentProfiles, workforceProfileFileId } from './agent-profiles.js';
 import { readAgentMap } from './agent-map.js';
 import { readCodexRouting } from './codex-routing.js';
 import { readCornellDestination } from './cornell-workflow.js';
@@ -12,6 +12,7 @@ import { readConfig, safePath } from './storage.js';
 /** Local inspection only. Configuration, hook observations and provider execution stay separate. */
 export function validatePlatform(root: string) {
   const config = readConfig(root), map = readAgentMap(root);
+  const workforce = config.execution_engine === 'opencode';
   const inspect = (read: () => unknown) => {
     try { return { status: 'inspected', value: read() }; }
     catch (error) { return { status: 'invalid', error: error instanceof Error ? error.message : String(error) }; }
@@ -19,8 +20,9 @@ export function validatePlatform(root: string) {
   const files = (paths: string[]) => paths.map(path => ({ path, present: existsSync(safePath(root, path)) }));
   const profiles = config.platforms.map(client => ({ client, files: files(client === 'claude'
     ? [...strongRoles, ...workerRoles].map(role => `.claude/agents/neomind-${role}.md`)
-    : agentProfiles.map(profile => client === 'codex' ? `.codex/agents/neomind-${profile.id}.toml`
-      : `.github/agents/neomind-${profile.id}.agent.md`)) }));
+    : (workforce ? agentProfiles : legacyAgentProfiles).map(profile => client === 'codex'
+      ? `.codex/agents/${workforce ? 'workforce-' + workforceProfileFileId(profile.id) : 'neomind-' + profile.id}.toml`
+      : `.github/agents/${workforce ? 'workforce-' + workforceProfileFileId(profile.id) : 'neomind-' + profile.id}.agent.md`)) }));
   return { schema_version: 1, project_id: config.project_id, inspected_at: new Date().toISOString(),
     runtime: { platform: process.platform, node: process.version, supported: Number(process.versions.node.split('.')[0]) === 24 || Number(process.versions.node.split('.')[0]) >= 26 },
     profiles, codex_routing: inspect(() => readCodexRouting(root)),

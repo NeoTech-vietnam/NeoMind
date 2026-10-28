@@ -74,7 +74,7 @@ function researchSourcePath(root: string, value: string, policy?: CornellSourceP
   const parts = value.split('/');
   if (!value || /[\\:*?\x00-\x1f]/.test(value) || isAbsolute(value) ||
       parts.some(part => !part || part === '.' || part === '..' || /[. ]$/.test(part) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part)) ||
-      parts.some(part => /^\.(?:git|neomind|taskforces|verythinker)$/i.test(part)))
+      parts.some(part => /^\.(?:git|workforce|workforce-private|neomind|taskforces|verythinker)$/i.test(part)))
     throw new Error('Approved research sources must be canonical relative files outside private runtime paths.');
   const target = safePath(root, value);
   if (relative(resolve(root), target).replaceAll('\\', '/') !== value) throw new Error('Research source path is not canonical.');
@@ -176,7 +176,8 @@ const destinationPath = '.neomind/cornell.json';
 export function readCornellDestination(root: string): CornellDestination {
   readConfig(root);
   const path = safePath(root, destinationPath);
-  const destination = existsSync(path) ? destinationSchema.parse(JSON.parse(readFileSync(path, 'utf8'))) : { schema_version: 1 as const, directory: '00_note/NeoMind' };
+  const destination = existsSync(path) ? destinationSchema.parse(JSON.parse(readFileSync(path, 'utf8')))
+    : { schema_version: 1 as const, directory: readConfig(root).execution_engine === 'opencode' ? '00_note/WorkForce' : '00_note/NeoMind' };
   const base = destination.notes_root ?? root;
   if (destination.notes_root && (!isAbsolute(base) || !lstatSync(base).isDirectory() || lstatSync(base).isSymbolicLink()))
     throw new Error('Notes root must remain an explicit existing local directory without a link.');

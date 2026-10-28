@@ -80,72 +80,49 @@ import { cornellResearchSchema, compileCornellResearch, prepareCornellResearch, 
   configureCornellDestination, prepareCornellExport, applyCornellExport } from './cornell-workflow.js';
 import { prepareCornellPublication, publishCornellExport } from './cornell-publication.js';
 import { validatePlatform } from './platform-validation.js';
-import { modelControlStatus, setRoleModel, configureRouter, routerHealth, routerModels, routerProbe } from './model-control.js';
+import { modelControlStatus, setRoleModel, configureRouter, configureWorkForceModelCatalog, routerHealth, routerModels, routerProbe } from './model-control.js';
 import { listUpstreams, discoverUpstreams, trackUpstream, checkUpstream, cloneUpstream, adoptUpstreamUpdate, readUpstreamInstructions, watchUpstreams } from './upstreams.js';
+import { requestSubmit, requestStatus, requestControl, requestSetupStatus } from './workforce-requests.js';
 import { checkpointLightweight, type LightweightCheckpoint } from './lightweight.js';
 import { recordTypes, type Gate, type Platform, type Profile, type RecordType } from './types.js';
 
-const help = `NeoMind engineering workflow (Node.js 24+)
+const help = `WorkForce engineering workspace (Node.js 24+)
 
-Usage: neomind <command> [action] [id] [options]
-  init --name NAME --profile basic|software|embedded --platforms codex,claude,copilot [--local]
-  doctor | update [--local] (persist separately ignorable Copilot integration)
-  validate (read-only integration, activity, upstream and reusable-procedure inspection)
-  upgrade --to VERSION_OR_TAG_OR_LOCAL_TGZ (uninstall old package, install new, refresh integration)
-  workflow begin --requirement TEXT [--title TITLE] [--request-id ID]
-  workflow run --requirement TEXT | --data '{"requirements":["..."],"execution_mode":"copilot-native"}'
-  workflow checkpoint WORKFLOW_ID --data JSON (unsigned lightweight progress/results)
-  workflow discuss|decide|finish WORKFLOW_ID --data JSON | workflow status [WORKFLOW_ID]
-  assignment report --data JSON --body FILE (target_ids, invocation_id, role; seven-section report)
-  record create TYPE --title TITLE --owner ROLE --data JSON [--body FILE]
-  record update ID --data JSON [--body FILE] | record show ID | record list [--type TYPE]
-  task create --title TITLE --owner ROLE --requires IDS --acceptance JSON --paths JSON
-  task list | task show ID | task start ID [--model MODEL] [--confirmed-model MODEL]
-  task submit ID --summary TEXT [--work-record FILE] | task accept ID | task block ID --summary TEXT
-  task resume ID [--model MODEL] | task repair ID --summary FEEDBACK
-  review ID --owner reviewer --decision pass|fail [--findings JSON] [--invocation ID]
-  check run ID --task TASK_ID
-  check inspect ID --task TASK_ID --invocation ID --data JSON
-  check archive EVIDENCE_ID (preserve verification logs for review and sharing)
-  context TASK_ID [--max-chars NUMBER]
-  trace ID [--impact] | verify [TASK_ID] [--gate ready|design-ready|verified|accepted]
-  memory search QUERY | memory history [--owner ROLE] | memory contribute KNOWLEDGE_ID
-  memory contribute KNOWLEDGE_ID --upstream OWNER/REPO (explicit draft PR submission)
-  pack list | pack install NAME_OR_PATH [--decision CHANGE_ID] | pack show ID | pack suggest TERMS
-  index rebuild
-  mcp
-  native run --data JSON | native status [ID] | native wait|interrupt|resume ID
-  router probe --url URL --alias MODEL (diagnostic only; no native receipt)
-  map (bounded saved agent activity and communication snapshot)
-  activity report --data JSON (unsigned native dispatch/progress/completion; never signed proof)
-  activity hooks | activity hook --provider codex|copilot --event EVENT (hook JSON on stdin)
-  codex status | codex configure --data '{"mode":"inherit|9router"}' (regenerate integration)
-  rea status|configure|probe --data JSON (explicit pinned optional MCP integration)
+Usage: workforce <command> [action] [id] [options]
+  init --name NAME --profile basic|software|embedded --platforms codex,copilot [--local]
+  update [--local]                  Refresh integration; preserve project edits
+  doctor | validate               Inspect setup and installed capabilities
+  request setup                   Read connection/tool readiness without calling a model
+  request submit --requirement TEXT [--title TITLE]
+  request status [REQUEST_ID]      Read saved products, checks and current action
+  request pause|resume|cancel REQUEST_ID [--data-file FILE]
+  request resume REQUEST_ID --question-id ISSUED_ID --answer TEXT
+  mcp                             Start request_submit/status/control MCP for this project
+  models status | models set --role ROLE --model ALIAS [--provider PROVIDER]
+  models catalog --catalog-file FILE  Select and validate an existing custom endpoint catalog
+  router configure --base-url URL [--api-key-env ENV] [--catalog-provider NAME]
+  router health|models|probe [--model ALIAS]
   plugins status|enable|disable|install|probe PLUGIN
   plugins connections|connect|disconnect PLUGIN --client codex|copilot-vscode|copilot-cli [--mcp-file FILE]
-  cornell compile|prepare --data-file FILE (validated research input and reusable recipe)
-  cornell destination|configure|export-plan|export-apply|publish-plan|publish --data JSON
-  models status | models set --role ROLE --model MODEL [--provider PROVIDER] [--effort low|medium|high]
-  router configure --base-url URL [--api-key-env ENV] [--catalog-provider NAME]
-  router health|models|probe [--model MODEL] (configured 9router; diagnostics only)
-  upstream list|discover|track|check|clone|adopt|instructions [ID] --data JSON
-  upstream watch [--wait-ms INTERVAL] (persistent checks, default 15 minutes; Ctrl+C stops)
-  archive prepare WORKFLOW_ID | archive publish|status SNAPSHOT_ID | archive restore ID --destination DIRECTORY | archive reassess WORKFLOW_ID --data JSON
-  migrate (move .taskforces or .verythinker storage to .neomind; never merges or overwrites)
-  note create --data JSON | note revise ID --data JSON | note validate ID
-  recipe list|resolve ID|prepare --data JSON|run ID|revise ID --data JSON
-  procedure discover|list|show ID|register|review|run|qualify|suspend ID --data-file FILE
-  procedure index (rebuild disposable procedure search index)
-  work prepare|run --data-file FILE (match requests; run requires eligible compatible procedure and explicit effects)
-  assignment open|context|progress|result --data-file FILE (private typed assignment context; keep credentials out of reports)
-  capability describe ROLE|resolve --data JSON|invoke --data JSON
-  workspace write --data JSON (actual Developer invocation and reviewed task scope required)
-  codegraph enable --report FILE --executable FILE --args JSON
+  cornell compile|prepare|destination|configure|export-plan|export-apply|publish-plan|publish --data-file FILE
+  procedure discover|list|show|register|review|run|qualify|suspend|index [ID] --data-file FILE
+  work prepare|run --data-file FILE
+  memory search QUERY | memory history | index rebuild
+  upstream list|discover|track|check|clone|adopt|instructions|watch [ID] --data-file FILE
+  migrate                         Move legacy storage to .workforce without rewriting history
+  upgrade --to VERSION_OR_TAG_OR_LOCAL_TGZ
 Options: --project DIRECTORY --json --help --version
 
-Create a check record with command (executable/arguments), baseline_paths, method,
-and a verifies link. Check execution collects real receipts and logs.
-Use record creation --data '{...}' for additional task packet fields.
+Submit your complete requirement once. WorkForce manages agent sessions,
+implementation, review and independent tests through the configured OpenCode engine.
+VS Code must stay open with the exact workspace connected. A model alias does not
+attest the upstream model. Setup and status commands never run inference.
+
+Legacy workflow, record, task, assignment, check, review, archive, capability and
+recipe commands remain available for historical projects and diagnostics; they are
+not the ordinary WorkForce request protocol. See the installed documentation.
+  check inspect ID --data JSON     Inspect a retained historical check contract
+  workspace write --data JSON      Historical guarded write with explicit CAS
 `;
 
 async function main(): Promise<void> {
@@ -196,6 +173,9 @@ async function main(): Promise<void> {
       'base-url',
       'api-key-env',
       'catalog-provider',
+      'catalog-file',
+      'question-id',
+      'answer',
       'client',
       'mcp-file',
     ].map((k) => [k, { type: 'string' }]),
@@ -250,6 +230,22 @@ async function main(): Promise<void> {
     return;
   }
   switch (command) {
+    case 'request': {
+      const input = data();
+      const answer = o.answer ?? input.answer;
+      if (action === 'setup') result = requestSetupStatus(root);
+      else if (action === 'status') result = requestStatus(root, id);
+      else if (action === 'submit') result = await requestSubmit(root, {
+        requirement: needed(o.requirement ?? input.requirement, '--requirement'),
+        ...(o.title ?? input.title ? { title: needed(o.title ?? input.title, '--title') } : {}),
+      });
+      else if (action === 'pause' || action === 'resume' || action === 'cancel') result = await requestControl(root, {
+        request_id: needed(id, 'REQUEST_ID'), action,
+        ...(answer !== undefined ? { answer: needed(answer, 'answer'), question_id: needed(o['question-id'] ?? input.question_id, '--question-id') } : {}),
+      });
+      else throw new Error('Use request setup|submit|status|pause|resume|cancel.');
+      break;
+    }
     case 'procedure': {
       const input = data();
       if (action === 'list') result = listProcedures(root);
@@ -321,7 +317,7 @@ async function main(): Promise<void> {
         const routing = withOperationLock(root, 'native-dispatch', () => withOperationLock(root, 'routing-policy', () => {
           if (modelControlStatus(root).active_invocations.length) throw new Error('Stop active signed invocations before changing Codex routing.');
           const selected = readCodexRouting(root, mode), config = readConfig(root);
-          atomicWrite(safePath(root, '.neomind/config.json'), JSON.stringify({ ...config, codex_routing: mode }, null, 2) + '\n');
+          atomicWrite(safePath(root, '.workforce/config.json'), JSON.stringify({ ...config, codex_routing: mode }, null, 2) + '\n');
           return selected;
         }));
         result = { routing, integration: updateProject(root) };
@@ -361,6 +357,7 @@ async function main(): Promise<void> {
       break;
     case 'models':
       if (action === 'status') result = modelControlStatus(root);
+      else if (action === 'catalog') result = configureWorkForceModelCatalog(root, { path: needed(o['catalog-file'] ?? data().path, '--catalog-file') });
       else if (action === 'set') {
         const selection = setRoleModel(root, {
           role: needed(o.role, '--role'), model: needed(o.model, '--model'),
@@ -371,7 +368,7 @@ async function main(): Promise<void> {
         try { result = { ...selection, installation: updateProject(root) }; }
         catch (error) { result = { ...selection, adapter_error: error instanceof Error ? error.message : String(error) }; }
       }
-      else throw new Error('Use models status|set.');
+      else throw new Error('Use models status|catalog|set.');
       break;
     case 'upstream': {
       const input = data();
@@ -397,7 +394,7 @@ async function main(): Promise<void> {
     }
     case 'init': {
       initialize(root, {
-        name: String(o.name ?? 'NeoMind project'),
+        name: String(o.name ?? 'WorkForce project'),
         profile: String(o.profile ?? 'basic') as Profile,
         platforms: list(o.platforms ?? 'copilot') as Platform[],
         ...(o['project-id'] ? { project_id: String(o['project-id']) } : {}),
@@ -420,9 +417,9 @@ async function main(): Promise<void> {
       break;
     case 'workflow': {
       if (action === 'begin' || action === 'run') {
-        if (!existsSync(safePath(root, '.neomind/config.json'))) {
+        if (!existsSync(safePath(root, '.workforce/config.json'))) {
           initialize(root, {
-            name: String(o.name ?? 'NeoMind project'),
+            name: String(o.name ?? 'WorkForce project'),
             profile: String(o.profile ?? 'basic') as Profile,
             platforms: [String(o.platform ?? 'copilot') as Platform],
           });
@@ -707,7 +704,7 @@ async function main(): Promise<void> {
       const platform = String(o.platform ?? 'codex');
       if (!['codex', 'claude', 'copilot'].includes(platform))
         throw new Error('Unknown hook platform.');
-      const message = `NeoMind ${config.profile} project ${config.project_id}. For a requirement, act as neomind-manager and read the installed guides/copilot-native.md for native mode or guides/manager.md for strict mode, under .neomind. Resume saved workflows with manager_status. Own internal discussion, documentation, review, acceptance, and configured draft PRs; ask only for missing product intent or a genuine blocker. This hook is advisory.`;
+      const message = `WorkForce ${config.profile} project ${config.project_id}. Use WF.PM to submit the complete requirement once through workforce/request_submit or the WorkForce Request tool. WorkForce owns agent sessions, implementation, independent review/testing and recovery. Follow saved work through request_status; do not implement the same accepted request separately or use legacy assignment credentials. Project instructions live under .workforce. This hook is advisory.`;
       console.log(
         json(
           event !== 'session-start'
@@ -807,7 +804,7 @@ async function main(): Promise<void> {
       else throw new Error('Use archive prepare|publish|status|restore|reassess.');
       break;
     case 'migrate':
-      result = migrateStorage(root);
+      result = migrateStorage(root, { activate_workforce: true });
       break;
     default:
       throw new Error(`Unknown command: ${command}. Use --help.`);

@@ -1,3 +1,5 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync, realpathSync } from 'node:fs';
@@ -6,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { parse as toml } from 'smol-toml';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { initialize, atomicWrite, safePath, loadRecords } from '../dist/storage.js';
+import { atomicWrite, safePath, loadRecords } from '../dist/storage.js';
 import { installProject, doctor } from '../dist/installer.js';
 import { createMcpServer } from '../dist/mcp.js';
 import { adapterOutputs } from '../dist/adapters.js';

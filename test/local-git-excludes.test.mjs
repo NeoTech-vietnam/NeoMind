@@ -8,6 +8,12 @@ import { spawnSync } from 'node:child_process';
 
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const rules = [
+  '/.workforce/',
+  '/.github/agents/workforce-*.agent.md',
+  '/.github/skills/workforce-*/',
+  '/.github/hooks/workforce.json',
+  '/.github/instructions/workforce.instructions.md',
+  '/**/*.workforce-update*',
   '/.neomind/',
   '/.github/agents/neomind-*.agent.md',
   '/.github/skills/neomind-*/',
@@ -19,11 +25,10 @@ const rules = [
   '/**/*.neomind-update*',
 ];
 const generated = [
-  '.neomind/config.json',
-  '.github/agents/neomind-coordinator.agent.md',
-  '.github/skills/neomind-manager/SKILL.md',
-  '.github/hooks/neomind.json',
-  '.github/instructions/neomind.instructions.md',
+  '.workforce/config.json',
+  '.github/agents/workforce-pm.agent.md',
+  '.workforce/skills/workforce-manager/SKILL.md',
+  '.github/instructions/workforce.instructions.md',
 ];
 function fixture(t) {
   const base = mkdtempSync(join(tmpdir(), 'neomind-git-excludes-'));
@@ -119,7 +124,7 @@ test('local init preserves BOM, CRLF, no final newline, negations and both user 
   const rootIgnore = Buffer.from('# Repository ignore rules\r\n*.object\r\n');
   const nestedIgnore = Buffer.from('# Existing managed-folder preferences\r\n!keep-me\r\n');
   write(join(root, '.gitignore'), rootIgnore);
-  write(join(root, '.neomind/.gitignore'), nestedIgnore);
+  write(join(root, '.workforce/.gitignore'), nestedIgnore);
   run(root, ['init', '--local', '--platforms', 'copilot']);
   const first = readFileSync(path);
   assert.deepEqual(first.subarray(0, 3), original.subarray(0, 3));
@@ -129,12 +134,12 @@ test('local init preserves BOM, CRLF, no final newline, negations and both user 
   git(root, ['check-ignore', '--no-index', '--quiet', '--', 'keep.private'], 1);
   git(root, ['check-ignore', '--no-index', '--quiet', '--', '.github/agents/neomind-personal.agent.md'], 1);
   assert.deepEqual(readFileSync(join(root, '.gitignore')), rootIgnore);
-  assert.deepEqual(readFileSync(join(root, '.neomind/.gitignore')), nestedIgnore);
+  assert.deepEqual(readFileSync(join(root, '.workforce/.gitignore')), nestedIgnore);
   run(root, ['update']);
   run(root, ['update', '--local']);
   assert.deepEqual(readFileSync(path), first);
   assert.deepEqual(readFileSync(join(root, '.gitignore')), rootIgnore);
-  assert.deepEqual(readFileSync(join(root, '.neomind/.gitignore')), nestedIgnore);
+  assert.deepEqual(readFileSync(join(root, '.workforce/.gitignore')), nestedIgnore);
 });
 
 test('existing manual marker blocks remain byte-for-byte intact and exact positive rules are not duplicated', t => {
@@ -154,14 +159,16 @@ test('existing manual marker blocks remain byte-for-byte intact and exact positi
   assert.deepEqual(readFileSync(path), after);
 });
 
-test('update --local opts into exclusions and persists them on ordinary subsequent updates', t => {
+test('default Local init installs exclusions and preserves them on explicit and ordinary updates', t => {
   const { root } = fixture(t);
   initializeGit(root);
   const path = excludes(root), original = readFileSync(path);
   run(root, ['init', '--platforms', 'copilot']);
-  assert.deepEqual(readFileSync(path), original);
+  assert.notDeepEqual(readFileSync(path), original);
+  const initialLocal = readFileSync(path);
   run(root, ['update', '--local']);
   const local = readFileSync(path);
+  assert.deepEqual(local, initialLocal);
   assert.notDeepEqual(local, original);
   assertIgnored(root);
   run(root, ['update']);
@@ -176,10 +183,10 @@ for (const action of ['init', 'update']) test(`${action} --local hides actual Co
   const ignoreBytes = Buffer.from('# User repository rules\r\n*.object\r\n');
   const authored = {
     '.gitignore': ignoreBytes,
-    'AGENTS.md': '# Project instructions\n<!-- BEGIN NEOMIND instructions -->\nUser-owned instructions remain unchanged.\n<!-- END NEOMIND instructions -->\n',
-    '.codex/config.toml': '[mcp_servers.neomind]\ncommand = "user-owned-command"\nargs = []\n',
+    'AGENTS.md': '# Project instructions\n<!-- BEGIN WORKFORCE instructions -->\nUser-owned instructions remain unchanged.\n<!-- END WORKFORCE instructions -->\n',
+    '.codex/config.toml': '[mcp_servers.workforce]\ncommand = "user-owned-command"\nargs = []\n',
     '.codex/hooks.json': JSON.stringify({ hooks: { SubagentStart: [{ hooks: [{ type: 'command', command: 'user-owned-hook' }] }] } }),
-    '.github/agents/neomind-coordinator.agent.md': '# User-owned Copilot agent\nPreserve these existing authored instructions.\n',
+    '.github/agents/workforce-pm.agent.md': '# User-owned Copilot agent\nPreserve these existing authored instructions.\n',
   };
   for (const [path, value] of Object.entries(authored)) write(join(root, path), value);
   git(root, ['add', '--', ...Object.keys(authored)]);
@@ -188,22 +195,21 @@ for (const action of ['init', 'update']) test(`${action} --local hides actual Co
   if (action === 'init') report = run(root, ['init', '--local', '--platforms', 'copilot,codex']).installation;
   else {
     run(root, ['init', '--platforms', 'copilot,codex']);
-    assert.match(git(root, ['status', '--porcelain=v1', '--untracked-files=all']), /\.neomind-update/);
+    assert.match(git(root, ['status', '--porcelain=v1', '--untracked-files=all', '--ignored']), /\.workforce-update/);
     report = run(root, ['update', '--local']);
   }
-  for (const path of ['AGENTS.md#instructions', '.codex/config.toml#mcp', '.codex/hooks.json#hooks.SubagentStart', '.github/agents/neomind-coordinator.agent.md'])
+  for (const path of ['AGENTS.md#instructions', '.codex/config.toml#mcp', '.github/agents/workforce-pm.agent.md'])
     assert.ok(report.conflicts.some(conflict => conflict.path === path), `${path} must produce an actual review candidate.`);
   for (const conflict of report.conflicts) {
     assert.equal(existsSync(join(root, conflict.candidate)), true, conflict.candidate);
     git(root, ['check-ignore', '--no-index', '--quiet', '--', conflict.candidate]);
   }
-  assert.doesNotMatch(git(root, ['status', '--porcelain=v1', '--untracked-files=all']), /\.neomind-update/);
+  assert.doesNotMatch(git(root, ['status', '--porcelain=v1', '--untracked-files=all']), /\.(?:workforce|neomind)-update/);
   for (const [path, value] of Object.entries(authored)) {
     if (path === '.codex/hooks.json') {
       const hooks = JSON.parse(readFileSync(join(root, path), 'utf8')).hooks;
       assert.deepEqual(hooks.SubagentStart, JSON.parse(value).hooks.SubagentStart, path);
-      for (const event of ['SubagentStop', 'PostToolUse', 'Stop'])
-        assert.ok(Array.isArray(hooks[event]) && hooks[event].length > 0, `Generated ${event} hook remains installed.`);
+      assert.deepEqual(hooks, JSON.parse(value).hooks, 'WorkForce does not install legacy agent lifecycle hooks.');
     } else assert.deepEqual(readFileSync(join(root, path)), Buffer.isBuffer(value) ? value : Buffer.from(value), path);
   }
   const after = readFileSync(excludePath);
@@ -216,9 +222,9 @@ for (const action of ['init', 'update']) test(`${action} --local hides actual Co
   const repeated = run(root, ['update', '--local']);
   const numbered = repeated.conflicts.find(conflict => conflict.path === originalCandidate.path);
   assert.notEqual(numbered.candidate, originalCandidate.candidate);
-  assert.match(numbered.candidate, /\.neomind-update-instructions\.\d+$/);
+  assert.match(numbered.candidate, /\.workforce-update-instructions\.\d+$/);
   assert.deepEqual(readFileSync(join(root, originalCandidate.candidate)), reviewerBytes);
-  assert.doesNotMatch(git(root, ['status', '--porcelain=v1', '--untracked-files=all']), /\.neomind-update/);
+  assert.doesNotMatch(git(root, ['status', '--porcelain=v1', '--untracked-files=all']), /\.(?:workforce|neomind)-update/);
   assert.deepEqual(readFileSync(excludePath), after);
   assert.deepEqual(readFileSync(join(root, '.gitignore')), ignoreBytes);
 });
@@ -270,7 +276,7 @@ test('nested local projects scope exclusions literally through spaces and bracke
   for (const path of generated) git(root, ['check-ignore', '--no-index', '--quiet', '--', path], 1);
   for (const path of ['AGENTS.md.neomind-update-instructions', '.codex/hooks.json.neomind-update-hooks-SubagentStart.1'])
     git(root, ['check-ignore', '--no-index', '--quiet', '--', path], 1);
-  git(root, ['check-ignore', '--no-index', '--quiet', '--', 'packages/local d study/.neomind/config.json'], 1);
+  git(root, ['check-ignore', '--no-index', '--quiet', '--', 'packages/local d study/.workforce/config.json'], 1);
 });
 
 test('non-Git local installs succeed with an explicit warning and never fabricate .git metadata', t => {
@@ -278,7 +284,7 @@ test('non-Git local installs succeed with an explicit warning and never fabricat
   const result = run(root, ['init', '--local', '--platforms', 'copilot']);
   assert.ok(result.installation.warnings.some(warning => /(?:not.*git|git.*(?:not|skip|unavailable)|no.*repository)/i.test(warning)), JSON.stringify(result.installation.warnings));
   assert.equal(existsSync(join(root, '.git')), false);
-  assert.ok(existsSync(join(root, '.neomind/config.json')));
+  assert.ok(existsSync(join(root, '.workforce/config.json')));
 });
 
 test('a dangling user-owned Git exclude link is preserved and local installation reports its exclusion warning', t => {
@@ -300,8 +306,8 @@ test('a dangling user-owned Git exclude link is preserved and local installation
 test('local initialization retains a preexisting dangling inner gitignore link and its missing target', t => {
   const { base, root } = fixture(t);
   initializeGit(root);
-  const path = join(root, '.neomind/.gitignore'), missingTarget = join(base, 'absent-inner-ignore');
-  mkdirSync(join(root, '.neomind'));
+  const path = join(root, '.workforce/.gitignore'), missingTarget = join(base, 'absent-inner-ignore');
+  mkdirSync(join(root, '.workforce'));
   if (!createFileLink(t, missingTarget, path)) return;
   const destination = readlinkSync(path);
   assert.equal(existsSync(path), false);

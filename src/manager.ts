@@ -243,7 +243,9 @@ function beginWorkflowClaimed(root: string, input: WorkflowInput): ProjectRecord
         knowledge_research_required: policy.knowledge_research_required === true,
         cornell_publication: policy.cornell_publication ?? 'draft-pr',
         ...(requestedMode === 'neomind-controlled'
-          ? { execution_mode: requestedMode, assurance: 'invocation-bound-local', process_contract: 'software-tools/v2', transport: 'vscode-lm' }
+          ? { execution_mode: requestedMode, assurance: 'invocation-bound-local',
+            process_contract: readConfig(root).execution_engine === 'opencode' ? 'workforce/v1' : 'software-tools/v2',
+            transport: readConfig(root).execution_engine === 'opencode' ? 'opencode' : 'vscode-lm' }
           : native
           ? { execution_mode: requestedMode, assurance: 'unsigned-native-report' }
           : {}),

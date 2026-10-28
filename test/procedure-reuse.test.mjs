@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, w
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
+import { initializeLegacy } from './helpers/legacy-project.mjs';
 import {
   listProcedures, qualifyProcedure, registerProcedure, reviewProcedure, runProcedure, validateProcedureParameters,
 } from '../dist/procedures.js';
@@ -11,6 +12,7 @@ import { normalizeProcedureQuery, prepareWork, rebuildProcedureIndex } from '../
 
 function project(t, overrides = {}) {
   const root = mkdtempSync(join(tmpdir(), 'neomind-procedure-reuse-'));
+  initializeLegacy(root, { project_id: 'PROCEDURE-REUSE' });
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, 'scripts'), { recursive: true });
   mkdirSync(join(root, 'checks'), { recursive: true });

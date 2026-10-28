@@ -105,6 +105,6 @@ test('scheduled workflow is metadata-only and self-hosted verification requires 
   const manual = parseYaml(readFileSync(new URL('../.github/workflows/self-hosted-linux.yml', import.meta.url), 'utf8'));
   assert.deepEqual(Object.keys(manual.on), ['workflow_dispatch']);
   assert.deepEqual(manual.permissions, { contents: 'read' });
-  assert.deepEqual(manual.jobs.verify['runs-on'], ['self-hosted', 'linux', 'x64', 'neomind-ci']);
+  assert.deepEqual(manual.jobs.verify['runs-on'], ['self-hosted', 'linux', 'x64', 'workforce-ci']);
   assert.ok(manual.jobs.verify['timeout-minutes'] <= 45);
 });

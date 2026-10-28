@@ -1,3 +1,5 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +10,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { initialize, hash, atomicWrite, safePath, createRecord, getRecord, updateRecord } from '../dist/storage.js';
+import { hash, atomicWrite, safePath, createRecord, getRecord, updateRecord } from '../dist/storage.js';
 import { createControlledMcpServer } from '../dist/controlled-tools.js';
 import { controlledReviewContext } from '../dist/controlled-review-context.js';
 import { evidenceRecordFingerprint } from '../dist/evidence-inputs.js';
@@ -32,7 +34,7 @@ function fixture(t, count = 2) {
     documentation_paths: ['docs/report.md'], checks: [] };
   const task = createRecord(root, { type: 'task', title: 'Execution', owner: 'developer', status: 'in-progress',
     links: [{ type: 'satisfies', target: requirement.meta.id }],
-    data: { workflow_id: parent.meta.id, epoch_id,
+    data: { workflow_id: parent.meta.id, epoch_id, process_contract: 'software-tools/v2',
       ...Object.fromEntries(['acceptance_criteria', 'allowed_paths', 'verification_paths', 'outputs', 'documentation_paths'].map(key => [key, plan[key]])) } });
   const contract = { schema_version: 2, process: 'software-tools', workflow_id: parent.meta.id, epoch_id, plan,
     plan_hash: hash(JSON.stringify(plan)), task_id: task.meta.id, requirement_ids: [requirement.meta.id],

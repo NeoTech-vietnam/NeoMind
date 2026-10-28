@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { atomicWrite, safePath, withOperationLock } from '../dist/storage.js';
 const { activateMonitor, _test } = createRequire(import.meta.url)('../extensions/vscode-model-bridge/monitor.cjs');
 
 function setup(t, overrides = {}, options = {}) {
@@ -11,7 +12,10 @@ function setup(t, overrides = {}, options = {}) {
   const commands = new Map(), calls = [], context = { subscriptions: [] };
   let workspaceChanged, received, disposed, current, readCount = 0, panelCount = 0;
   const control = { roles: [{ role: 'developer', models: ['configured-model'], provider: 'test', reasoning_effort: 'low', strong: false }], active_invocations: [], router: null };
-  const runtime = { readAgentMap: () => { readCount++; return { schema_version: 1, project: { id: 'MAP', name: 'Empty map' }, nodes: [], edges: [], diagnostics: {} }; },
+  const runtime = { atomicWrite, safePath, withOperationLock,
+    controlledStatus: async () => { readCount++; return []; },
+    startControlledWorkflow: async () => { throw new Error('Unexpected request submission.'); },
+    controlControlledWorkflow: async () => { throw new Error('Unexpected request control.'); },
     modelControlStatus: () => control,
     setRoleModel: (_root, input) => { calls.push(input); return { applies_to: 'next-invocation' }; },
     updateProject: () => { calls.push('generated agents refreshed'); return { conflicts: [] }; },
@@ -21,7 +25,7 @@ function setup(t, overrides = {}, options = {}) {
     Uri: { file: uri }, ViewColumn: { One: 1 },
     workspace: { isTrusted: true, workspaceFolders: [{ uri: uri(root) }],
       onDidChangeWorkspaceFolders: callback => { workspaceChanged = callback; return { dispose() {} }; } },
-    commands: { registerCommand: (name, callback) => { commands.set(name, callback); return { dispose: () => commands.delete(name) }; } },
+    commands: { executeCommand: async (...args) => calls.push(args), registerCommand: (name, callback) => { commands.set(name, callback); return { dispose: () => commands.delete(name) }; } },
     window: { showQuickPick: async items => items[0], showInputBox: async () => 'entered-model',
       showInformationMessage: async message => calls.push(message), showWarningMessage: async message => calls.push(message),
       showErrorMessage: message => calls.push(message),
@@ -43,7 +47,7 @@ function setup(t, overrides = {}, options = {}) {
     return runtime;
   });
   t.after(() => { monitor.dispose(); for (const item of context.subscriptions) item.dispose(); rmSync(root, { recursive: true, force: true }); });
-  return { vscode, runtime, control, calls, open: () => commands.get('neomind.monitor.open')(),
+  return { root, vscode, runtime, control, calls, open: () => commands.get('workforce.monitor.open')(),
     changeFolders: () => workspaceChanged(), message: value => received(value),
     get panel() { return current; }, get reads() { return readCount; }, get panelCount() { return panelCount; } };
 }
@@ -88,7 +92,8 @@ test('monitor exposes configured role controls in an honest empty state and disp
   const env = setup(t);
   await env.open();
   assert.equal(env.panel.messages[0].type, 'snapshot');
-  assert.equal(env.panel.messages[0].map.nodes.length, 0);
+  assert.equal('map' in env.panel.messages[0], false, 'The active view has request state, not a record communication graph.');
+  assert.equal(env.panel.messages[0].setup.ready, false, 'Loaded configuration is not a successful capability probe.');
   assert.equal(env.panel.messages[0].roles[0].role, 'developer');
   assert.match(env.panel.webview.html, /default-src 'none'/);
   assert.match(env.panel.webview.html, /script-src 'nonce-/);
@@ -112,7 +117,7 @@ test('model selection uses the policy helper and does not enable inference', asy
 });
 
 test('saved policy and generated-agent conflicts are reported as separate outcomes', async t => {
-  const env = setup(t, { updateProject: () => ({ conflicts: [{ path: '.github/agents/Manager.agent.md', candidate: '.neomind/updates/Manager.agent.md' }] }) });
+  const env = setup(t, { updateProject: () => ({ conflicts: [{ path: '.github/agents/Manager.agent.md', candidate: '.workforce/updates/Manager.agent.md' }] }) });
   await env.open();
   await env.message({ type: 'select-model', role: 'developer' });
   assert.ok(env.calls.some(call => typeof call === 'object' && call.model === 'configured-model'));
@@ -151,8 +156,8 @@ test('missing custom-provider catalog gives an actionable routing setting withou
   await env.open();
   await env.message({ type: 'select-model', role: 'developer' });
   const notification = env.calls.filter(call => typeof call === 'string').join('\n');
-  assert.match(notification, /language_models_file/);
-  assert.match(notification, /\.neomind\/routing\.json/);
+  assert.match(notification, /Choose model catalog/);
+  assert.doesNotMatch(notification, /Set language_models_file/);
   assert.match(notification, /chatLanguageModels\.json/);
   assert.equal(env.calls.includes('generated agents refreshed'), false);
   assert.doesNotMatch(notification, /policy (?:was )?saved/);
@@ -189,7 +194,7 @@ test('unknown errors and known-error text carrying provider secrets stay generic
   }
 });
 
-test('invalid policy or receipt control state cannot hide the read-only map diagnostics', async t => {
+test('invalid model control state cannot hide read-only request connection diagnostics', async t => {
   const env = setup(t, { modelControlStatus: () => { throw new Error('Invalid signed receipt.'); } });
   await env.open();
   const value = env.panel.messages[0];
@@ -197,6 +202,60 @@ test('invalid policy or receipt control state cannot hide the read-only map diag
   assert.equal(value.control_unavailable, true);
   assert.equal(value.active_count, null);
   assert.deepEqual(value.roles, []);
+});
+
+test('setup readiness comes only from a real backend capability result and never exposes diagnostic private fields', async t => {
+  const env = setup(t, { requestSetupStatus: async () => ({ ready: true, summary: 'Engine tool probe passed for this build.',
+    token: 'PRIVATE', checks: [{ label: 'Engine', state: 'ready', summary: 'Observed tool result', secret: 'PRIVATE' }] }) });
+  await env.open();
+  assert.equal(env.panel.messages[0].setup.ready, true);
+  assert.match(env.panel.messages[0].setup.summary, /probe passed/);
+  assert.equal(JSON.stringify(env.panel.messages).includes('PRIVATE'), false);
+});
+
+test('catalog selection accepts only the native picker result and cannot adopt a webview-supplied path', async t => {
+  const selected = [], env = setup(t, { configureWorkForceModelCatalog: (root, input) => selected.push([root, input]) });
+  env.vscode.window.showOpenDialog = async options => { assert.equal(options.canSelectMany, false); return [{ scheme: 'file', fsPath: 'D:/Code/User/chatLanguageModels.json' }]; };
+  await env.open(); await env.message({ type: 'select-model-catalog', path: 'D:/untrusted/catalog.json' });
+  assert.deepEqual(selected, [[realpathSync.native(env.root), { path: 'D:/Code/User/chatLanguageModels.json' }]]);
+  env.vscode.window.showOpenDialog = async () => { env.vscode.workspace.isTrusted = false; return [{ scheme: 'file', fsPath: 'D:/late.json' }]; };
+  await env.message({ type: 'select-model-catalog' }); assert.equal(selected.length, 1);
+});
+
+test('a saved catalog with unresolved legacy aliases points to available role controls without claiming readiness', async t => {
+  const env = setup(t, { configureWorkForceModelCatalog: () => ({ selections_valid: false,
+    unresolved_roles: [{ role: 'manager', model: 'OLD_ALIAS' }, { role: 'developer', model: 'OLD_WORKER' }],
+    apiKey: 'PRIVATE_CATALOG_CANARY' }) });
+  env.vscode.window.showOpenDialog = async () => [{ scheme: 'file', fsPath: 'D:/Code/User/chatLanguageModels.json' }];
+  await env.open(); await env.message({ type: 'select-model-catalog' });
+  const messages = env.calls.filter(call => typeof call === 'string').join('\n');
+  assert.match(messages, /catalog saved.*Change model for WF\.PM, WF\.FnD/);
+  assert.doesNotMatch(messages, /PRIVATE_CATALOG_CANARY|OLD_ALIAS|OLD_WORKER|Connect the workspace to verify/);
+});
+
+test('product navigation rechecks the selected request and physical project containment', async t => {
+  let workflow;
+  const env = setup(t, { controlledStatus: async () => workflow ? [workflow] : [] });
+  mkdirSync(join(env.root, 'products')); writeFileSync(join(env.root, 'products/result.md'), 'Useful result');
+  workflow = { workflow_id: 'request-one', folder: 'products', artifacts: [{ path: 'products/result.md', exists: true }] };
+  await env.open();
+  await env.message({ type: 'open-product', workflow_id: 'request-one', path: 'products/result.md' });
+  assert.equal(env.calls.at(-1)[0], 'vscode.open');
+  assert.equal(env.calls.at(-1)[1].fsPath, realpathSync.native(join(env.root, 'products/result.md')));
+  await env.message({ type: 'open-request-folder', workflow_id: 'request-one' });
+  assert.equal(env.calls.at(-1)[0], 'revealInExplorer');
+  const opened = env.calls.filter(Array.isArray).length;
+  for (const input of [
+    { workflow_id: 'other-request', path: 'products/result.md' }, { workflow_id: 'request-one', path: '../outside.md' },
+    { workflow_id: 'request-one', path: 'products/other.md' }, { workflow_id: 'request-one', path: 'D:/private.md' },
+  ]) await env.message({ type: 'open-product', ...input });
+  assert.equal(env.calls.filter(Array.isArray).length, opened);
+  const outside = mkdtempSync(join(tmpdir(), 'workforce-product-outside-'));
+  t.after(() => rmSync(outside, { recursive: true, force: true })); writeFileSync(join(outside, 'private.md'), 'Private');
+  symlinkSync(outside, join(env.root, 'products/linked'), process.platform === 'win32' ? 'junction' : 'dir');
+  workflow.artifacts.push({ path: 'products/linked/private.md', exists: true });
+  await env.message({ type: 'open-product', workflow_id: 'request-one', path: 'products/linked/private.md' });
+  assert.equal(env.calls.filter(Array.isArray).length, opened, 'Even a declared output cannot escape through a symlink.');
 });
 
 test('active invocations and loss of trust prevent model mutation', async t => {
@@ -239,8 +298,9 @@ test('pure renderer keeps inline state out of the webview and exposes previewabl
   assert.match(html, /src="monitor.js"/);
   assert.match(html, /href="monitor.css"/);
   assert.match(html, /nonce="testnonce"/);
-  assert.match(html, /Show history reveals static saved links/);
-  assert.match(html, /Pulses indicate observed activity/);
+  assert.match(html, /id="v-model"/);
+  assert.match(html, /id="products"/);
+  assert.doesNotMatch(html, /Recorded communication|Runtime journal|Show history|<canvas/);
   assert.equal(html.includes('unsafe-inline'), false);
   // Executable resources stay nonce protected; both views load before
   // before the controller and neither may embed project snapshots or handlers.

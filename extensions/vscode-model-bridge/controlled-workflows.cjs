@@ -1,11 +1,11 @@
-const { randomBytes, randomUUID } = require('node:crypto');
+const { randomUUID } = require('node:crypto');
 const { lstatSync, readFileSync, realpathSync } = require('node:fs');
 const { isAbsolute, join, resolve } = require('node:path');
 const { createControlledEntryReceipts, ControlledEntryError } = require('./controlled-entry.cjs');
 
-const TOOL_NAME = 'neomind_controlled_workflow';
-const LOCAL_COORDINATOR_COMMAND = 'neomind.coordinator.openLocal';
-const COORDINATOR_PROFILE = 'NeoMind Coordinator Agent';
+const TOOL_NAME = 'workforce_request';
+const LOCAL_COORDINATOR_COMMAND = 'workforce.pm.openLocal';
+const COORDINATOR_PROFILE = 'WF.PM';
 const actions = ['submit', 'submit_new', 'status', 'pause', 'resume', 'cancel'];
 const apiNames = ['startControlledWorkflow', 'controlledStatus', 'controlControlledWorkflow'];
 const samePath = (a, b) => process.platform === 'win32' ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b);
@@ -15,7 +15,7 @@ class ControlledUIError extends Error {
 function fail(code, message) { throw new ControlledUIError(code, message); }
 function text(value, maximum) { return typeof value === 'string' && value.trim() && value.length <= maximum; }
 function openRoot(vscode, path) {
-  if (!vscode.workspace.isTrusted) fail('WORKSPACE_UNTRUSTED', 'Open and trust the project before using NeoMind.');
+  if (!vscode.workspace.isTrusted) fail('WORKSPACE_UNTRUSTED', 'Open and trust the project before using WorkForce.');
   if (!text(path, 4096) || !isAbsolute(path) || /^[\\/]{2}/.test(path))
     fail('PROJECT_REQUIRED', 'Choose the exact absolute workspace folder for this request.');
   let root;
@@ -28,43 +28,68 @@ function openRoot(vscode, path) {
   return root;
 }
 function requireApi(runtime) {
-  if (apiNames.some(name => typeof runtime?.[name] !== 'function'))
-    fail('RUNTIME_UPDATE_REQUIRED', 'Update the NeoMind runtime to use controlled workflows.');
+  if (apiNames.some(name => typeof runtime?.[name] !== 'function') &&
+      ['requestSubmit', 'requestStatus', 'requestControl'].some(name => typeof runtime?.[name] !== 'function'))
+    fail('RUNTIME_UPDATE_REQUIRED', 'Update the WorkForce runtime to use controlled workflows.');
+}
+function adaptRuntime(runtime) {
+  if (typeof runtime.requestSubmit !== 'function') return runtime;
+  return { ...runtime,
+    startControlledWorkflow: (root, input) => runtime.requestSubmit(root, input),
+    controlledStatus: async (root, id) => {
+      const value = await runtime.requestStatus(root, id);
+      return Array.isArray(value?.requests) ? value.requests : value;
+    },
+    controlControlledWorkflow: (root, input) => runtime.requestControl(root, { ...input, request_id: input.workflow_id }),
+  };
 }
 function publicError(error) {
   if (error instanceof ControlledEntryError) return { code: error.code, message: error.message };
   if (error?.code === 'CONTINUATION_PILOT_UNSUPPORTED') return {
     code: 'CONTINUATION_PILOT_UNSUPPORTED',
-    message: 'This saved contract needs an intended-use adapter for its original task family. Its acceptance conditions remain open; NeoMind will not replace them with LeetCode or C/C++ requirements.',
+    message: 'This saved contract needs an intended-use adapter for its original task family. Its acceptance conditions remain open; WorkForce will not replace them with LeetCode or C/C++ requirements.',
   };
   return error instanceof ControlledUIError ? { code: error.code, message: error.message }
-    : { code: 'CONTROLLED_OPERATION_FAILED', message: 'NeoMind could not complete this operation. Inspect the workflow journal and Bridge status; the accepted workflow is preserved.' };
+    : { code: 'CONTROLLED_OPERATION_FAILED', message: 'WorkForce could not complete this operation. Existing work is preserved; check the connection status in Universe.' };
 }
 const fields = (value, keys) => Object.fromEntries(keys.filter(key => ['string', 'number', 'boolean'].includes(typeof value?.[key]) || value?.[key] === null)
   .map(key => [key, typeof value[key] === 'string' ? value[key].slice(0, 16000) : value[key]]));
 /** Public projections intentionally omit credentials, prompts and raw provider/tool payloads. */
 function publicWorkflow(value) {
-  const result = fields(value, ['workflow_id', 'title', 'status', 'phase', 'process_contract', 'transport', 'created_at', 'updated_at', 'final_report_id']);
+  const result = fields(value, ['workflow_id', 'request_id', 'request_key', 'title', 'status', 'historical_status', 'phase', 'current_action', 'folder', 'process_contract', 'transport', 'created_at', 'updated_at', 'final_report_id', 'revision', 'accepted']);
   if (value?.process_contract && typeof value.process_contract === 'object')
     result.process_contract = fields(value.process_contract, ['name', 'version', 'process', 'schema_version']);
-  result.active_invocations = (Array.isArray(value?.active_invocations) ? value.active_invocations : []).slice(0, 100)
+  result.active_invocations = (Array.isArray(value?.active_agents) ? value.active_agents : Array.isArray(value?.active_invocations) ? value.active_invocations : []).slice(0, 100)
     .map(item => fields(item, ['id', 'invocation_id', 'role', 'stage', 'state', 'status', 'requested_model', 'confirmed_model', 'model_provider', 'provider', 'started_at', 'updated_at']));
-  result.events = (Array.isArray(value?.events) ? value.events : []).slice(-100)
-    .map(item => fields(item, ['id', 'sequence', 'at', 'timestamp', 'type', 'kind', 'stage', 'role', 'state', 'status', 'summary', 'message', 'code', 'owner']));
   result.blocker = value?.blocker && typeof value.blocker === 'object'
     ? fields(value.blocker, ['code', 'kind', 'trace_id', 'phase', 'owner', 'message', 'retryable', 'next_action']) : typeof value?.blocker === 'string' ? value.blocker.slice(0, 4000) : null;
+  result.stages = (Array.isArray(value?.stages) ? value.stages : Array.isArray(value?.milestones) ? value.milestones : []).slice(0, 24)
+    .map(item => fields(item, ['id', 'label', 'state', 'status', 'role', 'agent', 'summary', 'rationale']));
+  result.artifacts = (Array.isArray(value?.artifacts) ? value.artifacts : []).slice(0, 200)
+    .map(item => fields(item, ['path', 'label', 'state', 'status', 'sha256', 'exists', 'summary']));
+  result.criteria = (Array.isArray(value?.criteria) ? value.criteria : []).slice(0, 100)
+    .map(item => fields(item, ['id', 'text', 'title', 'state', 'status', 'summary']));
+  result.findings = (Array.isArray(value?.findings) ? value.findings : []).slice(0, 100)
+    .map(item => typeof item === 'string' ? item.slice(0, 4000) : fields(item, ['criterion', 'criterion_id', 'summary', 'message', 'expected', 'actual', 'owner', 'path']));
+  result.question = value?.question && typeof value.question === 'object' ? fields(value.question, ['id', 'text', 'reason', 'missing', 'criterion', 'status']) : null;
+  result.review = value?.review && typeof value.review === 'object' ? fields(value.review, ['state', 'status', 'summary', 'rationale']) : null;
+  result.runtime_health = value?.runtime_health && typeof value.runtime_health === 'object' ? fields(value.runtime_health, ['state', 'status', 'message', 'owner']) : null;
+  result.dependency_wait = value?.dependency_wait && typeof value.dependency_wait === 'object'
+    ? fields(value.dependency_wait, ['code', 'attempts', 'next_condition_check_at', 'last_check_at']) : null;
   return result;
 }
 function publicStatus(value) {
-  const values = Array.isArray(value) ? value : Array.isArray(value?.workflows) ? value.workflows : value?.workflow_id ? [value] : [];
+  const values = Array.isArray(value) ? value : Array.isArray(value?.requests) ? value.requests : Array.isArray(value?.workflows) ? value.workflows : value?.workflow_id ? [value] : [];
   return { workflows: values.slice(0, 200).map(publicWorkflow) };
 }
 function inputValue(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).some(key => !['action', 'workspace_folder', 'requirement', 'workflow_id', 'title'].includes(key)) || !actions.includes(value.action))
+      Object.keys(value).some(key => !['action', 'workspace_folder', 'requirement', 'workflow_id', 'title', 'answer', 'question_id'].includes(key)) || !actions.includes(value.action))
     fail('INVALID_REQUEST', 'Choose submit, submit_new, status, pause, resume or cancel.');
-  if (value.workflow_id !== undefined && !text(value.workflow_id, 256)) fail('INVALID_REQUEST', 'Use a workflow ID returned by NeoMind.');
+  if (value.workflow_id !== undefined && !text(value.workflow_id, 256)) fail('INVALID_REQUEST', 'Use a workflow ID returned by WorkForce.');
   if (value.title !== undefined && !text(value.title, 256)) fail('INVALID_REQUEST', 'Use a title of at most 256 characters.');
+  if (value.answer !== undefined && (value.action !== 'resume' || !text(value.answer, 20000) || !text(value.question_id, 256))) fail('INVALID_REQUEST', 'Resume with the answer and the exact pending question ID returned by WorkForce.');
+  if (value.question_id !== undefined && (value.answer === undefined || !text(value.question_id, 256))) fail('INVALID_REQUEST', 'A question ID accompanies its answer when resuming the selected request.');
   if (['submit', 'submit_new'].includes(value.action)) {
     if (!text(value.requirement, 20000) || value.workflow_id !== undefined)
       fail('INVALID_REQUEST', 'Submit a new requirement, or resume an existing workflow by its saved ID.');
@@ -74,23 +99,26 @@ function inputValue(value) {
 }
 async function perform({ runtime, root, enabled, input, entries, generation, context, beforeDispatch, surface = 'lm' }) {
   requireApi(runtime);
+  runtime = adaptRuntime(runtime);
   if (input.action === 'status') {
     const result = publicStatus(await runtime.controlledStatus(root, input.workflow_id));
     if (input.workflow_id) entries?.acknowledgeWorkflow(input.workflow_id);
     return result;
   }
-  if (!enabled()) fail('BRIDGE_DISABLED', 'Enable the NeoMind Model Bridge for this workspace before submitting or controlling work.');
+  if (!enabled()) fail('BRIDGE_DISABLED', 'Connect WorkForce for this workspace before submitting or controlling work.');
   if (['submit', 'submit_new'].includes(input.action)) {
     entries ??= createControlledEntryReceipts({ runtime, root, surface });
     if (surface === 'panel' && input.action === 'submit_new') generation = entries.newIntent(generation).generation;
     const result = await entries.submit(input, { generation, newTask: input.action === 'submit_new', context, beforeDispatch });
     return { ...publicStatus(result.workflow), ...(surface === 'panel' ? { intake: result.intake } : {}) };
   }
-  const result = await runtime.controlControlledWorkflow(root, { workflow_id: input.workflow_id, action: input.action });
+  const result = await runtime.controlControlledWorkflow(root, { workflow_id: input.workflow_id, action: input.action,
+    ...(input.answer !== undefined ? { answer: input.answer, question_id: input.question_id } : {}) });
   entries?.acknowledgeWorkflow(input.workflow_id);
   return publicStatus(result);
 }
 function createControlledPanelHost({ runtime, root, post, alive = () => true, enabled = () => false, beforeDispatch }) {
+  runtime = adaptRuntime(runtime);
   let entries, snapshotPending, operationQueue = Promise.resolve(), pendingMutations = 0;
   const receiptStore = () => entries ??= createControlledEntryReceipts({ runtime, root, surface: 'panel' });
   const enqueue = operation => {
@@ -125,7 +153,8 @@ function createControlledPanelHost({ runtime, root, post, alive = () => true, en
     let input;
     try {
       input = inputValue({ action: message.action, ...(message.requirement !== undefined ? { requirement: message.requirement } : {}),
-        ...(message.workflow_id !== undefined ? { workflow_id: message.workflow_id } : {}) });
+        ...(message.workflow_id !== undefined ? { workflow_id: message.workflow_id } : {}),
+        ...(message.answer !== undefined ? { answer: message.answer, question_id: message.question_id } : {}) });
     } catch (error) { if (alive()) await post({ type: 'controlled-error', ...publicError(error) }); return; }
     if (input.action === 'status') {
       try { await snapshot(); }
@@ -142,7 +171,7 @@ function createControlledPanelHost({ runtime, root, post, alive = () => true, en
       const receipt = await perform({ runtime, root, enabled, input, entries: receiptStore(), generation: message.generation, surface: 'panel',
         beforeDispatch: () => {
           if (!alive()) fail('REQUEST_CANCELLED', 'The panel closed before this request was submitted.');
-          if (!enabled()) fail('BRIDGE_DISABLED', 'Enable the NeoMind Model Bridge for this workspace before submitting or controlling work.');
+          if (!enabled()) fail('BRIDGE_DISABLED', 'Connect WorkForce for this workspace before submitting or controlling work.');
           beforeDispatch?.();
         } });
       if (alive()) await post({ type: 'controlled-receipt', action: input.action, source_generation: message.generation, ...receipt });
@@ -155,105 +184,83 @@ function createControlledPanelHost({ runtime, root, post, alive = () => true, en
   }
   return { handle, snapshot };
 }
-function renderControlledPanel({ cspSource, script, style, nonce }) {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource}; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none';">
-<link rel="stylesheet" href="${style}"><title>NeoMind Workflows</title></head><body>
-<header><p class="eyebrow">NEOMIND · CONTROLLED EXECUTION</p><h1>Mission control</h1><p id="workspace">Connecting to the selected project…</p><div class="toolbar"><span id="owner" role="status">Reading Bridge state</span><button id="enable">Enable Model Bridge</button><button id="local-coordinator">Open Local Coordinator</button><button id="refresh">Refresh</button><button id="universe">Open Universe</button></div><p class="hint">In Local Copilot chat, choose your 9router custom-endpoint model in the model picker. NeoMind workers use their configured Bridge role models.</p></header>
-<p id="notice" role="status" aria-live="polite"></p>
-<section class="compose"><h2>Give NeoMind a task</h2><label for="requirement">Describe the outcome and constraints</label><textarea id="requirement" rows="4" maxlength="20000" placeholder="What should NeoMind implement and verify?"></textarea><button id="submit" disabled>Start workflow</button><p class="hint">NeoMind owns the agents and their tool context. Accepted work continues when this panel or chat is closed, while VS Code stays open.</p></section>
-<main><section><h2>Saved workflows</h2><div id="workflows"><p>No saved controlled workflows.</p></div></section><section class="details"><h2 id="selection-title">Select a workflow</h2><p id="selection-state"></p><div id="controls"></div><h3>Owned agents</h3><div id="agents"></div><h3>Runtime journal</h3><ol id="events"></ol></section></main>
-<footer>Closing VS Code stops model requests and owned checks. Reopening reconciles the last durable checkpoint. A completed agent turn alone does not establish accepted work.</footer>
-<script nonce="${nonce}" src="${script}"></script></body></html>`;
-}
+/** Compatibility entry renders the same product surface as Universe. */
+function renderControlledPanel(options) { return require('./monitor.cjs')._test.renderMonitorHtml(options); }
 function activateControlledWorkflows(vscode, context, loadRuntime, { enabled = () => false } = {}) {
-  let panel, timer, opening = false, generation = 0;
+  let generation = 0;
   const invocationContexts = new WeakMap();
   const invocationOwner = randomUUID();
-  function stop() { generation++; clearInterval(timer); timer = undefined; const old = panel; panel = undefined; old?.dispose(); }
+  function stop() { generation++; }
   async function openLocalCoordinator() {
+    const token = generation;
     try {
       if (!vscode.workspace.isTrusted) fail('WORKSPACE_UNTRUSTED', 'Trust the workspace before opening the Local Coordinator.');
       const folders = vscode.workspace.workspaceFolders?.filter(folder => folder.uri.scheme === 'file') ?? [];
       const folder = folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick();
       if (!folder) fail('PROJECT_REQUIRED', 'Open and select the project folder before opening the Local Coordinator.');
       const root = openRoot(vscode, folder.uri.fsPath);
+      const guard = () => {
+        if (token !== generation) fail('PROJECT_CHANGED', 'The selected WorkForce project changed while opening Local chat. No request was submitted.');
+        openRoot(vscode, root);
+      };
+      guard();
       try {
-        const profile = join(root, '.github', 'agents', 'neomind-coordinator.agent.md'), info = lstatSync(profile);
+        const profile = join(root, '.github', 'agents', 'workforce-pm.agent.md'), info = lstatSync(profile);
         if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > 128000 || !samePath(realpathSync.native(profile), profile) ||
-            !/^name:\s*["']?NeoMind Coordinator Agent["']?\s*$/m.test(readFileSync(profile, 'utf8')))
+            !/^name:\s*["']?WF\.PM["']?\s*$/m.test(readFileSync(profile, 'utf8')))
           throw new Error('Invalid profile.');
-      } catch { fail('COORDINATOR_PROFILE_REQUIRED', 'Run neomind update --local for this project and review the NeoMind Coordinator profile before opening it.'); }
+      } catch { fail('COORDINATOR_PROFILE_REQUIRED', 'Run workforce update --local for this project and review the WorkForce Coordinator profile before opening it.'); }
       const commands = typeof vscode.commands.getCommands === 'function' ? await vscode.commands.getCommands(true) : [];
+      guard();
       if (!['workbench.action.chat.openInSidebar', 'workbench.action.chat.newLocalChat', 'workbench.action.chat.open'].every(command => commands.includes(command)))
-        fail('LOCAL_CHAT_UNAVAILABLE', 'This VS Code installation does not expose the Chat view and Local Copilot commands required by NeoMind. Enable or update Copilot Chat; NeoMind will not open another session type.');
-      openRoot(vscode, root);
+        fail('LOCAL_CHAT_UNAVAILABLE', 'This VS Code installation does not expose the Chat view and Local Copilot commands required by WorkForce. Enable or update Copilot Chat; WorkForce will not open another session type.');
+      const permissions = vscode.workspace.getConfiguration('chat', folder.uri);
+      if (permissions.get('permissions.default') !== 'autoApprove') {
+        try { await permissions.update('permissions.default', 'autoApprove', vscode.ConfigurationTarget.Workspace); }
+        catch { /* The effective state below reflects platform/organization policy. */ }
+      }
+      guard();
+      const permissionLevel = vscode.workspace.getConfiguration('chat', folder.uri).get('permissions.default');
+      if (permissionLevel !== 'autoApprove')
+        await vscode.window.showWarningMessage('VS Code did not apply the workspace Allow all default. Review the permission picker or organization policy in this Local chat.');
+      guard();
       // newLocalChat follows the last-focused chat widget. An empty chat editor
       // can adopt its default harness while clearing; await its sidebar first.
       try { await vscode.commands.executeCommand('workbench.action.chat.openInSidebar'); }
       catch { fail('LOCAL_CHAT_UNAVAILABLE', 'VS Code could not focus the Chat view before creating Local Copilot Chat. No request was submitted.'); }
-      openRoot(vscode, root);
+      guard();
       try { await vscode.commands.executeCommand('workbench.action.chat.newLocalChat'); }
-      catch { fail('LOCAL_CHAT_UNAVAILABLE', 'VS Code could not create Local Copilot Chat. No alternative session was opened by NeoMind.'); }
-      openRoot(vscode, root);
+      catch { fail('LOCAL_CHAT_UNAVAILABLE', 'VS Code could not create Local Copilot Chat. No alternative session was opened by WorkForce.'); }
+      guard();
       // A generic new-chat command can follow a remembered SDK/cloud provider.
       // Select Local first; leave model/provider selection to the user's picker.
       try { await vscode.commands.executeCommand('workbench.action.chat.open', { mode: COORDINATOR_PROFILE }); }
-      catch { fail('LOCAL_COORDINATOR_UNAVAILABLE', 'Local chat was created, but VS Code could not select the NeoMind Coordinator profile. No request was submitted.'); }
-      return { opened: true, target: 'local', profile: COORDINATOR_PROFILE, model_selection: 'user-picker' };
+      catch { fail('LOCAL_COORDINATOR_UNAVAILABLE', 'Local chat was created, but VS Code could not select the WorkForce Coordinator profile. No request was submitted.'); }
+      guard();
+      return { opened: true, target: 'local', profile: COORDINATOR_PROFILE, model_selection: 'user-picker', permission_default: permissionLevel };
     } catch (error) {
       const result = publicError(error);
       await vscode.window.showErrorMessage(result.message);
       return { opened: false, error: result };
     }
   }
-  async function open() {
-    if (opening) return; opening = true; const token = generation;
-    try {
-      if (panel) { panel.reveal(); return; }
-      if (!vscode.workspace.isTrusted) fail('WORKSPACE_UNTRUSTED', 'Trust the workspace before opening NeoMind Workflows.');
-      const folders = vscode.workspace.workspaceFolders?.filter(folder => folder.uri.scheme === 'file') ?? [];
-      const folder = folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick();
-      if (!folder || token !== generation) return;
-      const root = openRoot(vscode, folder.uri.fsPath), runtime = await loadRuntime(root); requireApi(runtime);
-      if (token !== generation) return;
-      const resources = vscode.Uri.file(join(__dirname, 'resources', 'monitor'));
-      const current = vscode.window.createWebviewPanel('neomind.controlledWorkflows', 'NeoMind Workflows', vscode.ViewColumn?.One ?? 1,
-        { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [resources] });
-      panel = current;
-      const asset = name => current.webview.asWebviewUri(vscode.Uri.file(join(resources.fsPath, name)));
-      current.webview.html = renderControlledPanel({ cspSource: current.webview.cspSource, script: asset('controlled.js'), style: asset('controlled.css'), nonce: randomBytes(24).toString('hex') });
-      const alive = () => panel === current && token === generation && vscode.workspace.isTrusted;
-      const host = createControlledPanelHost({ runtime, root, post: message => current.webview.postMessage(message), alive, enabled: () => enabled(root),
-        beforeDispatch: () => openRoot(vscode, root) });
-      const messages = current.webview.onDidReceiveMessage(async message => {
-        if (!alive()) return;
-        if (message?.type === 'controlled-enable') { await vscode.commands.executeCommand('neomind.bridge.enable', root); await host.handle({ type: 'controlled-action', action: 'status' }); }
-        else if (message?.type === 'controlled-local-coordinator') await vscode.commands.executeCommand(LOCAL_COORDINATOR_COMMAND);
-        else if (message?.type === 'controlled-universe') await vscode.commands.executeCommand('neomind.monitor.open');
-        else await host.handle(message);
-      });
-      current.onDidDispose(() => { messages.dispose(); clearInterval(timer); timer = undefined; if (panel === current) panel = undefined; });
-      await host.handle({ type: 'controlled-action', action: 'status' });
-      if (!alive()) return;
-      timer = setInterval(() => { void host.handle({ type: 'controlled-action', action: 'status' }); }, 2000); timer.unref?.();
-    } catch (error) { if (token === generation) await vscode.window.showErrorMessage(publicError(error).message); }
-    finally { opening = false; }
-  }
-  const command = vscode.commands.registerCommand('neomind.workflows.open', open);
+  const open = () => vscode.commands.executeCommand('workforce.monitor.open');
+  const command = vscode.commands.registerCommand('workforce.workflows.open', open);
+  context.subscriptions.push(vscode.commands.registerCommand('neomind.workflows.open', open),
+    vscode.commands.registerCommand('workforce.coordinator.openLocal', openLocalCoordinator));
   const localCoordinator = vscode.commands.registerCommand(LOCAL_COORDINATOR_COMMAND, openLocalCoordinator);
   const disposable = { dispose: stop };
   context.subscriptions.push(command, localCoordinator, vscode.workspace.onDidChangeWorkspaceFolders(stop), disposable);
   if (typeof vscode.lm?.registerTool === 'function') context.subscriptions.push(vscode.lm.registerTool(TOOL_NAME, {
     prepareInvocation(options) {
-      return { invocationMessage: `NeoMind: ${options?.input?.action ?? 'workflow'} in the selected project` };
+      return { invocationMessage: `WorkForce: ${options?.input?.action ?? 'request'} in the selected project` };
     },
     async invoke(options, token) {
       let response;
       try {
-        if (token?.isCancellationRequested) fail('REQUEST_CANCELLED', 'The request was cancelled before NeoMind accepted it.');
+        if (token?.isCancellationRequested) fail('REQUEST_CANCELLED', 'The request was cancelled before WorkForce accepted it.');
         const input = inputValue(options?.input), root = openRoot(vscode, input.workspace_folder), runtime = await loadRuntime(root);
-        if (token?.isCancellationRequested) fail('REQUEST_CANCELLED', 'The request was cancelled before NeoMind accepted it.');
+        if (token?.isCancellationRequested) fail('REQUEST_CANCELLED', 'The request was cancelled before WorkForce accepted it.');
         const opaque = options?.toolInvocationToken;
         let invocation;
         if (opaque && typeof opaque === 'object') {
@@ -263,11 +270,11 @@ function activateControlledWorkflows(vscode, context, loadRuntime, { enabled = (
         const entries = ['submit', 'submit_new', 'status', 'pause', 'resume', 'cancel'].includes(input.action)
           ? createControlledEntryReceipts({ runtime, root, surface: 'lm' }) : undefined;
         response = await perform({ runtime, root, enabled: () => enabled(root), input, entries, context: invocation,
-          beforeDispatch: () => { if (token?.isCancellationRequested) fail('REQUEST_CANCELLED', 'The request was cancelled before NeoMind accepted it.'); } });
+          beforeDispatch: () => { if (token?.isCancellationRequested) fail('REQUEST_CANCELLED', 'The request was cancelled before WorkForce accepted it.'); } });
       } catch (error) { response = { error: publicError(error) }; }
       return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(JSON.stringify(response))]);
     },
   }));
   return disposable;
 }
-module.exports = { TOOL_NAME, LOCAL_COORDINATOR_COMMAND, activateControlledWorkflows, createControlledPanelHost, renderControlledPanel, publicStatus, inputValue, openRoot };
+module.exports = { TOOL_NAME, LOCAL_COORDINATOR_COMMAND, activateControlledWorkflows, createControlledPanelHost, renderControlledPanel, publicStatus, inputValue, openRoot, adaptRuntime };

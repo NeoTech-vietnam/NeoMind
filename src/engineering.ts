@@ -259,7 +259,7 @@ function documentationSnapshot(root: string, task: ProjectRecord): Record<string
     const files = snapshotPaths(root, [canonicalPath]);
     if (!Object.keys(files).length)
       throw new Error(`Documentation path contains no files: ${path}`);
-    if (Object.keys(files).some((file) => file.startsWith('.neomind/records/')))
+    if (Object.keys(files).some(file => /^\.(?:workforce|neomind|taskforces|verythinker)\/(?:records\/|shared\/records\/|legacy-unassigned\/records\/|requests\/[^/]+\/records\/)/.test(file)))
       throw new Error(
         'Documentation paths cannot include managed records; use the linked work record.',
       );

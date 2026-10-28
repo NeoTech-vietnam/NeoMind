@@ -2,9 +2,9 @@
 function renderFocusSpace() {
   return `<div id="fs-transition" class="fs-transition" aria-hidden="true" hidden><div class="fs-portal-globe"><div class="fs-earth"><i class="fs-continents"></i><i class="fs-clouds"></i></div></div></div>
 <aside id="fs-background-audio" class="fs-background-audio" aria-label="Background ambient sound" hidden><div><strong id="fs-background-track">Ambient sound</strong><p id="fs-background-status" role="status" aria-live="polite">Paused</p></div><button id="fs-background-toggle" class="fs-button fs-small" type="button" aria-pressed="false">▶ Play ambience</button><label for="fs-background-volume">Volume</label><input id="fs-background-volume" type="range" min="0" max="100" value="35"><button id="fs-background-focus" class="fs-button fs-small fs-ghost" type="button">Open FocusSpace</button></aside>
-<section id="focus-space" class="focus-space" aria-label="NeoMind FocusSpace" tabindex="-1">
+<section id="focus-space" class="focus-space" aria-label="WorkForce FocusSpace" tabindex="-1">
   <div class="fs-sky" aria-hidden="true"><span class="fs-nebula"></span><span class="fs-horizon"></span></div>
-  <header class="fs-header"><button id="fs-back" class="fs-button fs-ghost" type="button">← <span>Back to Universe</span></button><div class="fs-wordmark"><span class="fs-orbit-mark" aria-hidden="true">◉</span><div>NeoMind <strong>FocusSpace</strong><small>A little space for your next idea.</small></div></div><time id="fs-date"></time></header>
+  <header class="fs-header"><button id="fs-back" class="fs-button fs-ghost" type="button">← <span>Back to Universe</span></button><div class="fs-wordmark"><span class="fs-orbit-mark" aria-hidden="true">◉</span><div>WorkForce <strong>FocusSpace</strong><small>A little space for your next idea.</small></div></div><time id="fs-date"></time></header>
   <div class="fs-intro"><span class="fs-eyebrow">YOU ARE HERE · EARTH</span><h1>Find your quiet orbit.</h1><p>Your time, your soundtrack, your horizon.</p></div>
   <div class="fs-feedback"><p id="fs-status" role="status" aria-live="polite">Welcome back to Earth.</p><button id="fs-cancel" class="fs-button fs-ghost" type="button" hidden>Cancel request</button></div>
   <main class="fs-layout">
@@ -39,7 +39,7 @@ function renderFocusSpace() {
       <p class="fs-quiet-note">The universe can keep moving.<br>You can take one small step.</p>
     </div>
   </main>
-  <footer class="fs-footer"><span>NeoMind · A space to think clearly.</span><span>Personal focus time is separate from agent activity.</span></footer>
+  <footer class="fs-footer"><span>WorkForce · A space to think clearly.</span><span>Personal focus time is separate from agent activity.</span></footer>
 </section>`;
 }
 module.exports = { renderFocusSpace };

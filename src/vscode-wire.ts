@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 export const bridgeLimit = 1024 * 1024;
 export const bridgeProtocol = 'neomind-vscode-lm-v1';
 export interface HostDescriptor { protocol: string; root: string; port: number; token: string; instance: string; pid: number }
-type HostOperation = 'open' | 'run' | 'poll' | 'result' | 'cancel' | 'controlled-start' | 'controlled-control' | 'controlled-status';
+type HostOperation = 'open' | 'run' | 'poll' | 'result' | 'cancel' | 'controlled-start' | 'controlled-control' | 'controlled-status' | 'controlled-answer';
 /** Trusted process configuration; never read these budgets from a wire request body. */
 export interface BridgeTimeoutOptions {
   connect_timeout_ms?: number;
@@ -17,6 +17,8 @@ export interface BridgeTimeoutOptions {
   prefer_local_dispatch?: boolean;
   /** Best-effort trusted diagnostics after a successful authorized request. */
   on_dispatch?: (transport: 'in-process' | 'http') => void;
+  /** Trusted startup seam to serialize descriptor publication with package replacement. */
+  publish_descriptor?: (publish: () => void) => void;
 }
 interface LocalHost { descriptor: HostDescriptor; dispatch(operation: string, input: unknown): Promise<unknown>; options: BridgeTimeoutOptions }
 const localHosts = new Map<string, LocalHost>();
@@ -40,7 +42,7 @@ const operationTimeouts: Record<HostOperation, number> = {
   open: 30000, result: 30000,
   // Durable admission and controls validate current project records and commit
   // their checkpoint before acknowledging. They are not model polling calls.
-  'controlled-start': 30000, 'controlled-control': 30000, 'controlled-status': 15000,
+  'controlled-start': 30000, 'controlled-control': 30000, 'controlled-status': 15000, 'controlled-answer': 30000,
   // Model generation runs asynchronously; these operations return control metadata only.
   run: 15000, poll: 15000, cancel: 5000,
 };
@@ -81,8 +83,10 @@ export function secureHostPrivateDirectory(path: string): void {
       "$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; " +
       // Token defaults can give fresh objects an Administrators owner and
       // explicit foreign grants. Initialize only an atomically created directory.
-      "if ($env:NEOMIND_PRIVATE_CREATED -eq '1') { $acl=New-Object System.Security.AccessControl.DirectorySecurity; " +
-      "$acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); " +
+      "if ($env:NEOMIND_PRIVATE_CREATED -eq '1') { $changeOwner=$acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value; $acl=New-Object System.Security.AccessControl.DirectorySecurity; " +
+      // An unchanged owner must not trigger an unnecessary WRITE_OWNER request.
+      // A different token-default owner still has to be changed and verified.
+      "if ($changeOwner) { $acl.SetOwner($sid) }; $acl.SetAccessRuleProtection($true,$false); " +
       "$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow'); " +
       "$acl.AddAccessRule($rule); " +
       "[System.IO.Directory]::SetAccessControl($env:NEOMIND_PRIVATE_DIRECTORY,$acl); " +
@@ -239,7 +243,8 @@ export async function serveHost(root: string, dispatch: (operation: string, inpu
   if (!address || typeof address === 'string') throw new Error('VS Code loopback binding failed.');
   const descriptor: HostDescriptor = { protocol: bridgeProtocol, root, port: address.port, token, instance, pid: process.pid };
   try {
-    writeFileSync(path, JSON.stringify(descriptor), { mode: 0o600, flag: 'wx' });
+    const publish = () => writeFileSync(path, JSON.stringify(descriptor), { mode: 0o600, flag: 'wx' });
+    if (options.publish_descriptor) options.publish_descriptor(publish); else publish();
   } catch (error) { server.close(); throw error; }
   const local: LocalHost = { descriptor, dispatch: dispatchResult, options: { ...options,
     operation_timeouts_ms: { ...options.operation_timeouts_ms } } };

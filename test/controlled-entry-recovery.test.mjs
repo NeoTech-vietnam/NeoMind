@@ -1,3 +1,6 @@
+// The real-runtime case retains its historical backend mode; extension-owned
+// receipt journals use the current WorkForce namespace on both adapters.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -6,7 +9,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import vm from 'node:vm';
-import { atomicWrite, safePath, withOperationLock, initialize, loadRecords } from '../dist/storage.js';
+import { atomicWrite, safePath, withOperationLock, loadRecords } from '../dist/storage.js';
 import { startControlledHost, startControlledWorkflow, controlledStatus } from '../dist/controlled-workflow.js';
 import { enableVSCodeHost } from '../dist/vscode-host.js';
 import { ensureRoutingPolicy } from '../dist/routing.js';
@@ -24,7 +27,7 @@ function fixture(t) {
     atomicWrite, safePath, withOperationLock,
     controlledStatus: async (_root, id) => id ? [...workflows.values()].find(value => value.workflow_id === id) : [...workflows.values()],
     startControlledWorkflow: async (_root, input) => {
-      const journal = JSON.parse(readFileSync(join(root, '.neomind/controlled/entrypoints/panel.json'), 'utf8'));
+      const journal = JSON.parse(readFileSync(join(root, '.workforce/controlled/entrypoints/panel.json'), 'utf8'));
       assert.ok(journal.entries.some(value => value.request_id === input.request_id && value.payload.requirement === input.requirement), 'identity must be durable before dispatch');
       attempts.push(input.request_id);
       if (reject) throw new Error('PRIVATE_TRANSPORT_DETAIL');
@@ -49,7 +52,7 @@ test('lost backend acceptance response reconciles the exact durable identity acr
   const again = await Promise.all([a.store().submit({ requirement: 'Produce one bounded artifact.' }), a.store().submit({ requirement: 'Produce one bounded artifact.' })]);
   assert.equal(a.attempts.length, 1); assert.equal(a.workflows.size, 1); assert.equal(a.artifacts.length, 1);
   for (const replay of again) { assert.equal(replay.workflow.workflow_id, first.workflow.workflow_id); assert.equal(replay.workflow.epoch_id, first.workflow.epoch_id); }
-  assert.deepEqual(JSON.parse(readFileSync(join(a.root, '.neomind/controlled/entrypoints/panel.json'), 'utf8')).entries.map(entry => entry.request_id), a.attempts);
+  assert.deepEqual(JSON.parse(readFileSync(join(a.root, '.workforce/controlled/entrypoints/panel.json'), 'utf8')).entries.map(entry => entry.request_id), a.attempts);
 });
 
 test('unknown unaccepted request retries its saved key and cannot substitute changed content', async t => {
@@ -112,7 +115,7 @@ test('acknowledged identical LM submit replays; explicit fresh turn creates one 
   assert.equal(duplicate.workflows[0].workflow_id, second.workflows[0].workflow_id);
   assert.equal(late.workflows[0].workflow_id, first.workflows[0].workflow_id);
   assert.equal(a.workflows.size, 2); assert.equal(a.attempts.length, 2);
-  const bytes = readFileSync(join(a.root, '.neomind/controlled/entrypoints/lm.json'), 'utf8');
+  const bytes = readFileSync(join(a.root, '.workforce/controlled/entrypoints/lm.json'), 'utf8');
   assert.doesNotMatch(bytes, /toolInvocationToken|PRIVATE/);
 });
 
@@ -160,7 +163,7 @@ test('actual runtime intake accepts through the facade once when the client lose
 test('read-only facade recovery does not create an intake or overwrite an invalid journal', async t => {
   const a = fixture(t);
   assert.equal((await a.store().recover()).intake, null);
-  const path = safePath(a.root, '.neomind/controlled/entrypoints/panel.json');
+  const path = safePath(a.root, '.workforce/controlled/entrypoints/panel.json');
   atomicWrite(path, '{invalid');
   await assert.rejects(a.store().recover(), { code: 'INTAKE_STORE_INVALID' });
   assert.equal(readFileSync(path, 'utf8'), '{invalid'); assert.equal(a.attempts.length, 0);

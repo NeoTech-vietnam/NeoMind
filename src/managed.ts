@@ -1,4 +1,4 @@
-import { agentProfiles, coordinatorAgentName, nativeActivityInstructions } from './agent-profiles.js';
+import { legacyAgentProfiles as agentProfiles, legacyCoordinatorAgentName as coordinatorAgentName, nativeActivityInstructions } from './agent-profiles.js';
 import { executionModes, isNativeExecutionMode, nativeClientForMode, savedWorkflowExecutionMode } from './execution-mode.js';
 import {
   beginWorkflow,

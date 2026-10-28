@@ -1,5 +1,5 @@
 import test from 'node:test';
-import { initialize } from '../dist/storage.js';
+import { initializeLegacy as initialize } from './helpers/legacy-storage.mjs';
 import assert from 'node:assert/strict';
 import {
   mkdtempSync,
@@ -33,8 +33,9 @@ import {
   recordFingerprint,
   verify,
 } from '../dist/engineering.js';
-import { canonicalJson, ensureRoutingPolicy, routingConfigurationHashes } from '../dist/routing.js';
+import { canonicalJson, ensureRoutingPolicy, routingConfigurationHashes, roleModelPolicy } from '../dist/routing.js';
 import { validateEvidenceInputs } from '../dist/evidence-inputs.js';
+import { migrateStorage } from '../dist/migration.js';
 import { defaultAutomationPolicy, nativeAutomationPolicy } from '../dist/manager.js';
 import {
   ensureArchivePolicy,
@@ -275,8 +276,9 @@ function validationReceiptFixture(work, role, state = 'completed') {
     );
   }
   const id = randomUUID();
-  const model = role === 'manager' ? 'claude-opus-4.6' : 'gpt-5.4';
-  const effort = role === 'manager' ? 'high' : 'low';
+  const assigned = roleModelPolicy(root, role, policy);
+  const model = assigned.models[0];
+  const effort = assigned.reasoning_effort;
   const receipt = {
     schema_version: 1,
     issuer: 'neomind-codex-app-server',
@@ -375,6 +377,23 @@ test('accepted snapshot preserves record bytes, binary files, and evidence when 
     () => restoreArchive(work.root, snapshot.snapshot_id, work.restore),
     /empty directory/,
   );
+});
+test('a historical accepted archive remains valid after request-grouped WorkForce migration', t => {
+  const work = fixture(t);
+  const snapshot = prepareArchive(work.root, work.parent.meta.id);
+  const recordBytes = new Map(snapshot.manifest.records.map(record => [record.path, readFileSync(safePath(work.root, record.path))]));
+  const before = validateEvidenceInputs(work.root, snapshot.manifest.evidence_inputs[work.evidence.meta.id]);
+  const migrated = migrateStorage(work.root);
+  assert.equal(migrated.moved, true);
+  assert.ok(migrated.records_relocated > 0);
+  assert.equal(verify(work.root, work.task.meta.id, 'accepted').ok, true);
+  assert.equal(archiveStatus(work.root, snapshot.snapshot_id).manifest_hash, snapshot.manifest_hash);
+  for (const [path, bytes] of recordBytes) assert.deepEqual(readFileSync(safePath(work.root, path)), bytes);
+  const after = validateEvidenceInputs(work.root, snapshot.manifest.evidence_inputs[work.evidence.meta.id]);
+  assert.deepEqual(after, before);
+  restoreArchive(work.root, snapshot.snapshot_id, work.restore);
+  assert.equal(verify(work.restore, work.task.meta.id, 'accepted').ok, true);
+  assert.deepEqual(readFileSync(join(work.restore, 'src/image.bin')), readFileSync(join(work.root, 'src/image.bin')));
 });
 test('archive cannot export arbitrary inputs, raw logs, credentials, or duplicate record IDs', (t) => {
   const work = fixture(t);

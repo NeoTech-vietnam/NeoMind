@@ -1,3 +1,5 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
@@ -5,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { initialize, readConfig, hash } from '../dist/storage.js';
+import { readConfig, hash } from '../dist/storage.js';
 import { installProject, updateProject, doctor } from '../dist/installer.js';
 import { adapterOutputs } from '../dist/adapters.js';
 import { setRoleModel } from '../dist/model-control.js';
@@ -27,7 +29,7 @@ function run(root, args) {
   return JSON.parse(result.stdout);
 }
 
-test('CLI local init and repeated/model updates preserve shared files and bind MCP to the installed project', t => {
+test('legacy local CLI updates and model changes preserve shared files and bind MCP metadata to the installed project', t => {
   const root = fixture(t);
   const sentinels = {
     '.gitignore': '# Repository-owned ignore rules\n',
@@ -44,7 +46,10 @@ test('CLI local init and repeated/model updates preserve shared files and bind M
   assert.equal(git.status, 0, git.stderr);
   git = spawnSync('git', ['-C', root, 'add', '--', ...Object.keys(sentinels)], { encoding: 'utf8', windowsHide: true });
   assert.equal(git.status, 0, git.stderr);
-  const initialized = run(root, ['init', '--local', '--platforms', 'copilot', '--project-id', 'LOCAL']);
+  // Fresh CLI init now creates WorkForce; retain this historical upgrade
+  // contract explicitly instead of expecting old names from a new project.
+  initialize(root, { platforms: ['copilot'], project_id: 'LOCAL', copilot_integration: 'local' });
+  const initialized = { config: readConfig(root), installation: run(root, ['update', '--local']) };
   assert.equal(initialized.config.copilot_integration, 'local');
   assert.deepEqual(initialized.installation.conflicts, []);
   const instruction = read(root, '.github/instructions/neomind.instructions.md');
@@ -73,11 +78,37 @@ test('CLI local init and repeated/model updates preserve shared files and bind M
   for (const path of ['package.json', 'package-lock.json', 'node_modules']) assert.equal(existsSync(join(root, path)), false);
 });
 
+test('fresh CLI local init registers WorkForce for the exact project while preserving authored siblings', t => {
+  const root = fixture(t);
+  const instructions = '# Existing shared instructions\r\n';
+  const gitignore = '# Existing team exclusions\r\n*.object\r\n';
+  write(root, '.github/copilot-instructions.md', instructions);
+  write(root, '.gitignore', gitignore);
+  write(root, '.vscode/mcp.json', '{"servers":{"existing":{"command":"authored-server"}}}\n');
+  const initialized = run(root, ['init', '--local', '--platforms', 'copilot']);
+  assert.equal(initialized.config.execution_engine, 'opencode');
+  assert.equal(initialized.config.copilot_integration, 'local');
+  assert.deepEqual(initialized.installation.conflicts, []);
+  assert.equal(read(root, '.github/copilot-instructions.md'), instructions);
+  assert.equal(read(root, '.gitignore'), gitignore);
+  assert.match(read(root, '.github/instructions/workforce.instructions.md'), /request_submit/);
+  const mcp = JSON.parse(read(root, '.vscode/mcp.json'));
+  assert.equal(mcp.servers.existing.command, 'authored-server');
+  assert.equal(mcp.servers.workforce.command, process.execPath);
+  assert.deepEqual(mcp.servers.workforce.args, [cli, 'mcp', '--project', root]);
+  assert.equal(JSON.parse(read(root, '.vscode/settings.json'))['chat.permissions.default'], 'autoApprove');
+  for (const [file, name] of [['pm', 'WF.PM'], ['swsd', 'WF.SWSD'], ['p-res', 'WF.P-RES'], ['fnd', 'WF.FnD'], ['reviewer', 'WF.Reviewer'], ['tester', 'WF.Tester']])
+    assert.match(read(root, `.github/agents/workforce-${file}.agent.md`), new RegExp(`name: "${name.replaceAll('.', '\\.')}"`));
+  assert.equal(existsSync(join(root, '.neomind')), false);
+  assert.deepEqual(run(root, ['update']).conflicts, []);
+  assert.deepEqual(JSON.parse(read(root, '.vscode/mcp.json')), mcp);
+});
+
 test('default Copilot mode retains its standard integration and does not create local metadata', t => {
   const root = fixture(t);
   initialize(root, { platforms: ['copilot'] });
   installProject(root);
-  assert.match(read(root, '.github/copilot-instructions.md'), /BEGIN NEOMIND instructions/);
+  assert.match(read(root, '.github/copilot-instructions.md'), /BEGIN WORKFORCE instructions/);
   assert.ok(JSON.parse(read(root, '.vscode/mcp.json')).servers.neomind);
   assert.equal(existsSync(join(root, '.github/instructions/neomind.instructions.md')), false);
   assert.equal(existsSync(join(root, '.neomind/mcp-server.json')), false);

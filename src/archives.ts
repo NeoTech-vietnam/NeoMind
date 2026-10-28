@@ -449,7 +449,10 @@ function canonical(path: string): string {
 }
 /** Compare namespace aliases without rewriting frozen manifest paths or content. */
 function logicalManagedPath(path: string): string {
-  return path.replace(/^\.(?:taskforces|verythinker)(?=\/)/, '.neomind');
+  return path.replace(/^\.(?:workforce|taskforces|verythinker)(?=\/)/, '.neomind');
+}
+function managedRecordPath(path: string): boolean {
+  return /^\.neomind\/(?:records\/|(?:requests\/[^/]+|shared|legacy-unassigned)\/records\/)/.test(logicalManagedPath(path));
 }
 function prohibited(path: string): boolean {
   const envTemplate = /(?:^|\/)\.env\.(?:example|sample|template)$/i.test(path);
@@ -458,7 +461,7 @@ function prohibited(path: string): boolean {
     /(?:^|\/)(?:\.git|node_modules|cache|operations|contributions|archives|archive-intents|archive-reassessments|runs)(?:\/|$)/i.test(
       path,
     ) ||
-    /^\.(?:verythinker|taskforces|neomind)\/(?:tools|raw|sessions|capabilities)(?:\/|$)/i.test(path) ||
+    /^\.(?:workforce|verythinker|taskforces|neomind)\/(?:tools|raw|sessions|capabilities)(?:\/|$)/i.test(path) ||
     (/(?:^|\/)(?:\.env(?:\.[^/]+)?|credentials[^/]*|id_rsa|id_ed25519|private-key\.pem|[^/]+\.sqlite(?:-[^/]*)?|[^/]+\.(?:lock|tmp))$/i.test(
       path,
     ) &&
@@ -489,6 +492,7 @@ function collectFiles(
   evidenceInputs: Record<string, EvidenceInputSnapshot>,
 ): { paths: string[]; omissions: string[] } {
   const paths = new Set<string>();
+  const pathIdentities = new Set<string>();
   const approved = new Set<string>();
   const taskIds = new Set(strings(parent.meta.data.task_ids));
   const pending = [...taskIds];
@@ -583,7 +587,7 @@ function collectFiles(
       (scope) => scope === '.' || path === scope || path.startsWith(scope + '/'),
     );
   const control = (path: string) =>
-    logicalManagedPath(path).startsWith('.neomind/records/') ||
+    managedRecordPath(path) ||
     logicalManagedPath(path).startsWith('.neomind/native/keys/') ||
     [
       '.neomind/config.json',
@@ -632,7 +636,10 @@ function collectFiles(
       : [path];
     for (const file of candidates) {
       if (prohibited(file)) throw new Error(`Archive input contains excluded storage: ${file}`);
-      paths.add(canonical(file));
+      const candidate = canonical(file), identity = logicalManagedPath(candidate);
+      // A restored historical path and the active namespace can denote the
+      // same managed file. Export it once without rewriting frozen history.
+      if (!pathIdentities.has(identity)) { paths.add(candidate); pathIdentities.add(identity); }
     }
   };
   for (const record of records) {
@@ -918,7 +925,7 @@ export function prepareArchive(
         revision: record.meta.revision,
       })),
       deleted_paths: (prior?.files ?? [])
-        .filter((file) => !fileEntries.some((entry) => entry.path === file.path))
+        .filter((file) => !fileEntries.some((entry) => logicalManagedPath(entry.path) === logicalManagedPath(file.path)))
         .map((file) => file.path),
       omissions: inputs.omissions,
       evidence_inputs: evidenceInputs,
@@ -1595,7 +1602,7 @@ export function reassessArchive(
           )
             continue;
           if (
-            logicalManagedPath(file.path).startsWith('.neomind/records/') &&
+            managedRecordPath(file.path) &&
             known.manifest.records.some(
               (record) => logicalManagedPath(record.path) === logicalManagedPath(file.path) && affectedRecords.has(record.id),
             )

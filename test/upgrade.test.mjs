@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { threadId } from 'node:worker_threads';
@@ -98,7 +98,7 @@ function fakeNpmMain() {
     const target = basename(destination) === 'target';
     if (fixture.fail === (target ? 'target-pack' : 'old-pack')) fail('fixture pack failure');
     const metadata = target
-      ? { name: fixture.packName ?? 'neomind', version: fixture.version }
+      ? { name: fixture.packName ?? 'workforce', version: fixture.version }
       : read(join(args[1], 'package.json'));
     const name = metadata.name;
     const version = metadata.version;
@@ -127,7 +127,7 @@ function fakeNpmMain() {
     if (fixture.fail === 'uninstall') fail('fixture uninstall failure');
     const manifest = read(manifestPath);
     for (const name of args.slice(1, args.indexOf('--ignore-scripts'))) {
-      assert.ok(['neomind', 'verythinker'].includes(name));
+      assert.ok(['workforce', 'neomind', 'taskforces', 'verythinker'].includes(name));
       // Also removes the original runner and loaded old core in the survival test.
       rmSync(join(fixture.root, 'node_modules', name), { recursive: true, force: true });
       for (const section of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'])
@@ -144,22 +144,22 @@ function fakeNpmMain() {
     assert.ok(args.includes(section === 'dependencies' ? '--save-prod' : '--save-dev'));
     const target = read(statePath);
     const local = isAbsolute(args[1]);
-    assert.equal(local ? existsSync(args[1]) : args[1], local ? true : `neomind@${target.version}`);
+    assert.equal(local ? existsSync(args[1]) : args[1], local ? true : `workforce@${target.version}`);
     const spec = local ? 'file:' + relative(fixture.root, args[1]).split(sep).join('/') : target.version;
     const manifest = read(manifestPath);
     manifest[section] ??= {};
-    manifest[section].neomind = spec;
+    manifest[section].workforce = spec;
     put(manifestPath, manifest);
-    const installed = join(fixture.root, 'node_modules', 'neomind');
+    const installed = join(fixture.root, 'node_modules', 'workforce');
     put(join(installed, 'package.json'), {
-      name: 'neomind', version: target.version, type: 'module', bin: { neomind: 'dist/cli.js' },
+      name: 'workforce', version: target.version, type: 'module', bin: { workforce: 'dist/cli.js' },
     });
     mkdirSync(join(installed, 'dist'), { recursive: true });
     writeFileSync(join(installed, 'dist/cli.js'), fixture.newCliSource);
     const packages = { '': { [section]: { ...manifest[section] } } };
-    packages['node_modules/neomind'] = {
+    packages['node_modules/workforce'] = {
       version: target.version,
-      resolved: local ? spec : `https://registry.invalid/neomind/-/neomind-${target.version}.tgz`,
+      resolved: local ? spec : `https://registry.invalid/workforce/-/workforce-${target.version}.tgz`,
       integrity: target.integrity,
     };
     put(join(fixture.root, 'package-lock.json'), { name: manifest.name, lockfileVersion: 3, packages });
@@ -179,7 +179,7 @@ function newCliMain() {
   }) + '\n');
   assert.deepEqual(args, ['update', '--project', root, '--json']);
   assert.equal(process.cwd(), root);
-  assert.equal(existsSync(join(root, 'node_modules/neomind/scripts/upgrade-runner.mjs')), false);
+  assert.equal(existsSync(join(root, 'node_modules/workforce/scripts/upgrade-runner.mjs')), false);
   if (fixture.fail === 'update') {
     process.stderr.write('fixture new CLI update failure\n');
     process.exit(31);
@@ -228,15 +228,15 @@ function project(t, options = {}) {
   t.after(() => {
     for (const recovery of recoveryPaths) {
       assert.equal(dirname(recovery), realpathSync(tmpdir()));
-      assert.ok(basename(recovery).startsWith('neomind-upgrade-'));
+      assert.ok(basename(recovery).startsWith('workforce-upgrade-'));
       rmSync(recovery, { recursive: true, force: true });
     }
     rmSync(sandbox, { recursive: true, force: true });
   });
   initialize(root, { project_id: 'UPGRADE-TEST', platforms: ['copilot'] });
-  const managed = options.legacyStorage ? '.verythinker' : '.neomind';
-  if (options.legacyStorage) {
-    const source = resolve(root, '.neomind'), destination = resolve(root, managed);
+  const managed = options.legacyStorage ? '.verythinker' : options.neomindStorage ? '.neomind' : '.workforce';
+  if (options.legacyStorage || options.neomindStorage) {
+    const source = resolve(root, '.workforce'), destination = resolve(root, managed);
     assert.equal(dirname(sandbox), realpathSync(tmpdir()));
     assert.ok(basename(sandbox).startsWith('neomind upgrade-'));
     assert.equal(dirname(resolve(root)), sandbox);
@@ -348,7 +348,7 @@ function success(fixture, result) {
   assert.equal(result.schema_version, 1);
   assert.equal(result.status, 'upgraded');
   assert.equal(result.root, fixture.root);
-  assert.deepEqual(result.target, { name: 'neomind', version: newVersion });
+  assert.deepEqual(result.target, { name: 'workforce', version: newVersion });
   assert.deepEqual(result.previous, fixture.names.map((name) => ({ name, version: oldVersion })));
   assert.equal(result.dependency_section, fixture.section);
   assert.equal(result.update.schema_version, 1);
@@ -357,6 +357,8 @@ function success(fixture, result) {
   assert.deepEqual(result.update.platforms, ['copilot']);
   for (const key of ['installed', 'updated', 'unchanged', 'warnings']) assert.ok(Array.isArray(result.update[key]));
   assert.deepEqual(result.conflicts, result.update.conflicts);
+  assert.deepEqual(result.migration, { required: fixture.managed !== '.workforce', target_engine: 'opencode',
+    command: ['workforce', 'migrate', '--project', fixture.root] });
   assert.equal(readFileSync(join(fixture.root, fixture.managed, 'roles/upgrade-marker.md'), 'utf8'), `New CLI ${newVersion}\n`);
   for (const path of [`${fixture.managed}/config.json`, `${fixture.managed}/records/keep.md`, 'AGENTS.md'])
     assert.deepEqual(readFileSync(join(fixture.root, path)), fixture.original.get(path));
@@ -365,7 +367,8 @@ function success(fixture, result) {
   assert.equal(manifest.devDependencies['keep-development'], '4.5.6');
   for (const section of dependencySections) {
     assert.equal(manifest[section]?.verythinker, undefined);
-    if (section !== fixture.section) assert.equal(manifest[section]?.neomind, undefined);
+    assert.equal(manifest[section]?.neomind, undefined);
+    if (section !== fixture.section) assert.equal(manifest[section]?.workforce, undefined);
   }
   const journal = backups(fixture, result.recovery_path);
   assert.equal(journal.phase, 'complete');
@@ -374,8 +377,39 @@ function success(fixture, result) {
   assert.deepEqual(result.backups, journal.backups.map(({ path, backup }) => ({ path, backup })));
   assert.equal(json(join(result.recovery_path, 'result.json')).ok, true);
   assert.equal(existsSync(join(fixture.root, fixture.managed, 'operations/package-upgrade.lock')), false);
-  assert.equal(fixture.events().at(-1).executable, join(fixture.root, 'node_modules/neomind/dist/cli.js'));
+  assert.equal(fixture.events().at(-1).executable, join(fixture.root, 'node_modules/workforce/dist/cli.js'));
 }
+
+test('an existing WorkForce package upgrades without mutating routing aliases or historical records', t => {
+  const fixture = project(t, { names: ['workforce'] });
+  const path = join(fixture.root, fixture.managed, 'routing.json');
+  const routing = Buffer.from('{ "strong_model": "top-models", "worker_models": ["worker-models"], "strong_provider": "customendpoint" }\r\n');
+  write(path, routing);
+  success(fixture, fixture.upgrade());
+  assert.deepEqual(readFileSync(path), routing);
+});
+
+test('a NeoMind physical project returns explicit migration instructions after releasing the package lease', t => {
+  const fixture = project(t, { neomindStorage: true });
+  const result = fixture.upgrade();
+  success(fixture, result);
+  assert.equal(result.migration.required, true);
+  assert.equal(existsSync(join(fixture.root, '.workforce')), false);
+  assert.equal(existsSync(join(fixture.root, '.neomind/operations/package-upgrade.lock')), false);
+});
+
+test('an enabled editor execution owner prevents package replacement before npm runs', t => {
+  const fixture = project(t);
+  const key = createHash('sha256').update(`${userInfo().username}\0${realpathSync.native(fixture.root)}`).digest('hex');
+  const directory = join(realpathSync(tmpdir()), `neomind-vscode-${key}`);
+  assert.equal(dirname(directory), realpathSync(tmpdir()));
+  assert.match(basename(directory), /^neomind-vscode-[a-f0-9]{64}$/);
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  writeJson(join(directory, 'host.json'), { root: realpathSync.native(fixture.root), pid: process.pid });
+  failure(fixture, 'preflight', 'latest', {}, /editor execution owner is active/);
+  assert.deepEqual(commands(fixture), []);
+  unchanged(fixture);
+});
 
 for (const section of ['dependencies', 'devDependencies']) {
   for (const target of ['2.3.4', 'next']) {
@@ -385,14 +419,14 @@ for (const section of ['dependencies', 'devDependencies']) {
       success(fixture, result);
       assert.deepEqual(commands(fixture), ['pack', 'pack', 'uninstall', 'install', 'update']);
       const [targetPack, oldPack, uninstall, install] = fixture.events();
-      assert.equal(targetPack.args[1], `neomind@${target}`);
+      assert.equal(targetPack.args[1], `workforce@${target}`);
       assert.equal(oldPack.args[1], join(fixture.root, 'node_modules/neomind'));
       assert.deepEqual(uninstall.args.slice(0, 2), ['uninstall', 'neomind']);
-      assert.equal(install.args[1], `neomind@${newVersion}`);
+      assert.equal(install.args[1], `workforce@${newVersion}`);
       assert.ok(install.args.includes('--save-exact'));
       assert.ok(install.args.includes(section === 'dependencies' ? '--save-prod' : '--save-dev'));
       assert.equal(result.dependency_spec, newVersion);
-      assert.equal(json(join(fixture.root, 'package.json'))[section].neomind, newVersion);
+      assert.equal(json(join(fixture.root, 'package.json'))[section].workforce, newVersion);
       assert.equal(result.durable_target, undefined);
       assert.ok(existsSync(result.staged_target));
     });
@@ -423,7 +457,7 @@ for (const section of ['dependencies', 'devDependencies']) {
   test(`local .tgz saves a durable managed cache file: dependency in ${section}`, (t) => {
     const fixture = project(t, { section, legacyStorage: section === 'dependencies' });
     const input = join(fixture.sandbox, 'input archives/replacement.tgz');
-    const bytes = Buffer.from(JSON.stringify({ name: 'neomind', version: newVersion, fixture_archive: true }) + '\n');
+    const bytes = Buffer.from(JSON.stringify({ name: 'workforce', version: newVersion, fixture_archive: true }) + '\n');
     write(input, bytes);
     const result = fixture.upgrade(relative(fixture.root, input));
     success(fixture, result);
@@ -433,8 +467,8 @@ for (const section of ['dependencies', 'devDependencies']) {
     assert.equal(result.dependency_spec, `file:${fixture.managed}/package-cache/${digest}.tgz`);
     assert.equal(fixture.events()[0].args[1], input);
     assert.equal(fixture.events()[3].args[1], result.durable_target);
-    assert.equal(json(join(fixture.root, 'package.json'))[section].neomind, result.dependency_spec);
-    assert.equal(json(join(fixture.root, 'package-lock.json')).packages['node_modules/neomind'].resolved, result.dependency_spec);
+    assert.equal(json(join(fixture.root, 'package.json'))[section].workforce, result.dependency_spec);
+    assert.equal(json(join(fixture.root, 'package-lock.json')).packages['node_modules/workforce'].resolved, result.dependency_spec);
     assert.deepEqual(readFileSync(result.staged_target), bytes);
     rmSync(input);
     rmSync(result.recovery_path, { recursive: true, force: true });
@@ -530,7 +564,7 @@ for (const mode of ['update', 'update-json', 'update-report']) {
     const error = failure(fixture, 'update');
     assert.deepEqual(commands(fixture), ['pack', 'pack', 'uninstall', 'install', 'update']);
     backups(fixture, error.recovery_path);
-    assert.equal(json(join(fixture.root, 'node_modules/neomind/package.json')).version, newVersion);
+    assert.equal(json(join(fixture.root, 'node_modules/workforce/package.json')).version, newVersion);
     assert.deepEqual(readFileSync(join(fixture.root, fixture.managed, 'config.json')), fixture.original.get(`${fixture.managed}/config.json`));
     assert.equal(existsSync(join(fixture.root, fixture.managed, 'operations/package-upgrade.lock')), false);
   });
@@ -551,7 +585,7 @@ test('new CLI conflicts remain visible and user edits are preserved', (t) => {
 });
 
 const preflightCases = [
-  ...['neomind', 'verythinker'].map((name) => ({
+  ...['workforce', 'neomind', 'taskforces', 'verythinker'].map((name) => ({
     label: `source checkout named ${name}`, message: /source checkout|named neomind/,
     setup(fixture, manifest) { manifest.name = name; },
   })),
@@ -702,7 +736,7 @@ test('loaded installed supervisor and copied runner survive removal of the entir
   const installed = join(fixture.root, 'node_modules/neomind');
   // Use the actual built upgrade/storage core under the package that fake npm
   // deletes, not a second implementation or an import from the source checkout.
-  for (const file of ['upgrade.js', 'storage.js', 'types.js', 'execution-mode.js'])
+  for (const file of ['upgrade.js', 'storage.js', 'storage-layout.js', 'types.js', 'execution-mode.js'])
     cpSync(join(repository, 'dist', file), join(installed, 'dist', file));
   cpSync(join(repository, 'scripts/upgrade-runner.mjs'), join(installed, 'scripts/upgrade-runner.mjs'));
   const require = createRequire(new URL('../dist/storage.js', import.meta.url));

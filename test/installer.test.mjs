@@ -79,7 +79,7 @@ test('installation preserves instructions and JSONC/TOML siblings, then is idemp
   const report = installProject(root);
   assert.deepEqual(report.conflicts, []);
   assert.ok(read(root, 'AGENTS.md').startsWith(instructions.trimEnd()));
-  assert.match(read(root, 'AGENTS.md'), /BEGIN NEOMIND instructions/);
+  assert.match(read(root, 'AGENTS.md'), /BEGIN WORKFORCE instructions/);
   assert.match(read(root, '.mcp.json'), /User server comment/);
   assert.equal(parse(read(root, '.mcp.json')).mcpServers.existing.command, 'existing-server');
   assert.equal(parse(read(root, '.mcp.json')).extra, true);

@@ -41,7 +41,7 @@ function sourceProducer(root: string, run: ControlledSnapshot, contract: Control
         attempt.bound_hashes?.[source.path] !== source.sha256 ||
         Object.entries(previous.artifact_hashes).some(([path, digest]) => attempt.bound_hashes?.[path] !== digest)) continue;
     const receipt = readInvocation(root, attempt.invocation_id), report = getRecord(root, attempt.report_id);
-    if (receipt.issuer !== 'neomind-vscode-lm' || receipt.state !== 'completed' || !receipt.inference_completed ||
+    if (!isControlledExecutionReceipt(receipt) || receipt.state !== 'completed' || !receipt.inference_completed ||
         receipt.workflow_id !== run.workflow_id || receipt.task_id !== contract.task_id || receipt.role !== 'developer' ||
         receipt.request_id !== attempt.request_id || receipt.controlled_execution?.epoch_id !== run.epoch_id || receipt.controlled_execution.stage !== 'implementation' ||
         report.meta.owner !== 'developer' || report.meta.data.kind !== 'controlled-work-record' || report.meta.data.outcome !== 'completed' ||
@@ -133,3 +133,4 @@ export function assertCornellRendererResultCurrent(root: string, ledger: Cornell
     throw new Error('The renderer maintenance result no longer matches its canonical receipt and current owned bytes.');
   assertControlledPayloadCurrent(root, ledger.source);
 }
+import { isControlledExecutionReceipt } from './execution-attestation.js';

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { agentProfiles } from './agent-profiles.js';
+import { legacyAgentProfiles as agentProfiles } from './agent-profiles.js';
 import { atomicWrite, readConfig, safePath, withOperationLock } from './storage.js';
 import type { ManagedOutput, Platform } from './adapters.js';
 

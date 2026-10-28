@@ -1,3 +1,5 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, renameSync, readFileSync } from 'node:fs';
@@ -16,7 +18,7 @@ import {
   assertRecordPreview,
 } from '../dist/mcp.js';
 import { createRecord, getRecord, updateRecord, saveWorkflowClosure, hash } from '../dist/storage.js';
-import { initialize } from '../dist/storage.js';
+
 import { managedRun } from '../dist/managed.js';
 import { captureEvidenceInputs, validateEvidenceInputs } from '../dist/evidence-inputs.js';
 import { recordFingerprint } from '../dist/engineering.js';

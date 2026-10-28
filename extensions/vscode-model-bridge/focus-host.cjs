@@ -1,6 +1,6 @@
 const { requestBrowserLocation } = require('./focus-location.cjs');
 const { createYouTubePlayer } = require('./focus-youtube.cjs');
-const calendarKey = 'neomind.focus.calendarFeed', youtubeKey = 'neomind.focus.youtubeApiKey';
+const calendarKey = 'workforce.focus.calendarFeed', youtubeKey = 'workforce.focus.youtubeApiKey';
 const approvedActions = new Set(['status', 'weather', 'weather-location', 'place-search', 'calendar-import', 'calendar-connect', 'calendar-refresh', 'calendar-disconnect', 'youtube-configure', 'youtube-search', 'youtube-open', 'youtube-player', 'youtube-player-stop']);
 const calendarActions = new Set(['calendar-import', 'calendar-connect', 'calendar-refresh', 'calendar-disconnect']);
 const safeErrors = new Set([
@@ -33,7 +33,7 @@ function createFocusHost({ vscode, context, runtime, alive, post }) {
     signal.addEventListener('abort', abort, { once: true });
     if (signal.aborted) abort();
     try {
-      return await vscode.window.showInputBox({ title: 'NeoMind: connect calendar', prompt: 'Paste a private Google Calendar or Outlook ICS link. Stored in VS Code SecretStorage; read-only access.', password: true, ignoreFocusOut: true }, cancellation?.token);
+      return await vscode.window.showInputBox({ title: 'WorkForce: connect calendar', prompt: 'Paste a private Google Calendar or Outlook ICS link. Stored in VS Code SecretStorage; read-only access.', password: true, ignoreFocusOut: true }, cancellation?.token);
     } finally { signal.removeEventListener('abort', abort); cancellation?.dispose(); }
   }
   async function handle(message) {
@@ -83,7 +83,7 @@ function createFocusHost({ vscode, context, runtime, alive, post }) {
         case 'calendar-disconnect': await calendarSecret(() => context.secrets?.delete(calendarKey)); data = { events: [], warnings: [], slots: [], configured: false }; break;
         case 'youtube-configure': {
           if (!context.secrets) throw new Error('Secure storage is unavailable. Paste a YouTube link instead.');
-          const key = await vscode.window.showInputBox({ title: 'NeoMind: YouTube search API key', prompt: 'Optional YouTube Data API v3 key for search. Video/playlist links and built-in ambient music work without a key.', password: true, ignoreFocusOut: true });
+          const key = await vscode.window.showInputBox({ title: 'WorkForce: YouTube search API key', prompt: 'Optional YouTube Data API v3 key for search. Video/playlist links and built-in ambient music work without a key.', password: true, ignoreFocusOut: true });
           if (!key || !live() || controller.signal.aborted) throw new Error('YouTube search configuration cancelled.');
           if (key.length > 256 || /[\x00-\x20\x7f]/.test(key)) throw new Error('Enter a valid YouTube API key.');
           await context.secrets.store(youtubeKey, key); data = await configured(); break;

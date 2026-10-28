@@ -1,3 +1,5 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ChildProcess, spawn } from 'node:child_process';
@@ -7,7 +9,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createNativeBridge, interruptNative, shutdownNative } from '../dist/native.js';
 import { ensureRoutingPolicy, readInvocation } from '../dist/routing.js';
-import { initialize } from '../dist/storage.js';
+
 
 const fixture = fileURLToPath(new URL('../resources/native/fake-app-server.mjs', import.meta.url));
 function project(t) {

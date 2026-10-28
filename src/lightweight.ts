@@ -1,4 +1,4 @@
-import { coordinatorAgentName, nativeActivityInstructions } from './agent-profiles.js';
+import { legacyCoordinatorAgentName as coordinatorAgentName, nativeActivityInstructions } from './agent-profiles.js';
 import { randomUUID } from 'node:crypto';
 import { createRecord, getRecord, loadRecords, readConfig, resolveManagedRoot, updateRecord, withOperationLock } from './storage.js';
 import { isNativeExecutionMode, nativeClientForMode } from './execution-mode.js';

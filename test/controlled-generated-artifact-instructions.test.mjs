@@ -1,10 +1,12 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { parse as toml } from 'smol-toml';
-import { initialize, atomicWrite, safePath } from '../dist/storage.js';
+import { atomicWrite, safePath } from '../dist/storage.js';
 import { controlledInstructions, controlledToolNames, controlledPlanSchema } from '../dist/controlled-tools.js';
 import { controlledPlanSubmissionExample, controlledPlanSubmissionGuide } from '../dist/controlled-plan-request.js';
 import { adapterOutputs } from '../dist/adapters.js';

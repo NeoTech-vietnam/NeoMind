@@ -1,3 +1,5 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
@@ -5,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { parse as toml } from 'smol-toml';
-import { initialize, readConfig } from '../dist/storage.js';
+import { readConfig } from '../dist/storage.js';
 import { readAutomationPolicy } from '../dist/manager.js';
 import { adapterOutputs } from '../dist/adapters.js';
 import { installProject, updateProject } from '../dist/installer.js';
@@ -55,7 +57,7 @@ test('managed Codex update fixes an older optional entry while preserving author
   write(root, '.codex/config.toml', authored);
   assert.deepEqual(installProject(root).conflicts, []);
   const current = read(root, '.codex/config.toml');
-  const block = /(# BEGIN NEOMIND mcp\n)([\s\S]*?)(\n# END NEOMIND mcp)/.exec(current);
+  const block = /(# BEGIN WORKFORCE mcp\n)([\s\S]*?)(\n# END WORKFORCE mcp)/.exec(current);
   assert.ok(block);
   const oldContent = block[2].replace(/^required = true\n/m, '');
   write(root, '.codex/config.toml', current.replace(block[0], block[1] + oldContent + block[3]));
@@ -88,7 +90,7 @@ test('controlled update leaves an authored NeoMind entry untouched and offers a 
   assert.equal(read(root, '.codex/config.toml'), authored);
   const conflict = report.conflicts.find(item => item.path === '.codex/config.toml#mcp');
   assert.ok(conflict);
-  const candidateBlock = /# BEGIN NEOMIND mcp\n([\s\S]*?)\n# END NEOMIND mcp/.exec(read(root, conflict.candidate));
+  const candidateBlock = /# BEGIN WORKFORCE mcp\n([\s\S]*?)\n# END WORKFORCE mcp/.exec(read(root, conflict.candidate));
   assert.ok(candidateBlock);
   assert.equal(toml(candidateBlock[1]).mcp_servers.neomind.required, true);
   assert.equal(toml(read(root, '.codex/config.toml')).mcp_servers.neomind.required, false);

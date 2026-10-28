@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -11,22 +12,26 @@ import { createMcpServer } from '../dist/mcp.js';
 import { recordKnowledgeResearch, searchProjectKnowledge } from '../dist/knowledge-reuse.js';
 import { cornellFixture } from './cornell-fixture.mjs';
 import {
-  initialize, installProject, managedRun, beginWorkflow, createRecord, updateRecord,
+  installProject, managedRun, beginWorkflow, createRecord, updateRecord,
   getRecord, discussWorkflow, decideWorkflow, startTask, runCheck, archiveEvidence,
   submitTask, reviewTask, reviewRecord, finishWorkflow, safePath, ensureRoutingPolicy,
   nativeWorkflowRecord, verify, assignmentReport, loadRecords, createCornellNote,
   ensureArchivePolicy, prepareArchive, prepareRecipe,
 } from '../dist/index.js';
+import { nativeAutomationPolicy } from '../dist/manager.js';
 
 function project(t) {
   const root = mkdtempSync(join(tmpdir(), 'neomind-native-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  initialize(root, { project_id: 'NATIVE' });
+  initialize(root, { project_id: 'NATIVE', platforms: ['copilot'] });
   ensureRoutingPolicy(root);
+  // These cases retain the old standard Copilot adapter and its authored native
+  // contract. Fresh WorkForce initialization is covered by its own suite.
+  writeFileSync(safePath(root, '.neomind/automation.json'), JSON.stringify(nativeAutomationPolicy()));
   return root;
 }
 
-test('Copilot installation defaults to full native mode with visible named subagents', async (t) => {
+test('legacy Copilot installation preserves its native mode with visible named subagents', async (t) => {
   const root = project(t);
   installProject(root);
   const policy = JSON.parse(readFileSync(safePath(root, '.neomind/automation.json'), 'utf8'));
@@ -203,7 +208,8 @@ test('native increment keeps engineering gates, immutable evidence and independe
   try {
     const response = await client.callTool({ name: 'archive_restore', arguments: { snapshot_id: snapshot.manifest.snapshot_id, destination: restored } });
     assert.equal(response.isError, undefined, JSON.stringify(response));
-    assert.equal(existsSync(join(restored, '.neomind/config.json')), true);
+    assert.equal(existsSync(join(restored, '.workforce/config.json')), true);
+    assert.equal(existsSync(join(restored, '.neomind')), false);
     assert.equal(getRecord(restored, workflow_id).meta.data.assurance, 'unsigned-native-report');
   } finally { await client.close(); await server.close(); }
   writeFileSync(join(root, 'src/value.mjs'), 'export const value = 2;\n');

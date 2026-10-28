@@ -2,12 +2,12 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { readConfig, loadRecords, safePath, now } from './storage.js';
 import { readInvocation, ownerIsAlive, strongRoles, workerRoles, type NativeReceipt } from './routing.js';
 import { readAgentActivity, type AgentActivityState } from './agent-activity.js';
-import { agentProfiles } from './agent-profiles.js';
+import { legacyAgentProfiles as agentProfiles } from './agent-profiles.js';
 import { readNativeHooks, hookTtlMs } from './agent-hooks.js';
 import type { ProjectRecord } from './types.js';
 import { controlledStatus, type ControlledSnapshot } from './controlled-workflow.js';
 
-export type AgentMapState = 'running' | 'waiting' | 'blocked' | 'idle' | 'completed' | 'failed' | 'unknown' | 'queued' | 'interrupted' | 'uncertain';
+export type AgentMapState = 'running' | 'waiting' | 'needs_input' | 'blocked' | 'idle' | 'completed' | 'failed' | 'unknown' | 'queued' | 'interrupted' | 'uncertain';
 export type AgentMapSource = 'signed-receipt' | 'project-record' | 'native-activity' | 'native-hook' | 'controlled-runtime';
 export interface AgentMapNode {
   id: string;

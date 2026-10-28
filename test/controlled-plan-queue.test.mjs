@@ -1,10 +1,12 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { atomicWrite, hash, initialize, loadRecords, safePath } from '../dist/storage.js';
+import { atomicWrite, hash, loadRecords, safePath } from '../dist/storage.js';
 import { ensureRoutingPolicy, readInvocation } from '../dist/routing.js';
 import { enableVSCodeHost } from '../dist/vscode-host.js';
 import { shutdownNative } from '../dist/native.js';

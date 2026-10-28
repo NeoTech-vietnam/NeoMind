@@ -5,8 +5,8 @@ const { join, relative, isAbsolute } = require('node:path');
 function renderAutomationPanelHtml({ cspSource, script, style, nonce }) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource}; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none';">
-<link rel="stylesheet" href="${style}"><title>NeoMind Automation Library</title></head><body>
-<header><p class="eyebrow">NEOMIND · AUTOMATION</p><h1>Automation Library</h1><p>Discover scripts and reuse reviewed procedures that fit your request.</p>
+<link rel="stylesheet" href="${style}"><title>WorkForce Automation Library</title></head><body>
+<header><p class="eyebrow">WORKFORCE · AUTOMATION</p><h1>Automation Library</h1><p>Discover scripts and reuse reviewed procedures that fit your request.</p>
 <nav><button id="refresh">Refresh</button><button id="discover">Discover scripts</button><button id="register">Register manifest…</button></nav></header>
 <p id="notice" role="status" aria-live="polite"></p><section><h2>Registered procedures</h2><div id="procedures"></div></section>
 <section><h2>Find a reusable procedure</h2><label>Your request<textarea id="request" rows="3"></textarea></label><label>Parameters (JSON)<textarea id="parameters" rows="3">{}</textarea></label>
@@ -57,7 +57,7 @@ function createAutomationHost({ vscode, runtime, root, post, alive = () => true 
         await send({ type: 'automation-match', decision: result.decision, brief: result.manager_brief, next_action: result.next_action });
       }
       if (alive()) await snapshot();
-    } catch { await send({ type: 'automation-notice', error: true, message: 'Operation could not complete. Check the manifest, independent review and checked pilot evidence with the NeoMind procedure CLI. Existing files were preserved.' }); }
+    } catch { await send({ type: 'automation-notice', error: true, message: 'Operation could not complete. Check the manifest, independent review and checked pilot evidence with the WorkForce procedure CLI. Existing files were preserved.' }); }
     finally { busy = false; await send({ type: 'automation-busy', busy: false }); }
   }
   return { handle, snapshot };
@@ -77,7 +77,7 @@ function activateAutomationPanel(vscode, context, loadRuntime) {
       if (token !== generation || !vscode.workspace.isTrusted) return;
       for (const name of ['listProcedures', 'discoverProcedureScripts', 'registerProcedure', 'qualifyProcedure', 'suspendProcedure', 'prepareWork']) if (typeof runtime[name] !== 'function') throw new Error('old-runtime');
       const resources = vscode.Uri.file(join(__dirname, 'resources', 'monitor'));
-      const current = vscode.window.createWebviewPanel('neomind.automation', 'NeoMind Automation Library', vscode.ViewColumn?.One ?? 1, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [resources] });
+      const current = vscode.window.createWebviewPanel('workforce.automation', 'WorkForce Automation Library', vscode.ViewColumn?.One ?? 1, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [resources] });
       panel = current;
       const asset = name => current.webview.asWebviewUri(vscode.Uri.file(join(resources.fsPath, name)));
       current.webview.html = renderAutomationPanelHtml({ cspSource: current.webview.cspSource, script: asset('automation.js'), style: asset('automation.css'), nonce: randomBytes(24).toString('hex') });
@@ -86,11 +86,11 @@ function activateAutomationPanel(vscode, context, loadRuntime) {
       const messages = current.webview.onDidReceiveMessage(message => host.handle(message));
       current.onDidDispose(() => { messages?.dispose(); if (panel === current) { panel = undefined; generation++; } });
       await host.handle({ type: 'automation-action', action: 'refresh' });
-    } catch { if (token === generation) vscode.window.showErrorMessage('Automation Library requires a trusted open project and a current NeoMind runtime.'); }
+    } catch { if (token === generation) vscode.window.showErrorMessage('Automation Library requires a trusted open project and a current WorkForce runtime.'); }
     finally { opening = false; }
   }
   const disposable = { dispose: stop };
-  context.subscriptions.push(vscode.commands.registerCommand('neomind.automation.open', open), vscode.workspace.onDidChangeWorkspaceFolders(stop), disposable);
+  context.subscriptions.push(vscode.commands.registerCommand('workforce.automation.open', open), vscode.workspace.onDidChangeWorkspaceFolders(stop), disposable);
   return disposable;
 }
 module.exports = { renderAutomationPanelHtml, createAutomationHost, activateAutomationPanel };

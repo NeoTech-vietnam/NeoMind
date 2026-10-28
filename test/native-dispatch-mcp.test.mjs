@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { initializeLegacy } from './helpers/legacy-project.mjs';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -16,12 +17,12 @@ const { createNativeDispatchHost } = createRequire(import.meta.url)('../extensio
 test('workflow selector drives real MCP authentication, independent checked stages, Cornell creation and closure without model-authored credentials', async t => {
   const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-host-mcp-')));
   const runtimeRoot = realpathSync.native(fileURLToPath(new URL('../', import.meta.url)));
-  runtime.initialize(root, { project_id: 'HOST-MCP', platforms: ['copilot'] });
+  initializeLegacy(root, { project_id: 'HOST-MCP', platforms: ['copilot'] });
   const server = createMcpServer(root);
   runtime.atomicWrite(runtime.safePath(root, '.neomind/automation.json'), JSON.stringify(runtime.nativeAutomationPolicy()));
   const workflow = runtime.beginWorkflow(root, { requirement: 'Deliver a named integer one export with documented usage and independent executable checks.', execution_mode: 'copilot-native' });
   mkdirSync(join(root, '.github/agents'), { recursive: true });
-  for (const profile of runtime.agentProfiles) writeFileSync(join(root, `.github/agents/neomind-${profile.id}.agent.md`), `---\nname: "${profile.name}"\n---\nBounded test role.\n`);
+  for (const profile of runtime.legacyAgentProfiles) writeFileSync(join(root, `.github/agents/neomind-${profile.id}.agent.md`), `---\nname: "${profile.name}"\n---\nBounded test role.\n`);
   const client = new Client({ name: 'native-host-integration-fixture', version: '1' });
   const [a, b] = InMemoryTransport.createLinkedPair(); await server.connect(b); await client.connect(a);
   let host;
@@ -73,7 +74,7 @@ test('workflow selector drives real MCP authentication, independent checked stag
         }
         return { content: [{ value: 'The isolated delegate saved its actual bounded result.' }] };
       } } };
-  host = createNativeDispatchHost({ vscode, context: { globalState: { get: (k, fallback) => state.get(k) ?? fallback, update: async (k, v) => state.set(k, v) } }, loadRuntime: async () => runtime });
+  host = createNativeDispatchHost({ vscode, context: { globalState: { get: (k, fallback) => state.get(k) ?? fallback, update: async (k, v) => state.set(k, v) } }, loadRuntime: async () => ({ ...runtime, agentProfiles: runtime.legacyAgentProfiles }) });
   const invoke = async (operation = 'advance', parameters) => host.invoke({ toolInvocationToken: { actualFixtureToken: true }, input: {
     workflow_id: workflow.meta.id, ...(operation !== 'advance' ? { operation, parameters } : {}) } }, { isCancellationRequested: false });
   const planned = await invoke('workflow_plan', { process: 'software-tools', rationale: 'This change is limited to Node software and independent checks, without embedded interfaces.',

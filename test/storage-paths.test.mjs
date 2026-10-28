@@ -21,7 +21,8 @@ test('storage paths resolve missing descendants and preserve managed-root alias 
   const { root } = fixture(t);
   assert.equal(safePath(root, 'src/not-yet-created/value.mjs'), join(root, 'src', 'not-yet-created', 'value.mjs'));
   assert.throws(() => safePath(root, '../outside.txt'), /escapes/);
-  renameSync(join(root, '.neomind'), join(root, '.verythinker'));
+  assert.equal(safePath(root, '.neomind/config.json'), join(root, '.workforce', 'config.json'));
+  renameSync(join(root, '.workforce'), join(root, '.verythinker'));
   assert.equal(safePath(root, '.neomind/config.json'), join(root, '.verythinker', 'config.json'));
   writeFileSync(join(root, '.verythinker-migration.lock'), 'migration in progress');
   assert.throws(() => safePath(root, 'src/value.mjs'), /migration is active/);

@@ -80,7 +80,7 @@ function authenticate(root: string, workflowId: string, taskId: string, saved: C
         changed.some(path => attempt.bound_hashes?.[path] !== (expected?.artifacts[path]?.overwritten_sha256 ?? current[path]))) continue;
     const observed = observeInvocation(root, 'developer', attempt.invocation_id, { workflow_id: workflowId, task_id: taskId, require_completed: true });
     const receipt = observed.receipt, report = recordAt(attempt.report_id);
-    if (observed.problems.length || !receipt || receipt.issuer !== 'neomind-vscode-lm' || receipt.state !== 'completed' || !receipt.inference_completed ||
+    if (observed.problems.length || !receipt || !isControlledExecutionReceipt(receipt) || receipt.state !== 'completed' || !receipt.inference_completed ||
         receipt.request_id !== attempt.request_id || receipt.controlled_execution?.epoch_id !== run.epoch_id ||
         receipt.controlled_execution.stage !== 'implementation' || !receipt.native_tool_scope?.includes('task_file_write') ||
         report.meta.type !== 'knowledge' || report.meta.owner !== 'developer' || report.meta.data.kind !== 'controlled-work-record' ||
@@ -131,3 +131,4 @@ export function authenticateControlledCornellOwnedOverwrite(root: string, saved:
     original: bytes(root, item.canonical_path), overwritten: bytes(root, item.overwritten_path),
   }])) };
 }
+import { isControlledExecutionReceipt } from './execution-attestation.js';

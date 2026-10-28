@@ -2,7 +2,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,7 +14,7 @@ if (args.length && (args.length !== 2 || args[0] !== '--out' || !args[1])) {
   throw new Error('Usage: node scripts/package-extension.mjs [--out <VSIX path>]');
 }
 const output = args.length ? resolve(args[1]) : join(repository, 'artifacts',
-  `release-v${runtime.version}`, `neomind-agent-monitor-${manifest.version}.vsix`);
+  `workforce-v${runtime.version}`, `workforce-model-bridge-${manifest.version}.vsix`);
 if (!output.toLowerCase().endsWith('.vsix')) throw new Error('Extension output must end in .vsix.');
 const npmCli = [process.env.npm_execpath,
   join(dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'),
@@ -35,8 +34,9 @@ mkdirSync(dirname(output), { recursive: true });
 // Normalize file modes in an isolated source copy so Windows/Unix permissions do
 // not change the archive. Only exact manifest entries can enter this copy.
 if (!Array.isArray(manifest.files)) throw new Error('Extension manifest requires an explicit files list.');
-const temporaryRoot = resolve(tmpdir());
-const staging = mkdtempSync(join(temporaryRoot, 'neomind-vsix-'));
+const temporaryRoot = join(repository, 'artifacts/extension-staging');
+mkdirSync(temporaryRoot, { recursive: true });
+const staging = mkdtempSync(join(temporaryRoot, 'workforce-vsix-'));
 let result;
 try {
   for (const name of new Set(['package.json', ...manifest.files])) {
@@ -59,7 +59,7 @@ try {
     shell: false, windowsHide: true, stdio: 'inherit', timeout: 180_000 });
 } finally {
   const child = relative(temporaryRoot, staging);
-  if (!isAbsolute(child) && /^neomind-vsix-[^\\/]+$/.test(child)) rmSync(staging, { recursive: true, force: true });
+  if (!isAbsolute(child) && /^workforce-vsix-[^\\/]+$/.test(child)) rmSync(staging, { recursive: true, force: true });
 }
 if (result.error) throw new Error(`Extension packaging failed: ${result.error.message}`);
 if (result.status !== 0) process.exit(result.status ?? 1);

@@ -405,7 +405,7 @@ function contentPath(root: string, path: string): string {
   const canonical = relative(root, safePath(root, path)).replaceAll('\\', '/');
   if (
     !canonical ||
-    canonical.startsWith('.neomind/') ||
+    canonical.startsWith('.workforce/') || canonical.startsWith('.workforce-private/') || canonical.startsWith('.neomind/') ||
     canonical.startsWith('.git/') ||
     canonical !== path
   )

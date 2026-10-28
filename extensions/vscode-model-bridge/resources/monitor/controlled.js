@@ -65,7 +65,7 @@
           (!pending || (value.source_generation ?? null) !== pending.generation)) return;
       const workflow = value.workflows?.[0];
       if (workflow?.workflow_id) selected = workflow.workflow_id;
-      byId('notice').textContent = ['submit', 'submit_new'].includes(value.action) ? 'Request saved. NeoMind owns the remaining workflow.' : 'Control request recorded.';
+      byId('notice').textContent = ['submit', 'submit_new'].includes(value.action) ? 'Request saved. WorkForce owns the remaining workflow.' : 'Control request recorded.';
       if (['submit', 'submit_new'].includes(value.action)) {
         const alreadyRendered = value.intake?.generation && deliveredGeneration === value.intake.generation;
         intake = value.intake ?? intake;

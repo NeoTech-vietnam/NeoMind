@@ -3,13 +3,14 @@ import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { atomicWrite, getRecord, hash, now, safePath, withOperationLock } from './storage.js';
-import { replaceWorkspaceFile, workspaceFileBytes, workspaceContentBytes, workspacePathLockKey } from './workspace.js';
+import { replaceWorkspaceFile, workspaceFileBytes, workspaceContentBytes, workspacePathLockKey, assertWorkspaceEditablePath, WorkspacePathPolicyError } from './workspace.js';
+import { workForcePrivatePath } from './workforce-paths.js';
 import { registerProcedureSchema, procedureInputContractHint } from './procedures.js';
 import { controlledReportSubmissionSchema } from './controlled-report-normalization.js';
 import { controlledModelInput, controlledValidation, redactControlledValue } from './controlled-observability.js';
 import { controlledCornellResearchSchema } from './controlled-cornell-sources.js';
 import { controlledCornellSubmissionSchema, normalizeControlledCornellSubmission, controlledCornellSubmissionGuide } from './controlled-cornell-submission.js';
-import { controlledRuntimeGuide, controlledGuidePath, controlledRuntimeQuerySchema, type ControlledRuntimeQuery } from './controlled-runtime-context.js';
+import { controlledRuntimeGuide, controlledGuidePath, workforceGuidePath, controlledRuntimeQuerySchema, type ControlledRuntimeQuery } from './controlled-runtime-context.js';
 import { controlledExecutionSchema, type ControlledExecutionInput, type ControlledExecutionDeclaration } from './controlled-execution.js';
 import { controlledPayloadSchema, resolveControlledPayload, assertControlledPayloadCurrent, ControlledPayloadError, type ControlledPayloadSource } from './controlled-payload.js';
 import { controlledPlanExecutionStepSubmissionSchema, controlledPlanCheckSubmissionSchema } from './controlled-plan-submission.js';
@@ -18,12 +19,19 @@ import { controlledOperationDiagnostic, type ControlledDiagnosticPhase } from '.
 import { controlledFileWriteProof } from './controlled-file-write-proof.js';
 import { ControlledEvidenceScanTimeout } from './controlled-evidence-error.js';
 
-export type ControlledStage = 'planning' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
-export type ControlledReviewPurpose = 'checker-readiness' | 'final-product';
+export type ControlledStage = 'planning' | 'requirements' | 'design' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
+export type ControlledReviewPurpose = 'checker-readiness' | 'final-product' | 'design';
 export const controlledConsultationRoles = ['explorer', 'planner', 'architect', 'researcher', 'curator', 'component-owner'] as const;
 export interface ControlledBinding {
   workflow_id: string; task_id?: string; invocation_id?: string;
   stage: ControlledStage; role: string;
+  /** Version selected by the backend from the saved request, never a worker. */
+  process_contract?: 'software-tools/v2' | 'workforce/v1';
+  plugin_capabilities?: boolean;
+  /** New planning sessions commit the semantic plan as their single result. */
+  planning_result?: 'backend';
+  /** Exact text outputs that an independent content assessment must actually read. */
+  assessment_outputs?: string[];
   /** Saved workflow metadata supplied by its owning backend, never by a worker. */
   plan_defaults?: ControlledPlanRequestDefaults;
   /** Backend-owned opt-in from the original request or committed legacy contract. */
@@ -82,7 +90,27 @@ export const controlledPlanSchema = z.strictObject({
     .describe('Optional bounded consultation role only. Reviewer and Verifier are backend-owned workflow stages, not consultation roles.'),
     objective: text })).max(4).optional().describe('Optional consultations for a concrete expert question. Do not add Reviewer or Verifier here; the backend preserves and schedules all required independent verification, pre-check review and final review gates.'),
 });
-export type ControlledPlan = z.infer<typeof controlledPlanSchema>;
+const workforceNegativeSchema = z.strictObject({ title: text.max(256), command: z.array(z.string().min(1).max(8000)).min(1).max(128),
+  baseline_paths: paths.default([]), expected_exit_code: z.number().int().min(1).max(255) });
+export const workforceVerificationLevelSchema = z.strictObject({ level: z.enum(['unit', 'integration', 'system', 'acceptance']),
+  applicable: z.boolean(), rationale: text, method: z.enum(['execution', 'inspection']), checks: z.array(text.max(256)).max(16),
+  criterion_indexes: z.array(z.number().int().min(1).max(32)).max(32).optional().describe('Optional one-based positions in acceptance_criteria. Backend binds acceptance to every criterion; never supply internal IDs.') });
+export type WorkForceVerificationLevel = z.infer<typeof workforceVerificationLevelSchema>;
+export type WorkForceRequestKind = 'software' | 'document' | 'research' | 'analysis' | 'data';
+/** A new contract: existing test/compiler commands need no wrapper or invented negative fixture. */
+export const workforcePlanSchema = controlledPlanSchema.extend({
+  request_kind: z.enum(['software', 'document', 'research', 'analysis', 'data']).default('software').describe('Document/research text may use independent content inspection. Code/build outputs or producer execution require software assurance; analysis/data need reproducible executable checks.'),
+  allowed_urls: z.array(z.string().url().max(2048)).max(32).default([]).describe('Exact HTTP(S) browser destinations needed by this request, without credentials or wildcards. This does not grant network permission.'),
+  verification_levels: z.array(workforceVerificationLevelSchema).length(4).describe('Exactly unit, integration, system and acceptance once each. Explain nonapplicable levels; applicable execution names existing checks; inspection has no command names. Acceptance is always applicable.'),
+  verification_paths: paths.default([]).describe('Only new independent checker files that WF.Tester must author. Use [] when running existing project tests/compiler commands.'),
+  checks: z.array(z.strictObject({ title: text.max(256), purpose: z.enum(['self-check', 'intended-use']).optional(),
+    after_evidence_reports: z.boolean().optional(), command: z.array(z.string().min(1).max(8000)).min(1).max(128),
+    baseline_paths: paths.default([]), expected_exit_code: z.number().int().min(0).max(255).optional(),
+    timeout_ms: z.number().int().min(1).max(600000).optional(), negative_controls: z.array(workforceNegativeSchema).max(16).optional(),
+  })).max(16).describe('Use real existing project tests, compiler or validator argv directly. New or changed custom checkers need independent negative controls. Only text document/research requests may use [] with independent artifact inspection.'),
+  specialists: z.array(z.never()).max(0).optional().describe('No hidden specialists; the backend schedules WF.SWSD, WF.P-RES, WF.FnD, WF.Reviewer and WF.Tester.'),
+});
+export type ControlledPlan = z.infer<typeof controlledPlanSchema> | z.infer<typeof workforcePlanSchema>;
 export const controlledReportSchema = z.strictObject({
   outcome: z.enum(['completed', 'blocked', 'failed']), summary: text,
   artifacts: paths.optional().describe('Actual delivered files inside this workflow implementation/checker/Cornell output scopes. Preserved inputs and files only read are not deliverables; discuss their preservation in findings instead.'), findings: z.array(text).max(64).optional(),
@@ -92,20 +120,29 @@ export const controlledReportSchema = z.strictObject({
   limitations: z.array(text).max(32).optional(),
 });
 export type ControlledReport = z.infer<typeof controlledReportSchema>;
+export interface ControlledContentAssessment {
+  mode: 'complete-current-text'; invocation_id: string; artifact_hashes: Record<string, string>;
+}
 export interface ControlledCallbacks {
   /** Check authoritative invocation, epoch and current policy; writers recheck synchronously at commit. */
-  assertActive(): void | Promise<void>;
+  /** Omitted is full authority. Only fixed readonly handlers request the cheaper check. */
+  assertActive(mode?: 'read-only'): void | Promise<void>;
   submitPlan?(plan: ControlledPlan, source?: ControlledPayloadSource): unknown | Promise<unknown>;
-  saveReport(report: ControlledReport, source?: ControlledPayloadSource): unknown | Promise<unknown>;
+  saveReport(report: ControlledReport, source?: ControlledPayloadSource, assessment?: ControlledContentAssessment): unknown | Promise<unknown>;
+  requestInput?(input: WorkForceQuestion): unknown | Promise<unknown>;
+  invokeCapability?(input: { provider: 'rea' | 'codegraph' | 'context7' | 'playwright'; tool?: string; arguments: Record<string, unknown> }): unknown | Promise<unknown>;
   runCheck?(title?: string): unknown | Promise<unknown>;
   prepareWork?(query: { request: string; parameters?: Record<string, unknown> }): unknown | Promise<unknown>;
   runProcedure?(parameters?: Record<string, unknown>): unknown | Promise<unknown>;
   runtimeContext?(query: ControlledRuntimeQuery): unknown | Promise<unknown>;
   runTask?(input: ControlledExecutionInput, source?: ControlledPayloadSource): unknown | Promise<unknown>;
   compileResearch?(input: Record<string, unknown>, source?: ControlledPayloadSource): unknown | Promise<unknown>;
-  readEvidence?(title?: string, kind?: 'execution' | 'registration' | 'workflow'): unknown | Promise<unknown>;
+  readEvidence?(title?: string, kind?: 'execution' | 'registration' | 'workflow' | 'cornell-input'): unknown | Promise<unknown>;
   trace?(event: Record<string, unknown>): void | Promise<void>;
 }
+export const workforceQuestionSchema = z.strictObject({ question: text, missing: text, why_cannot_infer: text,
+  criterion: text, category: z.enum(['business-choice', 'missing-user-source', 'conflicting-requirements']), searched_paths: paths.min(1) });
+export type WorkForceQuestion = z.infer<typeof workforceQuestionSchema>;
 /** Only explicitly public controller diagnostics cross the model-facing error seam. */
 export class ControlledToolError extends Error {
   constructor(readonly code: string, message: string,
@@ -115,6 +152,7 @@ export class ControlledToolError extends Error {
 interface ToolState {
   schema_version: 1; binding_hash: string;
   reads: Record<string, string | null>;
+  read_coverage?: Record<string, { sha256: string; total: number; ranges: [number, number][] }>;
   writes: { operation: string; path: string; previous_hash: string | null; sha256: string; completed: boolean }[];
 }
 const key = (path: string) => process.platform === 'win32' ? path.toLowerCase() : path;
@@ -126,11 +164,7 @@ function canonical(path: string, directory = false): string {
     throw new ControlledToolError('INVALID_PATH', 'Use a canonical project-relative path with forward slashes.');
   return path;
 }
-function privatePath(path: string): boolean {
-  return path.toLowerCase().split('/').some(part =>
-    ['.git', '.neomind', '.verythinker', '.taskforces', '.codex', '.claude', '.vscode', '.agents', '.cursor', 'node_modules'].includes(part) ||
-    /^(?:\.env(?:\..*)?|auth\.json|credentials?(?:\.[^/]*)?|secrets?(?:\.[^/]*)?|id_(?:rsa|ed25519)(?:\.pub)?|[^/]+\.(?:pem|key|pfx|p12))$/.test(part));
-}
+const privatePath = workForcePrivatePath;
 /** Shared with plan intake so redundant public references never become hidden-file approvals. */
 export function controlledPublicReferencePath(path: string): boolean { return !privatePath(path); }
 export function controlledSkillInputPath(path: string): boolean {
@@ -178,8 +212,11 @@ function assertWritable(binding: ControlledBinding, path: string): void {
   }
 }
 export function controlledToolNames(binding: ControlledBinding): string[] {
-  return ['runtime_context', 'project_read', 'project_list', 'project_search', 'assignment_report',
+  return ['runtime_context', 'project_read', 'project_list', 'project_search',
+    ...(binding.process_contract === 'workforce/v1' && binding.stage === 'planning' && binding.planning_result === 'backend' ? [] : ['assignment_report']),
     ...(binding.stage === 'planning' ? ['workflow_plan', 'work_prepare'] : []),
+    ...(binding.process_contract === 'workforce/v1' && binding.role === 'manager' && ['planning', 'diagnosis'].includes(binding.stage) ? ['request_input'] : []),
+    ...(binding.process_contract === 'workforce/v1' && binding.plugin_capabilities === true ? ['capability_invoke'] : []),
     ...((binding.stage === 'implementation' && binding.role === 'developer') ||
       (binding.stage === 'verification' && ['verifier', 'check-executor'].includes(binding.role)) ? ['task_file_write'] : []),
     ...(binding.stage === 'implementation' && binding.procedure_bound !== false ? ['procedure_run'] : []),
@@ -190,11 +227,38 @@ export function controlledToolNames(binding: ControlledBinding): string[] {
 }
 /** Both Bridge prompt layers use the same scope so precheck cannot inherit final acceptance duties. */
 export function controlledReviewInstructions(purpose: ControlledReviewPurpose): string {
+  if (purpose === 'design') return 'Review the requirements, design, scope and planned verification before implementation. Judge interface, security, storage and execution risks. Product files and execution evidence are not expected yet. Do not fail because later stages have not run. Save one completed assignment_report with verdict pass or fail and all concrete findings.';
   return purpose === 'checker-readiness'
     ? 'Review purpose: checker-readiness. Independently inspect the exact checker source/argv, oracle, protected cases and negative controls against the unchanged criteria. Judge checker adequacy and safe bounded execution in the declared scope and disposable pilot workspace when required, including any generator or product code the planned commands execute. This review precedes execution: not-yet-run evidence is expected, and an empty check_evidence result is not a readiness failure. Product defects that the planned checker can safely diagnose belong in findings and limitations; they are not final acceptance decisions. Fail readiness for an unsound/incomplete checker or a real execution-safety defect, including scope escape, destructive effects or unauthorized data access/publication. Classify the actual cause with failure_kind. Do not execute checks in this read-only review. Save assignment_report with verdict pass or fail; readiness approval does not establish product correctness or workflow completion.'
     : 'Review purpose: final-product. Independently inspect the delivered artifacts against all unchanged acceptance criteria. Require fresh positive and negative execution evidence, required intended-use pilot receipts and the requested Cornell output. A producer-authored Cornell deliverable is independently checked without rewriting its captured bytes to embed future proof IDs; a separately assigned post-verification knowledge bundle must satisfy its evidence-derived synthesis obligations. Read check_evidence for actual stdout/stderr and intended-use build/run results; absent, stale or failing required evidence cannot support a pass. When registration is required, read check_evidence({kind:"registration"}) for the actual bound registry manifest and current code-hash comparisons; registered candidate is not qualification. Do not infer missing registration from the absence of a separate signed receipt or try private registry files. Private runtime files remain unavailable. Save assignment_report with verdict pass or fail and substantive findings; pre-execution checker readiness is not final product acceptance.';
 }
+const workforcePlanGuide = 'WorkForce planning contract workforce/v1. Supply request_kind, rationale, acceptance_criteria, allowed_paths, outputs, documentation_paths and checks [{title,command,baseline_paths}]. Supply verification_levels: exactly four {level,applicable,rationale,method,checks} rows for unit/integration/system/acceptance. Explain N/A; acceptance is always applicable. execution names actual check titles; inspection uses checks:[]. Text document/research work may use checks:[] and independent full-artifact content assessment; code/build/producer execution and data/analysis require actual executable checks. Use verification_paths:[] for existing project tests/compiler commands. Add separate verification_paths only for new independent checkers. Existing project test/compiler commands run directly; do not create wrappers. New/changed custom checker scripts need negative_controls. Use exact argv; no shell redirection. Backend captures output baselines and read-only project script/config inputs. Freeze expected outcomes before implementation. Cornell is optional and requested through cornell_output_dir; its three outputs remain compiler-owned. Do not declare specialists or internal IDs.';
+function workforceInstructions(binding: ControlledBinding): string {
+  const available = controlledToolNames(binding);
+  const duties: Record<ControlledStage, string> = {
+    planning: `WF.PM: inspect relevant project files and reusable tools; save one short workflow_plan${binding.planning_result === 'backend' ? ' as your single substantive result, then finish. The backend persists the planning receipt; no separate report is needed' : ', then one assignment_report'}. ${workforcePlanGuide}`,
+    requirements: 'WF.SWSD: inspect the saved user request and frozen plan. State scope, measurable acceptance criteria, expected outcomes, verification strategy and minimum useful deliverable. Identify actual contradictions or missing business input; do not invent setup preconditions or edit protocol. Save one compact assignment_report; report a concrete failure only when the assigned requirements cannot be satisfied.',
+    design: 'WF.P-RES: inspect project conventions and the frozen plan. State the applicable architecture/interface/module decisions, risks, and how each criterion will be checked. Keep trivial changes short and mark nonapplicable design layers with reasons. Do not create files solely for paperwork. Save one compact assignment_report.',
+    implementation: 'WF.FnD: implement the actual requested outputs using scoped task_file_write and declared task_run/procedure tools. Read current files before editing; backend checks their saved hashes. Complete useful product outputs before reporting. Missing later Reviewer/Tester artifacts are expected. Do not create independent checker files or claim final acceptance. Save one assignment_report with all concrete unresolved findings.',
+    review: binding.review_purpose === 'design' ? controlledReviewInstructions('design') : 'WF.Reviewer: independently inspect current product/specification/design against every criterion and project standards. This review precedes independent test execution, so absence of future test evidence is expected. Do not edit implementation or invent requirements. Save one completed assignment_report with verdict pass/fail and all actionable findings, classifying product defects as implementation and checker defects as checker.',
+    verification: 'WF.Tester: independently inspect outputs and review findings; author only assigned checker files when needed. Run the frozen existing project tests/compiler/check commands through check_run. New/changed custom checker logic requires negative controls; existing project commands do not need invented failing fixtures. Collect all observed findings in one result and classify implementation vs checker/environment faults accurately. Save one completed assignment_report with verdict pass/fail. Do not edit product files.',
+    diagnosis: 'WF.PM: diagnose the saved technical findings and actual execution evidence without changing files. Select one specific recovery direction and report failure_kind implementation/checker/protocol/environment/unknown. Never request that the user supply internal IDs, raise retry limits or change prompts.',
+    synthesis: 'WF.PM: derive only requested final knowledge from actual artifacts and independent evidence. Save one compact report; do not manufacture extra documentation.',
+  };
+  return `You are a WorkForce-owned ${binding.role} session using OpenCode. ${duties[binding.stage]}\n` +
+    `Available operations: ${available.join(', ')}. Identity, task, authorization, operation IDs and lifecycle are already bound. Supply professional content only.\n` +
+    `Producer write paths: ${JSON.stringify(binding.implementation_paths)}. Tester write paths: ${JSON.stringify(binding.verification_paths)}. Review/design/requirements are read-only.\n` +
+    (binding.assessment_outputs?.length ? `This is independent text-content assessment. Read all content of each actual output before reporting pass: ${JSON.stringify(binding.assessment_outputs)}. No compilation or executed-test result is implied.\n` : '') +
+    (available.includes('cornell_research_compile') ? 'Requested Cornell note.md/exercises.md/answers.md are compiler-owned: use cornell_research_compile with semantic research or an existing input_path, never task_file_write for those renderings.\n' : '') +
+    (available.includes('task_run') ? 'task_run uses declared operations. Send the declared title and optional input_path for prepared JSON; backend builds the execution payload.\n' : '') +
+    'Use runtime_context only if an execution fact is missing; its first successful snapshot suffices. Do not poll progress or ask the next stage. ' +
+    (available.includes('request_input') ? 'Only for a genuine missing business decision, use request_input after reading the actual named sources. ' :
+      'Report a genuine business-input gap in your professional findings; the backend owns any PM question. ') +
+    (available.includes('assignment_report') ? 'Save one substantive assignment_report, then finish; backend advances automatically. A failure report retains all useful artifacts without falsely completing the request.'
+      : 'After workflow_plan returns its saved receipt, finish. The backend advances only after this session completes.');
+}
 export function controlledInstructions(binding: ControlledBinding): string {
+  if (binding.process_contract === 'workforce/v1') return workforceInstructions(binding);
   const available = new Set(controlledToolNames(binding));
   const documentation = binding.stage === 'implementation' && binding.evidence_documentation === true;
   const writable = binding.stage === 'implementation' && binding.role === 'developer' ? binding.implementation_paths
@@ -205,6 +269,8 @@ export function controlledInstructions(binding: ControlledBinding): string {
     ...(binding.stage === 'verification' ? { verification_purpose: binding.verification_purpose ?? 'final-contract' } : {}),
     implementation: { owner: 'developer', paths: binding.implementation_paths }, verification: { owner: 'verifier', paths: binding.verification_paths } };
   const duties: Record<ControlledStage, string> = {
+    requirements: 'Inspect the saved scope and acceptance criteria and save your professional requirements result.',
+    design: 'Inspect the saved scope, interface decisions and verification strategy and save your professional design result.',
     planning: 'Inspect relevant files and existing reusable tools. Submit one bounded semantic workflow_plan with acceptance criteria, separate implementation/checker paths and actual check commands. Positive and negative baseline_paths may include public dependencies declared in preservation_paths and exact approved hidden input_paths; those inputs remain read-only. Do not move preserved scripts into allowed_paths or verification_paths merely to capture their bytes. Declare negative_controls using the same checker with verifier-owned deliberately invalid fixtures/inputs and their expected nonzero exits; runtime executes them as evidence. Elevate risk or suggest a bounded specialist only when needed. Allowed consultation roles are explorer, planner, architect, researcher, curator and component-owner. Reviewer and Verifier are backend-owned stages; do not add them as consultations or remove their required gates.',
     implementation: documentation
       ? 'Complete only the requested final report files in your writable paths. Read the bound check_evidence and the supplied independent verification checkpoint, then describe the observed commands, results and limitations accurately. Use task_file_write after reading the current report. Implementation code, checker files and Cornell bundles remain read-only. The backend schedules fresh independent verification and required review after this report; the workflow is not yet accepted or closed.'
@@ -267,14 +333,14 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
     if (!controlledSkillInputPath(path))
       throw new Error('Approved hidden inputs must be bounded skill assets or script sources, never client/runtime configuration.');
   if (!binding.invocation_id || !binding.workflow_id || !binding.role ||
-      !['planning', 'implementation', 'verification', 'review', 'diagnosis', 'synthesis'].includes(binding.stage))
+      !['planning', 'requirements', 'design', 'implementation', 'verification', 'review', 'diagnosis', 'synthesis'].includes(binding.stage))
     throw new Error('Controlled MCP requires a backend-bound actual invocation.');
   for (const scope of [...binding.implementation_paths, ...binding.verification_paths, ...(binding.read_paths ?? []), ...(binding.protected_paths ?? [])])
     canonical(scope, true);
   const bindingHash = hash(JSON.stringify(binding));
   const base = `.neomind/controlled-tools/${hash(binding.invocation_id)}`;
   const statePath = `${base}/state.json`;
-  const server = new McpServer({ name: 'neomind-controlled-worker', version: '2' }, { maxToolInputElements: 8000 });
+  const server = new McpServer({ name: binding.process_contract === 'workforce/v1' ? 'workforce-worker' : 'neomind-controlled-worker', version: binding.process_contract === 'workforce/v1' ? '1' : '2' }, { maxToolInputElements: 8000 });
   let closed = false;
   const originalClose = server.close.bind(server);
   server.close = async () => { closed = true; await originalClose(); };
@@ -337,7 +403,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       let phase: ControlledDiagnosticPhase = 'assert-active';
       try {
         if (closed) throw new ControlledToolError('ACTOR_INACTIVE', 'This worker session has ended.');
-        await callbacks.assertActive();
+        await callbacks.assertActive(readOnly && ['project_read', 'project_list', 'project_search', 'check_evidence'].includes(name) ? 'read-only' : undefined);
         phase = 'request-encoding';
         await trace({ event: 'tool-request', tool: name, model_input: controlledModelInput(name, args), owner: 'runtime',
           backend_binding: { workflow_id: binding.workflow_id, task_id: binding.task_id ?? null, invocation_id: binding.invocation_id } });
@@ -360,10 +426,19 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       }
     });
   }
+  const readOption = (schema: z.ZodNumber) => binding.process_contract === 'workforce/v1' ? schema.nullish() : schema.optional();
   register('project_read', 'Read an assigned UTF-8 file. The backend retains its version for subsequent scoped edits.',
-    z.strictObject({ path: z.string().min(1).max(1024), max_chars: z.number().int().min(128).max(64000).optional(),
-      start_line: z.number().int().min(1).optional() }), true, args => {
-      if (args.path === controlledGuidePath) return controlledRuntimeGuide(args.start_line ?? 1, args.max_chars ?? 64000);
+    z.strictObject({ path: z.string().min(1).max(1024), max_chars: readOption(z.number().int().min(128).max(64000)),
+      start_line: readOption(z.number().int().min(1)),
+      start_char: readOption(z.number().int().min(0).max(2 * 1024 * 1024)).describe('Optional zero-based character offset in LF-normalized text. Use next_start_char to paginate long lines. Line1 and character0 both mean the beginning; the backend accepts equivalent defaults. Two nondefault cursors are ambiguous.') }), true, args => {
+      if (binding.process_contract === 'workforce/v1') {
+        args = { ...args, max_chars: args.max_chars ?? undefined, start_line: args.start_line ?? undefined, start_char: args.start_char ?? undefined };
+        if (args.start_line === 1) args.start_line = undefined;
+        if (args.start_char === 0 && args.start_line !== undefined) args.start_char = undefined;
+      }
+      if (args.start_char !== undefined && args.start_line !== undefined) throw new ControlledToolError('INVALID_PAYLOAD', 'Choose one nondefault cursor: start_line or the returned start_char.');
+      if (args.path === controlledGuidePath || args.path === workforceGuidePath)
+        return controlledRuntimeGuide(args.start_line ?? 1, args.max_chars ?? 64000, binding.process_contract);
       const approved = binding.stage === 'planning' && controlledSkillInputPath(args.path)
         ? [...(binding.approved_inputs ?? []), args.path] : binding.approved_inputs;
       const target = publicTarget(root, args.path, approved); assertReadable(binding, args.path);
@@ -379,10 +454,21 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       try { content = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
       catch { throw new ControlledToolError('INVALID_FILE', 'The file is not valid UTF-8 text.'); }
       if (content.includes('\0')) throw new ControlledToolError('INVALID_FILE', 'Binary files require an appropriate artifact tool.');
-      locked(state => { state.reads[key(args.path)] = hash(bytes); saveState(state); });
-      const start = args.start_line ?? 1, excerpt = content.split(/\r?\n/).slice(start - 1).join('\n'), maximum = args.max_chars ?? 64000;
+      const normalized = content.replace(/\r\n/g, '\n'), start = args.start_line ?? 1;
+      const lineExcerpt = normalized.split('\n').slice(start - 1).join('\n'), offset = args.start_char ?? normalized.length - lineExcerpt.length;
+      const excerpt = normalized.slice(offset), maximum = args.max_chars ?? 64000;
+      locked(state => {
+        const digest = hash(bytes);
+        state.reads[key(args.path)] = digest;
+        const coverage = state.read_coverage ??= {}, prior = coverage[key(args.path)];
+        const ranges = [...(prior?.sha256 === digest ? prior.ranges : []), [offset, offset + Math.min(excerpt.length, maximum)] as [number, number]].sort((a, b) => a[0] - b[0]);
+        const merged: [number, number][] = [];
+        for (const range of ranges) { const last = merged.at(-1); if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]); else merged.push([...range]); }
+        coverage[key(args.path)] = { sha256: digest, total: normalized.length, ranges: merged }; saveState(state);
+      });
       return { path: args.path, exists: true, size_bytes: bytes.length, start_line: start,
-        text: excerpt.slice(0, maximum), truncated: excerpt.length > maximum };
+        text: excerpt.slice(0, maximum), truncated: excerpt.length > maximum,
+        ...(excerpt.length > maximum ? { next_start_char: offset + maximum } : {}) };
     });
   register('runtime_context', 'Read one backend-attested session snapshot with actual toolchain versions. Completed preflight leads to professional work, not repeated discovery. Identical queries reuse that snapshot. Optional executable paths must come from observed configuration; only fixed --version is executed. Invalid optional paths return per-tool diagnostics without invalidating the session.',
     controlledRuntimeQuerySchema, true, query => {
@@ -439,12 +525,17 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
     register('task_file_write', 'Write complete UTF-8 content within this stage scope. Read existing files first; the backend binds their versions and records recoverable operations.',
       z.strictObject({ path: z.string().min(1).max(1024), content: z.string().max(128 * 1024) }), false, args => {
         publicTarget(root, args.path); assertWritable(binding, args.path);
+        const writePolicy = binding.process_contract === 'workforce/v1' ? 'workforce-product' as const : undefined;
+        if (writePolicy) {
+          try { assertWorkspaceEditablePath(args.path, writePolicy); }
+          catch (error) { if (error instanceof WorkspacePathPolicyError) throw new ControlledToolError('SCOPE_DENIED', error.message); throw error; }
+        }
         try { workspaceContentBytes(args.content); }
         catch { throw new ControlledToolError('INVALID_FILE', 'Write valid UTF-8 text up to 128 KiB without binary control characters.'); }
         return locked(state => withOperationLock(root, workspacePathLockKey(args.path), () => {
           activeAtCommit();
           let current: Buffer | null;
-          try { current = workspaceFileBytes(root, args.path); }
+          try { current = workspaceFileBytes(root, args.path, writePolicy); }
           catch { throw new ControlledToolError('INVALID_FILE', 'This target is not an ordinary editable UTF-8 project file.'); }
           const currentHash = current === null ? null : hash(current), nextHash = hash(args.content);
           const priorWrite = state.writes.findLast(item => item.path === args.path && item.sha256 === nextHash);
@@ -471,10 +562,11 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
           }
           let entry = state.writes.find(item => item.operation === operation);
           if (!entry) { entry = { operation, path: args.path, previous_hash: currentHash, sha256: nextHash, completed: false }; state.writes.push(entry); saveState(state); }
-          try { replaceWorkspaceFile(root, { path: args.path, content: args.content, expected_hash: currentHash,
+          try { replaceWorkspaceFile(root, { path: args.path, content: args.content, expected_hash: currentHash, policy: writePolicy,
             authorize: () => { activeAtCommit(); assertWritable(binding, args.path); } }); }
           catch (error) {
             if (error instanceof ControlledToolError || error instanceof ControlledEvidenceScanTimeout) throw error;
+            if (error instanceof WorkspacePathPolicyError) throw new ControlledToolError('SCOPE_DENIED', error.message);
             throw new ControlledToolError('INPUT_CHANGED', 'File replacement could not complete safely. Current edits and the operation history were preserved; read the file again.');
           }
           completeWrite(entry); state.reads[key(args.path)] = nextHash; saveState(state);
@@ -482,14 +574,14 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         }));
       });
   if (binding.stage === 'planning') {
-    const schema = binding.procedure_registration_required
-      ? controlledPlanSchema.required({ procedure_candidate: true })
-      : controlledPlanSchema.omit({ procedure_candidate: true });
+    const schema: z.ZodObject<z.ZodRawShape> = binding.process_contract === 'workforce/v1'
+      ? binding.procedure_registration_required ? workforcePlanSchema.required({ procedure_candidate: true }) : workforcePlanSchema.omit({ procedure_candidate: true })
+      : binding.procedure_registration_required ? controlledPlanSchema.required({ procedure_candidate: true }) : controlledPlanSchema.omit({ procedure_candidate: true });
     const submission = controlledPlanRequestSchemas(schema, binding.plan_defaults);
-    register('workflow_plan', 'Save one semantic plan or send input_path alone for a prepared JSON plan. Backend supplies missing title and objective from this saved workflow when bound, normalizes unambiguous content, creates and links records and applies the minimum risk policy. Supply the professional rationale, scopes, deliverables and independent check design.\n' + controlledPlanSubmissionGuide(controlledPlanSchema), controlledPayloadSchema(submission.schema),
+    register('workflow_plan', 'Save one semantic plan or send input_path alone for a prepared JSON plan. Backend supplies identity, title and objective. Supply rationale, scoped deliverables, acceptance criteria and actual check commands.\n' + (binding.process_contract === 'workforce/v1' ? workforcePlanGuide : controlledPlanSubmissionGuide(controlledPlanSchema)), controlledPayloadSchema(submission.schema),
       false, args => prepared(submission.parseSchema, args, (plan, source) => {
         if (!callbacks.submitPlan) throw new ControlledToolError('UNSUPPORTED_STAGE', 'Planning is unavailable in this invocation.');
-        return callbacks.submitPlan(plan, source);
+        return callbacks.submitPlan(plan as ControlledPlan, source);
       }));
     register('work_prepare', 'Inspect reusable procedure applicability. Matching is advisory; the controller authorizes execution.',
       z.strictObject({ request: text.max(20000), parameters: z.record(z.string(), z.unknown()).optional() }), true, query => {
@@ -505,9 +597,25 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         if (!callbacks.runCheck) throw new ControlledToolError('UNSUPPORTED_STAGE', 'Check execution is unavailable in this invocation.');
         return callbacks.runCheck(args.title);
       });
+  if (binding.process_contract === 'workforce/v1' && binding.role === 'manager' && ['planning', 'diagnosis'].includes(binding.stage))
+    register('request_input', 'Ask for genuinely missing business input after inspecting the named project sources. Technical runtime/tool/model/retry failures belong to WorkForce and cannot become user-input questions.', workforceQuestionSchema, false, input => {
+      if (!callbacks.requestInput) throw new ControlledToolError('UNSUPPORTED_STAGE', 'User questions are unavailable in this session.');
+      const reads = loadState().reads;
+      if (input.searched_paths.some((path: string) => !Object.hasOwn(reads, key(path))))
+        throw new ControlledToolError('INPUT_SEARCH_REQUIRED', 'Read each named project source before stating that it cannot resolve the missing business input.');
+      if (/repair[_ -]?attempts|recovery[_ -]?limit|claim[_ -]?token|access[_ -]?token|assignment[_ -]?(?:id|identity)|increase.{0,24}(?:limit|retry|budget)|change.{0,24}prompt/i.test(JSON.stringify(input)))
+        throw new ControlledToolError('TECHNICAL_INCIDENT', 'WorkForce owns technical recovery; internal limits or identity cannot be presented as missing business input.');
+      return callbacks.requestInput(input);
+    });
+  if (binding.process_contract === 'workforce/v1' && binding.plugin_capabilities === true)
+    register('capability_invoke', 'Omit tool and provide only provider to discover its actual allowed tools and input schemas. Then call an already enabled, ready plug-in tool under this role and project policy with its observed schema. Runtime binds identity and authorization. This never installs a plug-in or grants network/filesystem access.',
+      z.strictObject({ provider: z.enum(['rea', 'codegraph', 'context7', 'playwright']), tool: text.max(256).optional(), arguments: z.record(z.string(), z.unknown()).default({}) }), false, input => {
+        if (!callbacks.invokeCapability) throw new ControlledToolError('CAPABILITY_UNAVAILABLE', 'This assignment has no authorized plug-in gateway.');
+        return callbacks.invokeCapability(input);
+      });
   if (['implementation', 'verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage))
     register('check_evidence', 'Read actual bound independent-check and producer-execution evidence (default execution kind). Omit title for all assigned evidence, or select an exact frozen check or producer execution_steps title. Entries identify their distinct provenance; a successful producer operation is not independent verification. Use kind workflow for original preservation and report lifecycle, or kind registration for the bound manifest. No private registry access or caller-provided identities.',
-      z.strictObject({ title: text.max(256).optional().describe('Exact assigned check or producer operation title. Omit to inspect all bound execution evidence; unknown selectors return available canonical titles.'), kind: z.enum(['execution', 'registration', 'workflow']).default('execution') }), true, args => {
+      z.strictObject({ title: text.max(256).optional().describe('Exact assigned check or producer operation title. Omit to inspect all bound execution evidence; unknown selectors return available canonical titles.'), kind: (binding.process_contract === 'workforce/v1' ? z.enum(['execution', 'registration', 'workflow', 'cornell-input']) : z.enum(['execution', 'registration', 'workflow'])).default('execution') }), true, args => {
         if (!callbacks.readEvidence) throw new ControlledToolError('NO_CHECK_EVIDENCE', 'No bound check evidence is available in this session.');
         return callbacks.readEvidence(args.title, args.kind);
       });
@@ -585,14 +693,23 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       then: { required: [requiresFailureKind ? 'failure_kind' : 'verdict'] },
     }] });
   }
-  register('assignment_report', 'Persist one substantive compact result. Incomplete findings are retained without submitting the task.' +
+  if (controlledToolNames(binding).includes('assignment_report')) register('assignment_report', 'Persist one substantive compact result. Incomplete findings are retained without submitting the task.' +
     (binding.stage === 'planning' ? ' Planning reports do not claim delivered filesystem artifacts: omit artifacts; the backend binds its actual saved plan and records.' : '') +
     (requiresVerdict ? ' A completed verification or review must include an explicit verdict pass or fail; blocked or failed findings may omit it.' : '') +
     (requiresFailureKind ? ' A completed manager diagnosis must include failure_kind: implementation, checker, protocol, environment or unknown; use unknown when evidence remains inconclusive. Blocked or failed findings may omit it.' : ''),
     reportInput, false, args => prepared(reportSchema, args, (report, source) => {
-      if (binding.stage === 'planning' && report.artifacts !== undefined) report = { ...report, artifacts: [] };
+      if (['planning', 'requirements', 'design'].includes(binding.stage) && report.artifacts !== undefined) report = { ...report, artifacts: [] };
       for (const path of report.artifacts ?? []) { publicTarget(root, path, binding.approved_inputs); assertReadable(binding, path); }
-      return callbacks.saveReport(report, source);
+      const assessment = report.outcome === 'completed' && report.verdict === 'pass' && binding.assessment_outputs?.length ? locked(state => {
+        const unread = binding.assessment_outputs!.filter(path => {
+          const target = publicTarget(root, path, binding.approved_inputs), digest = hash(readFileSync(target)), coverage = state.read_coverage?.[key(path)];
+          return coverage?.sha256 !== digest || coverage.ranges.length !== 1 || coverage.ranges[0]![0] !== 0 || coverage.ranges[0]![1] !== coverage.total;
+        });
+        if (unread.length) throw new ControlledToolError('READ_REQUIRED', `Read the complete current text of these assigned outputs before a passing content assessment: ${JSON.stringify(unread)}.`);
+        return { mode: 'complete-current-text' as const, invocation_id: binding.invocation_id!,
+          artifact_hashes: Object.fromEntries(binding.assessment_outputs!.map(path => [path, state.read_coverage![key(path)]!.sha256])) };
+      }) : undefined;
+      return callbacks.saveReport(report, source, assessment);
     }));
   return server;
 }

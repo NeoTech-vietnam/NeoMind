@@ -16,12 +16,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: neomind-upstream-candidates
+  group: workforce-upstream-candidates
   cancel-in-progress: false
 
 jobs:
   candidates:
-    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner == 'self-hosted-linux' && fromJSON('["self-hosted","linux","x64","neomind-upstreams"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner == 'self-hosted-linux' && fromJSON('["self-hosted","linux","x64","workforce-upstreams"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

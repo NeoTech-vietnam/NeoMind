@@ -1,3 +1,5 @@
+// Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
+import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, existsSync } from 'node:fs';
@@ -6,10 +8,11 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { initialize, createRecord, getRecord, safePath } from '../dist/storage.js';
+import { createRecord, getRecord, safePath } from '../dist/storage.js';
 import { installProject, updateProject } from '../dist/installer.js';
 import { migrateStorage } from '../dist/migration.js';
 import { createMcpServer } from '../dist/mcp.js';
+import { nativeAutomationPolicy } from '../dist/manager.js';
 
 function project(t) {
   const root = mkdtempSync(join(tmpdir(), 'neomind-feature-'));
@@ -75,6 +78,7 @@ test('CLI role selection regenerates the native Copilot agent and exposes the re
 
 test('MCP exposes upstream tools and preserves local-only refusal without transport access', async t => {
   const root = project(t);
+  writeFileSync(safePath(root, '.neomind/automation.json'), JSON.stringify(nativeAutomationPolicy()));
   installProject(root);
   const server = createMcpServer(root), client = new Client({ name: 'neomind-feature-test', version: '1' });
   const [a, b] = InMemoryTransport.createLinkedPair();

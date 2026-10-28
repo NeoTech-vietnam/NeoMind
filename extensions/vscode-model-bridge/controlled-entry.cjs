@@ -3,12 +3,12 @@ const { existsSync, lstatSync, readFileSync, realpathSync } = require('node:fs')
 
 const messages = {
   INTAKE_PENDING: 'A previous intake has an unknown response. Retry that saved request or refresh its receipt before starting different work.',
-  INTAKE_IDENTITY_CHANGED: 'This intake is already bound to different content. Choose Start another task for a new request.',
+  INTAKE_IDENTITY_CHANGED: 'This intake is already bound to different content. Choose Start another request for a new request.',
   INTAKE_RECEIPT_INVALID: 'The saved intake receipt could not be reconciled. Its identity was preserved; no replacement workflow was created.',
-  INTAKE_RESPONSE_UNKNOWN: 'The intake response is unknown. Retry the same request; NeoMind retains its saved request identity.',
-  INTAKE_NEW_CONTEXT_REQUIRED: 'An identical new task needs a fresh client turn context. Use Start another task in the Workflows panel if this client cannot provide one.',
-  INTAKE_CONTEXT_REQUIRED: 'Several intentional intakes contain this same request. Select the saved workflow or retry from its original client context; NeoMind will not guess which intake you mean.',
-  INTAKE_ACK_REQUIRED: 'Render and acknowledge the saved receipt before choosing Start another task.',
+  INTAKE_RESPONSE_UNKNOWN: 'The intake response is unknown. Retry the same request; WorkForce retains its saved request identity.',
+  INTAKE_NEW_CONTEXT_REQUIRED: 'An identical new task needs a fresh client turn context. Use Start another request in WorkForce Universe if this client cannot provide one.',
+  INTAKE_CONTEXT_REQUIRED: 'Several intentional intakes contain this same request. Select the saved workflow or retry from its original client context; WorkForce will not guess which intake you mean.',
+  INTAKE_ACK_REQUIRED: 'Render and acknowledge the saved receipt before choosing Start another request.',
   INTAKE_STORE_INVALID: 'The local intake journal is invalid or unavailable. Restore it before submitting again; no identity was replaced.',
 };
 class ControlledEntryError extends Error {
@@ -25,7 +25,7 @@ function createControlledEntryReceipts({ runtime, root, surface }) {
     fail('INTAKE_STORE_INVALID');
   root = realpathSync.native(root);
   const rootHash = sha(process.platform === 'win32' ? root.toLowerCase() : root);
-  const path = runtime.safePath(root, `.neomind/controlled/entrypoints/${surface}.json`);
+  const path = runtime.safePath(root, `.workforce/controlled/entrypoints/${surface}.json`);
   const lock = action => runtime.withOperationLock(root, `controlled-entry-${surface}`, action);
   const save = data => runtime.atomicWrite(path, `${JSON.stringify(data, null, 2)}\n`);
   function load() {

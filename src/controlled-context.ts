@@ -6,6 +6,8 @@ export interface OwnedContext {
   binding: ControlledBinding;
   callbacks: ControlledCallbacks;
   epoch_id: string;
+  /** Backend selection for a fresh invocation, never model-supplied routing. */
+  model_tier?: 'strong';
   bindInvocation(id: string): void;
 }
 const contexts = new Map<string, OwnedContext>();

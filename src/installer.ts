@@ -13,6 +13,7 @@ import { dirname, join, resolve, relative, isAbsolute, delimiter } from 'node:pa
 import { spawnSync } from 'node:child_process';
 import { ensureLocalGitExclusions } from './local-git-excludes.js';
 import { parse, modify, applyEdits, type ParseError } from 'jsonc-parser';
+import { parse as parseToml } from 'smol-toml';
 import { ensureAutomationPolicy, nativeAutomationPolicy, readAutomationPolicy, type AutomationPolicy } from './manager.js';
 import { ensureArchivePolicy, readArchivePolicy, type ArchivePolicy } from './archives.js';
 import {
@@ -25,7 +26,7 @@ import {
   type RoutingPolicy,
 } from './routing.js';
 import { ensureToolPolicy, toolObservations, roleCapabilities } from './tools.js';
-import { loadRecords, updateRecord, withOperationLock, safePath as storagePath, resolveManagedRoot } from './storage.js';
+import { loadRecords, updateRecord, withOperationLock, safePath as storagePath, resolveManagedRoot, readConfig } from './storage.js';
 import { strings, nativeWorkflowRecord } from './engineering.js';
 import {
   adapterOutputs,
@@ -112,8 +113,8 @@ function text(path: string): string | undefined {
   return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
 }
 function configFor(root: string): AdapterConfig {
-  const path = storagePath(root, '.neomind/config.json');
-  if (!existsSync(path)) throw new Error('Project is not initialized. Run neomind init first.');
+  const path = storagePath(root, '.workforce/config.json');
+  if (!existsSync(path)) throw new Error('Project is not initialized. Run workforce init first.');
   const config = JSON.parse(readFileSync(path, 'utf8')) as AdapterConfig;
   if (
     !Array.isArray(config.platforms) ||
@@ -150,15 +151,15 @@ function save(path: string, content: string): void {
   writeFileSync(path, content, 'utf8');
 }
 function manifestFor(root: string): Manifest {
-  const source = text(safePath(root, '.neomind/install-manifest.json'));
+  const source = text(safePath(root, '.workforce/install-manifest.json'));
   if (!source) return { schema_version: 1, version: version(), files: {} };
   const manifest = JSON.parse(source) as Manifest;
   if (manifest.schema_version !== 1 || !manifest.files || typeof manifest.files !== 'object')
     throw new Error('Unsupported installation manifest.');
   // Normalize inventory paths only; authored content and historical signed bytes stay intact.
-  manifest.files = Object.fromEntries(Object.entries(manifest.files).map(([id, entry]) => [
-    id.replace(/^\.(?:verythinker|taskforces)(?=\/|#|$)/, '.neomind'),
-    { ...entry, path: entry.path.replace(/^\.(?:verythinker|taskforces)(?=\/|$)/, '.neomind') },
+  if (readConfig(root).execution_engine === 'opencode') manifest.files = Object.fromEntries(Object.entries(manifest.files).map(([id, entry]) => [
+    id.replace(/^\.(?:neomind|verythinker|taskforces)(?=\/|#|$)/, '.workforce'),
+    { ...entry, path: entry.path.replace(/^\.(?:neomind|verythinker|taskforces)(?=\/|$)/, '.workforce') },
   ]));
   return manifest;
 }
@@ -174,7 +175,7 @@ function migratePendingRouting(
   try {
     records = loadRecords(root);
   } catch {
-    const base = '.neomind/migrations/alpha3-records-review.json';
+    const base = '.workforce/migrations/alpha3-records-review.json';
     const body =
       JSON.stringify(
         {
@@ -194,7 +195,7 @@ function migratePendingRouting(
       candidate = `${base}.${suffix++}`;
     save(safePath(root, candidate), body);
     report.conflicts.push({
-      path: '.neomind/records#alpha3-pending-routing',
+      path: '.workforce/records#alpha3-pending-routing',
       candidate,
       reason:
         'Existing record validation prevents safe pending-work migration; records were preserved for review.',
@@ -279,8 +280,8 @@ function outputID(output: ManagedOutput): string {
 function markers(output: ManagedOutput): { begin: string; end: string } {
   const key = output.key ?? 'instructions';
   return output.path.endsWith('.toml') || output.path.endsWith('.gitignore')
-    ? { begin: `# BEGIN NEOMIND ${key}`, end: `# END NEOMIND ${key}` }
-    : { begin: `<!-- BEGIN NEOMIND ${key} -->`, end: `<!-- END NEOMIND ${key} -->` };
+    ? { begin: `# BEGIN WORKFORCE ${key}`, end: `# END WORKFORCE ${key}` }
+    : { begin: `<!-- BEGIN WORKFORCE ${key} -->`, end: `<!-- END WORKFORCE ${key} -->` };
 }
 function blockState(
   source: string | undefined,
@@ -288,8 +289,8 @@ function blockState(
 ): { value?: string; start?: number; end?: number; malformed?: boolean } {
   if (source === undefined) return {};
   let mark = markers(output);
-  const candidates = [mark, ...['TASKFORCES', 'VERYTHINKER'].map((name) => ({
-    begin: mark.begin.replace('NEOMIND', name), end: mark.end.replace('NEOMIND', name),
+  const candidates = [mark, ...['NEOMIND', 'TASKFORCES', 'VERYTHINKER'].map((name) => ({
+    begin: mark.begin.replace('WORKFORCE', name), end: mark.end.replace('WORKFORCE', name),
   }))].filter((candidate) => source.includes(candidate.begin) || source.includes(candidate.end));
   if (candidates.length > 1) return { malformed: true };
   mark = candidates[0] ?? mark;
@@ -331,6 +332,29 @@ function jsonValue(object: unknown, path: (string | number)[]): unknown {
     object,
   );
 }
+function declaredTomlTable(content: string, section: string): string | undefined {
+  try {
+    const value = parseToml(content.replace(/^\uFEFF/, ''))[section];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const names = Object.keys(value); return names.length === 1 ? names[0] : undefined;
+  } catch { return undefined; }
+}
+function tomlTableExists(source: string, section: string, name: string): boolean {
+  try {
+    const value = parseToml(source.replace(/^\uFEFF/, ''))[section];
+    if (value && typeof value === 'object' && Object.hasOwn(value, name)) return true;
+  } catch { /* Preserve detectable authored tables even if unrelated TOML is malformed. */ }
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const part = (value: string) => `(?:${escape(value)}|"${escape(value)}"|'${escape(value)}')`;
+  const parent = part(section), child = part(name);
+  if (new RegExp(`^\\s*(?:\\[\\s*${parent}\\s*\\.\\s*${child}\\s*(?:\\.|\\])|${parent}\\s*\\.\\s*${child}\\s*(?:\\.|=))`, 'm').test(source)) return true;
+  const body = new RegExp(`^\\s*\\[\\s*${parent}\\s*\\]([\\s\\S]*?)(?=^\\s*\\[|(?![\\s\\S]))`, 'm').exec(source)?.[1] ?? '';
+  return new RegExp(`^\\s*${child}\\s*(?:\\.|=)`, 'm').test(body);
+}
+function selectedTomlProvider(source: string): string | undefined {
+  try { const value = parseToml(source.replace(/^\uFEFF/, '')).model_provider; return typeof value === 'string' ? value : undefined; }
+  catch { return /^\s*(?:model_provider|"model_provider"|'model_provider')\s*=\s*["']([^"']+)["']/m.exec(source)?.[1]; }
+}
 
 function installOutput(
   root: string,
@@ -367,31 +391,22 @@ function installOutput(
       for (const key of output.rootKeys ?? [])
         if (new RegExp(`^\\s*(?:${key}|"${key}"|'${key}')\\s*=`, 'm').test(outside))
           reason = `An authored ${key} setting already exists; review the parent provider selection.`;
-      if (output.key === 'codex-routing-provider' && state.start === undefined &&
-          (/^\s*(?:\[\s*model_providers\s*\.\s*(?:neomind_9router|"neomind_9router"|'neomind_9router')\s*(?:\.|\])|model_providers\s*\.\s*(?:neomind_9router|"neomind_9router"|'neomind_9router')\s*(?:\.|=))/m.test(outside) ||
-           /^\s*(?:neomind_9router|"neomind_9router"|'neomind_9router')\s*(?:\.|=)/m.test(
-             /^\s*\[\s*model_providers\s*\]([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(outside)?.[1] ?? '')))
-        reason = 'A user-owned neomind_9router provider table already exists.';
-      const serverName = output.key === 'codegraph' ? 'codegraph' : output.key === 'rea' ? 'rea' : 'neomind';
-      const serverKey = `(?:${serverName}|"${serverName}"|'${serverName}')`;
-      const table = new RegExp(
-        `^\\s*\\[\\s*mcp_servers\\s*\\.\\s*${serverKey}\\s*(?:\\.|\\])`,
-        'm',
-      );
-      const dotted = new RegExp(`^\\s*mcp_servers\\s*\\.\\s*${serverKey}\\s*(?:\\.|=)`, 'm');
-      const parent = /^\s*\[\s*mcp_servers\s*\]([\s\S]*?)(?=^\s*\[|(?![\s\S]))/m.exec(
-        current ?? '',
-      )?.[1];
-      const child = new RegExp(`^\\s*${serverKey}\\s*(?:\\.|=)`, 'm');
+      const providerName = declaredTomlTable(output.content, 'model_providers');
+      if (output.key === 'codex-routing-provider' && state.start === undefined && providerName && tomlTableExists(outside, 'model_providers', providerName))
+        reason = `A user-owned ${providerName} provider table already exists.`;
+      const serverName = declaredTomlTable(output.content, 'mcp_servers');
       if (
         output.path.endsWith('.toml') &&
-        ['mcp', 'codegraph', 'rea'].includes(output.key ?? '') &&
+        serverName &&
         state.start === undefined &&
         current &&
-        (table.test(current) || dotted.test(current) || (parent && child.test(parent)))
+        tomlTableExists(outside, 'mcp_servers', serverName)
       ) {
         reason = `A user-owned ${serverName} MCP table already exists.`;
       }
+      if (output.key === 'mcp' && serverName === 'workforce' && state.start === undefined &&
+          ['neomind', 'verythinker', 'taskforces'].some(name => tomlTableExists(outside, 'mcp_servers', name)))
+        reason = 'A legacy MCP server is user-owned. Review replacement before enabling a second WorkForce connection.';
     } else if (output.kind === 'json') {
       proposed = applyEdits(
         '{}\n',
@@ -400,6 +415,16 @@ function installOutput(
         }),
       );
       const object = current === undefined ? {} : parseJSON(current);
+      if (['servers.workforce', 'mcpServers.workforce'].includes(output.key ?? '')) {
+        const parentKey = output.jsonPath![0]!;
+        for (const legacy of ['neomind', 'verythinker', 'taskforces']) {
+          const legacyValue = jsonValue(object, [parentKey, legacy]);
+          if (legacyValue === undefined) continue;
+          const owned = manifest.files[`${output.path}#${parentKey}.${legacy}`];
+          if (!owned || owned.hash !== hash(JSON.stringify(legacyValue)))
+            reason = 'An edited or authored legacy MCP server was preserved. Review replacement before enabling another runtime owner.';
+        }
+      }
       const value = jsonValue(object, output.jsonPath!);
       currentValue = value === undefined ? undefined : JSON.stringify(value);
       // Refuse replacing an existing primitive parent with a new object.
@@ -448,7 +473,7 @@ function installOutput(
   if (!reason && !previous && currentValue !== undefined)
     reason = 'Existing content is owned by the user.';
   if (reason) {
-    const candidate = `${output.path}.neomind-update${output.key ? `-${output.key.replace(/[^a-z0-9-]/gi, '-')}` : ''}`;
+    const candidate = `${output.path}.workforce-update${output.key ? `-${output.key.replace(/[^a-z0-9-]/gi, '-')}` : ''}`;
     const candidatePath = safePath(root, candidate);
     // Keep conflicting candidate edits too; choose a fresh numbered filename.
     let available = candidatePath;
@@ -474,21 +499,26 @@ function installOutput(
   (previous ? report.updated : report.installed).push(id);
 }
 
-function resourceOutputs(): ManagedOutput[] {
+function brandedResource(content: string): string {
+  return content.replaceAll('NeoMind', 'WorkForce').replaceAll('NEOMIND', 'WORKFORCE')
+    .replace(/\bneomind(?!-controlled)\b/g, 'workforce')
+    .replaceAll('NeoTech-vietnam/WorkForce', 'NeoTech-vietnam/NeoMind');
+}
+function resourceOutputs(workforce: boolean): ManagedOutput[] {
   const outputs: ManagedOutput[] = [];
   function visit(directory: string, prefix: string): void {
     if (!existsSync(directory)) return;
     for (const item of readdirSync(directory, { withFileTypes: true })) {
       if (item.isSymbolicLink()) continue;
       const path = join(directory, item.name);
-      const target = `${prefix}/${item.name}`;
+      const target = `${prefix}/${workforce ? item.name.replace(/^neomind-/, 'workforce-') : item.name}`;
       if (item.isDirectory()) visit(path, target);
       else if (item.isFile())
-        outputs.push({ path: target, kind: 'file', content: readFileSync(path, 'utf8') });
+        outputs.push({ path: target, kind: 'file', content: workforce ? brandedResource(readFileSync(path, 'utf8')) : readFileSync(path, 'utf8') });
     }
   }
   for (const directory of ['roles', 'guides', 'templates', 'skills'])
-    visit(join(resourcesDirectory, directory), `.neomind/${directory}`);
+    visit(join(resourcesDirectory, directory), `${workforce ? '.workforce' : '.neomind'}/${directory}`);
   return outputs;
 }
 
@@ -503,19 +533,27 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
     throw new Error('Unsupported Copilot integration mode.');
   if (config.copilot_integration !== undefined && config.copilot_integration !== 'local')
     throw new Error('Unsupported Copilot integration mode in project configuration.');
-  const policyExists = existsSync(safePath(root, '.neomind/automation.json'));
+  const policyExists = existsSync(safePath(root, '.workforce/automation.json'));
+  const workforce = resolveManagedRoot(root) === '.workforce';
   const selectedPlatforms = options.platforms ?? config.platforms;
-  if (!policyExists && resolveManagedRoot(root) === '.neomind')
-    save(safePath(root, '.neomind/automation.json'), JSON.stringify(nativeAutomationPolicy(
+  if (!policyExists && readConfig(root).execution_engine === 'opencode')
+    save(safePath(root, '.workforce/automation.json'), JSON.stringify({ ...nativeAutomationPolicy(
       selectedPlatforms.includes('codex') && !selectedPlatforms.includes('copilot') ? 'codex' : 'copilot',
-    ), null, 2) + '\n');
+    ), execution_mode: 'neomind-controlled', knowledge_research_required: false }, null, 2) + '\n');
+  else if (!policyExists && (selectedPlatforms.includes('codex') && !selectedPlatforms.includes('copilot') ||
+      options.copilot_integration === 'local' || config.copilot_integration === 'local'))
+    save(safePath(root, '.workforce/automation.json'), JSON.stringify(nativeAutomationPolicy(
+      selectedPlatforms.includes('codex') && !selectedPlatforms.includes('copilot') ? 'codex' : 'copilot'), null, 2) + '\n');
   ensureAutomationPolicy(root);
   const policyPaths = [
-    '.neomind/routing.json',
-    '.neomind/archive.json',
-    '.neomind/tools.json',
+    '.workforce/routing.json',
+    '.workforce/archive.json',
+    '.workforce/tools.json',
   ];
   const newPolicyPaths = policyPaths.filter((path) => !existsSync(safePath(root, path)));
+  const defaultLocal = workforce && readConfig(root).execution_engine === 'opencode' &&
+    selectedPlatforms.includes('copilot') && config.copilot_integration === undefined;
+  if (defaultLocal) config.copilot_integration = 'local';
   if (options.platforms) config.platforms = options.platforms;
   if (options.profile) config.profile = options.profile;
   if (options.name) config.name = options.name;
@@ -524,8 +562,8 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
     throw new Error('Unsupported platform requested.');
   if (!['basic', 'software', 'embedded'].includes(config.profile))
     throw new Error('Unsupported project profile requested.');
-  if (options.platforms || options.profile || options.name || options.copilot_integration)
-    save(safePath(root, '.neomind/config.json'), JSON.stringify(config, null, 2) + '\n');
+  if (defaultLocal || options.platforms || options.profile || options.name || options.copilot_integration)
+    save(safePath(root, '.workforce/config.json'), JSON.stringify(config, null, 2) + '\n');
   const manifest = manifestFor(root);
   const report: InstallReport = {
     schema_version: 1,
@@ -545,20 +583,25 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
     if (exclusions.changed && exclusions.path) report.updated.push(exclusions.path);
     if (exclusions.warning) report.warnings.push(exclusions.warning);
     report.warnings.push(controlled
-      ? 'Controlled mode registers the exact-project NeoMind server in .vscode/mcp.json, preserving authored siblings and conflict candidates. Reload/start the server and verify actual tool discovery in VS Code; generated registration is not an active connection. Existing tracked MCP files remain tracked.'
-      : 'Local Copilot mode does not register an MCP server. Review .neomind/mcp-server.json and register its server in VS Code user-profile MCP configuration.');
+      ? 'Controlled mode registers the exact-project WorkForce server in .vscode/mcp.json, preserving authored siblings and conflict candidates. Reload/start the server and verify actual tool discovery in VS Code; generated registration is not an active connection. Existing tracked MCP files remain tracked.'
+      : 'Local Copilot mode does not register an MCP server. Review .workforce/mcp-server.json and register its server in VS Code user-profile MCP configuration.');
     if (['.github/copilot-instructions.md', '.vscode/mcp.json', '.mcp.json'].some(path => existsSync(safePath(root, path))))
       report.warnings.push(controlled
-        ? 'Controlled registration preserves authored shared instructions and unrelated MCP entries. Review conflicts and any previously configured user-profile NeoMind server before enabling duplicate connections.'
-        : 'Local Copilot integration preserves existing shared instructions and workspace MCP configuration. Review any previously configured NeoMind, TaskForces or VeryThinker integration before enabling the user-profile server.');
+        ? 'Controlled registration preserves authored shared instructions and unrelated MCP entries. Review conflicts and any previously configured user-profile WorkForce server before enabling duplicate connections.'
+        : 'Local Copilot integration preserves existing shared instructions and workspace MCP configuration. Review any previously configured WorkForce, TaskForces or VeryThinker integration before enabling the user-profile server.');
   }
-  if (!policyExists) report.installed.push('.neomind/automation.json');
+  if (!policyExists) report.installed.push('.workforce/automation.json');
+  if (workforce && newPolicyPaths.includes('.workforce/routing.json')) save(safePath(root, '.workforce/routing.json'), JSON.stringify({
+    schema_version: 1, enabled: true, platform: 'copilot', runtime_version: '0.162.1',
+    strong_model: 'top-models', worker_models: ['worker-models'], strong_provider: 'customendpoint', worker_provider: 'customendpoint',
+    strong_effort: 'high', worker_effort: 'low', vscode_effort_policy: 'allow-unavailable',
+  }, null, 2) + '\n');
   ensureRoutingPolicy(root);
   ensureArchivePolicy(root);
   ensureToolPolicy(root);
   report.installed.push(...newPolicyPaths);
-  const pendingMigration = migratePendingRouting(root, report);
-  const migrationPath = '.neomind/migrations/alpha3.json';
+  const pendingMigration = workforce ? { migrated: [], preserved: loadRecords(root).map(record => record.meta.id), blocked: false } : migratePendingRouting(root, report);
+  const migrationPath = '.workforce/migrations/workforce-install.json';
   if (!existsSync(safePath(root, migrationPath))) {
     save(
       safePath(root, migrationPath),
@@ -567,9 +610,9 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
           schema_version: 1,
           installed_version: report.version,
           historical_routing:
-            'Historical accepted/superseded records and recorded closed workflow history retain their original bytes and evidence. Pending tasks and workflows require strict native routing and strategic reassessment; old model strings are legacy observations.',
+            'Historical records, receipts and frozen contracts retain their original bytes and evidence. A WorkForce continuation links existing obligations through a fresh execution; installation does not rewrite pending record ownership or assurance.',
           new_work:
-            'Model choices are configured in routing.json. New NeoMind projects use visible Copilot subagents with unsigned assurance; signed VS Code Bridge execution remains opt-in.',
+            'Model aliases are configured in routing.json. New WorkForce projects use Local intake and runtime-owned OpenCode sessions; actual tool discovery and model access must be observed in the client.',
           authored_overrides: 'preserved-legacy-mappings; routing.json controls strict model selection',
           pending_work: pendingMigration,
         },
@@ -584,10 +627,10 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
       'Force does not overwrite user edits. Review and apply update candidates explicitly.',
     );
   const outputs = [
-    ...resourceOutputs(),
+    ...resourceOutputs(readConfig(root).execution_engine === 'opencode'),
     ...adapterOutputs(root, config),
     ...[...strongRoles, ...workerRoles].map((role) => ({
-      path: `.neomind/roles/${role}.capabilities.json`,
+      path: `.workforce/roles/${role}.capabilities.json`,
       kind: 'file' as const,
       content:
         JSON.stringify(
@@ -602,12 +645,12 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
         ) + '\n',
     })),
     {
-      path: '.neomind/providers/codegraph.json',
+      path: '.workforce/providers/codegraph.json',
       kind: 'file' as const,
       content: JSON.stringify(codeGraphProvider, null, 2) + '\n',
     },
     ...(!localCopilot ? [{
-      path: '.neomind/.gitignore',
+      path: '.workforce/.gitignore',
       kind: 'block' as const,
       key: 'local-data',
       content:
@@ -618,17 +661,22 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
   {
     const currentIds = new Set(outputs.map(outputID));
     for (const [id, entry] of Object.entries(manifest.files)) {
-      // Shared files may be tracked on another branch. Local mode never edits
-      // or retires their historical entries; any stale integration needs review.
-      if (localCopilot && ['.github/copilot-instructions.md', '.vscode/mcp.json', '.mcp.json'].includes(entry.path))
+      // Historical Local mode preserves shared files byte-for-byte. Explicit
+      // WorkForce migration may retire only hash-owned obsolete connections;
+      // authored siblings remain subject to the ownership checks below.
+      const legacyConnection = entry.kind === 'json' && /^(?:servers|mcpServers)\.(?:neomind|verythinker|taskforces)$/.test(entry.key ?? '');
+      const retiredSharedInstructions = entry.kind === 'block' && entry.key === 'instructions' &&
+        entry.path === '.github/copilot-instructions.md' && !currentIds.has(id);
+      if (localCopilot && ['.github/copilot-instructions.md', '.vscode/mcp.json', '.mcp.json'].includes(entry.path) &&
+          (!workforce || !legacyConnection && !retiredSharedInstructions))
         continue;
       const renamed = entry.kind === 'file' && (
-        /^\.neomind\/skills\/(?:verythinker|taskforces)-[^/]+\/SKILL\.md$/.test(entry.path) ||
-        /^\.(?:github|claude|agents)\/(?:agents\/(?:verythinker|taskforces)-[^/]+\.(?:agent\.md|md)|hooks\/(?:verythinker|taskforces)\.json|skills\/(?:verythinker|taskforces)-[^/]+\/SKILL\.md)$/.test(entry.path) ||
-        /^\.codex\/agents\/(?:verythinker|taskforces)-[^/]+\.toml$/.test(entry.path));
-      const oldServer = entry.kind === 'json' && ['servers.verythinker', 'servers.taskforces'].includes(entry.key ?? '') && entry.path === '.vscode/mcp.json';
+        /^\.workforce\/skills\/(?:neomind|verythinker|taskforces)-[^/]+\/SKILL\.md$/.test(entry.path) ||
+        /^\.(?:github|claude|agents)\/(?:agents\/(?:neomind|verythinker|taskforces)-[^/]+\.(?:agent\.md|md)|hooks\/(?:neomind|verythinker|taskforces)\.json|skills\/(?:neomind|verythinker|taskforces)-[^/]+\/SKILL\.md)$/.test(entry.path) ||
+        /^\.codex\/agents\/(?:neomind|verythinker|taskforces)-[^/]+\.toml$/.test(entry.path));
+      const oldServer = entry.kind === 'json' && ['servers.neomind', 'servers.verythinker', 'servers.taskforces'].includes(entry.key ?? '') && entry.path === '.vscode/mcp.json';
       const duplicateServer = entry.kind === 'json' && entry.path === '.mcp.json' &&
-        (['mcpServers.verythinker', 'mcpServers.taskforces'].includes(entry.key ?? '') || (entry.key === 'mcpServers.neomind' && !config.platforms.includes('claude')));
+        (['mcpServers.neomind', 'mcpServers.verythinker', 'mcpServers.taskforces'].includes(entry.key ?? '') || (entry.key === 'mcpServers.workforce' && !config.platforms.includes('claude')));
       const retiredSquadAgent = entry.kind === 'file' && (
         /^\.github\/agents\/neomind-[^/]+\.agent\.md$/.test(entry.path) ||
         /^\.codex\/agents\/neomind-[^/]+\.toml$/.test(entry.path));
@@ -644,23 +692,23 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
         (entry.kind === 'json' && ((entry.path === '.vscode/mcp.json' && optionalPlugins.some(plugin => entry.key === `servers.${plugin}`)) ||
           (entry.path === '.mcp.json' && optionalPlugins.some(plugin => entry.key === `mcpServers.${plugin}`)))) ||
         (entry.kind === 'file' && /^\.(?:agents|claude|github)\/skills\/reverse-engineer-anything\//.test(entry.path));
-      if (currentIds.has(id) || (!renamed && !oldServer && !duplicateServer && !retiredSquadAgent && !retiredCodexProvider && !retiredCodexHook && !retiredPlugin)) continue;
+      if (currentIds.has(id) || (!renamed && !oldServer && !duplicateServer && !retiredSquadAgent && !retiredCodexProvider && !retiredCodexHook && !retiredPlugin && !retiredSharedInstructions)) continue;
       const path = safePath(root, entry.path);
       const source = text(path);
       if (source === undefined) { delete manifest.files[id]; continue; }
-      // An edited root block remains user-owned. Keep its provider usable until
-      // that selection is reviewed instead of leaving a dangling reference.
-      if (retiredCodexProvider && entry.key === 'codex-routing-provider' &&
-          /^\s*(?:model_provider|"model_provider"|'model_provider')\s*=\s*["']neomind_9router["']/m.test(source)) {
-        report.warnings.push('The NeoMind 9router provider is still referenced by a preserved parent selection; review both Codex provider blocks manually.');
-        continue;
-      }
       let owned = false;
       let updated: string | undefined;
       try {
         if (entry.kind === 'file') owned = hash(source) === entry.hash;
         else if (entry.kind === 'block') {
           const state = blockState(source, { path: entry.path, key: entry.key, kind: 'block', content: '' });
+          // Infer the retired provider from its actual owned block. Historical
+          // names remain valid while an authored parent selection references them.
+          const providerName = state.value ? declaredTomlTable(state.value, 'model_providers') : undefined;
+          if (retiredCodexProvider && entry.key === 'codex-routing-provider' && providerName && selectedTomlProvider(source) === providerName) {
+            report.warnings.push(`The ${providerName} provider is still referenced by a preserved parent selection; review both Codex provider blocks manually.`);
+            continue;
+          }
           if (retiredPlugin && !state.malformed && state.value === undefined) { delete manifest.files[id]; continue; }
           owned = !state.malformed && state.value !== undefined && hash(state.value) === entry.hash;
           if (owned) updated = source.slice(0, state.start) + source.slice(state.end);
@@ -683,7 +731,7 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
   }
   manifest.version = report.version;
   save(
-    safePath(root, '.neomind/install-manifest.json'),
+    safePath(root, '.workforce/install-manifest.json'),
     JSON.stringify(manifest, null, 2) + '\n',
   );
   return report;
@@ -712,7 +760,7 @@ export function configureCodeGraph(
     status: 'supported-for-fixture',
     command: realpathSync(executablePath),
     args: [...args],
-    report_path: '.neomind/optional/codegraph-conformance.json',
+    report_path: '.workforce/optional/codegraph-conformance.json',
     report_hash: hash(source),
     platform: process.platform,
     architecture: process.arch,
@@ -723,7 +771,7 @@ export function configureCodeGraph(
   };
   save(safePath(root, config.report_path), source);
   save(
-    safePath(root, '.neomind/optional/codegraph.json'),
+    safePath(root, '.workforce/optional/codegraph.json'),
     JSON.stringify(config, null, 2) + '\n',
   );
   return config;
@@ -762,7 +810,7 @@ export function doctor(root: string): DoctorReport {
   const warnings: string[] = [];
   const controlled = controlledAdapterEnabled(root);
   if (config.platforms.includes('copilot') && config.copilot_integration === 'local' && !controlled)
-    warnings.push('Local Copilot mode requires VS Code user-profile MCP registration. .neomind/mcp-server.json is example metadata only; no registered connection or successful tool call is inferred.');
+    warnings.push('Local Copilot mode requires VS Code user-profile MCP registration. .workforce/mcp-server.json is example metadata only; no registered connection or successful tool call is inferred.');
   if (controlled) warnings.push('Controlled execution requires the trusted exact workspace open in VS Code and its Model Bridge enabled. Config files do not prove this client loaded the server or discovered/invoked its tools. Codex is an entrypoint; worker sessions use the VS Code LM Bridge and do not rewrite the parent Codex provider.');
   let codegraph: typeof codeGraphProvider | CodeGraphConfiguration = codeGraphProvider;
   try {
@@ -784,7 +832,7 @@ export function doctor(root: string): DoctorReport {
   const routingPolicy = readRoutingPolicy(root);
   const observations: DoctorReport['routing']['observations'] = [];
   let vscodeObservations = 0;
-  const receiptDirectory = safePath(root, '.neomind/native/receipts');
+  const receiptDirectory = safePath(root, '.workforce/native/receipts');
   for (const file of existsSync(receiptDirectory) ? readdirSync(receiptDirectory) : []) {
     if (!file.endsWith('.json')) continue;
     try {
@@ -802,13 +850,13 @@ export function doctor(root: string): DoctorReport {
       /* Invalid receipts remain unusable engineering evidence. */
     }
   }
-  const capabilityDirectory = safePath(root, '.neomind/capabilities');
+  const capabilityDirectory = safePath(root, '.workforce/capabilities');
   const capabilityObservations: unknown[] = [];
   for (const file of existsSync(capabilityDirectory) ? readdirSync(capabilityDirectory) : []) {
     if (!file.endsWith('.json')) continue;
     try {
       capabilityObservations.push(
-        JSON.parse(readFileSync(safePath(root, `.neomind/capabilities/${file}`), 'utf8')),
+        JSON.parse(readFileSync(safePath(root, `.workforce/capabilities/${file}`), 'utf8')),
       );
     } catch {
       warnings.push(`Tool observation cannot be read: ${file}`);
@@ -863,8 +911,8 @@ export function doctor(root: string): DoctorReport {
       const configured = validOptional && expected.every(matchesOutput);
       const registrations = expected.filter(output => platform === 'codex'
         ? output.path === '.codex/config.toml' && output.key === 'mcp'
-        : platform === 'copilot' ? output.path === '.vscode/mcp.json' && output.key === 'servers.neomind'
-        : output.path === '.mcp.json' && output.key === 'mcpServers.neomind');
+        : platform === 'copilot' ? output.path === '.vscode/mcp.json' && output.key === 'servers.workforce'
+        : output.path === '.mcp.json' && output.key === 'mcpServers.workforce');
       const registered = validOptional && registrations.length > 0 && registrations.every(matchesOutput);
       return {
         platform,

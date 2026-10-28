@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { initializeLegacy } from './helpers/legacy-project.mjs';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
@@ -29,7 +30,9 @@ test('build fingerprint changes for loaded code and guidance but ignores project
 
 test('actual MCP reports its startup build and unique instance without an assignment', async t => {
   const root = mkdtempSync(join(tmpdir(), 'neomind-live-build-'));
-  api.initialize(root, { project_id: 'LIVE-BUILD', platforms: ['copilot'] });
+  // Exercise the compatibility server's runtime_info contract, not the new
+  // request-only WorkForce public tool surface.
+  initializeLegacy(root, { project_id: 'LIVE-BUILD', platforms: ['copilot'] });
   const server = createMcpServer(root);
   const client = new Client({ name: 'live-build-test', version: '1' });
   const [caller, host] = InMemoryTransport.createLinkedPair();

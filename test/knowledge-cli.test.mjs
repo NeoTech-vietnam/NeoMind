@@ -8,7 +8,8 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import * as api from 'neomind';
+import * as api from 'workforce';
+import { initializeLegacy } from './helpers/legacy-project.mjs';
 import { dispatchKnowledgeCommand } from '../dist/knowledge-cli.js';
 import {
   discoverProjectKnowledge, searchProjectKnowledge, recordKnowledgeResearch,
@@ -27,9 +28,9 @@ const processMethods = ['spawnSync', 'spawn', 'exec', 'execSync', 'execFile', 'e
 function project(t) {
   const root = mkdtempSync(join(tmpdir(), 'neomind-knowledge-cli-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  api.initialize(root, {
+  initializeLegacy(root, {
     project_id: 'PRIVATE-KNOWLEDGE-CLI', profile: 'basic',
-    platforms: ['codex', 'claude', 'copilot'],
+    platforms: ['codex', 'claude', 'copilot'], copilot_integration: 'local',
   });
   api.ensureRoutingPolicy(root);
   const installation = api.installProject(root);

@@ -12,7 +12,7 @@ import { openAssignment, assignmentContext, assignmentProgress, assignmentResult
 import { listProcedures, discoverProcedureScripts, resolveProcedure, registerProcedure, registerProcedureSchema, reviewProcedure, qualifyProcedure, suspendProcedure, runProcedure } from './procedures.js';
 import { prepareWork, type WorkPrepareInput } from './procedure-reuse.js';
 import { reportAgentActivity } from './agent-activity.js';
-import { agentProfiles } from './agent-profiles.js';
+import { legacyAgentProfiles as agentProfiles } from './agent-profiles.js';
 import { relative } from 'node:path';
 import {
   createRecord,
@@ -731,6 +731,7 @@ import { publishProjectKnowledge } from './project-knowledge.js';
 export function createMcpServer(root: string, binding: McpBinding = {}): McpServer {
   const runtimeInfo = createRuntimeInfo(root);
   readConfig(root);
+  if (!binding.invocation_id && readConfig(root).execution_engine === 'opencode') return createWorkForceMcpServer(root);
   const controlledParent = !binding.invocation_id && readAutomationPolicy(root).execution_mode === 'neomind-controlled';
   const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const server = new McpServer({ name: 'neomind', version: packageJson.version });
@@ -2169,3 +2170,4 @@ export async function startMcp(root: string, binding: McpBinding = {}): Promise<
   const server = createMcpServer(root, binding);
   await server.connect(new StdioServerTransport());
 }
+import { createWorkForceMcpServer } from './workforce-requests.js';
