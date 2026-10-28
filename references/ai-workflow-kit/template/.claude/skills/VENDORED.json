@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "skills": [
+    {
+      "name": "asd-ste100",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Dustin Yuchen Teng",
+      "note": ""
+    },
+    {
+      "name": "build-iterated-agentic-loop",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 HumanLayer",
+      "note": ""
+    },
+    {
+      "name": "design-control-loop",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 HumanLayer",
+      "note": ""
+    },
+    {
+      "name": "humanizer",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2025 Siqi Chen",
+      "note": ""
+    },
+    {
+      "name": "improve-claude-md",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 HumanLayer",
+      "note": ""
+    },
+    {
+      "name": "narrow-react-prop-types",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 HumanLayer",
+      "note": ""
+    },
+    {
+      "name": "no-ai-slop",
+      "license": "unknown",
+      "copyright": "unknown",
+      "note": "source not recorded; check before external release"
+    },
+    {
+      "name": "reasoning-router",
+      "license": "unknown",
+      "copyright": "unknown",
+      "note": "source not recorded; check before external release"
+    },
+    {
+      "name": "show-me",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 HumanLayer",
+      "note": ""
+    },
+    {
+      "name": "visual-pr",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 HumanLayer",
+      "note": ""
+    }
+  ]
+}

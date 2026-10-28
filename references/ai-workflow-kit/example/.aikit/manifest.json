@@ -1,0 +1,32 @@
+{
+  "files": {
+    "__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "agents/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "agents/sync_agents.py": "3f4d8ed1bb538718c0a6959431abfea40efc90413b5a90cadf90aa6e3b79b84e",
+    "competency/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "competency/build_catchup.py": "2905ab0708745acf4b828e37c334844cb0466bcc4c9ca549561059ae016bf328",
+    "competency/check_lessons.py": "63f13e95861702819c35d65640797b7ff0fe40cd43c6108f6e51ad616c569595",
+    "competency/compkit.py": "24a6c5cd70f3813586ca97dd91a03fcad775bef3cadc51d1f9078f68c1004481",
+    "competency/gate.py": "26e78088b2032ad3c0ba57be26bb4f49d6b38c033652754cbf4d16e9bf520712",
+    "competency/grade_placement.py": "b8dde5a3bbdbbb46ac09106ecf3a377352fa12aceff26841ca0e3e148e5b8d4e",
+    "competency/ids.py": "b978e97c4320fdc1fcf4b5be330cd88745414dae6786cc2879f6c2d987b2bc3a",
+    "competency/migrate_ids.py": "e39048008cb31714605821d2bf72f479c92d6d1c9bc159fc8459cf69b81bffcc",
+    "competency/strings/en.json": "5079f50fdd956d8d8d8a2ab731293c0cd17f56a729c3aba9e3c739e6cd5ed94e",
+    "competency/strings/vi.json": "bb8eca37037f80fb28b4791144ea01b0ccbe9d13f11c1fdab9267ce9a01da19b",
+    "config.py": "83cdeeb5b85343d485401c7e0703228d9dcb33a244c47d7c298ed616525fb0da",
+    "hooks/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "hooks/action_guard.py": "2c15365f9d8a0e5d5819a05604609655c70c427718b09951c994f1b8e0267b02",
+    "hooks/antigravity.py": "32aad6154a72e972c429cffd92aae096f88244e4224614bb4e4d1cc1ef1bb986",
+    "hooks/grant.py": "9548722104bf77fb91847675fe8ebbfe32e73e16aab7c76358bdd53a295f746d",
+    "hooks/hook_paths.py": "deea4a3e393882c63e84b436d8afa99d7c17885c05d3f60e231101f96309b11e",
+    "hooks/kb_context.py": "685f67a86d3c63141210f3551ac30c849e288d91c8113966ef8d946d6391ea17",
+    "hooks/kb_guard.py": "28acba55eb286beab743f6ed997b7549552d56e93c58a8330250f89064544674",
+    "kb/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "kb/flow.py": "4910c8c36e72e44f566a4b969cf6125bdbc886ab32e66fc7070a05c1b69905cf",
+    "kb/kb.py": "74c1e088800e5d9febdc71f6b748631f9587c34a42ff115a89ebc4a080bc7176",
+    "kb/kbpaths.py": "c83453bbbfc70725277ba6aa4eed73df8b25da0073336d2178f6d16ece66f76f",
+    "kb/review.py": "d4fdcfbe570797df87a7101690df1f25ee78414fe508b6181d0ae0085082edb9",
+    "kb/store.py": "ff777fba0c3a3b6a68ba4ad3dd2793a26be54ee067ae5018f6c05b0a7038067a"
+  },
+  "kit_version": "0.1.0"
+}

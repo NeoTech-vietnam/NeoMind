@@ -1,0 +1,74 @@
+{
+ "schema": 1,
+ "project": "Fixture project",
+ "kinds": {
+  "foundation": "Foundation",
+  "module": "Module",
+  "open-question": "Open question"
+ },
+ "areas": [
+  "Core",
+  "Basics"
+ ],
+ "stages": [
+  "Basics",
+  "Core"
+ ],
+ "roots": {},
+ "items": [
+  {
+   "id": "L-T-01",
+   "kind": "foundation",
+   "area": "Basics",
+   "priority": 1,
+   "tags": [
+    "onboarding"
+   ],
+   "title": "First item",
+   "summary": "The first thing to learn.",
+   "prereq": [],
+   "sources": [
+    {
+     "label": "Main source",
+     "path": "src/main.c"
+    }
+   ],
+   "exercises": [
+    "Seed exercise"
+   ]
+  },
+  {
+   "id": "L-T-02",
+   "kind": "module",
+   "area": "Core",
+   "priority": 2,
+   "tags": [],
+   "title": "Second item",
+   "summary": "Needs the first.",
+   "prereq": [
+    "L-T-01"
+   ],
+   "sources": [
+    {
+     "label": "KB entry",
+     "kb": "D5"
+    }
+   ],
+   "exercises": []
+  },
+  {
+   "id": "L-T-03",
+   "kind": "open-question",
+   "area": "Core",
+   "priority": 3,
+   "tags": [],
+   "title": "Suspected problem",
+   "summary": "Hangs as a branch after the second.",
+   "prereq": [
+    "L-T-02"
+   ],
+   "sources": [],
+   "exercises": []
+  }
+ ]
+}

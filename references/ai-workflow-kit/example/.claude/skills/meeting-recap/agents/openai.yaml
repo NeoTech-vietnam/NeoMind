@@ -1,0 +1,4 @@
+interface:
+  display_name: "Meeting Recap"
+  short_description: "Create a structured meeting recap from a transcript"
+  default_prompt: "Use $meeting-recap to create a structured recap from a meeting transcript."

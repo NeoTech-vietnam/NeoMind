@@ -1,0 +1,83 @@
+Local reference validation, 2026-10-28
+Archive SHA-256: 1d24385591ed2852b4bd6c1d6351a32840d8a59a93fd22283bae2c8ac576ae6a
+Platform: Linux-7.0.0-38-generic-x86_64-with-glibc2.43
+Python: 3.14.4 (main, Aug 20 2026, 10:41:58) [GCC 15.2.0]
+
+Tests ran in an isolated copy, retaining original BANNED list from ZIP.
+Baseline command: python3 -m unittest discover -s tests -t . -v
+Working directory: /tmp/neomind-kit-research-98c2iia_/ai-workflow-kit
+Exit code: 1
+Full baseline log (temporary, not portable): /tmp/neomind-kit-research-98c2iia_/tests-baseline.log
+
+Skipped tests:
+test_spec_matches_an_independent_docx_reader (tests.kb.test_parsers.DocxTests.test_spec_matches_an_independent_docx_reader) ... skipped 'python-docx not installed'
+test_backlog_matches_an_independent_xlsx_reader (tests.kb.test_parsers.XlsxTests.test_backlog_matches_an_independent_xlsx_reader) ... skipped 'openpyxl not installed'
+test_the_review_command_names_the_reviewer_in_its_next_step (tests.kb.test_pending_text.ReviewerNameTests.test_the_review_command_names_the_reviewer_in_its_next_step) ... skipped 'openpyxl not installed'
+test_cli_round_trip (tests.kb.test_review.ReviewTests.test_cli_round_trip) ... skipped 'openpyxl not installed'
+test_export_lists_every_store_record_with_keep_default (tests.kb.test_review.ReviewTests.test_export_lists_every_store_record_with_keep_default) ... skipped 'openpyxl not installed'
+test_export_needs_a_store_group_and_a_known_name (tests.kb.test_review.ReviewTests.test_export_needs_a_store_group_and_a_known_name) ... skipped 'openpyxl not installed'
+test_import_proposes_removals_lists_changes_and_applies_on_ok (tests.kb.test_review.ReviewTests.test_import_proposes_removals_lists_changes_and_applies_on_ok) ... skipped 'openpyxl not installed'
+test_import_refuses_a_sheet_older_than_the_store_or_bad_values (tests.kb.test_review.ReviewTests.test_import_refuses_a_sheet_older_than_the_store_or_bad_values) ... skipped 'openpyxl not installed'
+
+Failure details and suite summary:
+======================================================================
+FAIL: test_claude_and_codex_session_start_commands_return_a_note (tests.hooks.test_harness.GeneratedCommandsRunTest.test_claude_and_codex_session_start_commands_return_a_note)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/neomind-kit-research-98c2iia_/ai-workflow-kit/tests/hooks/test_harness.py", line 269, in test_claude_and_codex_session_start_commands_return_a_note
+    out = self.run_command(command, self._tmp.name)
+  File "/tmp/neomind-kit-research-98c2iia_/ai-workflow-kit/tests/hooks/test_harness.py", line 262, in run_command
+    self.assertEqual(done.returncode, 0, done.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 127 != 0 : /bin/sh: 1: python: not found
+
+
+======================================================================
+FAIL: test_a_rooted_path_without_a_drive_is_refused (tests.kb.test_paths.ContainmentTests.test_a_rooted_path_without_a_drive_is_refused) (rel='\\a.md')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/neomind-kit-research-98c2iia_/ai-workflow-kit/tests/kb/test_paths.py", line 157, in test_a_rooted_path_without_a_drive_is_refused
+    with self.subTest(rel=rel), self.assertRaisesRegex(kb.KBError, 'Invalid workspace-relative path'):
+                                ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: KBError not raised
+
+======================================================================
+FAIL: test_parent_steps_and_drive_paths_are_refused (tests.kb.test_paths.ContainmentTests.test_parent_steps_and_drive_paths_are_refused) (rel='C:/a.md')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/neomind-kit-research-98c2iia_/ai-workflow-kit/tests/kb/test_paths.py", line 152, in test_parent_steps_and_drive_paths_are_refused
+    with self.subTest(rel=rel), self.assertRaisesRegex(kb.KBError, 'Invalid workspace-relative path'):
+                                ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: KBError not raised
+
+======================================================================
+FAIL: test_parent_steps_and_drive_paths_are_refused (tests.kb.test_paths.ContainmentTests.test_parent_steps_and_drive_paths_are_refused) (rel='C:a.md')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/neomind-kit-research-98c2iia_/ai-workflow-kit/tests/kb/test_paths.py", line 152, in test_parent_steps_and_drive_paths_are_refused
+    with self.subTest(rel=rel), self.assertRaisesRegex(kb.KBError, 'Invalid workspace-relative path'):
+                                ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: KBError not raised
+
+======================================================================
+FAIL: test_a_missing_file_a_missing_register_and_an_outside_path_are_refused (tests.kb.test_plugins.PluginLoadingTests.test_a_missing_file_a_missing_register_and_an_outside_path_are_refused) (path='C:/outside.py')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/neomind-kit-research-98c2iia_/ai-workflow-kit/tests/kb/test_plugins.py", line 158, in test_a_missing_file_a_missing_register_and_an_outside_path_are_refused
+    self.assertIn('Invalid workspace-relative path', result['error'])
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'Invalid workspace-relative path' not found in 'Plugin not found: C:/outside.py'
+
+----------------------------------------------------------------------
+Ran 424 tests in 28.300s
+
+FAILED (failures=5, skipped=8)
+Targeted recheck: temporary PATH contains private python symlink to /usr/bin/python3
+Command: python3 -m unittest tests.hooks.test_harness.GeneratedCommandsRunTest -v
+Exit code: 0
+test_claude_and_codex_session_start_commands_return_a_note (tests.hooks.test_harness.GeneratedCommandsRunTest.test_claude_and_codex_session_start_commands_return_a_note) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.148s
+
+OK

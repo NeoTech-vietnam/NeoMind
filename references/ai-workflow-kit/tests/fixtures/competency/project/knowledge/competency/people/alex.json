@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "person": "Alex",
+  "records": {
+    "L-T-01": {
+      "level": "aware",
+      "self": "aware",
+      "evidence": [
+        {
+          "date": "2026-01-02",
+          "exercise": "Exercise 1",
+          "support": "hint-direction",
+          "level": "aware"
+        }
+      ],
+      "gaps": "overflow",
+      "review_after": "2026-01-16"
+    }
+  }
+}

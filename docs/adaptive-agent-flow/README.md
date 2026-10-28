@@ -2,6 +2,8 @@
 
 Cập nhật ngày 28/10/2026. Nhánh làm việc: **`hieu/adaptive-agent-flow`** trong repository **NeoTech-vietnam/NeoMind**.
 
+Nguồn thực tế mới: người dùng cung cấp `ai-workflow-kit.zip` đã dùng trong dự án khác và muốn phát triển dựa trên flow này. Xem [snapshot và nguồn gốc](../../references/README.md), rồi đọc [phân tích kế thừa và kết quả test local](ai-workflow-kit-analysis.md). Đây là hướng nghiên cứu bổ sung; chưa cài kit vào NeoMind hoặc triển khai runtime.
+
 ## Đọc trước trong session local
 
 1. [Định hướng sản phẩm và quyết định của người dùng](product-direction.md).

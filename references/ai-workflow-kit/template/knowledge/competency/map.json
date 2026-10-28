@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "project": "{{project_name}}",
+  "kinds": {
+    "foundation": "Foundation concept",
+    "module": "Module",
+    "change": "Change the AI made",
+    "open-question": "Open question",
+    "decision": "Decision"
+  },
+  "areas": [
+    "Basics"
+  ],
+  "roots": {},
+  "items": [
+    {
+      "id": "L-BASIC-01",
+      "kind": "foundation",
+      "area": "Basics",
+      "priority": 1,
+      "tags": [
+        "onboarding"
+      ],
+      "title": "Where the project settings live",
+      "summary": "Starter item. All project-specific settings of the workflow tools are in kit.json: people, paths, repos. Replace the starter items with your own.",
+      "prereq": [],
+      "sources": [
+        {
+          "label": "kit.json"
+        }
+      ],
+      "exercises": [
+        "Find the cache folder"
+      ]
+    },
+    {
+      "id": "L-BASIC-02",
+      "kind": "module",
+      "area": "Basics",
+      "priority": 2,
+      "tags": [
+        "onboarding"
+      ],
+      "title": "How the learning map works",
+      "summary": "Starter item. The map lists what to understand, each item has a lesson, and each person has a record of levels and evidence.",
+      "prereq": [
+        "L-BASIC-01"
+      ],
+      "sources": [
+        {
+          "label": "map.json"
+        }
+      ],
+      "exercises": [
+        "Read the order of study"
+      ]
+    }
+  ]
+}

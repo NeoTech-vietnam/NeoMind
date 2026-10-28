@@ -1,0 +1,76 @@
+{
+  "kit_version": "0.1.0",
+  "project": {
+    "name": "Example Project",
+    "owner": "Alex Doe",
+    "reviewer": "Alex Doe",
+    "ui_lang": "en"
+  },
+  "people": {
+    "default": "alex-doe"
+  },
+  "paths": {
+    "engine": ".aikit",
+    "kb": "knowledge/kb",
+    "competency": "knowledge/competency",
+    "memory": ".claude/memory",
+    "cache": "knowledge/.cache"
+  },
+  "repos": [
+    {
+      "name": "main",
+      "path": "."
+    }
+  ],
+  "kb": {
+    "scopes": [
+      "project"
+    ],
+    "default_groups": {},
+    "status_column": "Status"
+  },
+  "competency": {
+    "markers": {}
+  },
+  "grants": [],
+  "guard_rules": [],
+  "agents": {
+    "tiers": {
+      "H": {
+        "claude": "opus",
+        "codex": "gpt-6.1-sol",
+        "codex_effort": "high"
+      },
+      "M": {
+        "claude": "sonnet",
+        "codex": "gpt-6.1-sol",
+        "codex_effort": "medium"
+      },
+      "L": {
+        "claude": "haiku",
+        "codex": "gpt-6-luna",
+        "codex_effort": "low"
+      }
+    },
+    "assign": {
+      "reviewer": "M",
+      "gate-quiz": "M",
+      "kb-lookup": "L",
+      "kb-curator": "L",
+      "governance-auditor": "M",
+      "chart-builder": "L",
+      "test-data-analyst": "M",
+      "test-plan-reviewer": "M",
+      "report-writer": "M",
+      "report-reviewer": "H",
+      "email-writer": "M",
+      "english-coach": "L"
+    }
+  },
+  "harnesses": {
+    "claude": true,
+    "codex": false,
+    "antigravity": false
+  },
+  "plugins": []
+}
