@@ -50,7 +50,7 @@ test('real OpenCode transports compatible default/null cursor reads and scoped w
     call('task_file_write', { path: 'products/unread.txt', content: 'Must not overwrite unread content.' }),
     call('project_read', { path: 'products/race.txt' }),
     call('task_file_write', { path: 'products/race.txt', content: 'Must not overwrite an outside edit.' }),
-    call('assignment_report', { outcome: 'completed', summary: 'Transport fixture completed its valid read/write calls and retained deliberate validation/CAS rejections.', artifacts: ['products/current.txt', 'products/new.txt'] }),
+    call('assignment_report', { summary: 'Transport fixture completed its valid read/write calls and retained deliberate validation/CAS rejections.', artifacts: ['products/current.txt', 'products/new.txt'], product_findings: [] }),
   ];
   provider = await localOpenAIProvider((index, body) => {
     assert.equal(body.model, 'worker-models');
@@ -124,7 +124,11 @@ for (const [label, args] of [
   while (invocationIsActive(receipt) && Date.now() < deadline) receipt = await waitNative(root, receipt.id, 500);
   t.diagnostic(JSON.stringify({ provider: 'loopback scripted OpenAI protocol only', case: label, request_count: provider.requests.length,
     terminal_state: receipt.state, error: receipt.error, tool_observations: traces.filter(event => event.event === 'engine-tool').map(event =>
-      ({ tool: event.tool, status: event.status, repeated_failures: event.repeated_failures, halt: event.halt })) }));
+      ({ tool: event.tool, status: event.status, repeated_failures: event.repeated_failures, halt: event.halt })),
+    native_session_observed: typeof receipt.native_thread_id === 'string',
+    control_failures: traces.filter(event => event.event === 'engine-failure').map(event => ({
+      operation: event.control_operation, error_name: event.error_name, transport_causes: event.transport_causes,
+    })) }));
   assert.equal(receipt.issuer, 'workforce-opencode'); assert.equal(receipt.state, 'blocked');
   assert.match(receipt.error ?? '', /^MCP_DELIVERY_PROTOCOL:/);
   assert.equal(readInvocation(root, receipt.id).inference_completed, false);

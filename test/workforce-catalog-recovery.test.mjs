@@ -20,7 +20,7 @@ test('a valid catalog can be connected before repairing retained unsupported rol
   assert.equal(selected.selections_valid, false); assert.equal(selected.unresolved_roles.length, 6);
   assert.deepEqual(selected.available_models, ['top-models', 'worker-models']);
   const stored = readRoutingPolicy(root), { language_models_file, ...unchanged } = stored;
-  assert.equal(language_models_file, realpathSync(path)); assert.deepEqual(unchanged, retained);
+  assert.equal(language_models_file, realpathSync.native(path)); assert.deepEqual(unchanged, retained);
   for (const role of ['manager', 'requirements', 'architect', 'developer', 'reviewer', 'verifier'])
     setRoleModel(root, { role, model: role === 'developer' ? 'worker-models' : 'top-models', provider: 'customendpoint' });
   assert.equal(configureWorkForceModelCatalog(root, { path }).selections_valid, true);

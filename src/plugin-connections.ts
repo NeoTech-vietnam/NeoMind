@@ -98,10 +98,12 @@ function writeConfiguration(path: string, value: string, expectedHash: string): 
   const mode = existsSync(path) ? lstatSync(path).mode & 0o777 : 0o600;
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(temporary, 'wx', mode);
     if (process.platform === 'win32' && existsSync(path)) {
-      // The temporary file is still empty. Copy and verify the existing file's
-      // security descriptor before it can contain unrelated client credentials.
+      // Apply the existing descriptor at CreateNew, before any content exists.
+      // In an elevated token, a normally-created temporary file can be owned
+      // by Administrators even when the settings file belongs to the user.
+      // Changing it afterwards requires WRITE_OWNER absent in Modify-only
+      // directories; creation-time security avoids that unnecessary request.
       // Fixed code and environment paths avoid command interpolation and module autoload.
       try {
         execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
@@ -109,15 +111,11 @@ function writeConfiguration(path: string, value: string, expectedHash: string): 
           '$sections=[System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Group; ' +
           '$acl=[System.IO.File]::GetAccessControl($env:NEOMIND_MCP_ACL_SOURCE); ' +
           "$sddl=$acl.GetSecurityDescriptorSddlForm($sections); $stage='copy-descriptor'; " +
-          // Reapplying an unchanged owner/group still asks Windows for
-          // WRITE_OWNER. A user-owned settings directory may grant Modify
-          // without that right. Preserve those fields and change only the DACL
-          // when their existing identities already match; verify all fields below.
-          '$targetAcl=[System.IO.File]::GetAccessControl($env:NEOMIND_MCP_ACL_TEMP); $applySections=[System.Security.AccessControl.AccessControlSections]::Access; ' +
-          'if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $targetAcl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { $applySections=$applySections -bor [System.Security.AccessControl.AccessControlSections]::Owner }; ' +
-          'if ($acl.GetGroup([System.Security.Principal.SecurityIdentifier]).Value -ne $targetAcl.GetGroup([System.Security.Principal.SecurityIdentifier]).Value) { $applySections=$applySections -bor [System.Security.AccessControl.AccessControlSections]::Group }; ' +
-          '$replacement=New-Object System.Security.AccessControl.FileSecurity; $replacement.SetSecurityDescriptorSddlForm($sddl,$applySections); ' +
-          '[System.IO.File]::SetAccessControl($env:NEOMIND_MCP_ACL_TEMP,$replacement); ' +
+          '$replacement=New-Object System.Security.AccessControl.FileSecurity; $replacement.SetSecurityDescriptorSddlForm($sddl,$sections); ' +
+          '$created=[System.IO.FileStream]::new($env:NEOMIND_MCP_ACL_TEMP,[System.IO.FileMode]::CreateNew,[System.Security.AccessControl.FileSystemRights]::Write,[System.IO.FileShare]::None,4096,[System.IO.FileOptions]::None,$replacement); $created.Dispose(); ' +
+          // CreateFile can clear the DACL auto-inherited marker. Reapply only
+          // Access so the owner/group established at creation stay untouched.
+          '$access=New-Object System.Security.AccessControl.FileSecurity; $access.SetSecurityDescriptorSddlForm($sddl,[System.Security.AccessControl.AccessControlSections]::Access); [System.IO.File]::SetAccessControl($env:NEOMIND_MCP_ACL_TEMP,$access); ' +
           "$stage='verify-descriptor'; $copied=[System.IO.File]::GetAccessControl($env:NEOMIND_MCP_ACL_TEMP); $copySddl=$copied.GetSecurityDescriptorSddlForm($sections); " +
           'if ($sddl -cne $copySddl) { ' +
           '$originalRaw=[System.Security.AccessControl.RawSecurityDescriptor]::new($sddl); $copiedRaw=[System.Security.AccessControl.RawSecurityDescriptor]::new($copySddl); ' +
@@ -134,7 +132,8 @@ function writeConfiguration(path: string, value: string, expectedHash: string): 
           "[pscustomobject]@{code='ACL_COPY_FAILED';stage=$stage;kind=$fault.GetType().Name;hresult=$fault.HResult} | ConvertTo-Json -Compress; exit 43 }"],
         { env: { ...process.env, NEOMIND_MCP_ACL_SOURCE: path, NEOMIND_MCP_ACL_TEMP: temporary }, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 });
       } catch (error) { throw new ConfigurationPermissionsError(aclFailureDetail(error)); }
-    }
+      descriptor = openSync(temporary, 'r+');
+    } else descriptor = openSync(temporary, 'wx', mode);
     if (hash(readText(path) ?? '') !== expectedHash) throw new Error('MCP configuration changed during this operation.');
     writeFileSync(descriptor, value);
     closeSync(descriptor); descriptor = undefined;

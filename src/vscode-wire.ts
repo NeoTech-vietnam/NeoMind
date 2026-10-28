@@ -1,13 +1,16 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, request, type IncomingMessage } from 'node:http';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir, userInfo } from 'node:os';
-import { join } from 'node:path';
+import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { userInfo } from 'node:os';
+import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { readConfig, withOperationLock } from './storage.js';
+import { assertNoLiveHost, hostOwnerState, hostProcessCreation, legacyHostDescriptorPaths, readHostAuthority,
+  stableHostDescriptorPath, validHostCreation } from './host-authority.js';
 
 export const bridgeLimit = 1024 * 1024;
 export const bridgeProtocol = 'neomind-vscode-lm-v1';
-export interface HostDescriptor { protocol: string; root: string; port: number; token: string; instance: string; pid: number }
+export interface HostDescriptor { protocol: string; root: string; port: number; token: string; instance: string; pid: number; owner_created_at?: string }
 type HostOperation = 'open' | 'run' | 'poll' | 'result' | 'cancel' | 'controlled-start' | 'controlled-control' | 'controlled-status' | 'controlled-answer';
 /** Trusted process configuration; never read these budgets from a wire request body. */
 export interface BridgeTimeoutOptions {
@@ -58,8 +61,11 @@ function operationTimeout(operation: string, options: BridgeTimeoutOptions): num
 }
 export function exactRoot(root: string): string { return realpathSync.native(root); }
 function descriptorPath(root: string): string {
-  const key = createHash('sha256').update(`${userInfo().username}\0${exactRoot(root)}`).digest('hex');
-  return join(tmpdir(), `neomind-vscode-${key}`, 'host.json');
+  const stable = stableHostDescriptorPath(root);
+  if (existsSync(stable)) return stable;
+  try { if (readConfig(root).execution_engine === 'opencode') return stable; }
+  catch (error) { if (existsSync(join(root, '.workforce/config.json'))) throw error; /* Standalone/legacy wire compatibility. */ }
+  return legacyHostDescriptorPaths(root)[0]!;
 }
 /** Internal diagnostic sidecars share the directory already secured by serveHost; no wire API or bearer material. */
 export function hostPrivateDirectory(root: string): string { return join(descriptorPath(root), '..'); }
@@ -113,18 +119,22 @@ export function bounded(value: unknown): string {
 }
 export function readHost(root: string): HostDescriptor {
   try {
-    const path = descriptorPath(root);
-    const stat = lstatSync(path), directory = lstatSync(join(path, '..'));
-    if (!stat.isFile() || stat.isSymbolicLink() || !directory.isDirectory() || directory.isSymbolicLink() ||
-        (process.platform !== 'win32' && (stat.uid !== process.getuid!() || (stat.mode & 0o077) ||
-          directory.uid !== process.getuid!() || (directory.mode & 0o077)))) throw new Error();
-    const descriptor = JSON.parse(readFileSync(path, 'utf8'));
-    if (descriptor.protocol !== bridgeProtocol || descriptor.root !== exactRoot(root) ||
-        !Number.isInteger(descriptor.port) || descriptor.port < 1 || descriptor.port > 65535 ||
-        !/^[a-f0-9]{64}$/.test(descriptor.token) || !/^[a-f0-9]{64}$/.test(descriptor.instance) ||
-        !Number.isInteger(descriptor.pid) || descriptor.pid < 1) throw new Error();
-    process.kill(descriptor.pid, 0);
-    return descriptor;
+    const stable = stableHostDescriptorPath(root);
+    for (const path of [stable, ...legacyHostDescriptorPaths(root)]) {
+      if (!existsSync(path)) continue;
+      const descriptor = readHostAuthority(root, path);
+      if (descriptor.protocol !== bridgeProtocol || descriptor.root !== exactRoot(root) ||
+          !Number.isInteger(descriptor.port) || descriptor.port < 1 || descriptor.port > 65535 ||
+          !/^[a-f0-9]{64}$/.test(descriptor.token) || !/^[a-f0-9]{64}$/.test(descriptor.instance) ||
+          !Number.isInteger(descriptor.pid) || descriptor.pid < 1 || path === stable && !validHostCreation(descriptor.owner_created_at)) throw new Error();
+      try { process.kill(descriptor.pid, 0); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') continue; throw error; }
+      // A same-process dispatch must also match this process creation; remote
+      // clients prove the exact live instance through the HTTP token handshake.
+      if (path === stable && descriptor.pid === process.pid && hostProcessCreation(process.pid) !== descriptor.owner_created_at) throw new Error();
+      return descriptor as HostDescriptor;
+    }
+    throw new Error();
   } catch {
     throw new Error('VS Code bridge is disabled or its descriptor is stale. Run NeoMind: Enable Model Bridge in the trusted workspace.');
   }
@@ -203,8 +213,13 @@ export async function serveHost(root: string, dispatch: (operation: string, inpu
   for (const value of Object.values(options.operation_timeouts_ms ?? {})) checkedTimeout(value);
   root = exactRoot(root);
   const path = descriptorPath(root), directory = join(path, '..');
+  const stable = path === stableHostDescriptorPath(root);
+  if (stable) {
+    secureHostPrivateDirectory(dirname(dirname(directory)));
+    secureHostPrivateDirectory(dirname(directory));
+  }
   secureHostPrivateDirectory(directory);
-  if (existsSync(path)) {
+  if (!stable && existsSync(path)) {
     const old = readHostIfLive(root);
     if (old) throw new Error('VS Code bridge already enabled for this workspace. Disable its existing host first.');
     rmSync(path, { force: true });
@@ -241,10 +256,26 @@ export async function serveHost(root: string, dispatch: (operation: string, inpu
   await new Promise<void>((done, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', done); });
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('VS Code loopback binding failed.');
-  const descriptor: HostDescriptor = { protocol: bridgeProtocol, root, port: address.port, token, instance, pid: process.pid };
+  const creation = stable ? hostProcessCreation(process.pid) : undefined;
+  if (stable && !creation) { server.close(); throw new Error('Editor owner process creation identity is unavailable; no stable host was published.'); }
+  const descriptor: HostDescriptor = { protocol: bridgeProtocol, root, port: address.port, token, instance, pid: process.pid,
+    ...(creation ? { owner_created_at: creation } : {}) };
   try {
-    const publish = () => writeFileSync(path, JSON.stringify(descriptor), { mode: 0o600, flag: 'wx' });
-    if (options.publish_descriptor) options.publish_descriptor(publish); else publish();
+    const publish = () => {
+      if (stable) {
+        assertNoLiveHost(root);
+        if (existsSync(path)) {
+          const previous = readHostAuthority(root, path);
+          if (hostOwnerState({ pid: previous.pid, owner_created_at: previous.owner_created_at }, true) !== 'stale')
+            throw new Error('The previous editor owner has not been proven ended.');
+          rmSync(path);
+        }
+      }
+      writeFileSync(path, JSON.stringify(descriptor), { mode: 0o600, flag: 'wx' });
+    };
+    if (options.publish_descriptor) options.publish_descriptor(publish);
+    else if (stable) withOperationLock(root, 'package-upgrade', publish);
+    else publish();
   } catch (error) { server.close(); throw error; }
   const local: LocalHost = { descriptor, dispatch: dispatchResult, options: { ...options,
     operation_timeouts_ms: { ...options.operation_timeouts_ms } } };

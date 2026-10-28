@@ -234,15 +234,39 @@ function assertQuiescent() {
     throw new Error('Storage migration lock is present.');
   // The editor host owns both legacy LM and WorkForce OpenCode sessions. An
   // idle but enabled host could dispatch while package files are replaced.
-  const key = createHash('sha256').update(`${userInfo().username}\0${realpathSync.native(root)}`).digest('hex');
-  for (const prefix of ['neomind-vscode', 'workforce-vscode']) {
-    const path = join(tmpdir(), `${prefix}-${key}`, 'host.json');
+  const physical = realpathSync.native(root), key = createHash('sha256').update(`${userInfo().username}\0${physical}`).digest('hex');
+  const stableKey = createHash('sha256').update(`${userInfo().username}\0${process.platform === 'win32' ? physical.toLowerCase() : physical}`).digest('hex');
+  const stable = join(dirname(physical), '.workforce-private', stableKey, 'host', 'host.json');
+  const legacyDirectories = process.platform === 'win32'
+    ? [tmpdir(), join(userInfo().homedir, 'AppData', 'Local', 'Temp'), ...(process.env.LOCALAPPDATA ? [join(process.env.LOCALAPPDATA, 'Temp')] : [])]
+    : [tmpdir(), '/tmp'];
+  const authorities = [...new Set([stable, ...legacyDirectories.flatMap(directory =>
+    ['neomind-vscode', 'workforce-vscode'].map(prefix => join(directory, `${prefix}-${key}`, 'host.json')))])];
+  for (const path of authorities) {
     if (!existsSync(path)) continue;
     const descriptor = json(regular(path));
     if (descriptor.root !== realpathSync.native(root) || !Number.isSafeInteger(descriptor.pid) || descriptor.pid < 1)
       throw new Error('Editor host identity is indeterminate; disable the project host before upgrading.');
+    if (path === stable && (typeof descriptor.owner_created_at !== 'string' || !/^(?:win32:\d+|linux:[a-f0-9-]{36}:\d+)$/.test(descriptor.owner_created_at)))
+      throw new Error('Stable editor owner creation identity is indeterminate.');
     try { process.kill(descriptor.pid, 0); }
     catch (error) { if (error.code === 'ESRCH') continue; throw new Error('Editor host liveness is indeterminate.'); }
+    if (path === stable) {
+      let creation;
+      try {
+        if (process.platform === 'win32') {
+          const result = spawnSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+            ['-NoProfile', '-NonInteractive', '-Command', `[System.Diagnostics.Process]::GetProcessById(${descriptor.pid}).StartTime.ToUniversalTime().ToFileTimeUtc().ToString()`],
+            { encoding: 'utf8', windowsHide: true, timeout: 10000, maxBuffer: 8192 });
+          if (!result.error && result.status === 0 && /^\d+$/.test(result.stdout.trim())) creation = `win32:${result.stdout.trim()}`;
+        } else if (process.platform === 'linux') {
+          const text = readFileSync(`/proc/${descriptor.pid}/stat`, 'utf8');
+          creation = `linux:${readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim()}:${text.slice(text.lastIndexOf(')') + 2).split(' ')[19]}`;
+        }
+      } catch { /* Unknown identity cannot authorize replacement. */ }
+      if (!creation) throw new Error('Stable editor owner creation identity could not be observed.');
+      if (creation !== descriptor.owner_created_at) continue; // Original owner ended; never kill the reused PID.
+    }
     throw new Error('An editor execution owner is active; disable the WorkForce/NeoMind host before upgrading.');
   }
   const base = join(root, managed);

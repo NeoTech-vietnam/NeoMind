@@ -50,8 +50,21 @@ test('every core CI entry keeps the complete suite and fails before testing a fa
     const steps = Object.values(workflow.jobs).flatMap(job => job.steps);
     const core = steps.filter(step => step.run === 'npm test');
     assert.equal(core.length, 1, `${file} runs one complete core regression.`);
-    assert.equal(steps.some(step => step.run?.includes('node --test')), false, 'CI must use the same canonical command as local validation.');
+    const direct = steps.filter(step => step.run?.includes('node --test'));
+    assert.equal(direct.length, file === 'ci.yml' ? 1 : 0, 'Only the separate Ubuntu transport diagnostic supplements canonical core validation.');
   }
+});
+
+test('Ubuntu repeated engine diagnostics supplement full regression and stop before packaging on any failure', () => {
+  const ci = parseYaml(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
+  const steps = ci.jobs.verify.steps, core = steps.find(step => step.run === 'npm test');
+  const diagnostic = steps.find(step => step.name === 'Repeat Ubuntu engine admission and transport diagnostics');
+  assert.equal(diagnostic.if, "success() && matrix.os == 'ubuntu-latest'"); assert.equal(diagnostic.shell, 'bash');
+  assert.match(diagnostic.run, /for attempt in 1 2 3; do/);
+  assert.match(diagnostic.run, /node --test --test-concurrency=2 test\/opencode-async-turn\.test\.mjs test\/opencode-tool-transport\.test\.mjs \|\| exit "\$\?"/);
+  assert.doesNotMatch(diagnostic.run, /diagnostics\/|--test-(?:name|skip|timeout)|test\/\*|PAID|LIVE|GATED/);
+  assert.ok(steps.indexOf(diagnostic) > steps.indexOf(core));
+  assert.ok(steps.indexOf(diagnostic) < steps.findIndex(step => step.name === 'Inspect package contents'));
 });
 
 test('portable assets identify only their actually supported native targets', () => {

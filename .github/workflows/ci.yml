@@ -33,6 +33,14 @@ jobs:
         # Keep the full suite while bounding simultaneous native guardians and
         # ACL subprocesses. Build failure must prevent test execution.
         run: npm test
+      - name: Repeat Ubuntu engine admission and transport diagnostics
+        if: success() && matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            printf 'Engine admission and transport repetition %s/3\n' "$attempt"
+            node --test --test-concurrency=2 test/opencode-async-turn.test.mjs test/opencode-tool-transport.test.mjs || exit "$?"
+          done
       - name: Inspect package contents
         run: npm pack --dry-run --json
       - name: Build local package

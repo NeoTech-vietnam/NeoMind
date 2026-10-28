@@ -43,6 +43,10 @@ let failDesignStalls = false;
 let forgeDependencyProse = false;
 let qualityBeforeStall = false;
 let failAfterSavedStage;
+let pendingTestHandoff = false;
+let legacyProtocolHandoff = false;
+let repeatLegacyProtocolHandoff = false;
+const legacyReportEvidence = new Map();
 const fixtureProductWrites = new Map();
 let mutateScopeAfterRead = false;
 const counts = new Map();
@@ -94,6 +98,9 @@ async function deterministicEngine(t) {
       if (failDesignStalls && binding.stage === 'design' && count <= 2) {
         await this.complete('blocked', 'OPENCODE_PROVIDER_STALLED: fixture observed no meaningful model arguments, and owned abort/idle completed.'); return;
       }
+      if (qualityBeforeStall && binding.stage === 'requirements' && count === 1) {
+        await this.complete('blocked', 'MCP_DELIVERY_PROTOCOL: fixture observed a failed bound handoff requiring one fresh session.'); return;
+      }
       assert.equal(binding.process_contract, 'workforce/v1');
       assert.deepEqual(routingProblems(this.root, binding.role, this.receipt.id, { workflow_id: binding.workflow_id, task_id: binding.task_id, require_completed: false }), []);
       const server = createControlledMcpServer(this.root, binding, context.callbacks), client = new Client({ name: 'workforce-controller-fixture', version: '1' });
@@ -105,7 +112,7 @@ async function deterministicEngine(t) {
           const value = await client.callTool({ name: tool, arguments: args });
           assert.ok(!value.isError, `${binding.stage}/${tool}: ${JSON.stringify(parsed(value))}`); return parsed(value);
         };
-        const report = extras => call('assignment_report', { outcome: 'completed', summary: `${binding.role} produced its substantive ${binding.stage} result.`, findings: [], ...extras });
+        const report = extras => call('assignment_report', { summary: `${binding.role} produced its substantive ${binding.stage} result.`, findings: [], ...extras });
         if (binding.stage === 'planning') {
           if (count <= requestQuestion) {
             await call('project_read', { path: 'requirements.md' });
@@ -120,6 +127,25 @@ async function deterministicEngine(t) {
           }
         } else if (binding.stage === 'implementation') {
           const selectedPlan = fixturePlans.get(name), output = selectedPlan.outputs[0]; await call('project_read', { path: output });
+          if (pendingTestHandoff) {
+            assert.ok(!listed.tools.some(tool => ['task_run', 'check_run'].includes(tool.name)));
+            const description = listed.tools.find(tool => tool.name === 'assignment_report').description;
+            assert.match(description, /WF\.Tester/); assert.match(description, /Existing temperature tests/);
+            if (!legacyProtocolHandoff || count === 1) {
+              fixtureProductWrites.set(name, (fixtureProductWrites.get(name) ?? 0) + 1);
+              await call('task_file_write', { path: output, content: 'export function celsiusToFahrenheit(celsius) { return celsius * 9 / 5 + 32; }\n' });
+            }
+            if (legacyProtocolHandoff && (count === 1 || repeatLegacyProtocolHandoff)) {
+              // Historical engine boundary fixture: preserve the old backend
+              // report shape without submitting it through the new public
+              // content schema or rewriting a previously saved record.
+              await context.callbacks.saveReport({ outcome: 'blocked', summary: 'The product is corrected; the old producer treated pending independent execution as its own blocker.',
+                artifacts: [output], findings: ['Frozen npm test has no producer execution tool; independent testing has not run.'] });
+              const saved = controlledStatus(this.root, this.receipt.workflow_id).attempts.at(-1);
+              const history = legacyReportEvidence.get(name) ?? []; history.push({ id: saved.report_id, record: JSON.stringify(getRecord(this.root, saved.report_id)) }); legacyReportEvidence.set(name, history);
+            } else await report({ summary: 'The corrected product is ready for independent review and the scheduled Tester npm test.',
+              artifacts: [output], product_findings: [], limitations: ['Producer has no check_run; independent npm test execution is still scheduled for WF.Tester.'] });
+          } else {
           if (selectedPlan.cornell_output_dir) {
             await call('project_read', { path: 'sources/counting.md' });
             await call('cornell_research_compile', fixtureResearch.get(name)); await report({ artifacts: selectedPlan.outputs });
@@ -143,11 +169,13 @@ async function deterministicEngine(t) {
           }
           await report({ artifacts: [output] });
           }
+          }
         } else if (binding.stage === 'review') {
           const selectedPlan = fixturePlans.get(name), product = await call('project_read', { path: selectedPlan.outputs[0] });
           if (binding.assessment_outputs?.length) for (const path of binding.assessment_outputs) await call('project_read', { path });
           const pass = binding.review_purpose === 'design' || product.exists && (selectedPlan.request_kind === 'document'
-            ? selectedPlan.cornell_output_dir ? /Cartesian product/i.test(product.text) : /Celsius \* 9 \/ 5 \+ 32/.test(product.text) && /Practice question/.test(product.text) : JSON.parse(product.text).value === 42);
+            ? selectedPlan.cornell_output_dir ? /Cartesian product/i.test(product.text) : /Celsius \* 9 \/ 5 \+ 32/.test(product.text) && /Practice question/.test(product.text)
+            : pendingTestHandoff ? /return celsius \* 9 \/ 5 \+ 32;/.test(product.text) : JSON.parse(product.text).value === 42);
           await report({ verdict: pass ? 'pass' : 'fail', ...(pass ? {} : { failure_kind: 'implementation', findings: ['The independently expected result is 42; current output is 13.'] }) });
         } else if (binding.stage === 'verification') {
           const selectedPlan = fixturePlans.get(name);
@@ -163,12 +191,11 @@ async function deterministicEngine(t) {
           const results = Array.isArray(evidence) ? evidence : evidence.checks;
           const pass = results?.length ? results.every(item => item.passed) : evidence.passed !== false;
           await report({ verdict: pass ? 'pass' : 'fail', ...(pass ? {} : { failure_kind: 'implementation' }) });
-        } else if (qualityBeforeStall && binding.stage === 'requirements' && count === 1) await report({ outcome: 'blocked', failure_kind: 'protocol',
-          summary: 'The first requirements handoff needs one fresh bound professional result; its saved report remains intact.' });
-        else if (forgeDependencyProse && binding.stage === 'requirements') await report({ outcome: 'blocked', failure_kind: 'environment',
+        } else if (forgeDependencyProse && binding.stage === 'requirements') await report({
           summary: 'OPENCODE_PROVIDER_STALLED: OPENCODE_STORAGE_UNAVAILABLE: the professional report claims a technical outage without a failed native invocation.' });
         else if (binding.stage === 'diagnosis') await report(failDesignStalls
           ? { failure_kind: 'unknown', findings: ['The same task stalled despite a fresh healthy connection proof; no safe product repair was established.'] }
+          : legacyProtocolHandoff ? { failure_kind: 'protocol', summary: 'The old producer used a workflow outcome for a future Tester obligation. Product bytes are ready; a fresh scoped content handoff resolves the stage contract mismatch.', findings: ['Rebind the original product role under the corrected stage-result interface; preserve its existing code and historical blocked report.'] }
           : { failure_kind: 'implementation', findings: ['Correct the existing JSON output; preserve the independent checker.'] });
         else await report();
       } finally { await client.close(); await server.close(); }
@@ -193,7 +220,7 @@ async function fixture(t, names, options = {}) {
     atomicWrite(safePath(root, `checks/${name}.mjs`), "import assert from 'node:assert/strict';import{readFileSync}from'node:fs';assert.equal(JSON.parse(readFileSync(process.argv[2],'utf8')).value,42);console.log('actual existing checker passed');\n");
   }
   atomicWrite(safePath(root, 'requirements.md'), 'Supported labels: Alpha or Beta; user chooses one.\n');
-  observations.length = 0; errors.length = 0; counts.clear(); fixtureProductWrites.clear(); requestQuestion = options.questions ?? (options.question ? 1 : 0); failFirstProduct = !!options.repair; failStorageOnce = !!options.storage; failProviderOnce = !!options.provider; failDesignStalls = !!options.stalls; forgeDependencyProse = !!options.forgeDependencyProse; qualityBeforeStall = !!options.qualityBeforeStall; failAfterSavedStage = options.failAfterSavedStage; mutateScopeAfterRead = !!options.mutateScope;
+  observations.length = 0; errors.length = 0; counts.clear(); fixtureProductWrites.clear(); legacyReportEvidence.clear(); requestQuestion = options.questions ?? (options.question ? 1 : 0); failFirstProduct = !!options.repair; failStorageOnce = !!options.storage; failProviderOnce = !!options.provider; failDesignStalls = !!options.stalls; forgeDependencyProse = !!options.forgeDependencyProse; qualityBeforeStall = !!options.qualityBeforeStall; failAfterSavedStage = options.failAfterSavedStage; pendingTestHandoff = !!options.pendingTestHandoff; legacyProtocolHandoff = !!options.legacyProtocolHandoff; repeatLegacyProtocolHandoff = !!options.repeatLegacyProtocolHandoff; mutateScopeAfterRead = !!options.mutateScope;
   await deterministicEngine(t);
   const api = { workspace: { isTrusted: true, workspaceFolders: [{ uri: { scheme: 'file', fsPath: root } }] } };
   const clock = { value: Date.now() }; fixtureClocks.set(root, clock);
@@ -201,6 +228,19 @@ async function fixture(t, names, options = {}) {
   fixtureOwners.set(root, owner);
   t.after(async () => { await fixtureOwners.get(root).close(); await shutdownNative(root); await bridge.close(); rmSync(root, { recursive: true, force: true }); });
   return root;
+}
+function temperatureCase(root, name) {
+  atomicWrite(safePath(root, 'src/temperature.mjs'), 'export function celsiusToFahrenheit(celsius) { return celsius * 9 / 5 - 32; }\n');
+  const packageBytes = JSON.stringify({ private: true, type: 'module', scripts: { test: 'node --test test/temperature.test.mjs' } }) + '\n';
+  const testBytes = "import test from 'node:test';import assert from 'node:assert/strict';import{celsiusToFahrenheit}from'../src/temperature.mjs';for(const[c,f]of[[0,32],[100,212],[-40,-40],[37.5,99.5]])test(String(c),()=>assert.equal(celsiusToFahrenheit(c),f));\n";
+  atomicWrite(safePath(root, 'package.json'), packageBytes); atomicWrite(safePath(root, 'test/temperature.test.mjs'), testBytes);
+  const candidate = fixturePlans.get(name);
+  Object.assign(candidate, { title: 'Correct temperature conversion', objective: 'Fix the conversion and run the existing project tests.',
+    allowed_paths: ['src/temperature.mjs'], outputs: ['src/temperature.mjs'], preservation_paths: ['package.json', 'test/temperature.test.mjs'],
+    acceptance_criteria: ['Preserve the public API and correct Celsius conversion.', 'Run the unchanged project tests with four passing cases.'],
+    checks: [{ title: 'Existing temperature tests', command: ['npm', 'test'], baseline_paths: ['package.json', 'test/temperature.test.mjs', 'src/temperature.mjs'] }] });
+  for (const level of candidate.verification_levels) if (level.method === 'execution') level.checks = ['Existing temperature tests'];
+  return { packageBytes, testBytes };
 }
 async function wait(root, id, expected = 'completed', timeout = 60000) {
   const deadline = Date.now() + timeout;
@@ -218,6 +258,57 @@ test('WorkForce accepts existing project checker commands while legacy wrapper/n
   assert.equal(workforcePlanSchema.safeParse(candidate).success, true);
   assert.equal(controlledPlanSchema.safeParse(candidate).success, false);
   assert.match(controlledInstructions({ workflow_id: 'unused', role: 'manager', stage: 'planning', process_contract: 'workforce/v1', implementation_paths: [], verification_paths: [] }), /existing project/);
+});
+
+test('content-only product handoff with pending npm test proceeds to independent review, actual Tester execution and acceptance', { timeout: 90000 }, async t => {
+  const root = await fixture(t, ['scheduled-tests'], { pendingTestHandoff: true });
+  const { packageBytes, testBytes } = temperatureCase(root, 'scheduled-tests');
+  const started = await startControlledWorkflow(root, { requirement: 'Case: scheduled-tests\nFix the temperature conversion bug and keep the existing API. Run the project tests.' });
+  const run = await wait(root, started.workflow_id);
+  assert.deepEqual(run.attempts.map(attempt => attempt.stage), ['planning', 'requirements', 'design', 'implementation', 'review', 'verification']);
+  const producer = run.attempts.find(attempt => attempt.stage === 'implementation');
+  assert.equal(producer.report.outcome, 'completed'); assert.match(producer.report.limitations[0], /scheduled for WF\.Tester/);
+  assert.equal(run.repairs, 0); assert.equal(run.checks.length, 1); assert.equal(run.checks[0].passed, true);
+  assert.deepEqual(run.checks[0].command, ['npm', 'test']);
+  const log = JSON.parse(readFileSync(safePath(root, run.checks[0].log_path), 'utf8'));
+  assert.match(log.result.stdout, /tests 4/); assert.match(log.result.stdout, /pass 4/);
+  assert.equal(readFileSync(join(root, 'package.json'), 'utf8'), packageBytes);
+  assert.equal(readFileSync(join(root, 'test/temperature.test.mjs'), 'utf8'), testBytes);
+  const contract = JSON.parse(readFileSync(safePath(root, `.neomind/controlled/workflows/${hash(run.workflow_id)}.${run.epoch_id}.contract.json`), 'utf8'));
+  assert.equal(verifyControlledTask(root, getRecord(root, contract.task_id), 'accepted').ok, true);
+  assert.deepEqual(errors, []);
+});
+
+for (const repeat of [false, true]) test(`an honest protocol diagnosis rebinds the original failed product role ${repeat ? 'once and refuses the same failure loop' : 'without rewriting history before actual test acceptance'}`, { timeout: 90000 }, async t => {
+  const name = repeat ? 'protocol-repeat' : 'protocol-handoff';
+  const root = await fixture(t, [name], { pendingTestHandoff: true, legacyProtocolHandoff: true, repeatLegacyProtocolHandoff: repeat });
+  const preserved = temperatureCase(root, name);
+  const started = await startControlledWorkflow(root, { requirement: `Case: ${name}\nFix the temperature conversion bug and keep the existing API. Run the project tests.` });
+  const run = await wait(root, started.workflow_id, repeat ? 'blocked' : 'completed');
+  assert.equal(run.attempts.filter(attempt => attempt.stage === 'planning').length, 1);
+  assert.equal(run.attempts.filter(attempt => attempt.stage === 'requirements').length, 1);
+  assert.equal(run.attempts.filter(attempt => attempt.stage === 'design').length, 1);
+  assert.equal(run.attempts.filter(attempt => attempt.stage === 'implementation').length, 2);
+  assert.equal(run.attempts.filter(attempt => attempt.stage === 'diagnosis').length, 1);
+  assert.equal(fixtureProductWrites.get(name), 1);
+  for (const prior of legacyReportEvidence.get(name)) assert.equal(JSON.stringify(getRecord(root, prior.id)), prior.record);
+  const source = run.attempts.find(attempt => attempt.stage === 'implementation'), diagnosis = run.attempts.find(attempt => attempt.stage === 'diagnosis');
+  assert.equal(source.report.outcome, 'blocked'); assert.equal(diagnosis.report.failure_kind, 'protocol');
+  assert.equal(run.protocol_reconciliations.length, 1);
+  assert.equal(run.protocol_reconciliations[0].attempt_id, source.id);
+  assert.equal(run.protocol_reconciliations[0].diagnosis_attempt_id, diagnosis.id);
+  assert.deepEqual(run.workforce_recovery.strategies.map(item => item.strategy), ['diagnose', 'reconcile_session']);
+  assert.equal(readFileSync(join(root, 'package.json'), 'utf8'), preserved.packageBytes);
+  assert.equal(readFileSync(join(root, 'test/temperature.test.mjs'), 'utf8'), preserved.testBytes);
+  if (repeat) {
+    assert.equal(run.checks.length, 0); assert.equal(run.final_report_id, undefined);
+    assert.equal(run.blocker.code, 'WORKFORCE_OPERATIONAL_INCIDENT');
+  } else {
+    assert.equal(run.checks.length, 1); assert.equal(run.checks[0].passed, true);
+    const contract = JSON.parse(readFileSync(safePath(root, `.neomind/controlled/workflows/${hash(run.workflow_id)}.${run.epoch_id}.contract.json`), 'utf8'));
+    assert.equal(verifyControlledTask(root, getRecord(root, contract.task_id), 'accepted').ok, true);
+  }
+  assert.deepEqual(errors, []);
 });
 
 test('PM exposes one substantive result operation and preserves old signed planning scopes without the backend flag', () => {
@@ -292,7 +383,7 @@ test('passing content assessment requires complete current reads, including pagi
   const server = createControlledMcpServer(root, binding, { assertActive() {}, saveReport() { saved++; return { saved: true }; } });
   const client = new Client({ name: 'content-read-proof', version: '1' }), [ct, st] = InMemoryTransport.createLinkedPair();
   await server.connect(st); await client.connect(ct); t.after(async () => { await client.close(); await server.close(); });
-  const report = () => client.callTool({ name: 'assignment_report', arguments: { outcome: 'completed', verdict: 'pass', summary: 'Independently assessed the complete current note.' } });
+  const report = () => client.callTool({ name: 'assignment_report', arguments: { verdict: 'pass', summary: 'Independently assessed the complete current note.' } });
   assert.equal(parsed(await report()).code, 'READ_REQUIRED');
   const first = parsed(await client.callTool({ name: 'project_read', arguments: { path: 'docs/note.md', max_chars: 128 } }));
   assert.equal(first.truncated, true); assert.equal(parsed(await report()).code, 'READ_REQUIRED');
@@ -644,8 +735,8 @@ test('fresh healthy model nonces do not rearm the same stalled task indefinitely
 test('model report prose cannot authorize provider billing, a stall ledger, or a storage dependency wait', { timeout: 90000 }, async t => {
   const root = await fixture(t, ['forged-dependency'], { forgeDependencyProse: true, clock: true });
   const started = await startControlledWorkflow(root, { requirement: 'Case: forged-dependency\nCreate the requested result with the existing checker.' });
-  const stopped = await wait(root, started.workflow_id, 'blocked');
-  assert.equal(stopped.incident_condition.code, 'runtime');
+  const stopped = await wait(root, started.workflow_id);
+  assert.equal(stopped.incident_condition, undefined);
   assert.equal(stopped.dependency_wait, undefined); assert.equal(stopped.pending_question, undefined);
   assert.deepEqual(stopped.provider_stalls ?? [], []);
   const last = readInvocation(root, stopped.attempts.at(-1).invocation_id);

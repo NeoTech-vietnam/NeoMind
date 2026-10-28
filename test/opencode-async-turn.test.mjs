@@ -10,6 +10,7 @@ import { registerControlledContext } from '../dist/controlled-context.js';
 import { startNative, waitNative, shutdownNative } from '../dist/native.js';
 import { OpenCodeSession } from '../dist/opencode-session.js';
 import { OpenCodeTurnObserver } from '../dist/opencode-turn.js';
+import { reconcileOpenCodeOwner } from '../dist/opencode-engine.js';
 import { localOpenAIProvider } from './helpers/local-openai-provider.mjs';
 
 // Real pinned engine, private gateway, native signatures and model tool loop.
@@ -31,7 +32,7 @@ function project(t, provider) {
   const release = registerControlledContext(root, requestId, { epoch_id: randomUUID(), binding, bindInvocation(id) { binding.invocation_id = id; },
     callbacks: { assertActive() {}, trace(event) { traces.push(event); }, saveReport(report) { reports.push(report); return { saved: true }; } } });
   t.after(async () => { await shutdownNative(root); release(); await provider.close(); rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
-  return { root, workflow, task, requestId, traces, reports };
+  return { root, workflow, task, requestId, traces, reports, diagnostic: value => t.diagnostic(value) };
 }
 function observerPolicy(t, idle = 10000) {
   const previous = OpenCodeSession.prototype.createTurnObserver;
@@ -45,6 +46,11 @@ async function run(fixture) {
     request_id: fixture.requestId, prompt: 'Offline scripted protocol fixture: use scoped tools and save one professional result.' });
   const deadline = Date.now() + 60000;
   while (invocationIsActive(receipt) && Date.now() < deadline) receipt = await waitNative(fixture.root, receipt.id, 100);
+  if (receipt.error) fixture.diagnostic(JSON.stringify({ provider: 'loopback scripted OpenAI protocol only',
+    native_session_observed: typeof receipt.native_thread_id === 'string',
+    control_failures: fixture.traces.filter(event => event.event === 'engine-failure').map(event => ({
+      operation: event.control_operation, error_name: event.error_name, transport_causes: event.transport_causes,
+    })) }));
   return receipt;
 }
 const call = (name, args) => ({ toolCalls: [{ name: `wf_${name}`, arguments: args }] });
@@ -54,7 +60,7 @@ for (const lost of [false, true]) test(`real async native turn ${lost ? 'reconci
   const provider = await localOpenAIProvider(index => [
     call('project_read', { path: 'products/current.txt', max_chars: 64000, start_line: 1, start_char: 0 }),
     call('task_file_write', { path: 'products/current.txt', content: 'verified 42\n' }),
-    call('assignment_report', { outcome: 'completed', summary: 'Saved the actual scoped output.' }),
+    call('assignment_report', { summary: 'Saved the actual scoped output.', product_findings: [] }),
     { text: 'complete' },
   ][index] ?? { text: 'unexpected extra request' }, 6);
   const fixture = project(t, provider), originalFetch = globalThis.fetch;
@@ -133,4 +139,37 @@ test('partial tool name and SSE heartbeats cannot create completion or defeat th
   assert.equal(provider.requests.length, 1); assert.equal(fixture.reports.length, 0);
   assert.ok(fixture.traces.some(event => event.event === 'model-progress-stalled' && event.abort_acknowledged === true && event.session_idle_observed === true));
   assert.equal(readFileSync(join(fixture.root, 'products/current.txt'), 'utf8'), 'original\n');
+});
+
+for (const operation of ['session-create', 'tool-list']) test(`a lost local ${operation} connection is a bounded pre-prompt failure, not a provider request or blind replay`, { timeout: 90000 }, async t => {
+  const provider = await localOpenAIProvider(() => { throw new Error('No model prompt is authorized by this control-setup fault fixture.'); }, 1);
+  const fixture = project(t, provider), originalFetch = globalThis.fetch;
+  let faults = 0, submissions = 0, sessionCreates = 0;
+  globalThis.fetch = async function (request, options) {
+    const url = new URL(typeof request === 'string' ? request : request.url), method = request.method ?? options?.method;
+    if (method === 'POST' && /\/prompt_async$/.test(url.pathname)) submissions++;
+    if (method === 'POST' && /\/session$/.test(url.pathname)) sessionCreates++;
+    const target = operation === 'session-create' ? method === 'POST' && /\/session$/.test(url.pathname)
+      : method === 'GET' && /\/tool\/ids$/.test(url.pathname);
+    if (target && faults++ === 0) {
+      // The POST may already have created one empty engine session. Its lost
+      // acknowledgment never authorizes another POST or a model prompt.
+      await originalFetch(request, options);
+      throw new TypeError('fetch failed', { cause: Object.assign(new Error('Loopback control reply was lost.'), { name: 'SocketError', code: 'UND_ERR_SOCKET' }) });
+    }
+    return originalFetch(request, options);
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const receipt = await run(fixture);
+  assert.equal(receipt.state, 'blocked'); assert.equal(receipt.inference_completed, false);
+  assert.match(receipt.error, /^OPENCODE_CONTROL_SETUP_FAILED:/);
+  assert.equal(faults, 1); assert.equal(sessionCreates, 1, 'No control POST is blindly replayed.');
+  assert.equal(submissions, 0); assert.equal(provider.requests.length, 0);
+  const stopped = await reconcileOpenCodeOwner(fixture.root, receipt.opencode.supervision);
+  assert.equal(stopped.state, 'stopped'); assert.match(stopped.proof_sha256, /^[a-f0-9]{64}$/);
+  assert.equal(fixture.reports.length, 0); assert.deepEqual(provider.failures, []);
+  assert.equal(readFileSync(join(fixture.root, 'products/current.txt'), 'utf8'), 'original\n');
+  const failure = fixture.traces.find(event => event.event === 'engine-failure' && event.control_operation === operation);
+  assert.ok(failure); assert.equal(failure.transport_causes[1].code, 'UND_ERR_SOCKET');
+  assert.doesNotMatch(JSON.stringify(failure), /Loopback control reply was lost|local-fixture|Authorization|apiKey/);
 });

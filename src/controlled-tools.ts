@@ -18,6 +18,7 @@ import { controlledPlanRequestSchemas, controlledPlanSubmissionGuide, type Contr
 import { controlledOperationDiagnostic, type ControlledDiagnosticPhase } from './controlled-operation-diagnostic.js';
 import { controlledFileWriteProof } from './controlled-file-write-proof.js';
 import { ControlledEvidenceScanTimeout } from './controlled-evidence-error.js';
+import { workforceStageResultSchema, workforceStageReport, workforceStageHandoff } from './workforce-stage-result.js';
 
 export type ControlledStage = 'planning' | 'requirements' | 'design' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
 export type ControlledReviewPurpose = 'checker-readiness' | 'final-product' | 'design';
@@ -202,7 +203,8 @@ function assertWritable(binding: ControlledBinding, path: string): void {
     const producerHandoff = binding.stage === 'implementation' && binding.role === 'developer' && target_owner === 'verifier';
     const verifierProduct = binding.stage === 'verification' && target_owner === 'developer';
     const next_action = producerHandoff
-      ? 'Finish only your assigned implementation outputs. When they are ready, save assignment_report with outcome completed. Missing checker files and negative-control fixtures are expected: the backend dispatches the independent Verifier next.'
+      ? binding.process_contract === 'workforce/v1' ? 'Finish your assigned product outputs and save their content result with product_findings:[] when ready. WF.Tester owns the later independent checker work; backend supplies stage outcome.'
+        : 'Finish only your assigned implementation outputs. When they are ready, save assignment_report with outcome completed. Missing checker files and negative-control fixtures are expected: the backend dispatches the independent Verifier next.'
       : verifierProduct ? 'Do not edit implementation files. Report the concrete product defect with failure_kind implementation; the backend dispatches the implementation repair.'
       : protectedTarget ? 'Preserve the protected acceptance artifact. Report the constraint for backend reconciliation; this role cannot widen its scope.'
       : !scopes.length ? 'This role is read-only. Inspect the assigned artifacts and evidence, then report your findings; route required changes to their owning role.'
@@ -239,13 +241,14 @@ function workforceInstructions(binding: ControlledBinding): string {
     planning: `WF.PM: inspect relevant project files and reusable tools; save one short workflow_plan${binding.planning_result === 'backend' ? ' as your single substantive result, then finish. The backend persists the planning receipt; no separate report is needed' : ', then one assignment_report'}. ${workforcePlanGuide}`,
     requirements: 'WF.SWSD: inspect the saved user request and frozen plan. State scope, measurable acceptance criteria, expected outcomes, verification strategy and minimum useful deliverable. Identify actual contradictions or missing business input; do not invent setup preconditions or edit protocol. Save one compact assignment_report; report a concrete failure only when the assigned requirements cannot be satisfied.',
     design: 'WF.P-RES: inspect project conventions and the frozen plan. State the applicable architecture/interface/module decisions, risks, and how each criterion will be checked. Keep trivial changes short and mark nonapplicable design layers with reasons. Do not create files solely for paperwork. Save one compact assignment_report.',
-    implementation: 'WF.FnD: implement the actual requested outputs using scoped task_file_write and declared task_run/procedure tools. Read current files before editing; backend checks their saved hashes. Complete useful product outputs before reporting. Missing later Reviewer/Tester artifacts are expected. Do not create independent checker files or claim final acceptance. Save one assignment_report with all concrete unresolved findings.',
+    implementation: 'WF.FnD: implement the actual requested outputs using scoped task_file_write and only producer operations actually assigned below. Read current files before editing; backend checks their saved hashes. Complete useful product outputs before reporting. Do not create independent checker files or claim final acceptance. Save one content result; report concrete unresolved product defects with their assigned paths in product_findings.',
     review: binding.review_purpose === 'design' ? controlledReviewInstructions('design') : 'WF.Reviewer: independently inspect current product/specification/design against every criterion and project standards. This review precedes independent test execution, so absence of future test evidence is expected. Do not edit implementation or invent requirements. Save one completed assignment_report with verdict pass/fail and all actionable findings, classifying product defects as implementation and checker defects as checker.',
     verification: 'WF.Tester: independently inspect outputs and review findings; author only assigned checker files when needed. Run the frozen existing project tests/compiler/check commands through check_run. New/changed custom checker logic requires negative controls; existing project commands do not need invented failing fixtures. Collect all observed findings in one result and classify implementation vs checker/environment faults accurately. Save one completed assignment_report with verdict pass/fail. Do not edit product files.',
     diagnosis: 'WF.PM: diagnose the saved technical findings and actual execution evidence without changing files. Select one specific recovery direction and report failure_kind implementation/checker/protocol/environment/unknown. Never request that the user supply internal IDs, raise retry limits or change prompts.',
     synthesis: 'WF.PM: derive only requested final knowledge from actual artifacts and independent evidence. Save one compact report; do not manufacture extra documentation.',
   };
   return `You are a WorkForce-owned ${binding.role} session using OpenCode. ${duties[binding.stage]}\n` +
+    `${workforceStageHandoff(binding, available)}\n` +
     `Available operations: ${available.join(', ')}. Identity, task, authorization, operation IDs and lifecycle are already bound. Supply professional content only.\n` +
     `Producer write paths: ${JSON.stringify(binding.implementation_paths)}. Tester write paths: ${JSON.stringify(binding.verification_paths)}. Review/design/requirements are read-only.\n` +
     (binding.assessment_outputs?.length ? `This is independent text-content assessment. Read all content of each actual output before reporting pass: ${JSON.stringify(binding.assessment_outputs)}. No compilation or executed-test result is implied.\n` : '') +
@@ -254,7 +257,7 @@ function workforceInstructions(binding: ControlledBinding): string {
     'Use runtime_context only if an execution fact is missing; its first successful snapshot suffices. Do not poll progress or ask the next stage. ' +
     (available.includes('request_input') ? 'Only for a genuine missing business decision, use request_input after reading the actual named sources. ' :
       'Report a genuine business-input gap in your professional findings; the backend owns any PM question. ') +
-    (available.includes('assignment_report') ? 'Save one substantive assignment_report, then finish; backend advances automatically. A failure report retains all useful artifacts without falsely completing the request.'
+    (available.includes('assignment_report') ? 'Save one substantive assignment_report containing professional content only, then finish. Never supply outcome; the backend supplies stage lifecycle. Independent verdicts and actual product findings remain authoritative; no stage result alone completes the request.'
       : 'After workflow_plan returns its saved receipt, finish. The backend advances only after this session completes.');
 }
 export function controlledInstructions(binding: ControlledBinding): string {
@@ -684,6 +687,34 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
   }
   const requiresVerdict = ['verification', 'review'].includes(binding.stage);
   const requiresFailureKind = binding.stage === 'diagnosis' && binding.role === 'manager';
+  const persistReport = (report: ControlledReport, source?: ControlledPayloadSource) => {
+      if (['planning', 'requirements', 'design'].includes(binding.stage) && report.artifacts !== undefined) report = { ...report, artifacts: [] };
+      for (const path of report.artifacts ?? []) { publicTarget(root, path, binding.approved_inputs); assertReadable(binding, path); }
+      const assessment = report.outcome === 'completed' && report.verdict === 'pass' && binding.assessment_outputs?.length ? locked(state => {
+        const unread = binding.assessment_outputs!.filter(path => {
+          const target = publicTarget(root, path, binding.approved_inputs), digest = hash(readFileSync(target)), coverage = state.read_coverage?.[key(path)];
+          return coverage?.sha256 !== digest || coverage.ranges.length !== 1 || coverage.ranges[0]![0] !== 0 || coverage.ranges[0]![1] !== coverage.total;
+        });
+        if (unread.length) throw new ControlledToolError('READ_REQUIRED', `Read the complete current text of these assigned outputs before a passing content assessment: ${JSON.stringify(unread)}.`);
+        return { mode: 'complete-current-text' as const, invocation_id: binding.invocation_id!,
+          artifact_hashes: Object.fromEntries(binding.assessment_outputs!.map(path => [path, state.read_coverage![key(path)]!.sha256])) };
+      }) : undefined;
+      return callbacks.saveReport(report, source, assessment);
+  };
+  if (binding.process_contract === 'workforce/v1') {
+    const schema = workforceStageResultSchema(binding);
+    if (controlledToolNames(binding).includes('assignment_report')) register('assignment_report',
+      'Save one content-only result for your assigned stage. Backend supplies outcome and transitions. ' + workforceStageHandoff(binding, controlledToolNames(binding)),
+      controlledPayloadSchema(schema), false, args => prepared(schema, args, (input, source) => {
+        const report = workforceStageReport(binding, input, finding => {
+          publicTarget(root, finding.path); assertReadable(binding, finding.path);
+          if (![...binding.implementation_paths, ...binding.verification_paths].some(scope => covers(scope, finding.path)))
+            throw new ControlledToolError('SCOPE_DENIED', 'Product findings must name an affected assigned output or checker path; missing tools and future-stage evidence are not product paths.');
+        });
+        return persistReport(report, source);
+      }));
+    return server;
+  }
   const reportSchema = controlledReportSubmissionSchema(controlledReportSchema, { requiresVerdict, requiresFailureKind });
   // The SDK needs a concrete root object. Role normalization/validation runs
   // after raw capture and prepared-source loading, before any report is saved.
@@ -699,19 +730,6 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
     (binding.stage === 'planning' ? ' Planning reports do not claim delivered filesystem artifacts: omit artifacts; the backend binds its actual saved plan and records.' : '') +
     (requiresVerdict ? ' A completed verification or review must include an explicit verdict pass or fail; blocked or failed findings may omit it.' : '') +
     (requiresFailureKind ? ' A completed manager diagnosis must include failure_kind: implementation, checker, protocol, environment or unknown; use unknown when evidence remains inconclusive. Blocked or failed findings may omit it.' : ''),
-    reportInput, false, args => prepared(reportSchema, args, (report, source) => {
-      if (['planning', 'requirements', 'design'].includes(binding.stage) && report.artifacts !== undefined) report = { ...report, artifacts: [] };
-      for (const path of report.artifacts ?? []) { publicTarget(root, path, binding.approved_inputs); assertReadable(binding, path); }
-      const assessment = report.outcome === 'completed' && report.verdict === 'pass' && binding.assessment_outputs?.length ? locked(state => {
-        const unread = binding.assessment_outputs!.filter(path => {
-          const target = publicTarget(root, path, binding.approved_inputs), digest = hash(readFileSync(target)), coverage = state.read_coverage?.[key(path)];
-          return coverage?.sha256 !== digest || coverage.ranges.length !== 1 || coverage.ranges[0]![0] !== 0 || coverage.ranges[0]![1] !== coverage.total;
-        });
-        if (unread.length) throw new ControlledToolError('READ_REQUIRED', `Read the complete current text of these assigned outputs before a passing content assessment: ${JSON.stringify(unread)}.`);
-        return { mode: 'complete-current-text' as const, invocation_id: binding.invocation_id!,
-          artifact_hashes: Object.fromEntries(binding.assessment_outputs!.map(path => [path, state.read_coverage![key(path)]!.sha256])) };
-      }) : undefined;
-      return callbacks.saveReport(report, source, assessment);
-    }));
+    reportInput, false, args => prepared(reportSchema, args, persistReport));
   return server;
 }

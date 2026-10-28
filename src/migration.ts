@@ -17,7 +17,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { parse } from 'yaml';
 import { legacyManagedRoots, managedRoot, retryWindowsFileOperation, validateMetadata, readConfig } from './storage.js';
 import { nativeAutomationPolicy, readAutomationPolicy } from './manager.js';
-import { readHost } from './vscode-wire.js';
+import { assertNoLiveHost } from './host-authority.js';
 import { canonicalManagedPath, readStorageLayout, ensureRequestInLayout, groupedRecordPath, recordRequest, managedRecordDirectories,
   writeRequestFolder, type StorageLayout } from './storage-layout.js';
 import type { ProjectRecord } from './types.js';
@@ -204,9 +204,7 @@ export function migrateStorage(root: string, options: StorageMigrationOptions = 
   const journal: MigrationJournal = { schema_version: 1, id, owner_pid: process.pid, original_root: originalRoot, phase: 'preparing' };
   let sourceMoved = false, committed = false, journalWritten = false;
   try {
-    let activeHost = false;
-    try { readHost(base); activeHost = true; } catch { /* Absent/dead descriptors cannot own execution. */ }
-    if (activeHost) throw new Error('An editor execution owner is active; disable the WorkForce/NeoMind host before migrating.');
+    assertNoLiveHost(base);
     assertNoActiveLocks(legacy);
     assertNoActiveNativeWork(legacy);
     saveJournal(base, journal); journalWritten = true;

@@ -49,6 +49,7 @@ import { createRuntimeInfo } from './runtime-info.js';
 import { workForceConnectionProof, workForceConnectionProofSatisfies, probeWorkForceConnection } from './workforce-connection.js';
 import { runDurableCommand, readDurableCommandResult, type DurableCommandRef } from './durable-command.js';
 import { workforceTraceability } from './workforce-traceability.js';
+import { workforceStageHandoff } from './workforce-stage-result.js';
 import { workforceProviderStallDecision, type ProviderStallHistory } from './workforce-stalls.js';
 import { assertControlledPayloadCurrent, ControlledPayloadError, type ControlledPayloadSource } from './controlled-payload.js';
 import { persistControlledCornellNote, ControlledCornellWriteError } from './controlled-cornell-write.js';
@@ -120,7 +121,7 @@ export interface ControlledSnapshot {
   answer_receipt?: { question_id: string; accepted: true; replayed: boolean };
   workforce_recovery?: { strategies: { checkpoint: string; strategy: string; kind: FailureKind; at: string; source_attempt_id?: string }[];
     strong_implementation: boolean; no_progress: number; resolved_checks: string[]; incident?: string };
-  protocol_reconciliations?: { invocation_id: string; attempt_id: string; checked_at: string; completed_operations: string[]; retained_report_id?: string }[];
+  protocol_reconciliations?: { invocation_id: string; attempt_id: string; checked_at: string; completed_operations: string[]; retained_report_id?: string; diagnosis_attempt_id?: string }[];
   model_escalations?: { source_attempt_id: string; source_report_id?: string; from_alias: string; to_alias: string; checkpoint: string; rationale: string; at: string }[];
   incident_condition?: { code: string; build: string; configuration: string; free_bytes: number; required_bytes: number; at: string; prerequisite?: WorkForcePrerequisite };
   runtime_observations?: { kind: string; evidence_sha256: string; at: string }[];
@@ -1343,6 +1344,10 @@ class Controller {
           if (workforce && stage === 'implementation' && !documentation && report.outcome === 'completed' && contract?.plan.reuse &&
               !current.procedure_runs?.some(execution => execution.status === 'succeeded'))
             throw new ControlledToolError('ACCEPTANCE_INCOMPLETE', 'Run the actual bound eligible procedure through procedure_run before claiming reused implementation. A selected manifest is not an executed instance.');
+          if (workforce && stage === 'implementation' && !documentation && report.outcome === 'completed' && contract) {
+            const missing = Object.entries(fingerprints(this.root, contract.plan.outputs)).filter(([, value]) => value === 'missing').map(([path]) => path);
+            if (missing.length) throw new ControlledToolError('PRODUCT_INCOMPLETE', `Create the assigned product outputs before their ready handoff, or report concrete unresolved product_findings: ${JSON.stringify(missing)}.`);
+          }
           if (['verification', 'review'].includes(stage) && report.outcome === 'completed' && !report.verdict)
             throw new ControlledToolError('VERDICT_REQUIRED', 'Completed independent verification or review must state verdict pass or fail.');
           if (stage === 'implementation' && !documentation && report.outcome === 'completed' && current.pending_artifact_repair &&
@@ -1631,10 +1636,11 @@ class Controller {
         if (receipt.state !== 'completed' || !active.report) {
           const observationLoop = receipt.error?.startsWith('CONTROLLED_OBSERVATION_LOOP:') === true;
           const deliveryProtocol = receipt.error?.startsWith('MCP_DELIVERY_PROTOCOL:') === true;
-          const kind = receipt.state === 'completed' || observationLoop || deliveryProtocol ? 'protocol' : 'environment';
+          const controlSetup = workforce && receipt.error?.startsWith('OPENCODE_CONTROL_SETUP_FAILED:') === true;
+          const kind = receipt.state === 'completed' || observationLoop || deliveryProtocol || controlSetup ? 'protocol' : 'environment';
           const message = receipt.state === 'completed' ? 'Session ended without its required typed result. Saved work is retained; inspect current artifacts then save the missing compact result.'
             : receipt.error ?? 'Model session did not complete.';
-          const hardFailure = !observationLoop && /OPENCODE_STORAGE_UNAVAILABLE|OPENCODE_PROVIDER_UNAVAILABLE|OPENCODE_SESSION_ERROR|backend-owned controlled assignment|CONTROLLED_TOOL_LOOP|MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED|CONTEXT_LIMIT_EXCEEDED|TOOL_CALLING_UNSUPPORTED|NoPermissions|NotFound|access denied|permission|policy|configuration changed|cancelled|canceled/i.test(message);
+          const hardFailure = !observationLoop && !controlSetup && /OPENCODE_STORAGE_UNAVAILABLE|OPENCODE_PROVIDER_UNAVAILABLE|OPENCODE_SESSION_ERROR|backend-owned controlled assignment|CONTROLLED_TOOL_LOOP|MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED|CONTEXT_LIMIT_EXCEEDED|TOOL_CALLING_UNSUPPORTED|NoPermissions|NotFound|access denied|permission|policy|configuration changed|cancelled|canceled/i.test(message);
           if (!hardFailure) {
             if (this.repair(run, kind, message)) continue;
             // repair already persisted the authoritative exhausted-budget or
@@ -1719,7 +1725,8 @@ class Controller {
           run.phase = 'review';
         } else {
           const kind = active.report.failure_kind;
-          if (!kind || kind === 'unknown' || !this.repair(run, kind, active.report.summary, true)) { this.block(run, 'unknown', 'Diagnosis could not assign a bounded safe repair.'); return; }
+          if (!kind || kind === 'unknown') { this.block(run, 'unknown', 'Diagnosis could not assign a bounded safe repair.'); return; }
+          if (!this.repair(run, kind, active.report.summary, true)) return;
           continue;
         }
         run.status = 'queued'; save(this.root, run, 'transition', `Backend selected ${run.phase}.`);
@@ -1757,6 +1764,7 @@ class Controller {
       `Original user request (preserve its complete scope):\n${run.requirement}`,
       run.context?.length ? `User attachments resolved by the backend, read through project tools:\n${JSON.stringify(run.context)}` : '',
       `WorkForce contract workforce/v1. Your stage: ${stage}; your role: ${binding?.role}. Backend owns payload identity, state and stage transitions.`,
+      binding ? workforceStageHandoff(binding, controlledToolNames(binding)) : '',
       stage === 'planning' ? 'Inspect the project and reusable tools, then save one short workflow_plan as your single professional result. The backend saves its planning receipt; finish after it returns. Reuse existing tests/compiler/validator commands directly. A new custom checker needs independent negative controls; an established project command does not need a wrapper or artificial negative case. Expected outcomes/oracle assumptions are fixed before implementation. Do not request hidden legacy specialists.' : '',
       stage === 'requirements' ? 'Confirm measurable scope, expected outcomes, verification strategy and the minimum useful product. Requirements findings must be concrete and refer to the actual request.' : '',
       stage === 'design' ? 'Give only design decisions needed by this change: interfaces, module responsibilities, relevant risks and criterion-to-check mapping. Explain nonapplicable design layers briefly.' : '',
@@ -2246,22 +2254,53 @@ class Controller {
     const producer = run.attempts.findLast(attempt => attempt.stage === 'implementation');
     const current = run.attempts.at(-1);
     const contract = run.contract_hash ? readContract(this.root, run) : undefined;
+    let protocolSource = current;
     if (kind === 'protocol') {
-      if (!current?.invocation_id || current.stage === 'diagnosis' && current.report?.outcome === 'completed') {
+      if (current?.stage === 'diagnosis' && current.report?.outcome === 'completed') {
+        const authentic = (attempt: Attempt) => {
+          if (!attempt.invocation_id) return false;
+          const receipt = readInvocation(this.root, attempt.invocation_id);
+          const actor = isControlledExecutionReceipt(receipt) && receipt.workflow_id === run.workflow_id && receipt.request_id === attempt.request_id &&
+            receipt.role === attempt.role && receipt.task_id === (attempt.stage === 'planning' ? null : contract?.task_id ?? null) &&
+            receipt.controlled_execution?.epoch_id === run.epoch_id && receipt.controlled_execution.stage === attempt.stage &&
+            (receipt.state === 'completed' && receipt.inference_completed || receipt.state === 'interrupted' && !receipt.inference_completed && !!receipt.opencode?.interruption_proof_sha256);
+          if (!actor) return false;
+          if (!attempt.report && !attempt.report_id) return receipt.state === 'interrupted' && !!receipt.opencode?.interruption_proof_sha256;
+          if (!attempt.report || !attempt.report_id) return false;
+          const report = getRecord(this.root, attempt.report_id);
+          return report.meta.data.kind === 'controlled-work-record' && report.meta.owner === attempt.role && report.meta.data.workflow_id === run.workflow_id &&
+            report.meta.data.epoch_id === run.epoch_id && report.meta.data.attempt_id === attempt.id && report.meta.data.invocation_id === receipt.id &&
+            report.meta.data.stage === attempt.stage && report.meta.data.report_payload_hash === hash(canonicalJson(attempt.report)) &&
+            attempt.report_fingerprint === evidenceRecordFingerprint(report) && same(report.meta.data.artifact_hashes, attempt.bound_hashes) &&
+            same(attempt.bound_hashes, fingerprints(this.root, Object.keys(attempt.bound_hashes ?? {})));
+        };
+        if (current.report.failure_kind !== 'protocol' || !authentic(current)) {
+          this.block(run, kind, 'The diagnostic protocol decision no longer matches its authentic current result. No role was rebound.'); return false;
+        }
+        const candidate = run.attempts.slice(0, -1).findLast(attempt => attempt.stage !== 'diagnosis');
+        const sourceNative = candidate?.invocation_id ? readInvocation(this.root, candidate.invocation_id) : undefined;
+        protocolSource = candidate && (candidate.report && (candidate.report.outcome !== 'completed' || candidate.report.verdict === 'fail') ||
+          sourceNative && !sourceNative.inference_completed && sourceNative.state === 'interrupted' && !!sourceNative.opencode?.interruption_proof_sha256) ? candidate : undefined;
+        if (!protocolSource || !authentic(protocolSource)) {
+          this.block(run, kind, 'The diagnosis has no intact same-task failed professional source to rebind. Current reports and artifacts remain unchanged.'); return false;
+        }
+      }
+      if (!protocolSource?.invocation_id) {
         this.block(run, kind, `No session rebind can repair this classified protocol defect. ${message}`); return false;
       }
-      const receipt = readInvocation(this.root, current.invocation_id);
-      if (!isControlledExecutionReceipt(receipt) || receipt.workflow_id !== run.workflow_id || receipt.request_id !== current.request_id ||
-          receipt.role !== current.role || receipt.task_id !== (current.stage === 'planning' ? null : contract?.task_id ?? null) || invocationIsActive(receipt) || !this.admitCheckEffects(run)) {
+      const receipt = readInvocation(this.root, protocolSource.invocation_id);
+      if (!isControlledExecutionReceipt(receipt) || receipt.workflow_id !== run.workflow_id || receipt.request_id !== protocolSource.request_id ||
+          receipt.role !== protocolSource.role || receipt.task_id !== (protocolSource.stage === 'planning' ? null : contract?.task_id ?? null) || invocationIsActive(receipt) || !this.admitCheckEffects(run)) {
         if (run.status !== 'uncertain') this.block(run, kind, `The failed session or its effects could not be safely reconciled. ${message}`);
         return false;
       }
-      if (current.report_id && current.report_fingerprint !== evidenceRecordFingerprint(getRecord(this.root, current.report_id))) {
+      if (protocolSource.report_id && protocolSource.report_fingerprint !== evidenceRecordFingerprint(getRecord(this.root, protocolSource.report_id))) {
         this.block(run, kind, 'A retained professional result changed during session reconciliation. Current user edits remain preserved.'); return false;
       }
-      run.protocol_reconciliations = [...(run.protocol_reconciliations ?? []), { invocation_id: receipt.id, attempt_id: current.id,
+      run.protocol_reconciliations = [...(run.protocol_reconciliations ?? []), { invocation_id: receipt.id, attempt_id: protocolSource.id,
         checked_at: now(), completed_operations: (run.local_executions ?? []).filter(operation => operation.state === 'completed').map(operation => operation.id),
-        ...(current.report_id ? { retained_report_id: current.report_id } : {}) }];
+        ...(protocolSource.report_id ? { retained_report_id: protocolSource.report_id } : {}),
+        ...(protocolSource !== current ? { diagnosis_attempt_id: current!.id } : {}) }];
     }
     const independentAfterProducer = run.attempts.findLastIndex(attempt => attempt.stage === 'verification') > run.attempts.findLastIndex(attempt => attempt.stage === 'implementation');
     const progress = contract && independentAfterProducer ? this.currentChecks(run, contract).filter(check => check.passed && !check.negative && check.checker_scope_current &&
@@ -2284,7 +2323,7 @@ class Controller {
       this.captureIncidentCondition(run, run.blocker.message);
       save(this.root, run, 'operational-incident', run.blocker.message); return false;
     }
-    state.strategies.push({ checkpoint, strategy: decision.strategy!, kind, at: now(), source_attempt_id: current?.id });
+    state.strategies.push({ checkpoint, strategy: decision.strategy!, kind, at: now(), source_attempt_id: kind === 'protocol' ? protocolSource?.id : current?.id });
     state.no_progress++;
     if (decision.strong) {
       state.strong_implementation = true;
@@ -2297,6 +2336,7 @@ class Controller {
     if (kind === 'implementation') run.phase = 'implementation';
     else if (kind === 'checker') run.phase = 'verification';
     else if (kind === 'unknown') run.phase = 'diagnosis';
+    else if (kind === 'protocol' && protocolSource) run.phase = protocolSource.stage;
     // Protocol/environment reconciliation keeps the failed role and its exact contract checkpoint.
     run.status = 'queued'; run.repairs++;
     save(this.root, run, 'recovery-strategy', `WorkForce selects ${decision.strategy} for ${kind} at the retained checkpoint.`);

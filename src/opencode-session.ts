@@ -9,6 +9,19 @@ import { OpenCodeTurnObserver, OpenCodeTurnError, safeOpenCodeTransportError, ty
 import { createOpenCodeGateway, openCodeConfiguration, openCodeEndpoint, openCodeError, openCodeBinary, opencodeProtocol,
   opencodeProviderId, opencodeRuntimeVersion, opencodeRuntimeIntegrity, openCodeStorageFailure, startOpenCodeEngine, type OpenCodeEngine, type OpenCodeGateway } from './opencode-engine.js';
 
+/** Only local control transport before prompt admission. Retrying the model or
+ * replaying an uncertain submitted prompt is never authorized by this error. */
+class OpenCodeControlSetupError extends Error {
+  constructor() {
+    super('The local engine control connection failed before any model prompt was submitted. Its owned engine was closed; preserve the exact assignment for bounded backend session reconciliation.');
+    this.name = 'OPENCODE_CONTROL_SETUP_FAILED';
+  }
+}
+function setupTransportFailure(operation: string, error: unknown): boolean {
+  return ['session-create', 'mcp-status', 'tool-list', 'event-subscribe'].includes(operation) &&
+    error instanceof TypeError && error.message === 'fetch failed';
+}
+
 /** OpenCode owns inference/tool iteration. This adapter binds one execution to the engineering runtime. */
 export function openCodeSystemText(instructions: string, tools: readonly string[]): string {
   return `${instructions}\nOpenCode tool names have the wf_ prefix. ` +
@@ -58,6 +71,7 @@ export class OpenCodeSession {
     };
     this.gateway = await createOpenCodeGateway(() => createControlledMcpServer(this.root, binding, callbacks),
       () => this.assertCurrent());
+    let operation = 'engine-start';
     try {
       this.engine = await startOpenCodeEngine(this.root, this.receipt.id,
         openCodeConfiguration(endpoint, this.gateway, this.tools), this.controller.signal, { onPrepared: supervision => {
@@ -67,10 +81,12 @@ export class OpenCodeSession {
         } });
       const permission = [{ permission: '*', pattern: '*', action: 'deny' as const },
         ...this.tools.map(name => ({ permission: `wf_${name}`, pattern: '*', action: 'allow' as const }))];
+      operation = 'session-create';
       const session = await this.engine.client.session.create({ directory: this.engine.directory,
         title: `WorkForce ${this.receipt.role}`, agent: 'workforce', permission });
       if (!session.data?.id) throw new Error('OpenCode did not return a session identity.');
       this.sessionId = session.data.id;
+      operation = 'mcp-status';
       const mcp = await this.engine.client.mcp.status({ directory: this.engine.directory });
       if (mcp.data?.wf?.status !== 'connected') throw new Error('Bound WorkForce gateway is unavailable.');
       this.messageId = `msg_${randomBytes(16).toString('hex')}`;
@@ -81,8 +97,13 @@ export class OpenCodeSession {
         opencode: { version: opencodeRuntimeVersion, binary_sha256: this.engine.binary_sha256, gateway_instance: this.engine.instance,
           supervision: this.engine.supervision },
         confirmed_reasoning_effort: null, effort_support: 'unavailable', native_sandbox: null, native_tool_scope: this.tools });
-    } catch (error) { const storageFailure = this.engine?.failure; await this.close();
+    } catch (error) {
+      try { await context.callbacks.trace?.({ event: 'engine-failure', engine: 'opencode', owner: 'runtime',
+        control_operation: operation, ...safeOpenCodeTransportError(error) }); } catch { /* Diagnostics never authorize replay. */ }
+      const setupFailure = !this.controller.signal.aborted && setupTransportFailure(operation, error);
+      const storageFailure = this.engine?.failure; await this.close();
       if (storageFailure) throw new Error(storageFailure.message);
+      if (setupFailure) throw new OpenCodeControlSetupError();
       throw error;
     }
   }
@@ -100,6 +121,7 @@ export class OpenCodeSession {
 
   private async perform(): Promise<void> {
     const engine = this.engine!, sessionID = this.sessionId!;
+    let operation = 'tool-list';
     try {
       const endpoint = openCodeEndpoint(this.root, this.receipt);
       const listed = await engine.client.tool.ids({ directory: engine.directory });
@@ -114,11 +136,13 @@ export class OpenCodeSession {
         onToolPart: part => this.toolObservation(this.failures!.reconcile(part)),
         onObservation: event => ownedContext(this.root, this.receipt.request_id)?.callbacks.trace?.(event),
       });
+      operation = 'event-subscribe';
       const eventStream = await engine.client.event.subscribe({ directory: engine.directory }, { signal: this.controller.signal });
       void this.observeEvents(eventStream.stream).catch(async error => {
         if (!this.stopped) await ownedContext(this.root, this.receipt.request_id)?.callbacks.trace?.({ event: 'engine-event-delivery-reconciling',
           engine: 'opencode', owner: 'runtime', ...safeOpenCodeTransportError(error), dispatch_replayed: false });
       });
+      operation = 'prompt-admission';
       try {
         const admission = await engine.client.session.promptAsync({ sessionID, messageID: this.messageId, directory: engine.directory,
           agent: 'workforce', model: { providerID: opencodeProviderId, modelID: endpoint.model }, tools: toolMask,
@@ -131,8 +155,10 @@ export class OpenCodeSession {
         await ownedContext(this.root, this.receipt.request_id)?.callbacks.trace?.({ event: 'engine-prompt-admission-unknown', engine: 'opencode', owner: 'runtime',
           ...safeOpenCodeTransportError(error), dispatch_replayed: false });
       }
+      operation = 'turn-reconciliation';
       const response = { data: await this.turn.wait() };
       if (this.stopped) return;
+      operation = 'result-validation';
       this.assertCurrent();
       if (response.data?.info.error) {
         const failure = response.data.info.error;
@@ -154,9 +180,22 @@ export class OpenCodeSession {
       await this.complete('completed', null);
     } catch (error) {
       try { await ownedContext(this.root, this.receipt.request_id)?.callbacks.trace?.({ event: 'engine-failure', engine: 'opencode',
-        owner: 'runtime', error_name: error instanceof Error ? error.name : 'Error', ...safeOpenCodeTransportError(error),
+        owner: 'runtime', control_operation: operation, error_name: error instanceof Error ? error.name : 'Error', ...safeOpenCodeTransportError(error),
         message_sha256: hash(error instanceof Error ? error.message : 'Unknown engine failure') }); } catch { /* No diagnostic is an authorization or retry. */ }
-      if (!this.stopped) await this.complete('blocked', this.engine?.failure?.message ?? (error instanceof OpenCodeTurnError ? `${error.code}: ${error.message}` : openCodeError(error)));
+      if (!this.stopped) {
+        const setupFailure = !this.engine?.failure && !this.controller.signal.aborted && setupTransportFailure(operation, error);
+        // A failed GET/SSE setup is not a provider outage. Close the engine
+        // before reporting that no prompt or product operation was admitted.
+        if (setupFailure) {
+          try { await engine.close(); }
+          catch {
+            await this.complete('blocked', 'OPENCODE_DELIVERY_UNKNOWN: local control setup failed and owned-engine shutdown could not be authenticated. Preserve its assignment and effects before another dispatch.');
+            return;
+          }
+          await this.complete('blocked', String(new OpenCodeControlSetupError()));
+        }
+        else await this.complete('blocked', this.engine?.failure?.message ?? (error instanceof OpenCodeTurnError ? `${error.code}: ${error.message}` : openCodeError(error)));
+      }
     }
   }
 
