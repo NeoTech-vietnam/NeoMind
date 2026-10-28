@@ -13,6 +13,8 @@ import { startControlledHost, startControlledWorkflow, controlControlledWorkflow
 import { verify } from '../dist/engineering.js';
 import { controlledProducerExecutionEvidence } from '../dist/controlled-execution-evidence.js';
 import { controlledAcceptanceBudget, ControlledEvidenceScanTimeout } from '../dist/controlled-acceptance.js';
+import { ownedContext } from '../dist/controlled-context.js';
+import { ControlledToolError } from '../dist/controlled-tools.js';
 
 // The Bridge, signatures, MCP tools, files and child processes are real. The
 // model/editor responses below are deterministic fixtures, not account inference.
@@ -69,6 +71,26 @@ const call = (name, input = {}, capture, expectedError) => ({ name, input, captu
 const report = (stage, extra = {}) => call('assignment_report', { outcome: 'completed', summary: `Scoped ${stage} result saved.`,
   ...(stage === 'verification' || stage === 'review' ? { verdict: 'pass' } : {}), ...extra });
 function actions(stage, attempt, mode) {
+  if (mode.startsWith('regeneration-')) {
+    const taskInput = { title, input: { values: [1, 2, 3] } };
+    if (stage === 'planning') return [call('workflow_plan', plan()), report(stage)];
+    if (stage === 'implementation') {
+      const code = attempt === 1 ? producer.replace('a+b,0', 'a+b+1,0') : producer;
+      const legacyRejection = mode.startsWith('regeneration-resume') && attempt === 2;
+      return [call('project_read', { path: script }), call('task_file_write', { path: script, content: code }),
+        call('task_run', taskInput, `regenerate-${attempt}`, legacyRejection || mode === 'regeneration-external-output' && attempt > 1 ? 'INPUT_CHANGED' : undefined),
+        ...(legacyRejection || mode === 'regeneration-external-output' && attempt > 1 ? [] : [call('task_run', taskInput, `regenerate-replay-${attempt}`)]),
+        report(stage, legacyRejection ? { outcome: 'blocked', failure_kind: 'unknown', summary: 'The old producer replay boundary rejected an authenticated changed script with INPUT_CHANGED; outputs remain untouched.' }
+          : mode === 'regeneration-external-output' && attempt > 1
+          ? { outcome: 'blocked', failure_kind: 'protocol', summary: 'External output edit was preserved; regeneration was not authorized.' } : {})];
+    }
+    if (stage === 'verification') return [call('project_read', { path: checker }), call('task_file_write', { path: checker, content: oracle }),
+      call('project_read', { path: wrong }), call('task_file_write', { path: wrong, content: '{"value":7}\n' }),
+      call('check_run', {}, `regeneration-check-${attempt}`), report(stage, attempt === 1
+        ? { verdict: 'fail', ...(mode.startsWith('regeneration-resume') ? {} : { failure_kind: 'implementation' }),
+          summary: 'The independent oracle rejects the generated value; diagnose and repair its owning implementation.' } : {})];
+    if (stage === 'diagnosis') return [report(stage, { failure_kind: 'implementation', summary: 'The checker correctly rejects the produced scalar; fix its generating implementation.' })];
+  }
   if (stage === 'planning' && mode.startsWith('checker-scope-')) {
     const proposed = plan();
     if (mode === 'checker-scope-generated') proposed.checks[0].negative_controls[0].command =
@@ -195,6 +217,12 @@ async function fixture(t, mode = 'normal') {
         const attempt = (counts.get(stage) ?? 0) + 1; counts.set(stage, attempt);
         state = { stage, actions: actions(stage, attempt, mode), round: 0 }; conversations.set(messages, state); observed.push(stage);
         if (stage === 'implementation') {
+          if (mode === 'regeneration-external-output' && attempt === 2) atomicWrite(safePath(root, product), '{"value":"USER_EDIT"}\n');
+          if (mode.startsWith('regeneration-resume') && attempt === 2) {
+            const [run] = controlledStatus(root), active = run.attempts.at(-1), context = ownedContext(root, active.request_id);
+            assert.ok(context, 'Legacy compatibility test uses the actual bound backend context.');
+            context.callbacks.runTask = () => { throw new ControlledToolError('INPUT_CHANGED', 'Local execution inputs or outputs changed after the saved result. Inspect the current artifacts before continuing.'); };
+          }
           const tool = options.tools.find(tool => tool.name === 'task_run');
           const fields = Object.keys(tool?.inputSchema.properties ?? {}).sort();
           if (JSON.stringify(fields) !== JSON.stringify(['input', 'input_path', 'title'])) errors.push({ code: 'TASK_RUN_SCHEMA_MISMATCH', fields });
@@ -346,6 +374,68 @@ test('bound task_run consumes JSON, replays without another effect, and passes i
   const task = loadRecords(env.root).find(record => record.meta.type === 'task' && record.meta.data.workflow_id === initial.workflow_id);
   assert.equal(verify(env.root, task.meta.id, 'accepted').ok, true);
   for (const attempt of done.attempts) assert.equal(readInvocation(env.root, attempt.invocation_id).inference_completed, true);
+});
+
+test('a successful producer can regenerate only its unchanged owned outputs after an authenticated implementation repair', async t => {
+  const env = await fixture(t, 'regeneration-repair'), initial = await startControlledWorkflow(env.root, {
+    requirement: 'Generate scalar six with a local producer, repair an independently found implementation error and verify the final result.', request_id: 'owned-regeneration' });
+  const done = await until(env, initial.workflow_id, run => run.status === 'completed');
+  assert.deepEqual(env.errors, []);
+  assert.deepEqual(env.observed, ['planning', 'implementation', 'verification', 'implementation', 'verification']);
+  assert.equal(done.local_executions.length, 2); assert.ok(done.local_executions.every(entry => entry.passed));
+  assert.equal(done.local_executions[0].request_hash, done.local_executions[1].request_hash, 'Professional operation stays the same; backend revision owns new effects.');
+  assert.equal(env.captures['regenerate-replay-1'].replayed, true); assert.equal(env.captures['regenerate-replay-2'].replayed, true);
+  const first = savedResult(env, done.local_executions[0]), second = savedResult(env, done.local_executions[1]);
+  assert.equal(first.execution.passed, true, 'The actual successful process result is never rewritten into a failed result.');
+  assert.ok(second.regeneration); const archived = second.regeneration.files.find(file => file.path === product);
+  assert.equal(hash(readFileSync(safePath(env.root, archived.archive_path))), first.execution.output_hashes[product]);
+  assert.deepEqual(JSON.parse(readFileSync(safePath(env.root, archived.archive_path), 'utf8')), { value: 9 });
+  assert.deepEqual(JSON.parse(readFileSync(safePath(env.root, product), 'utf8')), { value: 6 });
+  for (const entry of done.local_executions) assert.equal(hash(readFileSync(safePath(env.root, entry.result_path))), entry.result_sha256);
+  assert.equal(done.repairs, 1); assert.ok(done.checks.some(check => !check.negative && !check.passed));
+  assert.ok(done.checks.slice(-2).every(check => check.passed));
+  assert.equal(verify(env.root, savedContract(env, done).task_id, 'accepted').ok, true);
+});
+
+test('producer regeneration refuses an outside output edit without deleting or archiving the user bytes', async t => {
+  const env = await fixture(t, 'regeneration-external-output'), initial = await startControlledWorkflow(env.root, {
+    requirement: 'Generate scalar six and independently verify it; preserve any external edits during a repair.', request_id: 'refuse-external-regeneration' });
+  const deadline = Date.now() + 90000; let done;
+  do { done = controlledStatus(env.root, initial.workflow_id); if (['blocked', 'uncertain'].includes(done.status)) break; await delay(200); } while (Date.now() < deadline);
+  assert.ok(['blocked', 'uncertain'].includes(done.status));
+  assert.equal(env.captures['regenerate-2'].code, 'INPUT_CHANGED');
+  assert.equal(readFileSync(safePath(env.root, product), 'utf8'), '{"value":"USER_EDIT"}\n');
+  assert.equal(done.local_executions.length, 1, 'No replacement operation or output removal occurs.');
+  assert.equal(verify(env.root, savedContract(env, done).task_id, 'accepted').ok, false);
+  assert.deepEqual(env.errors, []);
+});
+
+for (const externalEdit of [false, true]) test(`explicit resume of an already charged producer repair ${externalEdit ? 'refuses changed user output' : 'uses the same budget and completes with fresh verification'}`, async t => {
+  const env = await fixture(t, externalEdit ? 'regeneration-resume-user-edit' : 'regeneration-resume'), initial = await startControlledWorkflow(env.root, {
+    requirement: 'Generate scalar six and independently verify it, preserving the same workflow through an authenticated producer repair.', request_id: `resume-owned-repair-${externalEdit}` });
+  let stopped;const deadline=Date.now()+90000;
+  do { stopped=controlledStatus(env.root,initial.workflow_id);if(stopped.status==='blocked')break;await delay(200); } while(Date.now()<deadline);
+  assert.equal(stopped.status,'blocked');assert.equal(stopped.phase,'implementation');
+  assert.equal(stopped.repair_budget.product,1);assert.equal(stopped.diagnosis_sources.length,1);
+  const priorBytes=readFileSync(safePath(env.root,stopped.local_executions[0].result_path));
+  const budget=structuredClone(stopped.repair_budget), contractBytes=readFileSync(safePath(env.root,
+    `.neomind/controlled/workflows/${hash(stopped.workflow_id)}.${stopped.epoch_id}.contract.json`));
+  if(externalEdit)atomicWrite(safePath(env.root,product),'{"value":"USER_EDIT"}\n');
+  const resumed=await controlControlledWorkflow(env.root,{workflow_id:initial.workflow_id,action:'resume'});
+  if(externalEdit){
+    assert.equal(resumed.status,'blocked');assert.equal(readFileSync(safePath(env.root,product),'utf8'),'{"value":"USER_EDIT"}\n');
+    assert.equal(resumed.local_executions.length,1);assert.deepEqual(resumed.repair_budget,budget);
+  }else{
+    const done=await until(env,initial.workflow_id,run=>run.status==='completed');
+    assert.deepEqual(done.repair_budget,budget);assert.equal(done.repairs,1);
+    assert.equal(done.local_executions.length,2);assert.ok(done.local_executions[1].passed);
+    assert.equal(done.attempts.filter(a=>a.stage==='diagnosis').length,1);
+    assert.ok(done.checks.slice(-2).every(check=>check.passed));
+    assert.equal(verify(env.root,savedContract(env,done).task_id,'accepted').ok,true);
+  }
+  assert.deepEqual(readFileSync(safePath(env.root,stopped.local_executions[0].result_path)),priorBytes);
+  assert.deepEqual(readFileSync(safePath(env.root,`.neomind/controlled/workflows/${hash(stopped.workflow_id)}.${stopped.epoch_id}.contract.json`)),contractBytes);
+  assert.deepEqual(env.errors,[]);
 });
 
 test('a missing negative fixture preflights the whole group before any checker runs, then the Verifier prepares it and closes', async t => {

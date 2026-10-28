@@ -144,6 +144,37 @@ test('active assignment guidance reports the backend format and reuses only a cu
   assert.equal(context(a.root,{plan:{input_paths:[]},preserved_hashes:{}},[saved],allowed),'','Default requests receive no new profile-specific instruction.');
 });
 
+test('separate curriculum Cornell notes retain their own template contract and real canonical validation', async t => {
+  const { controlledCornellFormatContext: context } = await import('../dist/controlled-cornell-format-context.js');
+  const a = fixture(t), path = 'curriculum/4242_format_fixture/4242_note.md';
+  const contract = { ...a.contract, plan: { ...a.contract.plan, cornell_output_dir: a.input.output_dir,
+    outputs: [path, ...['note.md', 'exercises.md', 'answers.md'].map(name => `${a.input.output_dir}/${name}`)] } };
+  const guidance = context(a.root, contract, [], { sourceAllowed: () => false });
+  assert.match(guidance, /primary trio only/);
+  assert.ok(guidance.includes(path));
+  assert.ok(guidance.includes(a.template)); assert.ok(guidance.includes(a.validator));
+  assert.match(guidance, /do not freehand/); assert.match(guidance, /before publishing/);
+  mkdirSync(join(a.root, path, '..'), { recursive: true });
+  const note = { meta: { data: { artifact_path: path } } };
+  writeFileSync(safePath(a.root, path), '# Exercise overview\n\n## Problem\n\nInspect a finite input.\n\n## Notes\n\nReturn the requested result.\n');
+  assert.equal(externalValidation(a, note).status, 1, 'A short handwritten overview is not a canonical curriculum Cornell note.');
+  const source = readFileSync(safePath(a.root, a.template), 'utf8');
+  const rendered = source.replace(/\{\{([A-Z0-9_/-]+)\}\}/g, (_, key) => ({
+    NUMBER: '4242', TITLE: 'Format profile fixture', 'DD/MM/YYYY': '28/10/2026',
+    TIME_COMPLEXITY: 'O(n)', SPACE_COMPLEXITY: 'O(1)', INPUT: '[1,2,3]', OUTPUT: '6',
+  })[key] ?? 'Inspect the finite values and preserve their order.').replaceAll('Initialize', 'Read the finite values')
+    .replaceAll('Decision?', 'Is the finite prefix complete?').replaceAll('Apply matching action', 'Return the expected finite total')
+    .replaceAll('Apply alternate action', 'Inspect the next finite value').replaceAll('Return result', 'Return the finite total')
+    .replaceAll('["Action"]', '["Scan the finite sequence"]').replace(/<!--[\s\S]*?-->/g, '');
+  writeFileSync(safePath(a.root, path), rendered);
+  const result = externalValidation(a, note);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(rendered, /^## Strategy A:/m); assert.match(rendered, /^### Strategy A Worked Example Flow$/m);
+  assert.match(rendered, /classDef start fill:/); assert.doesNotMatch(rendered, /\{\{[A-Z0-9_/-]+\}\}/);
+  assert.equal(hash(readFileSync(safePath(a.root, a.template))), templateHash);
+  assert.equal(hash(readFileSync(safePath(a.root, a.validator))), validatorHash);
+});
+
 test('diagnosis separates current renderer capability from saved generation and actual canonical validation', async t => {
   const {controlledCornellFormatContext:context}=await import('../dist/controlled-cornell-format-context.js');
   const {validateControlledCornell}=await import('../dist/controlled-cornell-validation.js');

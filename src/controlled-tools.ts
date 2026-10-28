@@ -15,6 +15,7 @@ import { controlledPayloadSchema, resolveControlledPayload, assertControlledPayl
 import { controlledPlanExecutionStepSubmissionSchema, controlledPlanCheckSubmissionSchema } from './controlled-plan-submission.js';
 import { controlledPlanRequestSchemas, controlledPlanSubmissionGuide, type ControlledPlanRequestDefaults } from './controlled-plan-request.js';
 import { controlledOperationDiagnostic, type ControlledDiagnosticPhase } from './controlled-operation-diagnostic.js';
+import { controlledFileWriteProof } from './controlled-file-write-proof.js';
 import { ControlledEvidenceScanTimeout } from './controlled-evidence-error.js';
 
 export type ControlledStage = 'planning' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
@@ -298,18 +299,10 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
     }
   }
   function completeWrite(entry: ToolState['writes'][number]): void {
-    const folder = `${base}/writes/${entry.operation}`;
-    const intent = { schema_version: 1, operation: entry.operation, binding_hash: bindingHash, path: entry.path,
-      previous_hash: entry.previous_hash, sha256: entry.sha256 };
     try {
-      if (readFileSync(safePath(root, `${folder}/intent.json`), 'utf8') !== `${JSON.stringify(intent, null, 2)}\n` ||
-          hash(readFileSync(safePath(root, `${folder}/next.utf8`))) !== entry.sha256 ||
-          (entry.previous_hash !== null && hash(readFileSync(safePath(root, `${folder}/previous.utf8`))) !== entry.previous_hash))
-        throw new Error('history mismatch');
-      const completion = `${JSON.stringify({ ...intent, kind: 'completed-controlled-file-write' }, null, 2)}\n`;
-      const path = safePath(root, `${folder}/completion.json`);
-      if (existsSync(path) && readFileSync(path, 'utf8') !== completion) throw new Error('completion mismatch');
-      if (!existsSync(path)) atomicWrite(path, completion);
+      const proof = controlledFileWriteProof(root, binding.invocation_id!, bindingHash, entry, false);
+      const path = safePath(root, proof.completion_path);
+      if (!existsSync(path)) atomicWrite(path, proof.completion);
     } catch {
       throw new ControlledToolError('STATE_UNCERTAIN', 'The immutable file operation history is missing or changed; runtime reconciliation is required.');
     }

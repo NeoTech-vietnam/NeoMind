@@ -34,6 +34,7 @@ assert.ok(raw.endsWith('\\n'));assert.equal(raw,readFileSync(packet.outputs[0],'
   assert.deepEqual(Object.keys(example), ['schema_version', 'request_id', 'procedure_id', 'version', 'parameters', 'outputs']);
   for (const actor of [
     { stage: 'planning', role: 'manager', procedure_bound: false },
+    { stage: 'planning', role: 'manager', procedure_bound: false, procedure_registration_required: true },
     { stage: 'implementation', role: 'developer', procedure_bound: true },
     { stage: 'implementation', role: 'developer', procedure_bound: false },
     { stage: 'implementation', role: 'developer', procedure_bound: false, evidence_documentation: true, execution_steps: [] },
@@ -45,13 +46,15 @@ assert.ok(raw.endsWith('\\n'));assert.equal(raw,readFileSync(packet.outputs[0],'
     const binding = { ...actor, workflow_id: 'BACKEND-WORKFLOW',
       implementation_paths: ['scripts/generate.mjs'], verification_paths: ['scripts/verify.mjs'] };
     const instructions = controlledInstructions(binding);
-    const needsPacketContract = actor.stage === 'planning' || controlledToolNames(binding).includes('procedure_run');
+    const needsPacketContract = actor.stage === 'planning' && actor.procedure_registration_required === true ||
+      controlledToolNames(binding).includes('procedure_run');
     assert.equal(instructions.includes(hint), needsPacketContract, `${actor.stage}: bound procedure ${actor.procedure_bound}`);
     if (needsPacketContract) {
       assert.match(instructions, /identical packet.*generator.*verification script/);
       assert.match(instructions, /backend-owned metadata, not model inputs/);
     } else {
       assert.doesNotMatch(instructions, /Procedure subprocess stdin contract:|Workers invoke the bound procedure_run tool/);
+      if (actor.stage === 'planning') assert.doesNotMatch(instructions, /procedure_candidate/);
     }
     assert.doesNotMatch(hint, /BACKEND-WORKFLOW/);
   }

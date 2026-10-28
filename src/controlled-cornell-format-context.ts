@@ -8,10 +8,15 @@ import type { ControlledCornellResult } from './controlled-cornell-sources.js';
 /** Trusted assignment guidance derived from the same frozen format contract as compilation.
  * It exposes an old semantic input path only after current provenance/read-scope checks. */
 export function controlledCornellFormatContext(root: string, contract: {
-  plan: { input_paths?: readonly string[]; cornell_output_dir?: string; cornell_input_path?: string }; preserved_hashes: Record<string, string>;
+  plan: { input_paths?: readonly string[]; outputs?: readonly string[]; cornell_output_dir?: string; cornell_input_path?: string }; preserved_hashes: Record<string, string>;
 }, results: readonly ControlledCornellResult[], access: { sourceAllowed(path: string): boolean; read_only?: boolean }): string {
   const profile = resolveControlledCornellFormatProfile(root, contract);
   if (!profile || !contract.plan.cornell_output_dir) return '';
+  const separateNotes = (contract.plan.outputs ?? []).filter(path => /(?:^|\/)\d+_note\.md$/.test(path) && path !== `${contract.plan.cornell_output_dir}/note.md`);
+  const separateFormat = separateNotes.length ? `The native compiler's format/validation receipt covers its primary trio only; it does not certify separate curriculum notes ${JSON.stringify(separateNotes)}. ` +
+    `Those declared notes retain their own approved project-format requirement. Use a template-backed producer reading ${JSON.stringify(profile.template.path)}; do not freehand or shorten the headings/layout. ` +
+    'Populate substantive problem-specific template fields, remove template author comments and unresolved tokens, preserve styled strategy and worked-example Mermaid sections, and specialize generic diagram labels to the actual algorithm and example. ' +
+    `Run the existing pinned validator ${JSON.stringify(profile.validator.path)} on each generated curriculum note before publishing; a successful primary trio is not evidence that these other files pass. ` : '';
   const rendererRevision = cornellFormatRendererRevision(profile);
   const result = results.findLast(item => Object.hasOwn(item.artifact_hashes, `${contract.plan.cornell_output_dir}/note.md`));
   let generatedRevision: number | 'not-recorded' = 'not-recorded', artifactsCurrent = false;
@@ -39,7 +44,7 @@ export function controlledCornellFormatContext(root: string, contract: {
     ...(proof ? { validated_renderer_revision: proof.renderer_revision, validation_generation: proof.generation } : {}),
   })}. A current renderer capability is separate from the stored generation and its actual pinned-validator receipt. `;
   if (access.read_only) return `Current backend format capability is active: ${profile.id}, verified against this task's declared approved template and validator fingerprints. ` +
-    provenance +
+    provenance + separateFormat +
     'The backend accepts professional JSON dates in ISO YYYY-MM-DD and renders DD/MM/YYYY plus the exact approved project headings, preserving research sections and separate exercises/answers. ' +
     'The earlier generic ISO-date renderer is not the active capability now; this does not mean existing saved artifacts have already been regenerated. ' +
     'This diagnosis session is read-only and has no compiler operation. A separately dispatched producer session handles ordinary content compilation or regeneration; trusted runtime maintenance can reconcile its own faulty renderer from the exact retained source. Do not call a compiler, edit artifacts or supply a model format/profile argument here. ' +
@@ -65,7 +70,7 @@ export function controlledCornellFormatContext(root: string, contract: {
     } catch { /* Stale or unavailable old input is never advertised as an authorized replay. */ }
   }
   return `Backend format compatibility is active: ${profile.id}, bound to this task's declared approved template and validator fingerprints. ` +
-    provenance +
+    provenance + separateFormat +
     'Keep the professional JSON date in ISO YYYY-MM-DD; the backend renderer displays DD/MM/YYYY and the exact approved project headings while preserving research sections and separate exercises/answers. ' +
     'The earlier generic ISO-date rendering is not the active renderer now. Do not add a model format/profile argument or edit generated note.md, exercises.md or answers.md directly. ' +
     (boundPath ? 'The primary semantic source is already fixed by the immutable contract. Call cornell_research_compile({}) so the backend loads and rechecks that source; do not submit copied research fields. ' +

@@ -19,6 +19,7 @@ import { ControlledToolError, controlledReviewInstructions, controlledPublicRefe
 import { controlledRuntimeContextGuide, controlledToolchain } from './controlled-runtime-context.js';
 import { controlledExecutionSchema, controlledExecutionDeclarationSchema, ControlledExecutionError,
   prepareControlledExecution, runControlledExecution, rollbackControlledExecutionOutputs, type ControlledExecutionInput } from './controlled-execution.js';
+import { authorizedControlledExecutionRepair, archiveControlledRegenerationOutputs } from './controlled-execution-regeneration.js';
 import { normalizeControlledCornellSources, existingControlledCornellNote, controlledCornellResult, bindControlledCornellPractice, bindControlledCornellDemonstration, type ControlledCornellSourceContext, type ControlledCornellResult } from './controlled-cornell-sources.js';
 import { registerProcedure, resolveProcedure, runProcedure } from './procedures.js';
 import { compileCornellResearch, readCornellDestination, type CornellResearchInput } from './cornell-workflow.js';
@@ -28,7 +29,7 @@ import { redactControlledValue } from './controlled-observability.js';
 import { classifyControlledDiagnosisReport } from './controlled-report-normalization.js';
 import { continuationObligations, controlledFingerprints, controlledFingerprintsAsync, ControlledEvidenceScanTimeout, executeControlledPilot, materializeControlledEvidence,
   prepareControlledCheckEvidence, verifyControlledTask, controlledContractForTask, controlledAcceptanceBudget, controlledRecordView, type ContinuationObligations } from './controlled-acceptance.js';
-import { controlledProducerExecutionEvidence } from './controlled-execution-evidence.js';
+import { controlledProducerExecutionEvidence, verifyControlledExecutions } from './controlled-execution-evidence.js';
 import { evidenceRecordFingerprint, type EvidenceInputSnapshot } from './evidence-inputs.js';
 import type { ProjectRecord } from './types.js';
 import { normalizeControlledPlanInput, controlledConsultationRole, controlledRegistrationRequested } from './controlled-plan-input.js';
@@ -1280,6 +1281,16 @@ class Controller {
         retained_failed_outputs: saved.rollback.archived?.map((item: any) => ({ path: item.path, sha256: item.sha256, bytes: item.bytes, removed: item.removed })),
         uncertain_paths: saved.rollback.uncertain_paths, reason: saved.rollback.reason } } : {}),
       note: 'Observed direct local execution; independent verification remains required. Registry qualification was not changed.' });
+    const executionBinding = { stage: 'implementation', role: 'developer',
+      implementation_paths: contract.plan.allowed_paths, verification_paths: contract.plan.verification_paths,
+      read_paths: ['.'], approved_inputs: contract.plan.input_paths,
+      protected_paths: [...this.protectedPaths(contract), ...[contract.plan.cornell_output_dir, contract.knowledge_directory]
+        .filter((directory): directory is string => !!directory)
+        .flatMap(directory => ['note.md', 'exercises.md', 'answers.md'].map(name => `${directory}/${name}`))],
+      preserved_hashes: contract.preserved_hashes, ...(source ? { payload_source: source } : {}) };
+    const operationId = randomUUID(), folder = `.neomind/controlled/executions/${operationId}`;
+    let regeneration: ReturnType<typeof archiveControlledRegenerationOutputs> | undefined;
+    let regenerationBaseline: Record<string, string> | undefined;
     const prior = [...(run.local_executions ?? [])].reverse().find(item => item.request_hash === requestHash &&
       (item.attempt_id === attemptId || item.state === 'completed'));
     if (prior) {
@@ -1294,29 +1305,83 @@ class Controller {
       const expectedOutputs = saved.rollback?.complete
         ? Object.fromEntries(Object.keys(saved.execution?.output_hashes ?? {}).map(path => [path, 'missing'])) : saved.execution?.output_hashes;
       const outputMatches = !expectedOutputs || same(expectedOutputs, fingerprints(this.root, Object.keys(expectedOutputs)));
-      if (!outputMatches || saved.execution?.passed && !inputMatches)
+      if (!outputMatches)
         throw new ControlledToolError('INPUT_CHANGED', 'Local execution inputs or outputs changed after the saved result. Inspect the current artifacts before continuing.');
       if (inputMatches) return summarize(saved, true);
-      if (!saved.rollback?.complete)
+      if (saved.execution?.passed) {
+        if (prior.attempt_id === attemptId || !input.output_paths.length)
+          throw new ControlledToolError('INPUT_CHANGED', 'A successful producer revision can change only in a separately bound repair assignment.');
+        const authenticated = verifyControlledExecutions(this.root, run, contract, {
+          fingerprints: paths => fingerprints(this.root, paths), requireCurrentSource: false, requireCompleted: true }).find(proof => proof.operation.id === prior.id);
+        if (!authenticated) throw new ControlledToolError('STATE_UNCERTAIN', 'Regeneration requires the original signed producer operation.');
+        const oldIntentBytes = readFileSync(safePath(this.root, prior.intent_path));
+        if (hash(oldIntentBytes) !== prior.intent_sha256)
+          throw new ControlledToolError('STATE_UNCERTAIN', 'The prior producer ownership intent changed.');
+        const oldIntent = JSON.parse(oldIntentBytes.toString('utf8'));
+        if (oldIntent.id !== prior.id || oldIntent.workflow_id !== id || oldIntent.epoch_id !== run.epoch_id ||
+            oldIntent.contract_hash !== run.contract_hash || oldIntent.payload_hash !== saved.execution.payload_hash ||
+            canonicalJson(oldIntent.baseline) !== canonicalJson(saved.execution.baseline) ||
+            canonicalJson(Object.keys(oldIntent.output_baseline).sort()) !== canonicalJson([...input.output_paths].sort()) ||
+            Object.values(oldIntent.output_baseline).some(value => value !== null))
+          throw new ControlledToolError('STATE_UNCERTAIN', 'Regeneration requires proof that the prior operation exclusively created these exact outputs.');
+        const probe = prepareControlledExecution(this.root, executionBinding, { ...input, output_paths: [] });
+        const previousIndex = run.attempts.findIndex(item => item.id === prior.attempt_id);
+        const repairAttempts = run.attempts.slice(previousIndex + 1).filter(item => item.stage === 'implementation' && item.role === 'developer' && item.invocation_id);
+        const repairs = repairAttempts.map(item => {
+          const receipt = readInvocation(this.root, item.invocation_id!);
+          if (receipt.issuer !== 'neomind-vscode-lm' || receipt.workflow_id !== id || receipt.task_id !== contract.task_id || receipt.role !== 'developer' ||
+              receipt.controlled_execution?.epoch_id !== run.epoch_id || receipt.controlled_execution.stage !== 'implementation')
+            throw new ControlledToolError('STATE_UNCERTAIN', 'A producer repair journal lacks its original signed same-workflow actor.');
+          return item.invocation_id!;
+        });
+        const repair = previousIndex < 0 ? undefined : authorizedControlledExecutionRepair(this.root, attempt.invocation_id,
+          saved.execution.baseline, probe.baseline, executionBinding, repairs);
+        if (!repair) throw new ControlledToolError('INPUT_CHANGED', 'Changed producer inputs lack a current same-workflow backend-authored repair and fresh read.');
+        const regenerationIntent = JSON.stringify({ schema_version: 1, kind: 'controlled-producer-regeneration', id: operationId,
+          workflow_id: id, epoch_id: run.epoch_id, task_id: contract.task_id, contract_hash: run.contract_hash,
+          attempt_id: attemptId, invocation_id: attempt.invocation_id, request_hash: requestHash,
+          previous_operation_id: prior.id, previous_result_path: prior.result_path, previous_result_sha256: prior.result_sha256,
+          previous_intent_path: prior.intent_path, previous_intent_sha256: prior.intent_sha256,
+          output_hashes: saved.execution.output_hashes, new_input_baseline: probe.baseline, repair }, null, 2) + '\n';
+        atomicWrite(safePath(this.root, `${folder}/regeneration-intent.json`), regenerationIntent);
+        run.local_executions = [...(run.local_executions ?? []), { id: operationId, attempt_id: attemptId, request_hash: requestHash,
+          title: input.title, state: 'running', intent_path: `${folder}/regeneration-intent.json`, intent_sha256: hash(regenerationIntent) }];
+        save(this.root, run, 'local-regeneration-authorized', 'An authenticated producer repair owns a new operation; prior output bytes will be preserved before exclusive regeneration.');
+        try {
+          assertActive();
+          regeneration = archiveControlledRegenerationOutputs(this.root, `${folder}/regeneration`, saved.execution.output_hashes, executionBinding);
+          regenerationBaseline = probe.baseline;
+        } catch {
+          const uncertain = readState(this.root, id); uncertain.status = 'uncertain';
+          uncertain.blocker = { kind: 'protocol', message: 'Producer regeneration stopped during owned-output preservation. Durable intent and archives require reconciliation before another effect.' };
+          save(this.root, uncertain, 'uncertain', uncertain.blocker.message);
+          throw new ControlledToolError('STATE_UNCERTAIN', uncertain.blocker.message);
+        }
+      } else if (!saved.rollback?.complete)
         throw new ControlledToolError('STATE_UNCERTAIN', 'A failed local operation needs safe effect reconciliation before another execution.');
       // A producer-authored script changed after a retained failed operation.
       // The exact new source must have been read through the bound file tool.
     }
     let prepared;
-    try { prepared = prepareControlledExecution(this.root, { stage: 'implementation', role: 'developer',
-      implementation_paths: contract.plan.allowed_paths, verification_paths: contract.plan.verification_paths,
-      read_paths: ['.'], approved_inputs: contract.plan.input_paths,
-      protected_paths: [...this.protectedPaths(contract), ...[contract.plan.cornell_output_dir, contract.knowledge_directory]
-        .filter((directory): directory is string => !!directory)
-        .flatMap(directory => ['note.md', 'exercises.md', 'answers.md'].map(name => `${directory}/${name}`))],
-      preserved_hashes: contract.preserved_hashes, ...(source ? { payload_source: source } : {}) }, input); }
+    try { prepared = prepareControlledExecution(this.root, executionBinding, input); }
     catch (error) {
+      if (regeneration) {
+        const uncertain = readState(this.root, id); uncertain.status = 'uncertain';
+        uncertain.blocker = { kind: 'protocol', message: 'Owned outputs were preserved, but regeneration preflight changed. Reconcile the durable intent before another effect.' };
+        save(this.root, uncertain, 'uncertain', uncertain.blocker.message);
+        throw new ControlledToolError('STATE_UNCERTAIN', uncertain.blocker.message);
+      }
       if (error instanceof ControlledExecutionError) throw new ControlledToolError(error.code, error.message);
       throw error;
     }
+    if (regenerationBaseline && canonicalJson(prepared.baseline) !== canonicalJson(regenerationBaseline)) {
+      const uncertain = readState(this.root, id); uncertain.status = 'uncertain';
+      uncertain.blocker = { kind: 'protocol', message: 'Producer inputs changed during owned-output preservation; regeneration remains unexecuted pending reconciliation.' };
+      save(this.root, uncertain, 'uncertain', uncertain.blocker.message);
+      throw new ControlledToolError('STATE_UNCERTAIN', uncertain.blocker.message);
+    }
     if (source && prepared.baseline[source.path] !== source.sha256)
       throw new ControlledToolError('INPUT_CHANGED', 'Prepared JSON source changed before the backend captured its execution baseline.');
-    const operationId = randomUUID(), folder = `.neomind/controlled/executions/${operationId}`;
     const { input: _directInput, ...declaredOperation } = input;
     const guardedBefore = fingerprints(this.root, [...contract.plan.verification_paths, ...this.protectedPaths(contract),
       ...[contract.plan.cornell_output_dir, contract.knowledge_directory].filter((directory): directory is string => !!directory)
@@ -1324,13 +1389,15 @@ class Controller {
     const identity = { schema_version: 1, kind: 'controlled-direct-local-execution', id: operationId,
       workflow_id: id, task_id: contract.task_id, epoch_id: run.epoch_id, contract_hash: run.contract_hash,
       attempt_id: attemptId, invocation_id: attempt.invocation_id, request_hash: requestHash,
-      ...(source ? { payload_source: source } : {}) };
+      ...(source ? { payload_source: source } : {}), ...(regeneration ? { regeneration } : {}) };
     const intent = JSON.stringify({ ...identity, created_at: now(), authorization: 'immutable-producer-scope',
       command: prepared.command, input_sha256: prepared.input_sha256, baseline: prepared.baseline,
       output_baseline: prepared.output_baseline, payload_hash: prepared.payload_hash,
       declaration: controlledExecutionDeclarationSchema.parse(declaredOperation), guarded_before: guardedBefore }, null, 2) + '\n';
     atomicWrite(safePath(this.root, `${folder}/intent.json`), intent);
-    run.local_executions = [...(run.local_executions ?? []), { id: operationId, attempt_id: attemptId,
+    const reserved = run.local_executions?.find(item => item.id === operationId);
+    if (reserved) { reserved.intent_path = `${folder}/intent.json`; reserved.intent_sha256 = hash(intent); }
+    else run.local_executions = [...(run.local_executions ?? []), { id: operationId, attempt_id: attemptId,
       request_hash: requestHash, title: input.title, state: 'running', intent_path: `${folder}/intent.json`, intent_sha256: hash(intent) }];
     save(this.root, run, 'local-execution-authorized', 'Backend bound the local script, input hashes and producer-only output scope. No procedure qualification was granted.');
     let execution: Awaited<ReturnType<typeof runControlledExecution>> | undefined, started = false, notStarted = false;
@@ -1823,6 +1890,16 @@ class Controller {
           receipt.workflow_id !== run.workflow_id || receipt.task_id !== contract.task_id || receipt.role !== last.role ||
           receipt.request_id !== last.request_id || receipt.controlled_execution?.epoch_id !== run.epoch_id ||
           receipt.controlled_execution.stage !== last.stage) return run;
+      // Resume an already charged producer repair that the former replay-only
+      // boundary rejected. This is protocol recovery, not another product repair.
+      if (diagnosticResume && run.phase === 'implementation' && last.stage === 'implementation' &&
+          last.role === 'developer' && last.report.outcome === 'blocked' &&
+          controlledRepairBudget(run).product > 0 && this.resumableProducerRegeneration(run, contract, last)) {
+        run.status = 'queued'; run.owner_pid = process.pid; run.owner_instance = readHost(this.root).instance;
+        delete run.blocker;
+        save(this.root, run, 'resume', 'Resume the authenticated, already charged producer repair after execution reconciliation; retain prior results, original contract and repair usage.');
+        this.schedule(id); return run;
+      }
       // The completed failure is authenticated against its own signed binding.
       // It is not acceptance evidence under the newly selected project policy.
       run.owner_pid = process.pid; run.owner_instance = readHost(this.root).instance;
@@ -1840,6 +1917,34 @@ class Controller {
     }
     run.status = 'queued'; run.owner_pid = process.pid; run.owner_instance = readHost(this.root).instance; delete run.blocker;
     save(this.root, run, 'resume', 'Resume from durable contract and prior results.'); this.schedule(id); return run;
+  }
+
+  private resumableProducerRegeneration(run: ControlledSnapshot, contract: Contract, attempt: Attempt): boolean {
+    try {
+      const rejected = run.events.some(event => {
+        if (event.invocation_id !== attempt.invocation_id || !event.summary.startsWith('Semantic tool task_run: failed; trace ')) return false;
+        const id = event.summary.split('trace ')[1];
+        if (!id || !/^[a-f0-9-]{36}$/.test(id)) return false;
+        const trace = JSON.parse(readFileSync(safePath(this.root, `.neomind/controlled/traces/${id}.json`), 'utf8'));
+        return trace.event === 'tool-result' && trace.tool === 'task_run' && trace.code === 'INPUT_CHANGED' &&
+          trace.workflow_id === run.workflow_id && trace.epoch_id === run.epoch_id && trace.attempt_id === attempt.id &&
+          trace.backend_binding?.invocation_id === attempt.invocation_id && trace.backend_binding?.task_id === contract.task_id;
+      });
+      if (!rejected || !attempt.invocation_id) return false;
+      const binding = { stage: 'implementation' as const, role: 'developer', implementation_paths: contract.plan.allowed_paths,
+        verification_paths: contract.plan.verification_paths, preserved_hashes: contract.preserved_hashes,
+        protected_paths: [...this.protectedPaths(contract), ...[contract.plan.cornell_output_dir, contract.knowledge_directory]
+          .filter((path): path is string => !!path).flatMap(path => ['note.md', 'exercises.md', 'answers.md'].map(name => `${path}/${name}`))] };
+      return verifyControlledExecutions(this.root, run, contract, { fingerprints: paths => fingerprints(this.root, paths),
+        requireCurrentSource: false, requireCompleted: true }).some(proof => {
+        const execution = proof.result.execution;
+        if (!execution?.passed || run.attempts.findIndex(item => item.id === proof.operation.attempt_id) >= run.attempts.indexOf(attempt) ||
+            !Object.values(proof.intent.output_baseline ?? {}).every(value => value === null) ||
+            canonicalJson(execution.output_hashes) !== canonicalJson(fingerprints(this.root, Object.keys(execution.output_hashes)))) return false;
+        const current = fingerprints(this.root, Object.keys(execution.baseline));
+        return !!authorizedControlledExecutionRepair(this.root, attempt.invocation_id!, execution.baseline, current, binding);
+      });
+    } catch { return false; }
   }
   close(): Promise<void> {
     if (this.closing) return this.closing;
