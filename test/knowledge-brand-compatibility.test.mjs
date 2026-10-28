@@ -170,7 +170,10 @@ test('historical archive record paths restore with identical manifest and record
   const destination = mkdtempSync(join(tmpdir(), 'neomind-history-restore-'));
   t.after(() => rmSync(destination, { recursive: true, force: true }));
   assert.equal(restoreArchive(root, id, destination).records, 1);
-  assert.equal(recordFingerprint(getRecord(destination, record.meta.id)), recordFingerprint(record));
-  assert.equal(readFileSync(join(destination, `.neomind/records/${record.meta.id}.md`), 'utf8'), inputs[1].content.toString());
+  const restored = getRecord(destination, record.meta.id);
+  assert.equal(recordFingerprint(restored), recordFingerprint(record));
+  assert.match(restored.path, /^\.workforce\//);
+  assert.equal(existsSync(join(destination, '.neomind')), false);
+  assert.equal(readFileSync(join(destination, restored.path), 'utf8'), inputs[1].content.toString());
   assert.equal(readFileSync(join(root, directory, 'manifest.json'), 'utf8'), manifestBytes);
 });
