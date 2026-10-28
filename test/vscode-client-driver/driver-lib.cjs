@@ -73,6 +73,9 @@ function createDriver({ vscode, context, configPath, loadRuntime }) {
   async function inspect() {
     const folder = exact(), currentApi = await runtime(), info = currentApi.createRuntimeInfo(root);
     const workforce = vscode.extensions.getExtension('workforce.workforce-model-bridge'), copilot = vscode.extensions.getExtension('GitHub.copilot-chat');
+    // Contributed commands activate the installed extension on first use.
+    // Enumerate its actual registrations after that normal activation.
+    if (workforce && !workforce.isActive && typeof workforce.activate === 'function') await workforce.activate();
     const commands = await vscode.commands.getCommands(true);
     const required = ['workforce.pm.openLocal', 'workbench.action.chat.open', 'workbench.action.chat.newLocalChat', 'workbench.action.chat.export'];
     const models = (await vscode.lm.selectChatModels({})).map(model => fields(model, ['id', 'vendor', 'name', 'family', 'version']));
@@ -88,6 +91,23 @@ function createDriver({ vscode, context, configPath, loadRuntime }) {
       model_candidates: candidates, model_selection_unique: candidates.length === 1, setup: currentApi.requestSetupStatus(root),
       local_target_evidence: { command: 'workbench.action.chat.newLocalChat', semantics: 'Installed 1.143.1 implementation explicitly calls startNewLocalSession/an.Local.' } };
     persist(); return report;
+  }
+  async function configureRuntime() {
+    exact();
+    const currentApi = await runtime(), info = currentApi.createRuntimeInfo(root);
+    if (!same(realpathSync.native(info.runtime_root), realpathSync.native(config.runtime_root))) throw new Error('REVIEWED_RUNTIME_REQUIRED');
+    await vscode.workspace.getConfiguration('workforce.bridge').update('runtimePath', realpathSync.native(config.runtime_root), vscode.ConfigurationTarget.Global);
+    return inspect();
+  }
+  async function connectWorkForce() {
+    await inspect();
+    if (!report.runtime_binding.matches) throw new Error('CONFIGURED_RUNTIME_MUST_MATCH_REVIEWED_CANDIDATE');
+    // The actual product command presents its normal first-use consent. This
+    // driver neither answers that dialog nor modifies its saved approval.
+    void vscode.commands.executeCommand('workforce.bridge.enable').then(() => inspect()).catch(error => {
+      report.connection_error = { name: error?.name ?? 'Error', message_sha256: sha(String(error?.message ?? error)) }; persist();
+    });
+    return { connection_requested: true, consent_automatically_granted: false };
   }
   async function capture() {
     if (closed) return { captured: false, reason: 'DRIVER_CLOSED' };
@@ -161,9 +181,10 @@ function createDriver({ vscode, context, configPath, loadRuntime }) {
       if (!authenticated || request.headers.origin || request.headers.host !== `127.0.0.1:${server.address()?.port}`) { response.writeHead(403).end(); return; }
       try {
         if (request.method === 'GET' && request.url === '/status') { response.setHeader('content-type', 'application/json'); response.end(JSON.stringify(report)); return; }
-        if (request.method !== 'POST' || !['/inspect', '/run-once', '/capture'].includes(request.url)) { response.writeHead(404).end(); return; }
+        if (request.method !== 'POST' || !['/inspect', '/configure-runtime', '/connect', '/run-once', '/capture'].includes(request.url)) { response.writeHead(404).end(); return; }
         request.resume();
-        const value = request.url === '/inspect' ? await inspect() : request.url === '/capture' ? await capture() : await runOnce();
+        const value = request.url === '/inspect' ? await inspect() : request.url === '/configure-runtime' ? await configureRuntime()
+          : request.url === '/connect' ? await connectWorkForce() : request.url === '/capture' ? await capture() : await runOnce();
         response.setHeader('content-type', 'application/json'); response.end(JSON.stringify(value));
       } catch (error) { response.writeHead(409, { 'content-type': 'application/json' }).end(JSON.stringify({ error: /^[A-Z_]+$/.test(error?.message ?? '') ? error.message : 'DRIVER_OPERATION_FAILED', error_sha256: sha(String(error?.message ?? error)) })); }
     });

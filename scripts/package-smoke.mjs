@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { parse as parseYaml } from 'yaml';
-import { fileHash, distributionTarget, packedArchive } from './package-runtime.mjs';
+import { fileHash, distributionTarget, packedArchive, nativeTarCommand } from './package-runtime.mjs';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(join(repository, 'package.json'), 'utf8'));
@@ -29,9 +29,9 @@ try {
   if (supplied('--runtime')) installed = realpathSync.native(resolve(supplied('--runtime')));
   else if (supplied('--runtime-archive')) {
     tarball = resolve(supplied('--runtime-archive'));
-    const names = run('tar', ['-tzf', tarball], workspace).trim().split(/\r?\n/);
+    const names = run(nativeTarCommand(), ['-tzf', tarball], workspace).trim().split(/\r?\n/);
     assert.ok(names.every(name => name.startsWith('workforce/') && !name.split('/').includes('..')), 'Portable archive entries stay under workforce/.');
-    run('tar', ['-xzf', tarball, '-C', workspace], workspace); installed = join(workspace, 'workforce');
+    run(nativeTarCommand(), ['-xzf', tarball, '-C', workspace], workspace); installed = join(workspace, 'workforce');
     assert.ok(existsSync(join(installed, 'distribution-manifest.json')), 'Portable assets include their dependency/integrity manifest.');
   } else {
     assert.ok(npm, 'Run npm run package:smoke so the npm CLI path is available.');

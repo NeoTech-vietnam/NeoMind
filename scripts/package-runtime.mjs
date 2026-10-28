@@ -10,6 +10,11 @@ import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+export function nativeTarCommand() {
+  // Git Bash can put GNU tar first on PATH; it interprets D: as a remote
+  // archive host. Windows ships bsdtar with native drive-path support.
+  return process.platform === 'win32' ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+}
 export function packedArchive(value) {
   const candidates = Array.isArray(value) ? value : value?.filename ? [value] : Object.values(value ?? {}).flat();
   const files = candidates.filter(item => item && typeof item.filename === 'string');
@@ -29,7 +34,7 @@ export async function fileHash(path) {
 }
 export async function archiveRuntime(staging, output) {
   const temporary = `${output}.${randomUUID()}.partial`;
-  const child = spawn('tar', ['-cf', '-', '-C', staging, 'workforce'], { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(nativeTarCommand(), ['-cf', '-', '-C', staging, 'workforce'], { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let diagnostic = '', timedOut = false;
   child.stderr.on('data', chunk => { diagnostic = (diagnostic + chunk.toString()).slice(-4000); });
   const finished = new Promise((fulfill, reject) => {
@@ -73,7 +78,7 @@ export async function buildRuntime({ outputDirectory = join(repository, 'artifac
     execute(process.execPath, [npm, 'run', 'build'], repository);
     const cache = join(repository, 'artifacts/npm-build-cache');
     const packed = packedArchive(JSON.parse(execute(process.execPath, [npm, 'pack', '--ignore-scripts', '--json', '--cache', cache, '--pack-destination', staging], repository)));
-    execute('tar', ['-xzf', join(staging, packed.filename), '-C', root, '--strip-components=1'], repository);
+    execute(nativeTarCommand(), ['-xzf', join(staging, packed.filename), '-C', root, '--strip-components=1'], repository);
     copyFileSync(join(repository, 'package-lock.json'), join(root, 'package-lock.json'));
     execute(process.execPath, [npm, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--cache', cache], root);
     const bootstrap = join(root, 'resources/opencode-bootstrap');

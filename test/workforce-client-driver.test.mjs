@@ -19,8 +19,10 @@ function fixture(t, { authorized = false, trusted = true, runtimeMismatch = fals
   writeFileSync(config.prompt_file, prompt); writeFileSync(join(root, 'config.json'), JSON.stringify(config));
   writeFileSync(config.authorization_file, JSON.stringify({ allow_chat_dispatch: authorized, run_id: config.run_id, max_user_prompts: 1,
     workspace_root: project, prompt_sha256: hash(prompt) }));
-  const calls = [], vscode = { version: 'synthetic-vscode', ExtensionMode: { Test: 3 }, Uri: { file: fsPath => ({ scheme: 'file', fsPath }) },
-    workspace: { isTrusted: trusted, workspaceFolders: [{ uri: { scheme: 'file', fsPath: project } }], getConfiguration: section => ({ get: () => 'autoApprove', inspect: () => ({ globalValue: runtimeMismatch ? project : root }) }) },
+  let configuredRuntime = runtimeMismatch ? project : root;
+  const updates = [], calls = [], vscode = { version: 'synthetic-vscode', ExtensionMode: { Test: 3 }, ConfigurationTarget: { Global: 1 }, Uri: { file: fsPath => ({ scheme: 'file', fsPath }) },
+    workspace: { isTrusted: trusted, workspaceFolders: [{ uri: { scheme: 'file', fsPath: project } }], getConfiguration: section => ({ get: () => 'autoApprove', inspect: () => ({ globalValue: configuredRuntime }),
+      update: async (name, value, target) => { updates.push({ section, name, value, target }); configuredRuntime = value; } }) },
     extensions: { getExtension: id => ({ id, extensionPath: ext, packageJSON: { version: 'synthetic' }, isActive: true }) },
     lm: { selectChatModels: async () => [{ id: 'top-models', vendor: 'customendpoint', name: 'top-models' }] },
     commands: { getCommands: async () => ['workforce.pm.openLocal', 'workbench.action.chat.open', 'workbench.action.chat.newLocalChat', 'workbench.action.chat.export'],
@@ -31,8 +33,37 @@ function fixture(t, { authorized = false, trusted = true, runtimeMismatch = fals
   const runtime = { createRuntimeInfo: () => ({ package_version: 'synthetic', runtime_root: root, build_fingerprint: 'fixture' }), requestSetupStatus: () => ({ ready: true }), requestStatus: () => ({ requests: [] }) };
   const driver = createDriver({ vscode, context: { extensionMode: 2 }, configPath: join(root, 'config.json'), loadRuntime: async () => runtime });
   t.after(async () => { await driver.close(); rmSync(root, { recursive: true, force: true }); });
-  return { driver, calls, root, output, vscode };
+  return { driver, calls, updates, root, output, vscode };
 }
+
+async function control(app, action) {
+  await app.driver.listen();
+  const endpoint = JSON.parse(readFileSync(join(app.output, 'control.json'), 'utf8'));
+  const response = await fetch(`${endpoint.url}/${action}`, { method: 'POST', headers: { Authorization: endpoint.authorization } });
+  return { status: response.status, result: await response.json() };
+}
+
+test('native setup sets only the reviewed User runtime and leaves dispatch and consent unapproved', async t => {
+  const app = fixture(t, { runtimeMismatch: true });
+  const configured = await control(app, 'configure-runtime');
+  assert.equal(configured.status, 200); assert.equal(configured.result.runtime_binding.matches, true);
+  assert.deepEqual(app.updates, [{ section: 'workforce.bridge', name: 'runtimePath', value: app.root, target: 1 }]);
+  const connected = await control(app, 'connect');
+  assert.deepEqual(connected.result, { connection_requested: true, consent_automatically_granted: false });
+  assert.deepEqual(app.calls.map(([name]) => name), ['workforce.bridge.enable']);
+  await assert.rejects(app.driver.runOnce(), /EXPLICIT_DISPATCH_AUTHORIZATION_REQUIRED/);
+  assert.equal(app.driver.report().user_prompts_dispatched, 0);
+});
+
+test('setup refuses a different or untrusted workspace without changing settings or invoking consent', async t => {
+  const app = fixture(t, { trusted: false });
+  assert.equal((await control(app, 'configure-runtime')).status, 409);
+  assert.equal((await control(app, 'connect')).status, 409);
+  app.vscode.workspace.isTrusted = true; app.vscode.workspace.workspaceFolders = [];
+  assert.equal((await control(app, 'configure-runtime')).status, 409);
+  assert.equal((await control(app, 'connect')).status, 409);
+  assert.deepEqual(app.updates, []); assert.deepEqual(app.calls, []);
+});
 
 test('disabled dispatch authorization cannot execute any chat command', async t => {
   const app = fixture(t); await assert.rejects(app.driver.runOnce(), /EXPLICIT_DISPATCH_AUTHORIZATION_REQUIRED/); assert.deepEqual(app.calls, []);

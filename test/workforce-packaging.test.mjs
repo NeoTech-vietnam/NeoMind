@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { distributionTarget, lockedDependencyInventory, archiveRuntime, packedArchive } from '../scripts/package-runtime.mjs';
+import { distributionTarget, lockedDependencyInventory, archiveRuntime, packedArchive, nativeTarCommand } from '../scripts/package-runtime.mjs';
 import { spawnSync } from 'node:child_process';
 import { writeReleaseIndex } from '../scripts/package-release.mjs';
 import { parse as parseYaml } from 'yaml';
@@ -84,7 +84,7 @@ test('native archive streaming publishes an extractable asset only after compres
   const root = mkdtempSync(join(tmpdir(), 'workforce-archive-')); t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, 'workforce')); writeFileSync(join(root, 'workforce/product.txt'), 'Useful fixture artifact');
   const output = join(root, 'runtime.tgz'); await archiveRuntime(root, output);
-  const listing = spawnSync('tar', ['-tzf', output], { encoding: 'utf8', windowsHide: true });
+  const listing = spawnSync(nativeTarCommand(), ['-tzf', output], { encoding: 'utf8', windowsHide: true });
   assert.equal(listing.status, 0); assert.match(listing.stdout.replaceAll('\\', '/'), /workforce\/product\.txt/);
 });
 

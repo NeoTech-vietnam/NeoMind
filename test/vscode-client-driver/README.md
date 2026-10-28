@@ -8,7 +8,7 @@ The implementation was checked against installed VS Code **1.143.1**, whose buil
 - `workbench.action.chat.open` with `mode`, exact `modelSelector`, `query`, `isPartialQuery` and `blockOnResponse`;
 - `workbench.action.chat.export` with an explicit output URI. The export contains actual `modelId`, `modeInfo`, tool calls and request text.
 
-`blockOnResponse` returns when the response completes or needs a native confirmation. The driver records that condition and never presses Allow, grants model access, changes global settings or retries the prompt. Workspace Trust and model/MCP authorization remain actual platform requirements.
+`blockOnResponse` returns when the response completes or needs a native confirmation. The driver records that condition and never presses Allow, grants model access, changes approval settings or retries the prompt. Workspace Trust and model/MCP authorization remain actual platform requirements.
 
 The driver rejects `ExtensionMode.Test`; it deliberately does not use `--extensionTestsPath`, `--disable-workspace-trust`, in-memory secrets, imported chat histories or testing/model simulation flags. It requires the WorkForce VSIX installed in the same actual profile. Loading this small driver as a development extension does not make a fixture response count as actual-client evidence.
 
@@ -28,6 +28,8 @@ The default prompt is the user's original ordinary request: “I want a leetcode
 Install the reviewed candidate VSIX, set the User setting `workforce.bridge.runtimePath` to the freshly extracted candidate runtime, reload the VS Code window, then launch this driver with `--launch`. The actual workspace must be trusted. Connect WorkForce through its product setup and complete its genuine cached capability check. Those platform actions may require the user; this driver does not bypass them.
 
 Use `node test/vscode-client-driver/control.mjs inspect` to inspect actual versions, workspace trust, effective workspace permission default, registered model metadata, native commands, runtime build fingerprint and installed WorkForce source fingerprint. The configured User runtime and imported runtime must both resolve to the reviewed candidate directory before dispatch; a source checkout or another installation is refused. Inspection is read-only and sends no chat query. A runtime setting change during observation invalidates client evidence rather than accepting work from a different installation.
+
+`configure-runtime` sets only the User `workforce.bridge.runtimePath` to the approved extracted runtime, through the native VS Code configuration API in the exact trusted fixture window. `connect` invokes the actual WorkForce Connect command and leaves its consent dialog to the user. Neither operation authorizes chat dispatch. The helper activates only in the configured single fixture workspace, so unrelated or empty editor windows cannot take over its control endpoint.
 
 Only after the operator authorizes the reviewed fixture/prompt, set `allow_chat_dispatch` to `true` in that run's authorization file. The run ID, workspace, prompt hash and one-prompt limit must match. Then call `control.mjs run-once` once. It opens Local WF.PM, selects the actual unique registered `customendpoint/top-models`, sends the ordinary prompt and starts receipt observation. A durable exclusive ledger prevents another dispatch, including after driver restart. An uncertain dispatch is never retried automatically.
 
