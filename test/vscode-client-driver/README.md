@@ -25,9 +25,9 @@ The default prompt is the user's original ordinary request: “I want a leetcode
 
 ## Actual run — only after explicit authorization
 
-Install the accepted candidate VSIX, then launch this driver with `--launch`. The actual workspace must be trusted. Connect WorkForce through its product setup and complete its genuine cached capability check. Those platform actions may require the user; this driver does not bypass them.
+Install the reviewed candidate VSIX, set the User setting `workforce.bridge.runtimePath` to the freshly extracted candidate runtime, reload the VS Code window, then launch this driver with `--launch`. The actual workspace must be trusted. Connect WorkForce through its product setup and complete its genuine cached capability check. Those platform actions may require the user; this driver does not bypass them.
 
-Use `node test/vscode-client-driver/control.mjs inspect` to inspect actual versions, workspace trust, effective workspace permission default, registered model metadata, native commands, runtime build fingerprint and installed WorkForce source fingerprint. This is read-only and sends no chat query.
+Use `node test/vscode-client-driver/control.mjs inspect` to inspect actual versions, workspace trust, effective workspace permission default, registered model metadata, native commands, runtime build fingerprint and installed WorkForce source fingerprint. The configured User runtime and imported runtime must both resolve to the reviewed candidate directory before dispatch; a source checkout or another installation is refused. Inspection is read-only and sends no chat query. A runtime setting change during observation invalidates client evidence rather than accepting work from a different installation.
 
 Only after the operator authorizes the reviewed fixture/prompt, set `allow_chat_dispatch` to `true` in that run's authorization file. The run ID, workspace, prompt hash and one-prompt limit must match. Then call `control.mjs run-once` once. It opens Local WF.PM, selects the actual unique registered `customendpoint/top-models`, sends the ordinary prompt and starts receipt observation. A durable exclusive ledger prevents another dispatch, including after driver restart. An uncertain dispatch is never retried automatically.
 

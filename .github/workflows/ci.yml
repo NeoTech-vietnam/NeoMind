@@ -30,6 +30,8 @@ jobs:
       - name: Prepare pinned offline engine bootstrap
         run: npm run engine:bootstrap
       - name: Build and test
+        # Keep the full suite while bounding simultaneous native guardians and
+        # ACL subprocesses. Build failure must prevent test execution.
         run: npm test
       - name: Inspect package contents
         run: npm pack --dry-run --json

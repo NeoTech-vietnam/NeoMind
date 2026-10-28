@@ -175,7 +175,14 @@ export interface OpenCodeSupervisionRef {
   schema_version: 1; invocation_id: string; instance: string; spec_sha256: string; spec_hmac: string;
   owner: { pid: number; created_at: string }; engine?: OpenCodeProcessIdentity;
 }
-export interface OpenCodeEngineOptions { onPrepared?(ref: OpenCodeSupervisionRef): void | Promise<void> }
+const engineStartupStages = ['owner-verified', 'watchdog-spawned', 'watchdog-waiting', 'admitted',
+  'guardian-spawned', 'engine-identity-observed', 'server-listening', 'authenticated-ready'] as const;
+export interface OpenCodeStartupObservation { stage: typeof engineStartupStages[number]; elapsed_ms: number }
+export interface OpenCodeEngineOptions {
+  onPrepared?(ref: OpenCodeSupervisionRef): void | Promise<void>;
+  /** Bounded owner diagnostic only: no paths, identity, endpoint or credentials. */
+  onStartupStage?(observation: OpenCodeStartupObservation): void;
+}
 export interface OpenCodeOwnerReconciliation {
   state: 'stopped' | 'still_live' | 'uncertain'; proof_sha256?: string; owner_matches?: boolean;
 }
@@ -458,20 +465,24 @@ export async function runOpenCodeOwnerSupervisor(root: string, ref: OpenCodeSupe
       detached: true, env: spec.env, stdio: ['ignore', 'pipe', 'pipe'] });
     if (child.pid) {
       const created = processBirth(child.pid, spec.binary.path);
-      if (created) observed = { pid: child.pid, created_at: created, executable_sha256: spec.binary.sha256 };
+      if (created) { observed = { pid: child.pid, created_at: created, executable_sha256: spec.binary.sha256 };
+        send({ type: 'startup-stage', stage: 'engine-identity-observed' }); }
       else requestStop();
     }
   }
+  child.once('spawn', () => send({ type: 'startup-stage', stage: 'guardian-spawned' }));
   child.stdin?.on('error', () => {}); child.stderr?.resume();
   child.stdout?.on('data', (bytes: Buffer) => {
     output = (output + bytes.toString('utf8')).slice(-32768);
     if (process.platform === 'win32' && !observed) {
       const match = new RegExp(`WORKFORCE_ENGINE_IDENTITY ${nonce} (\\d+) (\\d+)`).exec(output);
-      if (match) observed = { pid: Number(match[1]), created_at: `win32:${match[2]}`, executable_sha256: spec.binary.sha256 };
+      if (match) { observed = { pid: Number(match[1]), created_at: `win32:${match[2]}`, executable_sha256: spec.binary.sha256 };
+        send({ type: 'startup-stage', stage: 'engine-identity-observed' }); }
     }
     if (process.platform === 'win32' && new RegExp(`WORKFORCE_ENGINE_EXIT ${nonce} \\d+`).test(output)) { actualExit = true; treeClosed = true; }
     const url = /opencode server listening on (http:\/\/127\.0\.0\.1:\d+)/.exec(output)?.[1];
-    if (!started && observed && url) { started = true; publish('ready', { engine: observed, url }); send({ type: 'ready', engine: observed, url }); }
+    if (!started && observed && url) { started = true; send({ type: 'startup-stage', stage: 'server-listening' });
+      publish('ready', { engine: observed, url }); send({ type: 'ready', engine: observed, url }); }
   });
   const trackGroup = process.platform === 'linux' ? setInterval(() => {
     if (observed) for (const member of linuxEngineGroup(observed.pid) ?? []) knownGroup.set(member.pid, member.birth);
@@ -496,8 +507,16 @@ export async function runOpenCodeOwnerSupervisor(root: string, ref: OpenCodeSupe
 async function startSupervisedEngine(root: string, invocationId: string, directory: string, configDirectory: string,
   binary: { path: string; sha256: string }, env: NodeJS.ProcessEnv, password: string, signal: AbortSignal | undefined,
   options: OpenCodeEngineOptions): Promise<OpenCodeEngine> {
+  const startupAt = performance.now();
+  let lastStartup: OpenCodeStartupObservation = { stage: 'owner-verified', elapsed_ms: 0 };
+  const startup = (stage: OpenCodeStartupObservation['stage']) => {
+    lastStartup = { stage, elapsed_ms: Math.round(performance.now() - startupAt) };
+    try { options.onStartupStage?.({ ...lastStartup }); } catch { /* Diagnostics cannot change launch authority. */ }
+  };
+  const deadlineError = (message: string) => new Error(`${message} (last_stage=${lastStartup.stage}, elapsed_ms=${Math.round(performance.now() - startupAt)}).`);
   const created = ownerBirth(process.pid);
   if (!created) throw new Error('A verified process creation identity is required for this platform before starting an engine.');
+  startup('owner-verified');
   const path = join(directory, 'supervision'); secureHostPrivateDirectory(path);
   if (existsSync(join(path, 'spec.json'))) throw new Error('This invocation already owns engine supervision history; reconcile it before creating a new invocation.');
   const instance = randomBytes(32).toString('hex'), key = randomBytes(32);
@@ -512,12 +531,20 @@ async function startSupervisedEngine(root: string, invocationId: string, directo
   const child = spawn(adapterNodeCommand(root), ['--input-type=module', '-e', script, root, JSON.stringify(ref)], {
     cwd: directory, detached: true, windowsHide: true, shell: false, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
     env: commandEnvironment({ TEMP: join(directory, 'tmp'), TMP: join(directory, 'tmp'), TMPDIR: join(directory, 'tmp') }) });
+  startup('watchdog-spawned');
+  const observeStartup = (message: unknown) => {
+    const value = message as { type?: string; instance?: string; stage?: unknown };
+    if (value?.type === 'startup-stage' && value.instance === instance &&
+        engineStartupStages.includes(value.stage as OpenCodeStartupObservation['stage'])) startup(value.stage as OpenCodeStartupObservation['stage']);
+  };
+  child.on('message', observeStartup);
   let exited = false, finishExit!: () => void;
   const exit = new Promise<void>(done => { finishExit = done; });
   child.once('error', () => { exited = true; finishExit(); }); child.once('exit', () => { exited = true; finishExit(); });
   let closing: Promise<void> | undefined, failure: OpenCodeEngine['failure'], logOffset = 0;
   const close = () => closing ??= (async () => {
     clearInterval(monitor); signal?.removeEventListener('abort', abort);
+    child.off('message', observeStartup);
     if (!exited && child.connected) child.send({ type: 'stop', instance }, () => {});
     let timer: NodeJS.Timeout | undefined;
     await Promise.race([exit, new Promise<void>(done => { timer = setTimeout(done, 10000); })]); clearTimeout(timer);
@@ -547,18 +574,19 @@ async function startSupervisedEngine(root: string, invocationId: string, directo
     // Only the waiting watchdog exists here. It cannot start a guardian/engine
     // until the controller has durably stored the prepared supervision ref.
     await new Promise<void>((fulfill, reject) => {
-      const timer = setTimeout(() => { done(); reject(new Error('Engine supervision admission deadline exceeded.')); }, 15000);
+      const timer = setTimeout(() => { done(); reject(deadlineError('Engine supervision admission deadline exceeded')); }, 15000);
       const done = () => { clearTimeout(timer); child.off('message', waiting); child.off('error', failed); child.off('exit', failed); };
       const failed = () => { done(); reject(new Error('Private waiting engine supervisor did not start.')); };
       const waiting = (value: unknown) => { const input = value as { type?: string; instance?: string };
         if (input?.type === 'waiting' && input.instance === instance) { done(); fulfill(); } };
       child.on('message', waiting); child.once('error', failed); child.once('exit', failed); if (exited) failed();
     });
+    startup('watchdog-waiting');
     await options.onPrepared?.({ ...ref, owner: { ...ref.owner } }); signal?.throwIfAborted();
     if (!child.connected || exited) throw new Error('Private engine supervisor ended before admission.');
-    child.send({ type: 'admit', instance }, () => {});
+    startup('admitted'); child.send({ type: 'admit', instance }, () => {});
     const ready = await new Promise<{ url: string; engine: OpenCodeProcessIdentity }>((fulfill, reject) => {
-      const timer = setTimeout(() => { done(); reject(new Error('OpenCode startup deadline exceeded.')); }, 30000);
+      const timer = setTimeout(() => { done(); reject(deadlineError('OpenCode startup deadline exceeded')); }, 30000);
       const done = () => { clearTimeout(timer); child.off('message', message); child.off('exit', failed); child.off('error', failed); };
       const failed = () => { done(); reject(new Error('Pinned OpenCode engine exited before authenticated readiness.')); };
       const message = (value: unknown) => {
@@ -568,6 +596,7 @@ async function startSupervisedEngine(root: string, invocationId: string, directo
           const payload = authenticatedEnginePayload(path, key, ref, 'ready');
           if (!payload || payload.root !== spec.root || !/^http:\/\/127\.0\.0\.1:\d+$/.test(payload.url) ||
               payload.engine?.executable_sha256 !== binary.sha256 || processBirth(payload.engine.pid, binary.path) !== payload.engine.created_at) throw new Error();
+          startup('authenticated-ready');
           done(); fulfill({ url: payload.url, engine: payload.engine });
         } catch { done(); reject(new Error('Engine readiness identity could not be authenticated.')); }
       };

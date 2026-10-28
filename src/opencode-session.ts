@@ -4,7 +4,8 @@ import { ownedContext } from './controlled-context.js';
 import { canonicalJson, invocationConfigurationHashes, readInvocation, type NativeReceipt } from './routing.js';
 import { hash } from './storage.js';
 import { closeWorkForceCapabilities } from './workforce-plugin-gateway.js';
-import { OpenCodeToolFailureGuard } from './opencode-tool-observation.js';
+import { OpenCodeToolFailureGuard, type OpenCodeToolObservation } from './opencode-tool-observation.js';
+import { OpenCodeTurnObserver, OpenCodeTurnError, safeOpenCodeTransportError, type OpenCodeTurnIdentity, type OpenCodeTurnOptions } from './opencode-turn.js';
 import { createOpenCodeGateway, openCodeConfiguration, openCodeEndpoint, openCodeError, openCodeBinary, opencodeProtocol,
   opencodeProviderId, opencodeRuntimeVersion, opencodeRuntimeIntegrity, openCodeStorageFailure, startOpenCodeEngine, type OpenCodeEngine, type OpenCodeGateway } from './opencode-engine.js';
 
@@ -26,6 +27,9 @@ export class OpenCodeSession {
   private stopped = false;
   private running?: Promise<void>;
   private closing?: Promise<void>;
+  private turn?: OpenCodeTurnObserver;
+  private failures?: OpenCodeToolFailureGuard;
+  private resultSaved = false;
   constructor(readonly root: string, readonly receipt: NativeReceipt,
     readonly update: (patch: Partial<NativeReceipt>) => void,
     readonly complete: (state: 'completed' | 'blocked' | 'interrupted', error: string | null) => Promise<void>) {}
@@ -39,7 +43,20 @@ export class OpenCodeSession {
     this.tools = controlledToolNames(binding);
     this.instructions = controlledInstructions(binding);
     const endpoint = openCodeEndpoint(this.root, this.receipt);
-    this.gateway = await createOpenCodeGateway(() => createControlledMcpServer(this.root, binding, context.callbacks),
+    const callbacks = { ...context.callbacks,
+      saveReport: async (...args: Parameters<typeof context.callbacks.saveReport>) => {
+        const result = await context.callbacks.saveReport(...args); this.resultSaved = true; return result;
+      },
+      ...(context.callbacks.submitPlan ? { submitPlan: async (...args: Parameters<NonNullable<typeof context.callbacks.submitPlan>>) => {
+        const result = await context.callbacks.submitPlan!(...args);
+        if (binding.planning_result === 'backend') this.resultSaved = true;
+        return result;
+      } } : {}),
+      ...(context.callbacks.requestInput ? { requestInput: async (...args: Parameters<NonNullable<typeof context.callbacks.requestInput>>) => {
+        const result = await context.callbacks.requestInput!(...args); this.resultSaved = true; return result;
+      } } : {}),
+    };
+    this.gateway = await createOpenCodeGateway(() => createControlledMcpServer(this.root, binding, callbacks),
       () => this.assertCurrent());
     try {
       this.engine = await startOpenCodeEngine(this.root, this.receipt.id,
@@ -76,6 +93,10 @@ export class OpenCodeSession {
     // NativeSession waits on completion; it does not hold the submitting MCP request open.
     void this.running.catch(() => {});
   }
+  /** Narrow owner-policy seam for deterministic transport fault fixtures. */
+  protected createTurnObserver(client: OpenCodeEngine['client'], identity: OpenCodeTurnIdentity, options: OpenCodeTurnOptions): OpenCodeTurnObserver {
+    return new OpenCodeTurnObserver(client, identity, options);
+  }
 
   private async perform(): Promise<void> {
     const engine = this.engine!, sessionID = this.sessionId!;
@@ -86,12 +107,31 @@ export class OpenCodeSession {
       const toolMask = Object.fromEntries((listed.data ?? []).map(name => [name, allowed.has(name)]));
       for (const name of allowed) toolMask[name] = true;
       this.assertCurrent();
+      this.failures = new OpenCodeToolFailureGuard(sessionID, this.tools);
+      this.turn = this.createTurnObserver(engine.client, { sessionID, messageID: this.messageId!, directory: engine.directory,
+        modelID: endpoint.model, providerID: opencodeProviderId }, {
+        signal: this.controller.signal, assertCurrent: () => this.assertCurrent(),
+        onToolPart: part => this.toolObservation(this.failures!.reconcile(part)),
+        onObservation: event => ownedContext(this.root, this.receipt.request_id)?.callbacks.trace?.(event),
+      });
       const eventStream = await engine.client.event.subscribe({ directory: engine.directory }, { signal: this.controller.signal });
-      void this.observeEvents(eventStream.stream).catch(() => {});
-      const response = await engine.client.session.prompt({ sessionID, messageID: this.messageId, directory: engine.directory,
-        agent: 'workforce', model: { providerID: opencodeProviderId, modelID: endpoint.model }, tools: toolMask,
-        system: openCodeSystemText(this.instructions, this.tools),
-        parts: [{ type: 'text', text: this.receipt.input_text }] }, { signal: this.controller.signal });
+      void this.observeEvents(eventStream.stream).catch(async error => {
+        if (!this.stopped) await ownedContext(this.root, this.receipt.request_id)?.callbacks.trace?.({ event: 'engine-event-delivery-reconciling',
+          engine: 'opencode', owner: 'runtime', ...safeOpenCodeTransportError(error), dispatch_replayed: false });
+      });
+      try {
+        const admission = await engine.client.session.promptAsync({ sessionID, messageID: this.messageId, directory: engine.directory,
+          agent: 'workforce', model: { providerID: opencodeProviderId, modelID: endpoint.model }, tools: toolMask,
+          system: openCodeSystemText(this.instructions, this.tools),
+          parts: [{ type: 'text', text: this.receipt.input_text }] }, { signal: AbortSignal.any([this.controller.signal, AbortSignal.timeout(10000)]) });
+        await ownedContext(this.root, this.receipt.request_id)?.callbacks.trace?.({ event: 'engine-prompt-admission', engine: 'opencode', owner: 'runtime',
+          acknowledged: admission.response.status === 204, status_code: admission.response.status, inference_completed: false });
+      } catch (error) {
+        if (this.stopped) return;
+        await ownedContext(this.root, this.receipt.request_id)?.callbacks.trace?.({ event: 'engine-prompt-admission-unknown', engine: 'opencode', owner: 'runtime',
+          ...safeOpenCodeTransportError(error), dispatch_replayed: false });
+      }
+      const response = { data: await this.turn.wait() };
       if (this.stopped) return;
       this.assertCurrent();
       if (response.data?.info.error) {
@@ -108,49 +148,49 @@ export class OpenCodeSession {
           response.data.info.parentID !== this.messageId)
         throw new Error('OpenCode response identity or inference result did not validate.');
       if (!this.gateway!.calls.size) throw new Error('OpenCode did not demonstrate invocation-bound tool execution.');
+      if (!this.resultSaved) throw new OpenCodeTurnError('MCP_DELIVERY_PROTOCOL', 'The completed model turn did not persist its required bound professional result.');
       const text = response.data.parts.filter(part => part.type === 'text').map(part => part.text).join('\n');
-      this.update({ output: text.slice(0, 64000) });
+      this.update({ output: text.slice(0, 64000), opencode: { ...this.receipt.opencode!, response_message_id: response.data.info.id } });
       await this.complete('completed', null);
     } catch (error) {
       try { await ownedContext(this.root, this.receipt.request_id)?.callbacks.trace?.({ event: 'engine-failure', engine: 'opencode',
-        owner: 'runtime', error_name: error instanceof Error ? error.name : 'Error',
+        owner: 'runtime', error_name: error instanceof Error ? error.name : 'Error', ...safeOpenCodeTransportError(error),
         message_sha256: hash(error instanceof Error ? error.message : 'Unknown engine failure') }); } catch { /* No diagnostic is an authorization or retry. */ }
-      if (!this.stopped) await this.complete('blocked', this.engine?.failure?.message ?? openCodeError(error));
+      if (!this.stopped) await this.complete('blocked', this.engine?.failure?.message ?? (error instanceof OpenCodeTurnError ? `${error.code}: ${error.message}` : openCodeError(error)));
     }
   }
 
   private async observeEvents(stream: AsyncIterable<unknown>): Promise<void> {
     const observed = new Set<string>();
-    const failures = new OpenCodeToolFailureGuard(this.sessionId!, this.tools);
     for await (const item of stream) {
       if (this.stopped || !item || typeof item !== 'object') return;
       const event = item as { id?: string; type?: string; properties?: Record<string, any> };
       const properties = event.properties;
       if (!properties || properties.sessionID !== this.sessionId || !event.id || observed.has(event.id)) continue;
       observed.add(event.id); if (observed.size > 4096) observed.delete(observed.values().next().value!);
+      this.turn?.note(event);
       const context = ownedContext(this.root, this.receipt.request_id);
-      const observation = failures.observe(event);
-      if (observation) {
-        await context?.callbacks.trace?.({ event: 'engine-tool', engine: 'opencode', ...observation });
-        if (observation.halt && !this.stopped) {
-          await this.complete('blocked', 'MCP_DELIVERY_PROTOCOL: the same bound tool input and error recurred twice without distinct committed work. WorkForce stopped this session to reconcile the payload; current artifacts remain.');
-          return;
-        }
-      }
+      await this.toolObservation(this.failures?.observe(event));
       if (event.type === 'session.status' || event.type === 'session.error') {
         await context?.callbacks.trace?.({ event: 'engine-session', engine: 'opencode', event_id: event.id,
           engine_event: event.type, ...(event.type === 'session.status' ? { status: properties.status?.type }
             : { error_name: properties.error?.name ?? 'UnknownError' }) });
         if (event.type === 'session.error' && !this.stopped) {
           const storage = openCodeStorageFailure(JSON.stringify(properties.error ?? {}));
-          const provider = /APIError|Authentication|ModelNotFound|ProviderAuth/.test(properties.error?.name ?? '');
-          await this.complete('blocked', storage?.message ?? (provider
-            ? 'OPENCODE_PROVIDER_UNAVAILABLE: the private engine reported a provider failure. Current artifacts and operation evidence are retained.'
-            : 'OPENCODE_SESSION_ERROR: the private engine reported an execution failure. Current artifacts and operation evidence are retained.'));
-          return;
+          if (storage) { await this.complete('blocked', storage.message); return; }
+          // Canonical messages/idle reconcile other engine errors. A lost
+          // delivery or an owner-issued abort is not a provider verdict.
         }
       }
     }
+  }
+  private async toolObservation(observation?: OpenCodeToolObservation): Promise<void> {
+    if (!observation || this.stopped) return;
+    await ownedContext(this.root, this.receipt.request_id)?.callbacks.trace?.({ event: 'engine-tool', engine: 'opencode', ...observation });
+    if (observation.halt && !this.stopped)
+      await this.complete('blocked', observation.halt_reason === 'repeated-observation'
+        ? 'CONTROLLED_OBSERVATION_LOOP: the same successful read-only input and content recurred three times without distinct committed work. WorkForce retained the established facts and stopped redundant observation.'
+        : 'MCP_DELIVERY_PROTOCOL: the same bound tool input and error recurred twice in this owned session. WorkForce stopped redundant retries to reconcile the payload; current artifacts remain.');
   }
 
   private assertCurrent(): void {

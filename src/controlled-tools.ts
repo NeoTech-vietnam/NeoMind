@@ -457,8 +457,8 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       const normalized = content.replace(/\r\n/g, '\n'), start = args.start_line ?? 1;
       const lineExcerpt = normalized.split('\n').slice(start - 1).join('\n'), offset = args.start_char ?? normalized.length - lineExcerpt.length;
       const excerpt = normalized.slice(offset), maximum = args.max_chars ?? 64000;
+      const digest = hash(bytes);
       locked(state => {
-        const digest = hash(bytes);
         state.reads[key(args.path)] = digest;
         const coverage = state.read_coverage ??= {}, prior = coverage[key(args.path)];
         const ranges = [...(prior?.sha256 === digest ? prior.ranges : []), [offset, offset + Math.min(excerpt.length, maximum)] as [number, number]].sort((a, b) => a[0] - b[0]);
@@ -466,7 +466,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         for (const range of ranges) { const last = merged.at(-1); if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]); else merged.push([...range]); }
         coverage[key(args.path)] = { sha256: digest, total: normalized.length, ranges: merged }; saveState(state);
       });
-      return { path: args.path, exists: true, size_bytes: bytes.length, start_line: start,
+      return { path: args.path, exists: true, ...(binding.process_contract === 'workforce/v1' ? { sha256: digest } : {}), size_bytes: bytes.length, start_line: start,
         text: excerpt.slice(0, maximum), truncated: excerpt.length > maximum,
         ...(excerpt.length > maximum ? { next_start_char: offset + maximum } : {}) };
     });
@@ -541,7 +541,8 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
           const priorWrite = state.writes.findLast(item => item.path === args.path && item.sha256 === nextHash);
           if (priorWrite && currentHash === nextHash) {
             completeWrite(priorWrite); state.reads[key(args.path)] = nextHash; saveState(state);
-            return { path: args.path, saved: true, replayed: true };
+            return { path: args.path, saved: true, replayed: true,
+              ...(binding.process_contract === 'workforce/v1' ? { sha256: nextHash, previous_sha256: priorWrite.previous_hash } : {}) };
           }
           const observed = state.reads[key(args.path)];
           if (observed === undefined && current !== null)
@@ -570,7 +571,8 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
             throw new ControlledToolError('INPUT_CHANGED', 'File replacement could not complete safely. Current edits and the operation history were preserved; read the file again.');
           }
           completeWrite(entry); state.reads[key(args.path)] = nextHash; saveState(state);
-          return { path: args.path, saved: true, replayed: false };
+          return { path: args.path, saved: true, replayed: false,
+            ...(binding.process_contract === 'workforce/v1' ? { sha256: nextHash, previous_sha256: currentHash } : {}) };
         }));
       });
   if (binding.stage === 'planning') {

@@ -49,6 +49,7 @@ import { createRuntimeInfo } from './runtime-info.js';
 import { workForceConnectionProof, workForceConnectionProofSatisfies, probeWorkForceConnection } from './workforce-connection.js';
 import { runDurableCommand, readDurableCommandResult, type DurableCommandRef } from './durable-command.js';
 import { workforceTraceability } from './workforce-traceability.js';
+import { workforceProviderStallDecision, type ProviderStallHistory } from './workforce-stalls.js';
 import { assertControlledPayloadCurrent, ControlledPayloadError, type ControlledPayloadSource } from './controlled-payload.js';
 import { persistControlledCornellNote, ControlledCornellWriteError } from './controlled-cornell-write.js';
 import { CornellFormatProfileError, resolveControlledCornellFormatProfile } from './cornell-format-profile.js';
@@ -113,6 +114,8 @@ export interface ControlledSnapshot {
   context?: { path: string; kind: 'file' | 'directory' }[];
   pending_question?: WorkForceQuestion & { id: string; attempt_id: string };
   dependency_wait?: { code: 'storage' | 'provider' | 'prerequisite'; attempts: number; next_condition_check_at: string; last_check_at?: string };
+  provider_stalls?: ProviderStallHistory[];
+  provider_stall_diagnosis?: { checkpoint: string; phase: Stage };
   answers?: { question_id: string; question: string; answer: string; at: string }[];
   answer_receipt?: { question_id: string; accepted: true; replayed: boolean };
   workforce_recovery?: { strategies: { checkpoint: string; strategy: string; kind: FailureKind; at: string; source_attempt_id?: string }[];
@@ -881,11 +884,36 @@ class Controller {
     await reconcileWorkForceInvocations(this.root, run.workflow_id);
     run = readState(this.root, run.workflow_id);
     const last = run.attempts.at(-1);
-    if (!last || !['starting', 'running'].includes(last.state) || !last.invocation_id) return run;
+    if (!last || !['starting', 'running', 'completed'].includes(last.state) || !last.invocation_id) return run;
     const native = readInvocation(this.root, last.invocation_id);
-    if (native.workflow_id !== run.workflow_id || native.request_id !== last.request_id || native.role !== last.role ||
+    if (!isControlledExecutionReceipt(native) || native.workflow_id !== run.workflow_id || native.request_id !== last.request_id || native.role !== last.role ||
         native.controlled_execution?.epoch_id !== run.epoch_id || native.controlled_execution.stage !== last.stage)
       throw new ControlledToolError('STATE_UNCERTAIN', 'The preserved owned session does not match its backend dispatch.');
+    if (last.state === 'completed') {
+      if (native.state === 'completed' && native.inference_completed) return run;
+      // Older controller builds marked any terminal response completed. A
+      // saved professional report is durable work, not successful inference.
+      // Correct only an intact result with authenticated process-tree exit.
+      if (native.state !== 'interrupted' || native.inference_completed || !native.opencode?.interruption_proof_sha256)
+        throw new ControlledToolError('STATE_UNCERTAIN', 'The saved stage lacks a successful native result or authenticated ended-process proof. Preserve its report and effects before another dispatch.');
+      const contract = run.contract_hash ? readContract(this.root, run) : undefined;
+      if (native.task_id !== (last.stage === 'planning' ? null : contract?.task_id ?? null) ||
+          canonicalJson(invocationConfigurationHashes(this.root, native)) !== canonicalJson(native.configuration_hashes))
+        throw new ControlledToolError('STATE_UNCERTAIN', 'The failed saved stage no longer matches its frozen task or execution configuration.');
+      if (last.report || last.report_id) {
+        const report = last.report_id ? getRecord(this.root, last.report_id) : undefined;
+        if (!report || !last.report || report.meta.data.kind !== 'controlled-work-record' || report.meta.owner !== last.role ||
+            report.meta.data.workflow_id !== run.workflow_id || report.meta.data.epoch_id !== run.epoch_id ||
+            report.meta.data.attempt_id !== last.id || report.meta.data.invocation_id !== native.id || report.meta.data.stage !== last.stage ||
+            report.meta.data.report_payload_hash !== hash(canonicalJson(last.report)) ||
+            last.report_fingerprint !== evidenceRecordFingerprint(report) || !same(report.meta.data.artifact_hashes, last.bound_hashes) ||
+            !same(last.bound_hashes, fingerprints(this.root, Object.keys(last.bound_hashes ?? {}))))
+          throw new ControlledToolError('STATE_UNCERTAIN', 'The retained report or its artifacts changed after the unsuccessful native turn. Current bytes remain preserved.');
+      }
+      last.state = 'interrupted'; run.active_invocations = [];
+      save(this.root, run, 'incomplete-result-reconciled', 'The signed native turn did not finish. Its immutable report and current artifacts remain unsubmitted; a fresh bounded role can continue after the actual dependency is restored.');
+      return run;
+    }
     if (native.state === 'interrupted' && native.opencode?.interruption_proof_sha256) {
       last.state = 'interrupted'; run.active_invocations = [];
       save(this.root, run, 'owner-reconciled', 'The signed native supervisor confirmed process-tree exit. Partial artifacts and reports remain; a new bounded attempt may continue.');
@@ -1521,6 +1549,7 @@ class Controller {
                 ...(source ? { payload_source: source } : {}) }];
             save(this.root, current, 'cornell-compiled', 'Research note, exercises and separate answers compiled by the existing Cornell formatter.');
             return { saved: true, note_id: note.meta.id, revision: note.meta.revision,
+              ...(workforce ? { artifact_hashes: note.meta.data.artifact_hashes } : {}),
               ...(proof ? { canonical_validation: proof } : {}),
               observation_policy: stage === 'implementation' ? 'Expected-only primary deliverable; the independent Verifier supplies execution evidence next.' : 'Actual current independent evidence bound by the backend.',
               artifacts: [`${directory}/note.md`, `${directory}/exercises.md`, `${directory}/answers.md`, ...(solutionCreated ? [solutionPath!] : [])],
@@ -1569,12 +1598,22 @@ class Controller {
         if (signal.aborted) { await interruptNative(this.root, receipt.id); return; }
         run = readState(this.root, id);
         const active = run.attempts.at(-1)!;
-        active.invocation_id = receipt.id; active.state = 'completed'; run.active_invocations = [];
+        active.invocation_id = receipt.id;
+        active.state = !workforce || receipt.state === 'completed' && receipt.inference_completed ? 'completed' : 'interrupted';
+        run.active_invocations = [];
         save(this.root, run, 'returned', `${role} session returned ${receipt.state}.`);
         if (run.status === 'uncertain') { active.state = receipt.state === 'completed' ? 'completed' : 'interrupted'; save(this.root, run); return; }
-        if (workforce && run.pending_question?.attempt_id === active.id && receipt.state === 'completed') {
+        if (workforce && run.pending_question?.attempt_id === active.id && ['completed', 'blocked', 'interrupted'].includes(receipt.state)) {
+          // request_input already committed a backend-validated business
+          // question. A provider failure while generating its final prose must
+          // not hide that question or require a technical resume to answer it.
           run.status = 'needs_input'; delete run.blocker;
           save(this.root, run, 'needs-input', run.pending_question.question); return;
+        }
+        if (workforce && receipt.error?.startsWith('OPENCODE_DELIVERY_UNKNOWN:')) {
+          run.status = 'uncertain'; run.blocker = { kind: 'protocol', code: 'STATE_UNCERTAIN', owner: 'runtime',
+            message: 'The engine delivery could not be reconciled with its saved user/assistant and operation ledger. Actual artifacts remain; no model prompt or side effect was replayed.' };
+          save(this.root, run, 'uncertain', run.blocker.message); return;
         }
         const compilerFailure = workforce ? currentWorkForceCompilerFailure(run, active.id, noteId => {
           try { return evidenceRecordFingerprint(getRecord(this.root, noteId)); } catch { return undefined; }
@@ -2227,9 +2266,12 @@ class Controller {
     const independentAfterProducer = run.attempts.findLastIndex(attempt => attempt.stage === 'verification') > run.attempts.findLastIndex(attempt => attempt.stage === 'implementation');
     const progress = contract && independentAfterProducer ? this.currentChecks(run, contract).filter(check => check.passed && !check.negative && check.checker_scope_current &&
       same(check.baseline, fingerprints(this.root, Object.keys(check.baseline)))).map(check => check.title) : [];
-    // Only actual check dispositions change this checkpoint, never bytes, wording, IDs or model choice.
+    // A provider nonce/session timestamp is transport evidence, not a newly
+    // resolved engineering check or restored local prerequisite.
+    const condition = [...(run.runtime_observations ?? [])].reverse().find(observation =>
+      ['storage-sqlite-write-restored', 'known-prerequisite-restored', 'trusted-runtime-or-configuration-changed'].includes(observation.kind));
     const checkpoint = hash(canonicalJson({ contract: run.contract_hash ?? run.request_id,
-      condition: run.runtime_observations?.at(-1)?.evidence_sha256 ?? null,
+      condition: condition?.evidence_sha256 ?? null,
       resolved: [...new Set([...state.resolved_checks, ...progress])].sort() }));
     const sourceWorker = !!producer && producer.model_tier !== 'strong';
     const decision = workforceRecoveryDecision(run, kind, checkpoint, progress, sourceWorker);
@@ -2353,9 +2395,63 @@ class Controller {
   }
   private captureIncidentCondition(run: ControlledSnapshot, message: string): void {
     const storage = openCodeStorage(this.root);
-    const providerFailure = run.blocker?.kind === 'environment' && /OPENCODE_PROVIDER_UNAVAILABLE|OpenCodeProviderError|MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED/.test(message);
+    const attempt = run.attempts.at(-1), receipt = attempt?.invocation_id ? readInvocation(this.root, attempt.invocation_id) : undefined;
+    const nativeFailure = !!attempt && !!receipt && receipt.issuer === 'workforce-opencode' &&
+      ['blocked', 'interrupted'].includes(receipt.state) && receipt.inference_completed === false &&
+      receipt.workflow_id === run.workflow_id && receipt.request_id === attempt.request_id && receipt.role === attempt.role;
+    const actualStall = nativeFailure && receipt?.error?.startsWith('OPENCODE_PROVIDER_STALLED:') === true;
+    const providerFailure = nativeFailure && run.blocker?.kind === 'environment' &&
+      /^(?:OPENCODE_PROVIDER_STALLED:|OPENCODE_PROVIDER_UNAVAILABLE:|OpenCodeProviderError|MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED)/.test(receipt?.error ?? '');
+    if (providerFailure && actualStall && attempt && receipt) {
+      const phase = attempt.stage === 'diagnosis' ? run.provider_stall_diagnosis?.phase ?? attempt.stage : attempt.stage;
+      const contract = run.contract_hash ? readContract(this.root, run) : undefined;
+      const products = contract ? fingerprints(this.root, contract.plan.outputs) : {};
+      const checks = run.checks.filter(check => check.passed && !check.negative &&
+        same(check.baseline, fingerprints(this.root, Object.keys(check.baseline))))
+        .map(check => ({ title: check.title, command: check.command, baseline: check.baseline }));
+      const dispositions = [...new Map(checks.map(check => [canonicalJson(check), check])).entries()]
+        .sort(([a], [b]) => a.localeCompare(b)).map(([, check]) => check);
+      const checkpoint = hash(canonicalJson({ contract: run.contract_hash ?? hash(run.requirement), phase, products, checks: dispositions,
+        build: createRuntimeInfo(this.root).build_fingerprint, configuration: hash(canonicalJson(routingConfigurationHashes(this.root))) }));
+      const strong = requireRoutingPolicy(this.root).strong_model;
+      const decision = workforceProviderStallDecision(run.provider_stalls ?? [], { checkpoint, invocation_id: receipt.id,
+        model: receipt.requested_model, can_escalate: phase === 'implementation' && receipt.role === 'developer' && receipt.requested_model !== strong,
+        at: now() });
+      run.provider_stalls = decision.history;
+      if (decision.action !== 'retry-provider') {
+        delete run.dependency_wait; this.conditionRequests.delete(run.workflow_id);
+        if (decision.action === 'escalate') {
+          (run.workforce_recovery ??= { strategies: [], strong_implementation: false, no_progress: 0, resolved_checks: [] }).strong_implementation = true;
+          if (!decision.replayed) run.model_escalations = [...(run.model_escalations ?? []), { source_attempt_id: attempt.id,
+            from_alias: receipt.requested_model, to_alias: strong, checkpoint,
+            rationale: 'The worker stream stopped making meaningful progress. Continue the same product checkpoint through the configured strong route.', at: now() }];
+          run.phase = 'implementation'; run.status = 'queued';
+          run.blocker = { kind: 'environment', owner: 'runtime', code: 'WORKFORCE_STRONG_ROUTE_PENDING',
+            message: 'The runtime selected the configured strong route for this retained task; no completed work or provider restoration is inferred.' };
+        } else if (decision.action === 'diagnose' && attempt.stage !== 'diagnosis') {
+          run.provider_stall_diagnosis = { checkpoint, phase }; run.phase = 'diagnosis'; run.status = 'queued';
+          run.blocker = { kind: 'unknown', owner: 'runtime', code: 'WORKFORCE_DIAGNOSIS_PENDING',
+            message: `The same frozen task stalled again despite a fresh actual provider capability result. A strong diagnosis must examine its retained context and effects. ${message}`.slice(0, 4000) };
+        } else {
+          run.status = 'blocked'; run.blocker = { kind: 'unknown', owner: 'runtime', code: 'WORKFORCE_OPERATIONAL_INCIDENT',
+            message: 'The unchanged task still cannot complete after provider recovery and strong diagnosis. Existing products and all failure evidence are retained; repeating health nonces is not task progress.',
+            next_action: 'WorkForce maintenance must resolve this task-specific incident; no missing user input or completion is claimed.' };
+        }
+        if (run.status === 'queued') {
+          const epoch = run.epoch_id;
+          setImmediate(() => {
+            if (this.closed) return;
+            try { const current = readState(this.root, run.workflow_id);
+              if (current.epoch_id === epoch && current.status === 'queued') this.schedule(run.workflow_id);
+            } catch { /* A replaced checkpoint cannot authorize dispatch. */ }
+          }).unref();
+        }
+        return;
+      }
+    }
     const prerequisite = this.knownPrerequisite(run);
-    run.incident_condition = { code: prerequisite ? 'prerequisite' : /OPENCODE_STORAGE_UNAVAILABLE/.test(message) ? 'storage' : providerFailure ? 'provider' : 'runtime',
+    const storageFailure = storage.free_bytes < storage.required_bytes || nativeFailure && receipt?.error?.startsWith('OPENCODE_STORAGE_UNAVAILABLE:') === true;
+    run.incident_condition = { code: prerequisite ? 'prerequisite' : storageFailure ? 'storage' : providerFailure ? 'provider' : 'runtime',
       build: createRuntimeInfo(this.root).build_fingerprint, configuration: hash(canonicalJson(routingConfigurationHashes(this.root))),
       free_bytes: storage.free_bytes, required_bytes: storage.required_bytes, at: now(), ...(prerequisite ? { prerequisite } : {}) };
     const negative = hash(canonicalJson({ code: run.incident_condition.code, available: false,
@@ -2398,7 +2494,10 @@ class Controller {
     }
     if (!observation || run.runtime_observations?.at(-1)?.evidence_sha256 === observation.evidence_sha256) return false;
     run.runtime_observations = [...(run.runtime_observations ?? []), { ...observation, at: now() }];
-    if (run.workforce_recovery) { run.workforce_recovery.no_progress = 0; delete run.workforce_recovery.incident; }
+    if (run.workforce_recovery) {
+      if (observation.kind !== 'provider-capability-restored') run.workforce_recovery.no_progress = 0;
+      delete run.workforce_recovery.incident;
+    }
     save(this.root, run, 'condition-restored', 'A validated runtime condition changed; historical attempts and strategy ledger remain unchanged.');
     return true;
   }

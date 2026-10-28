@@ -17,7 +17,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { parse } from 'jsonc-parser';
 import { installProject, updateProject, doctor, configureCodeGraph } from '../dist/installer.js';
 import { adapterOutputs, codeGraphConformanceChecks } from '../dist/adapters.js';
-import { createRecord, getRecord, updateRecord, saveWorkflowClosure } from '../dist/storage.js';
+import { createRecord, getRecord, updateRecord, saveWorkflowClosure, safePath } from '../dist/storage.js';
 import { resumeTask } from '../dist/engineering.js';
 import { createHash } from 'node:crypto';
 
@@ -919,7 +919,7 @@ test(
     assert.equal(config.status, 'supported-for-fixture');
     assert.equal(config.report_hash.length, 64);
     assert.deepEqual(config.args, args);
-    assert.equal(read(root, config.report_path), readFileSync(report, 'utf8'));
+    assert.equal(readFileSync(safePath(root, config.report_path), 'utf8'), readFileSync(report, 'utf8'));
     assert.deepEqual(updateProject(root).conflicts, []);
     const mcp = parse(read(root, '.mcp.json'));
     assert.equal(mcp.extra, true);
@@ -934,7 +934,7 @@ test(
       'unverified',
     );
     assert.deepEqual(updateProject(root).conflicts, []);
-    write(root, config.report_path, read(root, config.report_path) + '\n');
+    writeFileSync(safePath(root, config.report_path), readFileSync(safePath(root, config.report_path), 'utf8') + '\n');
     const changed = doctor(root);
     assert.equal(changed.codegraph.enabled, false);
     assert.match(changed.warnings.join(' '), /changed since approval/);

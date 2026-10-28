@@ -29,14 +29,43 @@ test('pinned next tool events retain actual input and deduplicate their legacy t
   assert.equal(guard.observe(next('call2', 'failed', { error: { name: 'UnknownError', data: { message: 'bad range' } } })).halt, true);
 });
 
-test('successful reads and timestamps cannot reset a repeated failure but distinct committed writes can', () => {
+test('successful reads, timestamps and committed writes cannot erase the same protocol error within its owned session', () => {
   const guard = new OpenCodeToolFailureGuard(sid, ['project_read', 'task_file_write']);
   assert.equal(guard.observe(part('call1', 'error')).repeated_failures, 1);
   guard.observe(part('read2', 'completed', { path: 'other.txt' }));
-  guard.observe(part('write1', 'completed', { path: 'result.txt', content: 'updated' }, 'wf_task_file_write'));
-  assert.equal(guard.observe(part('call2', 'error')).repeated_failures, 1);
-  guard.observe(part('write2', 'completed', { path: 'result.txt', content: 'updated' }, 'wf_task_file_write'));
-  assert.equal(guard.observe(part('call3', 'error')).halt, true, 'identical successful payload/output is not new engineering progress');
+  const write = part('write1', 'completed', { path: 'result.txt', content: 'updated' }, 'wf_task_file_write');
+  write.properties.part.state.output = JSON.stringify({ path: 'result.txt', saved: true, replayed: false, sha256: 'a'.repeat(64), previous_sha256: 'b'.repeat(64) });
+  guard.observe(write);
+  assert.equal(guard.observe(part('call2', 'error')).halt, true);
+});
+
+test('three identical successful read responses ignore metadata and duplicate events, but a real new artifact resets only the read counter', () => {
+  const guard = new OpenCodeToolFailureGuard(sid, ['project_read', 'task_file_write']);
+  const read = (id, time, content = 'unchanged') => {
+    const event = part(id, 'completed', { path: 'result.txt' });
+    event.properties.part.state.output = JSON.stringify({ path: 'result.txt', text: content, observed_at: time }); return event;
+  };
+  assert.equal(guard.observe(read('read1', 'one')).repeated_observations, 1);
+  assert.equal(guard.observe(read('read1', 'two')), undefined);
+  assert.equal(guard.observe(read('read2', 'two')).repeated_observations, 2);
+  const write = part('write1', 'completed', { path: 'result.txt', content: 'actual new product' }, 'wf_task_file_write');
+  write.properties.part.state.output = JSON.stringify({ path: 'result.txt', saved: true, replayed: false, sha256: 'a'.repeat(64), previous_sha256: 'b'.repeat(64) });
+  guard.observe(write);
+  assert.equal(guard.observe(read('read3', 'three')).repeated_observations, 1);
+  const replay = structuredClone(write); replay.id = 'new-event'; replay.properties.part.callID = 'write-replay';
+  replay.properties.part.state.output = JSON.stringify({ path: 'result.txt', saved: true, replayed: true, sha256: 'a'.repeat(64), previous_sha256: 'b'.repeat(64) });
+  guard.observe(replay);
+  assert.equal(guard.observe(read('read4', 'four')).repeated_observations, 2);
+  const stopped = guard.observe(read('read5', 'five')); assert.equal(stopped.halt, true); assert.equal(stopped.halt_reason, 'repeated-observation');
+});
+
+test('fresh check locators and nonce fields cannot refund identical protocol failures', () => {
+  const guard = new OpenCodeToolFailureGuard(sid, ['project_read', 'check_run']);
+  assert.equal(guard.observe(part('error1', 'error')).repeated_failures, 1);
+  const check = part('check1', 'completed', { title: 'Check' }, 'wf_check_run');
+  check.properties.part.state.output = JSON.stringify({ checks: [{ passed: false, evidence: 'new-locator', nonce: 'changed' }] });
+  guard.observe(check);
+  assert.equal(guard.observe(part('error2', 'error')).halt, true);
 });
 
 test('invalid pseudo-tool schema errors before MCP dispatch are bounded and foreign sessions cannot trip the guard', () => {

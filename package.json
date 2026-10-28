@@ -31,9 +31,9 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test test/*.test.mjs",
+    "test": "npm run build && node --test --test-concurrency=2 test/*.test.mjs",
     "check": "npm test",
-    "prepack": "npm run build && npm run engine:bootstrap",
+    "prepack": "node scripts/prepack.mjs",
     "evaluate": "node scripts/evaluate.mjs",
     "package:smoke": "node scripts/package-smoke.mjs",
     "extension:package": "node scripts/package-extension.mjs",

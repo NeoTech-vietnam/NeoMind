@@ -1,5 +1,5 @@
-import { readFileSync, existsSync, lstatSync, realpathSync } from 'node:fs';
-import { isAbsolute, relative, resolve, dirname } from 'node:path';
+import { readFileSync, existsSync, lstatSync, realpathSync, type Stats } from 'node:fs';
+import { isAbsolute, relative, resolve, dirname, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -137,25 +137,28 @@ type WorkForceStartInput = Omit<ControlledStartInput, 'context'> & {
  * their actual type and project relation before creating a durable request. */
 export function workForceIntakeContext(root: string, context: WorkForceStartInput['context']): ControlledStartInput['context'] {
   if (!context) return undefined;
-  root = realpathSync.native(root);
+  const rootAlias = resolve(root), physicalRoot = realpathSync.native(rootAlias);
   return context.map(item => {
     const supplied = item.path.startsWith('file:') ? fileURLToPath(item.path) : item.path;
-    const path = relative(resolve(root), isAbsolute(supplied) ? supplied : resolve(root, supplied));
-    if (!path) return { path: '.', kind: 'directory' as const };
+    // Keep the literal spelling until its ancestors have been checked. Resolving
+    // away "link/.." here would also erase evidence of a linked traversal.
+    const target = isAbsolute(supplied) ? supplied : `${rootAlias}${sep}${supplied}`;
+    let actual: Stats, physicalTarget: string;
+    try { actual = lstatSync(target); physicalTarget = realpathSync.native(target); }
+    catch { throw new Error('The attachment must be an actual file or directory inside this project.'); }
+    const path = relative(physicalRoot, physicalTarget);
     if (path === '..' || path.startsWith('../') || path.startsWith('..\\') || isAbsolute(path))
       throw new Error('The attachment must be an actual file or directory inside this project.');
-    const canonical = path.replaceAll('\\', '/');
-    if (!controlledPublicReferencePath(canonical)) throw new Error('The attachment must be an ordinary public project source, not runtime data or credentials.');
-    const target = safePath(root, canonical), actual = lstatSync(target);
     if (actual.isSymbolicLink() || !actual.isFile() && !actual.isDirectory()) throw new Error('The attachment must be an ordinary local file or directory.');
-    let ancestor = dirname(target);
-    while (ancestor !== resolve(root)) {
+    let ancestor = target;
+    while (true) {
       if (lstatSync(ancestor).isSymbolicLink()) throw new Error('The attachment cannot pass through a linked directory.');
+      if (!['.', '..'].includes(basename(ancestor)) && !relative(physicalRoot, realpathSync.native(ancestor))) break;
       const parent = dirname(ancestor); if (parent === ancestor) throw new Error('The attachment is outside this project.'); ancestor = parent;
     }
-    const actualRelative = relative(realpathSync.native(root), realpathSync.native(target));
-    if (actualRelative === '..' || actualRelative.startsWith('../') || actualRelative.startsWith('..\\') || isAbsolute(actualRelative))
-      throw new Error('The attachment is outside this project.');
+    const canonical = path.replaceAll('\\', '/') || '.';
+    if (canonical !== '.' && !controlledPublicReferencePath(canonical)) throw new Error('The attachment must be an ordinary public project source, not runtime data or credentials.');
+    safePath(physicalRoot, canonical);
     return { path: canonical, kind: actual.isDirectory() ? 'directory' as const : 'file' as const };
   });
 }

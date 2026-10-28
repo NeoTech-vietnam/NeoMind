@@ -28,7 +28,7 @@ function fixture(t) {
 const call = (name, args) => ({ toolCalls: [{ name: `wf_${name}`, arguments: args }] });
 
 test('real OpenCode transports compatible default/null cursor reads and scoped writes while preserving range, required-null and CAS refusals', { timeout: 150000 }, async t => {
-  const { root, cleanup } = fixture(t), traces = [], reports = [], events = [];
+  const { root, cleanup } = fixture(t), traces = [], reports = [], events = [], startup = [];
   let provider, gateway, engine, controller;
   t.after(async () => { controller?.abort(); await engine?.close(); await gateway?.close(); await provider?.close(); cleanup(); });
   const binding = { workflow_id: 'WF-TRANSPORT-REQUEST', invocation_id: randomUUID(), task_id: 'WF-TRANSPORT-TASK', process_contract: 'workforce/v1',
@@ -64,7 +64,8 @@ test('real OpenCode transports compatible default/null cursor reads and scoped w
   }), () => {});
   engine = await startOpenCodeEngine(root, randomUUID(), openCodeConfiguration({ model: 'worker-models', provider: 'local-protocol-fixture',
     baseURL: provider.baseURL, apiKey: 'local-fixture-not-a-provider-key' }, gateway,
-  ['project_read', 'project_list', 'project_search', 'runtime_context', 'task_file_write', 'assignment_report', 'check_evidence']));
+  ['project_read', 'project_list', 'project_search', 'runtime_context', 'task_file_write', 'assignment_report', 'check_evidence']), undefined,
+    { onStartupStage: observation => startup.push(observation) }).finally(() => t.diagnostic(JSON.stringify({ startup_stages: startup })));
   controller = new AbortController();
   const stream = await engine.client.event.subscribe({ directory: engine.directory }, { signal: controller.signal });
   const observation = (async () => { for await (const event of stream.stream) events.push(event); })().catch(() => {});

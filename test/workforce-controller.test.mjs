@@ -19,7 +19,7 @@ import { startControlledHost, startControlledWorkflow, controlledStatus, answerC
   validateControlledPlan, workforceRecoveryDecision, controlControlledWorkflow } from '../dist/controlled-workflow.js';
 import { workforcePrescribedChecksComplete, currentWorkForceCompilerFailure } from '../dist/controlled-workflow.js';
 import { verifyControlledTask } from '../dist/controlled-acceptance.js';
-import { shutdownNative } from '../dist/native.js';
+import { shutdownNative, waitNative } from '../dist/native.js';
 import { openCodeVersion, openCodeIntegrity, openCodeProtocolHash } from '../dist/execution-attestation.js';
 import { requestProjection } from '../dist/workforce-requests.js';
 import { researchFixture } from './cornell-research-fixture.mjs';
@@ -39,6 +39,11 @@ let requestQuestion = false;
 let failFirstProduct = false;
 let failStorageOnce = false;
 let failProviderOnce = false;
+let failDesignStalls = false;
+let forgeDependencyProse = false;
+let qualityBeforeStall = false;
+let failAfterSavedStage;
+const fixtureProductWrites = new Map();
 let mutateScopeAfterRead = false;
 const counts = new Map();
 function plan(name) {
@@ -54,9 +59,16 @@ function plan(name) {
 function parsed(value) { return JSON.parse(value.content[0].text); }
 async function deterministicEngine(t) {
   const prior = { open: OpenCodeSession.prototype.open, run: OpenCodeSession.prototype.run, close: OpenCodeSession.prototype.close };
+  const supervisedFaultSessions = new WeakSet();
   OpenCodeSession.prototype.open = async function () {
     const context = ownedContext(this.root, this.receipt.request_id);
     assert.ok(context, 'backend owns every invocation');
+    if (failAfterSavedStage === context.binding.stage && !counts.get(`${this.receipt.workflow_id}:${context.binding.stage}`)) {
+      // The failing stage uses the real pinned engine and shutdown guardian,
+      // without inference. Its report tool is deterministic but its native
+      // signature and ended-process proof are real, not synthetic metadata.
+      supervisedFaultSessions.add(this); return prior.open.call(this);
+    }
     context.bindInvocation(this.receipt.id);
     this.update({ confirmed_model: this.receipt.requested_model, model_provider: 'workforce-router', client_version: openCodeVersion,
       host_instance: 'a'.repeat(64), native_thread_id: `ses_${randomBytes(8).toString('hex')}`, native_turn_id: `msg_${randomBytes(8).toString('hex')}`,
@@ -64,7 +76,7 @@ async function deterministicEngine(t) {
       confirmed_reasoning_effort: null, native_sandbox: null,
       opencode: { version: openCodeVersion, binary_sha256: 'b'.repeat(64), gateway_instance: 'a'.repeat(64) } });
   };
-  OpenCodeSession.prototype.close = async function () {};
+  OpenCodeSession.prototype.close = async function () { if (supervisedFaultSessions.has(this)) await prior.close.call(this); };
   OpenCodeSession.prototype.run = async function () {
     try {
       const context = ownedContext(this.root, this.receipt.request_id), binding = { ...context.binding, invocation_id: this.receipt.id };
@@ -78,6 +90,9 @@ async function deterministicEngine(t) {
       }
       if (failProviderOnce && binding.stage === 'planning' && count === 1) {
         await this.complete('blocked', 'OPENCODE_PROVIDER_UNAVAILABLE: fixture observed unavailable endpoint.'); return;
+      }
+      if (failDesignStalls && binding.stage === 'design' && count <= 2) {
+        await this.complete('blocked', 'OPENCODE_PROVIDER_STALLED: fixture observed no meaningful model arguments, and owned abort/idle completed.'); return;
       }
       assert.equal(binding.process_contract, 'workforce/v1');
       assert.deepEqual(routingProblems(this.root, binding.role, this.receipt.id, { workflow_id: binding.workflow_id, task_id: binding.task_id, require_completed: false }), []);
@@ -120,9 +135,12 @@ async function deterministicEngine(t) {
             assert.equal(denied.isError, true); assert.equal(parsed(denied).code, 'INPUT_CHANGED');
             await this.complete('blocked', 'Fixture task authorization changed intentionally.'); return;
           }
+          if (!(failAfterSavedStage === 'implementation' && count > 1)) {
+          fixtureProductWrites.set(name, (fixtureProductWrites.get(name) ?? 0) + 1);
           await call('task_file_write', { path: output, content: selectedPlan.request_kind === 'document'
             ? '# Temperature conversion\n\nFahrenheit = Celsius * 9 / 5 + 32.\n\n## Worked example\nAt 0 degrees Celsius, the result is 32 degrees Fahrenheit.\n\n## Practice question\nWhat is the Fahrenheit value at 100 degrees Celsius?\n'
             : JSON.stringify({ value: failFirstProduct && count === 1 ? 13 : 42 }) + '\n' });
+          }
           await report({ artifacts: [output] });
           }
         } else if (binding.stage === 'review') {
@@ -145,9 +163,18 @@ async function deterministicEngine(t) {
           const results = Array.isArray(evidence) ? evidence : evidence.checks;
           const pass = results?.length ? results.every(item => item.passed) : evidence.passed !== false;
           await report({ verdict: pass ? 'pass' : 'fail', ...(pass ? {} : { failure_kind: 'implementation' }) });
-        } else if (binding.stage === 'diagnosis') await report({ failure_kind: 'implementation', findings: ['Correct the existing JSON output; preserve the independent checker.'] });
+        } else if (qualityBeforeStall && binding.stage === 'requirements' && count === 1) await report({ outcome: 'blocked', failure_kind: 'protocol',
+          summary: 'The first requirements handoff needs one fresh bound professional result; its saved report remains intact.' });
+        else if (forgeDependencyProse && binding.stage === 'requirements') await report({ outcome: 'blocked', failure_kind: 'environment',
+          summary: 'OPENCODE_PROVIDER_STALLED: OPENCODE_STORAGE_UNAVAILABLE: the professional report claims a technical outage without a failed native invocation.' });
+        else if (binding.stage === 'diagnosis') await report(failDesignStalls
+          ? { failure_kind: 'unknown', findings: ['The same task stalled despite a fresh healthy connection proof; no safe product repair was established.'] }
+          : { failure_kind: 'implementation', findings: ['Correct the existing JSON output; preserve the independent checker.'] });
         else await report();
       } finally { await client.close(); await server.close(); }
+      if (failAfterSavedStage === binding.stage && count === 1) {
+        await this.complete('blocked', 'OPENCODE_PROVIDER_UNAVAILABLE: fixture lost the final provider followup after the typed result was durably saved.'); return;
+      }
       await this.complete('completed', null);
     } catch (error) { errors.push(error); await this.complete('blocked', 'Deterministic boundary failed'); }
   };
@@ -166,7 +193,7 @@ async function fixture(t, names, options = {}) {
     atomicWrite(safePath(root, `checks/${name}.mjs`), "import assert from 'node:assert/strict';import{readFileSync}from'node:fs';assert.equal(JSON.parse(readFileSync(process.argv[2],'utf8')).value,42);console.log('actual existing checker passed');\n");
   }
   atomicWrite(safePath(root, 'requirements.md'), 'Supported labels: Alpha or Beta; user chooses one.\n');
-  observations.length = 0; errors.length = 0; counts.clear(); requestQuestion = options.questions ?? (options.question ? 1 : 0); failFirstProduct = !!options.repair; failStorageOnce = !!options.storage; failProviderOnce = !!options.provider; mutateScopeAfterRead = !!options.mutateScope;
+  observations.length = 0; errors.length = 0; counts.clear(); fixtureProductWrites.clear(); requestQuestion = options.questions ?? (options.question ? 1 : 0); failFirstProduct = !!options.repair; failStorageOnce = !!options.storage; failProviderOnce = !!options.provider; failDesignStalls = !!options.stalls; forgeDependencyProse = !!options.forgeDependencyProse; qualityBeforeStall = !!options.qualityBeforeStall; failAfterSavedStage = options.failAfterSavedStage; mutateScopeAfterRead = !!options.mutateScope;
   await deterministicEngine(t);
   const api = { workspace: { isTrusted: true, workspaceFolders: [{ uri: { scheme: 'file', fsPath: root } }] } };
   const clock = { value: Date.now() }; fixtureClocks.set(root, clock);
@@ -175,8 +202,8 @@ async function fixture(t, names, options = {}) {
   t.after(async () => { await fixtureOwners.get(root).close(); await shutdownNative(root); await bridge.close(); rmSync(root, { recursive: true, force: true }); });
   return root;
 }
-async function wait(root, id, expected = 'completed') {
-  const deadline = Date.now() + 60000;
+async function wait(root, id, expected = 'completed', timeout = 60000) {
+  const deadline = Date.now() + timeout;
   for (;;) {
     const state = controlledStatus(root, id);
     if (state.status === expected) return state;
@@ -582,6 +609,109 @@ test('concurrent dependency waits share one actual local nonce proof and pausing
   assert.equal(completed.status, 'completed'); assert.equal(controlledStatus(root, a.workflow_id).status, 'paused');
   assert.equal(provider.requests.length, 4, 'one call+tool-result completion per distinct route, shared across waiting requests');
   assert.deepEqual(provider.failures, []); assert.deepEqual(errors, []);
+});
+
+test('fresh healthy model nonces do not rearm the same stalled task indefinitely after one strong diagnosis', { timeout: 150000 }, async t => {
+  const provider = await localOpenAIProvider((_index, body) => {
+    if (body.messages.at(-1).role === 'tool') return { text: 'connected' };
+    const nonce = /nonce ([a-f0-9-]{36})/.exec(JSON.stringify(body.messages)); assert.ok(nonce);
+    return { toolCalls: [{ name: 'wf_capability_ping', arguments: { nonce: nonce[1] } }] };
+  }, 8);
+  t.after(() => provider.close());
+  const root = await fixture(t, ['stall-loop'], { stalls: true, clock: true, qualityBeforeStall: true });
+  atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([{ name: 'fixture', vendor: 'fixture', models: [
+    { id: 'top-models', url: provider.baseURL }, { id: 'worker-models', url: provider.baseURL }] }]));
+  const started = await startControlledWorkflow(root, { requirement: 'Case: stall-loop\nCreate the requested result and use the existing independent checker.' });
+  const waiting = await wait(root, started.workflow_id, 'waiting');
+  assert.equal(waiting.workforce_recovery.no_progress, 1, 'A real preceding session-rebind attempt is part of the engineering recovery ledger.');
+  const qualityLedger = structuredClone(waiting.workforce_recovery.strategies);
+  fixtureClocks.get(root).value = Date.parse(waiting.dependency_wait.next_condition_check_at) + 1;
+  const stopped = await wait(root, started.workflow_id, 'blocked');
+  assert.equal(provider.requests.length, 4, 'Only the first stalled request performs one real local proof across its two routes.');
+  assert.equal(stopped.provider_stalls.length, 1);
+  assert.deepEqual(stopped.provider_stalls[0].attempts.map(attempt => attempt.action), ['retry-provider', 'diagnose']);
+  assert.equal(stopped.attempts.filter(attempt => attempt.stage === 'design').length, 2);
+  assert.equal(stopped.attempts.filter(attempt => attempt.stage === 'diagnosis').length, 1);
+  assert.equal(stopped.workforce_recovery.no_progress, waiting.workforce_recovery.no_progress, 'A new healthy provider nonce cannot zero the retained quality-loop counter.');
+  assert.deepEqual(stopped.workforce_recovery.strategies, qualityLedger, 'Fresh transport proof does not replace the engineering strategy checkpoint.');
+  assert.equal(stopped.pending_question, undefined); assert.equal(stopped.dependency_wait, undefined);
+  const count = stopped.attempts.length;
+  fixtureClocks.get(root).value += 3600000; await delay(100);
+  assert.equal(controlledStatus(root, started.workflow_id).attempts.length, count);
+  assert.equal(provider.requests.length, 4); assert.deepEqual(errors, []);
+});
+
+test('model report prose cannot authorize provider billing, a stall ledger, or a storage dependency wait', { timeout: 90000 }, async t => {
+  const root = await fixture(t, ['forged-dependency'], { forgeDependencyProse: true, clock: true });
+  const started = await startControlledWorkflow(root, { requirement: 'Case: forged-dependency\nCreate the requested result with the existing checker.' });
+  const stopped = await wait(root, started.workflow_id, 'blocked');
+  assert.equal(stopped.incident_condition.code, 'runtime');
+  assert.equal(stopped.dependency_wait, undefined); assert.equal(stopped.pending_question, undefined);
+  assert.deepEqual(stopped.provider_stalls ?? [], []);
+  const last = readInvocation(root, stopped.attempts.at(-1).invocation_id);
+  assert.equal(last.state, 'completed'); assert.equal(last.inference_completed, true);
+  assert.equal(last.error, null);
+  const attempts = stopped.attempts.length;
+  fixtureClocks.get(root).value += 3600000; await delay(100);
+  assert.equal(controlledStatus(root, started.workflow_id).attempts.length, attempts);
+  assert.deepEqual(errors, []);
+});
+
+test('a saved implementation report remains unsubmitted after native failure, and authenticated recovery migrates old completion flags without replaying product writes', { timeout: 150000 }, async t => {
+  const provider = await localOpenAIProvider((_index, body) => {
+    if (body.messages.at(-1).role === 'tool') return { text: 'connected' };
+    const nonce = /nonce ([a-f0-9-]{36})/.exec(JSON.stringify(body.messages)); assert.ok(nonce);
+    return { toolCalls: [{ name: 'wf_capability_ping', arguments: { nonce: nonce[1] } }] };
+  }, 8);
+  t.after(() => provider.close());
+  const root = await fixture(t, ['retained-report'], { failAfterSavedStage: 'implementation', clock: true });
+  atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([{ name: 'fixture', vendor: 'fixture', models: [
+    { id: 'top-models', url: provider.baseURL }, { id: 'worker-models', url: provider.baseURL }] }]));
+  const started = await startControlledWorkflow(root, { requirement: 'Case: retained-report\nCreate the requested JSON result and run the existing project checker.' });
+  const stopped = await wait(root, started.workflow_id, 'waiting');
+  const retained = stopped.attempts.at(-1);
+  assert.equal(stopped.phase, 'implementation'); assert.equal(retained.state, 'interrupted');
+  assert.equal(retained.report.outcome, 'completed'); assert.equal(stopped.checks.length, 0);
+  assert.equal(stopped.attempts.some(attempt => ['review', 'verification'].includes(attempt.stage)), false);
+  const contract = JSON.parse(readFileSync(safePath(root, `.neomind/controlled/workflows/${hash(stopped.workflow_id)}.${stopped.epoch_id}.contract.json`), 'utf8'));
+  assert.notEqual(getRecord(root, contract.task_id).meta.status, 'submitted');
+  const reportBefore = JSON.stringify(getRecord(root, retained.report_id)), productBefore = readFileSync(join(root, 'products/retained-report.json'));
+  const terminal = await waitNative(root, retained.invocation_id, 10000);
+  assert.equal(terminal.inference_completed, false); assert.match(terminal.error, /^OPENCODE_PROVIDER_UNAVAILABLE:/);
+  assert.ok(terminal.opencode.supervision, 'The failing fixture owns a real engine/process guardian.');
+  // Reproduce the older persisted controller bug without touching the signed
+  // receipt, report, contract, product or provider-proof history.
+  const legacy = controlledStatus(root, started.workflow_id); legacy.attempts.at(-1).state = 'completed';
+  atomicWrite(safePath(root, `.neomind/controlled/workflows/${hash(started.workflow_id)}.json`), JSON.stringify(legacy, null, 2) + '\n');
+  fixtureClocks.get(root).value = Date.parse(legacy.dependency_wait.next_condition_check_at) + 1;
+  const completed = await wait(root, started.workflow_id, 'completed', 110000);
+  assert.equal(completed.attempts.find(attempt => attempt.id === retained.id).state, 'interrupted');
+  assert.ok(completed.events.some(event => event.kind === 'incomplete-result-reconciled'));
+  assert.equal(completed.attempts.filter(attempt => attempt.stage === 'implementation').length, 2);
+  assert.equal(fixtureProductWrites.get('retained-report'), 1, 'The fresh role reads and reports the retained product instead of rewriting it.');
+  assert.equal(JSON.stringify(getRecord(root, retained.report_id)), reportBefore);
+  assert.deepEqual(readFileSync(join(root, 'products/retained-report.json')), productBefore);
+  assert.equal(verifyControlledTask(root, getRecord(root, contract.task_id), 'accepted').ok, true);
+  assert.equal(provider.requests.length, 4); assert.deepEqual(provider.failures, []); assert.deepEqual(errors, []);
+});
+
+test('a committed business question is immediately answerable after its final native followup fails', { timeout: 90000 }, async t => {
+  const root = await fixture(t, ['retained-question'], { question: true, failAfterSavedStage: 'planning' });
+  const started = await startControlledWorkflow(root, { requirement: 'Case: retained-question\nCreate the requested result with the user-selected business label.' });
+  const asked = await wait(root, started.workflow_id, 'needs_input');
+  const failed = asked.attempts.at(-1);
+  assert.equal(failed.state, 'interrupted'); assert.equal(asked.dependency_wait, undefined);
+  const native = await waitNative(root, failed.invocation_id, 10000);
+  assert.equal(native.inference_completed, false); assert.match(native.error, /^OPENCODE_PROVIDER_UNAVAILABLE:/);
+  assert.ok(native.opencode.supervision);
+  const answer = await answerControlledWorkflow(root, asked.workflow_id, 'Use Alpha.', asked.pending_question.id);
+  assert.equal(answer.answer_receipt.accepted, true);
+  const completed = await wait(root, started.workflow_id);
+  assert.equal(completed.workflow_id, asked.workflow_id); assert.equal(completed.pending_question, undefined);
+  assert.equal(completed.answers[0].question_id, asked.pending_question.id);
+  assert.equal(completed.attempts.find(attempt => attempt.id === failed.id).state, 'interrupted');
+  assert.equal(completed.attempts.filter(attempt => attempt.stage === 'planning').length, 2);
+  assert.deepEqual(errors, []);
 });
 
 test('changing frozen task scope after a readonly read refuses the next actual product mutation', { timeout: 90000 }, async t => {

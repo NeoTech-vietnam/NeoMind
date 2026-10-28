@@ -41,6 +41,19 @@ test('exact WorkForce branch push packages candidates after the same native CI r
   assert.doesNotMatch(JSON.stringify(ci), /gh release create|vsce publish|npm publish/);
 });
 
+test('every core CI entry keeps the complete suite and fails before testing a failed build', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(pkg.scripts.test, 'npm run build && node --test --test-concurrency=2 test/*.test.mjs');
+  assert.doesNotMatch(pkg.scripts.test, /--test-(?:name|skip|timeout)/);
+  for (const file of ['ci.yml', 'release-candidate.yml', 'self-hosted-linux.yml']) {
+    const workflow = parseYaml(readFileSync(new URL(`../.github/workflows/${file}`, import.meta.url), 'utf8'));
+    const steps = Object.values(workflow.jobs).flatMap(job => job.steps);
+    const core = steps.filter(step => step.run === 'npm test');
+    assert.equal(core.length, 1, `${file} runs one complete core regression.`);
+    assert.equal(steps.some(step => step.run?.includes('node --test')), false, 'CI must use the same canonical command as local validation.');
+  }
+});
+
 test('portable assets identify only their actually supported native targets', () => {
   assert.equal(distributionTarget('win32', 'x64').binaryPackage, 'opencode-windows-x64');
   assert.equal(distributionTarget('linux', 'x64').target, 'linux-x64');

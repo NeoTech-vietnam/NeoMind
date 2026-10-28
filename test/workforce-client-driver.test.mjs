@@ -10,17 +10,17 @@ const { createDriver, safeExport } = createRequire(import.meta.url)('./vscode-cl
 const hash = value => createHash('sha256').update(value).digest('hex');
 const prompt = 'I want a leetcode exercise and create a cornell note for me in vscode window';
 
-function fixture(t, { authorized = false, trusted = true, localResult = { opened: true, target: 'local', profile: 'WF.PM' } } = {}) {
+function fixture(t, { authorized = false, trusted = true, runtimeMismatch = false, localResult = { opened: true, target: 'local', profile: 'WF.PM' } } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'workforce-driver-test-')), project = join(root, 'workspace'), output = join(root, 'evidence'), ext = join(root, 'extension');
   for (const path of [project, output, ext]) mkdirSync(path);
   writeFileSync(join(ext, 'package.json'), JSON.stringify({ name: 'synthetic', files: [] }));
-  const config = { run_id: 'synthetic-driver-test', workspace_root: project, output_directory: output, prompt_file: join(root, 'prompt.txt'),
+  const config = { run_id: 'synthetic-driver-test', workspace_root: project, runtime_root: root, output_directory: output, prompt_file: join(root, 'prompt.txt'),
     authorization_file: join(root, 'authorization.json'), model_vendor: 'customendpoint', model_alias: 'top-models' };
   writeFileSync(config.prompt_file, prompt); writeFileSync(join(root, 'config.json'), JSON.stringify(config));
   writeFileSync(config.authorization_file, JSON.stringify({ allow_chat_dispatch: authorized, run_id: config.run_id, max_user_prompts: 1,
     workspace_root: project, prompt_sha256: hash(prompt) }));
   const calls = [], vscode = { version: 'synthetic-vscode', ExtensionMode: { Test: 3 }, Uri: { file: fsPath => ({ scheme: 'file', fsPath }) },
-    workspace: { isTrusted: trusted, workspaceFolders: [{ uri: { scheme: 'file', fsPath: project } }], getConfiguration: () => ({ get: () => 'autoApprove' }) },
+    workspace: { isTrusted: trusted, workspaceFolders: [{ uri: { scheme: 'file', fsPath: project } }], getConfiguration: section => ({ get: () => 'autoApprove', inspect: () => ({ globalValue: runtimeMismatch ? project : root }) }) },
     extensions: { getExtension: id => ({ id, extensionPath: ext, packageJSON: { version: 'synthetic' }, isActive: true }) },
     lm: { selectChatModels: async () => [{ id: 'top-models', vendor: 'customendpoint', name: 'top-models' }] },
     commands: { getCommands: async () => ['workforce.pm.openLocal', 'workbench.action.chat.open', 'workbench.action.chat.newLocalChat', 'workbench.action.chat.export'],
@@ -28,7 +28,7 @@ function fixture(t, { authorized = false, trusted = true, localResult = { opened
         if (name === 'workbench.action.chat.export') writeFileSync(input.fsPath, JSON.stringify({ requests: [{ message: { text: prompt }, modelId: 'actual-export-id-fixture', modeInfo: { name: 'WF.PM' }, response: [{ kind: 'toolInvocationSerialized', toolId: 'mcp_workforce_request_submit', arguments: { apiKey: 'SECRET' } }] }] }));
         return { type: 'confirmation', kind: 'toolInvocation', toolId: 'workforce/request_submit' }; } },
   };
-  const runtime = { createRuntimeInfo: () => ({ package_version: 'synthetic', build_fingerprint: 'fixture' }), requestSetupStatus: () => ({ ready: true }), requestStatus: () => ({ requests: [] }) };
+  const runtime = { createRuntimeInfo: () => ({ package_version: 'synthetic', runtime_root: root, build_fingerprint: 'fixture' }), requestSetupStatus: () => ({ ready: true }), requestStatus: () => ({ requests: [] }) };
   const driver = createDriver({ vscode, context: { extensionMode: 2 }, configPath: join(root, 'config.json'), loadRuntime: async () => runtime });
   t.after(async () => { await driver.close(); rmSync(root, { recursive: true, force: true }); });
   return { driver, calls, root, output, vscode };
@@ -36,6 +36,15 @@ function fixture(t, { authorized = false, trusted = true, localResult = { opened
 
 test('disabled dispatch authorization cannot execute any chat command', async t => {
   const app = fixture(t); await assert.rejects(app.driver.runOnce(), /EXPLICIT_DISPATCH_AUTHORIZATION_REQUIRED/); assert.deepEqual(app.calls, []);
+});
+
+test('a different configured User runtime cannot be mistaken for the extracted acceptance candidate', async t => {
+  const app = fixture(t, { authorized: true, runtimeMismatch: true });
+  const inspected = await app.driver.inspect();
+  assert.equal(inspected.runtime_binding.matches, false);
+  await assert.rejects(app.driver.runOnce(), /CONFIGURED_RUNTIME_MUST_MATCH_REVIEWED_CANDIDATE/);
+  assert.deepEqual(app.calls, []);
+  assert.equal(app.driver.report().user_prompts_dispatched, 0);
 });
 
 test('native chat dispatch is exact and once-only even across repeated requests', async t => {

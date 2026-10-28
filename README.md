@@ -76,6 +76,8 @@ npm run package:smoke
 
 A push to `codex/workforce-vmodel` reuses the normal Windows/Ubuntu CI regression matrix, then builds and extracts that platform's portable runtime and matching VSIX. Candidate assets, checksums and package-smoke reports are retained as CI artifacts. This path works before the optional manual candidate workflow reaches the default branch. CI never publishes a GitHub release automatically.
 
+`npm test` builds first, then runs the complete `test/*.test.mjs` suite with at most two test files at once. Local and CI validation share this command. The scheduling budget bounds competing native guardian and ACL subprocesses without changing their deadlines or removing cases. Hosted validation must pass with this budget before a candidate is accepted.
+
 Windows and Ubuntu CI establish core/package portability. Linux desktop support requires an actual Linux VS Code acceptance run. Unit tests, fixture UI screenshots and packaging smoke do not establish that a complete user request succeeded in Copilot Local, Codex or the installed panel. Publication remains gated by those real client journeys on the packaged candidate.
 
 The implementation supports V-model/ASPICE engineering traceability. It does not claim a formal ASPICE certification merely from having agents, gates or reports.

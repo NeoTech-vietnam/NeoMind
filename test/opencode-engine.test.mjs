@@ -155,7 +155,12 @@ test('pinned real local engine starts with its bound gateway and stops on cancel
   const signal = new AbortController();
   const config = openCodeConfiguration({ model: 'worker-models', provider: 'test', baseURL: 'http://127.0.0.1:1/v1' },
     a.server, ['observe']);
-  const engine = await startOpenCodeEngine(root, randomUUID(), config, signal.signal);
+  const startup = [];
+  const engine = await startOpenCodeEngine(root, randomUUID(), config, signal.signal,
+    { onStartupStage: observation => startup.push(observation) }).finally(() => t.diagnostic(JSON.stringify({ startup_stages: startup })));
+  assert.ok(startup.some(observation => observation.stage === 'authenticated-ready'));
+  assert.ok(startup.every(observation => Object.keys(observation).sort().join(',') === 'elapsed_ms,stage' &&
+    Number.isInteger(observation.elapsed_ms) && observation.elapsed_ms >= 0), 'Startup diagnostics contain only bounded stage names and timing.');
   t.after(() => engine.close());
   const health = await engine.client.global.health();
   assert.equal(health.data.version, '1.19.4');

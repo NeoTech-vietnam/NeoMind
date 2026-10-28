@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "kind": "workforce-release-acceptance",
+  "state": "pending-evidence",
+  "published": false,
+  "source": {
+    "repository": "NeoTech-vietnam/NeoMind",
+    "branch": "codex/workforce-vmodel",
+    "commit": null,
+    "clean_worktree": null,
+    "test_file_inventory_sha256": null
+  },
+  "candidate": {
+    "tag": "workforce-v0.2.0-alpha.1",
+    "runtime": "workforce@0.2.0-alpha.1",
+    "extension": "workforce.workforce-model-bridge@0.12.0",
+    "engine": "OpenCode 1.19.4",
+    "requested_aliases": ["top-models", "worker-models"],
+    "upstream_model_identity": { "status": "unavailable-unless-provider-proves", "value": null }
+  },
+  "artifacts": [
+    { "name": "workforce-runtime-0.2.0-alpha.1-windows-x64.tgz", "sha256": null, "ci_run": null, "source_commit": null },
+    { "name": "workforce-runtime-0.2.0-alpha.1-linux-x64.tgz", "sha256": null, "ci_run": null, "source_commit": null },
+    { "name": "workforce-model-bridge-0.12.0.vsix", "sha256": null, "ci_run": null, "source_commit": null }
+  ],
+  "core_ci": [
+    { "platform": "windows-latest", "status": "pending", "run_id": null, "job_id": null, "head_sha": null, "tests": null, "pass": null, "fail": null, "skipped": null, "duration_ms": null, "sanitized_log_sha256": null },
+    { "platform": "ubuntu-latest", "status": "pending", "run_id": null, "job_id": null, "head_sha": null, "tests": null, "pass": null, "fail": null, "skipped": null, "duration_ms": null, "sanitized_log_sha256": null }
+  ],
+  "installed_package_checks": [
+    { "target": "windows-x64", "status": "pending", "archive_sha256": null, "build_fingerprint": null, "engine_binary_sha256": null, "report_sha256": null },
+    { "target": "linux-x64", "status": "pending", "archive_sha256": null, "build_fingerprint": null, "engine_binary_sha256": null, "report_sha256": null }
+  ],
+  "client_journeys": [
+    { "id": "copilot-local-clean-original-prompt", "client": "Copilot Local", "platform": "Windows", "status": "pending", "request_id": null, "evidence_sha256": null },
+    { "id": "copilot-local-existing-project-upgrade", "client": "Copilot Local", "platform": "Windows", "status": "pending", "request_id": null, "evidence_sha256": null },
+    { "id": "codex-shared-runtime", "client": "Codex", "platform": "Windows", "status": "pending", "request_id": null, "evidence_sha256": null },
+    { "id": "universe-shared-runtime-and-product-handoff", "client": "WorkForce Universe", "platform": "Windows", "status": "pending", "request_id": null, "evidence_sha256": null }
+  ],
+  "required_product_cases": [
+    { "family": "original-prompt-LeetCode-C11-C++17-Cornell", "status": "pending", "evidence_sha256": null },
+    { "family": "existing-project-bug-fix", "status": "pending", "evidence_sha256": null },
+    { "family": "feature-interface-and-behavior-preserving-refactor", "status": "pending", "evidence_sha256": null },
+    { "family": "note-only-or-source-research", "status": "pending", "evidence_sha256": null },
+    { "family": "qualified-procedure-A-to-B-and-no-match-fallback", "status": "pending", "evidence_sha256": null },
+    { "family": "high-risk-independent-review-and-legacy-continuation", "status": "pending", "evidence_sha256": null }
+  ],
+  "journey_evidence_contract": {
+    "client_versions_and_native_local_mode": null,
+    "effective_workspace_permissions_observed": null,
+    "exact_original_prompt_and_attachment_hashes": null,
+    "fixture_or_user_project_provenance": null,
+    "expected_configured_imported_and_loaded_runtime_identity": null,
+    "installed_extension_version_and_source_fingerprint": null,
+    "same_request_across_clients_and_after_reload": null,
+    "actual_dispatch_review_test_and_current_acceptance": null,
+    "final_product_inventory_hashes_and_user_handoff": null,
+    "preservation_of_existing_files_and_history": null,
+    "developer_interventions": null,
+    "model_and_tool_calls_including_failed_attempts": null,
+    "receipt_elapsed_ms": null,
+    "usable_output_elapsed_ms": null,
+    "final_acceptance_elapsed_ms": null,
+    "observed_tokens": null,
+    "observed_cost": null
+  },
+  "fault_recovery": {
+    "status": "pending",
+    "report_sha256": null,
+    "incident_handling_is_product_completion": false,
+    "mandatory_product_journey_failures": null
+  },
+  "release_decision": {
+    "status": "not-approved-by-this-template",
+    "authorization_reference": null,
+    "mandatory_evidence_complete": false,
+    "remaining_incidents": [],
+    "limitations": [
+      "This template contains no observed acceptance results.",
+      "Core tests, setup probes, package smoke, synthetic driver tests and screenshots do not establish complete actual-client product acceptance.",
+      "Windows and Ubuntu package/core validation do not establish Linux VS Code desktop acceptance.",
+      "9router aliases alone do not prove the upstream model's identity.",
+      "V-model and ASPICE traceability guidance is not an ASPICE capability certification."
+    ]
+  },
+  "sanitization": {
+    "status": "pending-review",
+    "raw_client_exports_published": false,
+    "credentials_tokens_cookies_and_private_paths_removed": null,
+    "unrelated_conversations_and_user_repository_contents_removed": null,
+    "safe_projected_evidence_hashes_retained": null
+  }
+}

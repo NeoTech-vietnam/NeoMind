@@ -59,6 +59,17 @@ function createDriver({ vscode, context, configPath, loadRuntime }) {
     return folders[0];
   };
   async function runtime() { return api ??= await (loadRuntime ? loadRuntime() : import(pathToFileURL(join(config.runtime_root, 'dist/index.js')).href)); }
+  function runtimeBinding(info) {
+    const configured = vscode.workspace.getConfiguration('workforce.bridge').inspect('runtimePath')?.globalValue;
+    let expectedRoot, configuredRoot, importedRoot;
+    try {
+      expectedRoot = realpathSync.native(config.runtime_root);
+      if (typeof configured === 'string' && isAbsolute(configured)) configuredRoot = realpathSync.native(configured);
+      if (typeof info?.runtime_root === 'string' && isAbsolute(info.runtime_root)) importedRoot = realpathSync.native(info.runtime_root);
+    } catch { /* Inspection reports the missing/mismatched setting; it never repairs User settings. */ }
+    return { expected_root: expectedRoot ?? null, configured_user_root: configuredRoot ?? null, imported_root: importedRoot ?? null,
+      matches: Boolean(expectedRoot && configuredRoot && importedRoot && same(expectedRoot, configuredRoot) && same(expectedRoot, importedRoot)) };
+  }
   async function inspect() {
     const folder = exact(), currentApi = await runtime(), info = currentApi.createRuntimeInfo(root);
     const workforce = vscode.extensions.getExtension('workforce.workforce-model-bridge'), copilot = vscode.extensions.getExtension('GitHub.copilot-chat');
@@ -70,6 +81,7 @@ function createDriver({ vscode, context, configPath, loadRuntime }) {
     report = { ...report, inspected_at: new Date().toISOString(), vscode_version: vscode.version, extension_mode: context.extensionMode,
       workspace_trusted: true, workspace_permission_default: vscode.workspace.getConfiguration('chat', folder.uri).get('permissions.default'),
       runtime: fields(info, ['package_version', 'runtime_root', 'build_fingerprint']),
+      runtime_binding: runtimeBinding(info),
       workforce_extension: workforce ? { id: workforce.id, version: workforce.packageJSON.version, path: workforce.extensionPath, source_fingerprint: extensionFingerprint(workforce) } : null,
       copilot_extension: copilot ? { id: copilot.id, version: copilot.packageJSON.version, path: copilot.extensionPath, active: copilot.isActive } : null,
       required_commands_available: required.every(name => commands.includes(name)), missing_commands: required.filter(name => !commands.includes(name)),
@@ -89,7 +101,9 @@ function createDriver({ vscode, context, configPath, loadRuntime }) {
   async function observe() {
     if (closed || !running) return;
     try {
-      exact(); const status = await (await runtime()).requestStatus(root), requests = status.requests ?? [];
+      exact(); report.runtime_binding = runtimeBinding(report.runtime);
+      if (!report.runtime_binding.matches) { report.status = 'runtime-binding-changed-client-evidence-incomplete'; running = false; persist(); clearInterval(observer); observer = undefined; return; }
+      const status = await (await runtime()).requestStatus(root), requests = status.requests ?? [];
       const admitted = requests.filter(item => !beforeIds.has(item.workflow_id));
       report.new_request_count = admitted.length;
       if (admitted.length > 1) { report.status = 'failed-duplicate-request-admission'; running = false; }
@@ -114,6 +128,7 @@ function createDriver({ vscode, context, configPath, loadRuntime }) {
     if (existsSync(ledgerPath)) throw new Error('DISPATCH_ALREADY_ISSUED_NO_RETRY');
     await inspect();
     if (!report.required_commands_available || !report.model_selection_unique || !report.copilot_extension || !report.workforce_extension) throw new Error('ACTUAL_CLIENT_PREREQUISITES_NOT_READY');
+    if (!report.runtime_binding.matches) throw new Error('CONFIGURED_RUNTIME_MUST_MATCH_REVIEWED_CANDIDATE');
     if (report.setup.ready !== true) throw new Error('CONNECT_WORKFORCE_AND_COMPLETE_REAL_CAPABILITY_CHECK_FIRST');
     const currentApi = await runtime(), existing = currentApi.requestStatus(root);
     beforeIds = new Set((existing.requests ?? []).map(item => item.workflow_id));
@@ -121,6 +136,7 @@ function createDriver({ vscode, context, configPath, loadRuntime }) {
     report.status = 'preparing-local-client'; report.prompt_sha256 = sha(prompt); report.observe_deadline = Date.now() + (config.observation_timeout_ms ?? 1200000); persist();
     const selected = report.model_candidates[0];
     const local = await vscode.commands.executeCommand('workforce.pm.openLocal'); exact();
+    if (!runtimeBinding(report.runtime).matches) throw new Error('CONFIGURED_RUNTIME_CHANGED_NO_QUERY_SENT');
     report.local_open_result = fields(local, ['opened', 'target', 'profile', 'model_selection', 'permission_default']);
     if (local?.opened !== true || local.target !== 'local' || local.profile !== 'WF.PM') { report.status = 'local-profile-open-failed-no-query-sent'; persist(); throw new Error('LOCAL_PROFILE_OPEN_FAILED_NO_DISPATCH'); }
     report.status = 'dispatch-issued'; report.user_prompts_dispatched = 1; persist();

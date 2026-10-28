@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, existsSync, realpathSync, symlinkSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -102,6 +103,36 @@ test('backend resolves actual attachment types and rejects outside paths before 
   assert.throws(() => workForceIntakeContext(root, [{ path: '.workforce/config.json' }]), /public project source/);
   for (const path of ['.', root, pathToFileURL(root).href])
     assert.deepEqual(workForceIntakeContext(root, [{ path }]), [{ path: '.', kind: 'directory' }]);
+});
+
+test('attachment spelling cannot hide either an internal directory link or an escaping link', t => {
+  const root = project(t), outside = mkdtempSync(join(tmpdir(), 'wf-intake-outside-'));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  mkdirSync(join(root, 'course')); writeFileSync(join(root, 'course/note.md'), 'Inside source.');
+  writeFileSync(join(root, 'note.md'), 'Root source.'); writeFileSync(join(outside, 'note.md'), 'Outside source.');
+  const type = process.platform === 'win32' ? 'junction' : 'dir';
+  symlinkSync(join(root, 'course'), join(root, 'inside-link'), type);
+  symlinkSync(outside, join(root, 'outside-link'), type);
+  for (const path of ['inside-link', 'inside-link/note.md', `${root}/inside-link/../note.md`])
+    assert.throws(() => workForceIntakeContext(root, [{ path }]), /linked directory|ordinary local/);
+  for (const path of ['outside-link', 'outside-link/note.md'])
+    assert.throws(() => workForceIntakeContext(root, [{ path }]), /inside this project|linked directory/);
+  assert.deepEqual(workForceIntakeContext(root, [{ path: 'course/note.md' }]), [{ path: 'course/note.md', kind: 'file' }]);
+});
+
+test('actual Windows short and long attachment paths resolve to one public source', { skip: process.platform !== 'win32' }, t => {
+  const root = project(t), physicalRoot = realpathSync.native(root);
+  mkdirSync(join(root, 'course')); writeFileSync(join(root, 'course/note.md'), 'Source context.');
+  const shortRoot = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    "$ErrorActionPreference='Stop'; Add-Type -TypeDefinition 'using System; using System.Text; using System.Runtime.InteropServices; public static class WorkForceShortPathFixture { [DllImport(\"kernel32.dll\", CharSet=CharSet.Unicode, SetLastError=true)] public static extern uint GetShortPathName(string path, StringBuilder value, uint size); }'; " +
+    '$buffer=New-Object System.Text.StringBuilder 32768; $size=[WorkForceShortPathFixture]::GetShortPathName($env:WORKFORCE_TEST_ALIAS_PATH,$buffer,32768); if($size -eq 0){throw "GetShortPathName failed"}; $buffer.ToString()'],
+  { env: { ...process.env, WORKFORCE_TEST_ALIAS_PATH: physicalRoot }, encoding: 'utf8', windowsHide: true, timeout: 15000 }).trim();
+  if (shortRoot.toLowerCase() === physicalRoot.toLowerCase()) { t.skip('This volume has no actual 8.3 alias for the fixture.'); return; }
+  for (const [workspace, source] of [[physicalRoot, shortRoot], [shortRoot, physicalRoot]]) {
+    for (const path of [join(source, 'course/note.md'), pathToFileURL(join(source, 'course/note.md')).href])
+      assert.deepEqual(workForceIntakeContext(workspace, [{ path }]), [{ path: 'course/note.md', kind: 'file' }]);
+    assert.deepEqual(workForceIntakeContext(workspace, [{ path: source }]), [{ path: '.', kind: 'directory' }]);
+  }
 });
 
 test('invalid empty requirements are rejected before a durable admission or owner dispatch', async t => {

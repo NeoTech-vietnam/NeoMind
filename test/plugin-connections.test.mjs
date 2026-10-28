@@ -284,6 +284,7 @@ test('Windows Modify-only owner settings update without WRITE_OWNER and retain t
   const env = { ...process.env, NEOMIND_TEST_MCP_ACL: targets.copilotVscode, NEOMIND_TEST_MCP_PARENT: dirname(targets.copilotVscode) };
   execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
     "$ErrorActionPreference='Stop'; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; " +
+    '$file=[System.IO.File]::GetAccessControl($env:NEOMIND_TEST_MCP_ACL); if($file.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value){$file.SetOwner($sid); [System.IO.File]::SetAccessControl($env:NEOMIND_TEST_MCP_ACL,$file)}; ' +
     '$before=[System.IO.Directory]::GetAccessControl($env:NEOMIND_TEST_MCP_PARENT); $changeOwner=$before.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value; ' +
     '$acl=New-Object System.Security.AccessControl.DirectorySecurity; if($changeOwner){$acl.SetOwner($sid)}; $acl.SetAccessRuleProtection($true,$false); ' +
     "$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'Modify','ContainerInherit,ObjectInherit','None','Allow'); $acl.AddAccessRule($rule); " +
