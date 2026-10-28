@@ -97,6 +97,7 @@ test('an actual LLVM clang++ alias retains C++ driver invocation when its realpa
   if (!alias) { t.skip('No actual LLVM clang++ to clang alias is present on this process PATH.'); return; }
   const result = await controlledToolchain(root, { executables: { cpp17: alias } });
   const cpp = result.observations.find(item => item.program === 'cpp17');
+  if (!cpp.available) t.diagnostic(JSON.stringify({ fixed_cpp_version_observation: cpp }));
   assert.equal(cpp.available, true); assert.equal(cpp.exit_code, 0);
   assert.equal(cpp.executable, alias); assert.deepEqual(cpp.command, [alias, '--version']);
   assert.match(cpp.stdout, /clang version/i);

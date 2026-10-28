@@ -49,7 +49,18 @@ const health=await engine.client.global.health();writeFileSync(${JSON.stringify(
   assert.equal(existsSync(join(actual.directory, 'config/opencode/node_modules')), false);
   assert.equal(JSON.parse(readFileSync(join(actual.directory, 'bootstrap-cleanup.json'), 'utf8')).cleaned, true);
   const readyProof = JSON.parse(readFileSync(join(storage, `opencode-${invocation}`, 'supervision/ready.json'), 'utf8'));
-  await assert.rejects(fetch(`${readyProof.payload.url}/global/health`, { signal: AbortSignal.timeout(1000) }));
+  if (process.platform === 'linux') {
+    // An ephemeral TCP port may already belong to the next concurrent engine.
+    // Check the owned process creation itself; an address alone is not identity.
+    try {
+      const stat = readFileSync(`/proc/${actual.ref.engine.pid}/stat`, 'utf8');
+      const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+      const current = `linux:${readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim()}:${fields[19]}`;
+      assert.ok(current !== actual.ref.engine.created_at || ['Z', 'X'].includes(fields[0]), 'The original engine creation must have stopped.');
+    } catch (error) { if (error.code !== 'ENOENT' && error.code !== 'ESRCH') throw error; }
+  } else {
+    await assert.rejects(fetch(`${readyProof.payload.url}/global/health`, { signal: AbortSignal.timeout(1000) }));
+  }
   assert.equal((await reconcileOpenCodeOwner(root, { ...actual.ref, engine: { ...actual.ref.engine, created_at: 'another-process-creation' } })).state, 'uncertain');
   proof.payload.engine.pid++; writeFileSync(path, JSON.stringify(proof));
   assert.equal((await reconcileOpenCodeOwner(root, initial)).state, 'uncertain', 'Tampered ended bytes cannot establish shutdown.');
