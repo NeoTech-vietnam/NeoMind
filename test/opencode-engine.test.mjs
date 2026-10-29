@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -15,6 +15,7 @@ import { createOpenCodeGateway, openCodeConfiguration, openCodeEndpoint, openCod
 import { openCodeStorage, openCodeStorageFailure, openCodeMinimumFreeBytes } from '../dist/opencode-engine.js';
 import { OpenCodeSession, openCodeAttestation, openCodeSystemText } from '../dist/opencode-session.js';
 import { registerControlledContext } from '../dist/controlled-context.js';
+import { secureHostPrivateDirectory } from '../dist/vscode-wire.js';
 
 function project(t, catalog, engine = false) {
   const parent = engine ? resolve('artifacts/test-temp') : tmpdir();
@@ -150,6 +151,38 @@ test('cancelled startup never launches an engine, and execution diagnostics do n
   assert.equal(openCodeAttestation.identity_provenance, 'local-opencode');
 });
 
+test('duplicate engine preparation preserves the first invocation dependency tree', { timeout: 45000 }, async t => {
+  const { root } = project(t, [], true), invocation = randomUUID(), parent = openCodeStorage(root).path;
+  const directory = join(parent, `opencode-${invocation}`), config = join(directory, 'config/opencode');
+  for (const path of [dirname(parent), parent, directory]) secureHostPrivateDirectory(path);
+  mkdirSync(join(config, 'node_modules'), { recursive: true });
+  writeFileSync(join(config, 'package.json'), 'first invocation package\n');
+  const sentinel = join(config, 'node_modules/owned.txt'); writeFileSync(sentinel, 'first invocation dependencies\n');
+  t.after(() => { assert.equal(dirname(directory), parent); rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
+  await assert.rejects(startOpenCodeEngine(root, invocation, {}), error => ['EEXIST', 'ERR_FS_CP_EEXIST'].includes(error.code));
+  assert.equal(existsSync(sentinel), true, 'A rejected duplicate cannot remove another invocation dependency tree.');
+  assert.equal(readFileSync(sentinel, 'utf8'), 'first invocation dependencies\n');
+  assert.equal(readFileSync(join(config, 'package.json'), 'utf8'), 'first invocation package\n');
+});
+
+test('dependency seeding yields to cancellation before any watchdog or engine admission', { timeout: 45000 }, async t => {
+  const { root } = project(t, [], true), invocation = randomUUID(), parent = openCodeStorage(root).path;
+  const directory = join(parent, `opencode-${invocation}`);
+  t.after(() => { assert.equal(dirname(directory), parent); rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
+  const controller = new AbortController(), stages = [];
+  let prepared = 0, cancellationObserved = false;
+  const timer = setTimeout(() => { cancellationObserved = true; controller.abort(); }, 0);
+  t.after(() => clearTimeout(timer));
+  await assert.rejects(startOpenCodeEngine(root, invocation, {}, controller.signal, {
+    onPrepared() { prepared++; }, onStartupStage(observation) { stages.push(observation.stage); },
+  }), { name: 'AbortError' });
+  assert.equal(cancellationObserved, true);
+  assert.deepEqual(stages, [], 'The event loop must handle cancellation while preparing dependencies, before a watchdog is spawned.');
+  assert.equal(prepared, 0);
+  assert.equal(existsSync(join(directory, 'supervision/spec.json')), false);
+  assert.equal(existsSync(join(directory, 'config/opencode/node_modules')), false, 'Partial dependency copies are cleaned without launching an engine.');
+});
+
 test('pinned real local engine starts with its bound gateway and stops on cancellation without calling a model', { timeout: 45000 }, async t => {
   const { root } = project(t, [], true), a = await gateway(t, 'engine-bound');
   const signal = new AbortController();
@@ -161,6 +194,15 @@ test('pinned real local engine starts with its bound gateway and stops on cancel
   assert.ok(startup.some(observation => observation.stage === 'authenticated-ready'));
   assert.ok(startup.every(observation => Object.keys(observation).sort().join(',') === 'elapsed_ms,stage' &&
     Number.isInteger(observation.elapsed_ms) && observation.elapsed_ms >= 0), 'Startup diagnostics contain only bounded stage names and timing.');
+  if (process.platform === 'win32') {
+    const expected = ['guardian-spawned', 'guardian-compile-started', 'guardian-compile-completed',
+      'engine-create-started', 'engine-create-completed', 'engine-identity-observed'];
+    const actual = startup.map(observation => observation.stage);
+    for (let index = 0; index < expected.length; index++) {
+      assert.equal(actual.filter(stage => stage === expected[index]).length, 1, `${expected[index]} is observed exactly once`);
+      if (index) assert.ok(actual.indexOf(expected[index - 1]) < actual.indexOf(expected[index]), 'Guardian timings preserve native startup order.');
+    }
+  }
   t.after(() => engine.close());
   const health = await engine.client.global.health();
   assert.equal(health.data.version, '1.19.4');

@@ -242,13 +242,15 @@ function temperatureCase(root, name) {
   for (const level of candidate.verification_levels) if (level.method === 'execution') level.checks = ['Existing temperature tests'];
   return { packageBytes, testBytes };
 }
-async function wait(root, id, expected = 'completed', timeout = 60000) {
+async function wait(root, id, expected = 'completed', timeout = 60000, failureContext = () => ({})) {
   const deadline = Date.now() + timeout;
   for (;;) {
     const state = controlledStatus(root, id);
     if (state.status === expected) return state;
     if (['blocked', 'uncertain', 'cancelled'].includes(state.status) || Date.now() > deadline)
-      assert.fail(JSON.stringify({ status: state.status, phase: state.phase, blocker: state.blocker, errors: errors.map(error => error.message) }));
+      assert.fail(JSON.stringify({ status: state.status, phase: state.phase, blocker: state.blocker, errors: errors.map(error => error.message),
+        dependency_wait: state.dependency_wait ?? null, incident_code: state.incident_condition?.code ?? null,
+        recent_events: state.events.slice(-8).map(({ kind, stage, at }) => ({ kind, stage, at })), ...failureContext() }));
     await delay(50);
   }
 }
@@ -717,7 +719,9 @@ test('fresh healthy model nonces do not rearm the same stalled task indefinitely
   assert.equal(waiting.workforce_recovery.no_progress, 1, 'A real preceding session-rebind attempt is part of the engineering recovery ledger.');
   const qualityLedger = structuredClone(waiting.workforce_recovery.strategies);
   fixtureClocks.get(root).value = Date.parse(waiting.dependency_wait.next_condition_check_at) + 1;
-  const stopped = await wait(root, started.workflow_id, 'blocked');
+  const stopped = await wait(root, started.workflow_id, 'blocked', 60000, () => ({
+    provider_request_count: provider.requests.length, provider_failure_count: provider.failures.length,
+    fixture_stage_counts: Object.fromEntries([...counts].filter(([key]) => key.startsWith(`${started.workflow_id}:`)).map(([key, value]) => [key.slice(started.workflow_id.length + 1), value])) }));
   assert.equal(provider.requests.length, 4, 'Only the first stalled request performs one real local proof across its two routes.');
   assert.equal(stopped.provider_stalls.length, 1);
   assert.deepEqual(stopped.provider_stalls[0].attempts.map(attempt => attempt.action), ['retry-provider', 'diagnose']);

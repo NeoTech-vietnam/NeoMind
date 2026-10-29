@@ -1,7 +1,8 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statfsSync, rmSync, writeFileSync, unlinkSync, openSync, readSync, closeSync, fstatSync, fsyncSync, renameSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statfsSync, rmSync, writeFileSync, unlinkSync, openSync, readSync, closeSync, fstatSync, fsyncSync, renameSync } from 'node:fs';
+import { cp, lstat, realpath, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -176,8 +177,10 @@ export interface OpenCodeSupervisionRef {
   schema_version: 1; invocation_id: string; instance: string; spec_sha256: string; spec_hmac: string;
   owner: { pid: number; created_at: string }; engine?: OpenCodeProcessIdentity;
 }
+const guardianStartupStages = ['guardian-compile-started', 'guardian-compile-completed',
+  'engine-create-started', 'engine-create-completed'] as const;
 const engineStartupStages = ['owner-verified', 'watchdog-spawned', 'watchdog-waiting', 'admitted',
-  'guardian-spawned', 'engine-identity-observed', 'server-listening', 'authenticated-ready'] as const;
+  'guardian-spawned', ...guardianStartupStages, 'engine-identity-observed', 'server-listening', 'authenticated-ready'] as const;
 export interface OpenCodeStartupObservation { stage: typeof engineStartupStages[number]; elapsed_ms: number }
 export interface OpenCodeEngineOptions {
   onPrepared?(ref: OpenCodeSupervisionRef): void | Promise<void>;
@@ -369,7 +372,9 @@ public static class WorkForceEngineJob {
    Need(DuplicateHandle(GetCurrentProcess(),GetStdHandle(-12),GetCurrentProcess(),out error,0,true,2));
    SA sa=new SA();sa.length=Marshal.SizeOf(typeof(SA));sa.inherit=true; input=CreateFile("NUL",0x80000000,3,ref sa,3,0,IntPtr.Zero); Need(input!=new IntPtr(-1));
    START s=new START();s.cb=Marshal.SizeOf(typeof(START));s.flags=0x100;s.input=input;s.output=output;s.error=error;
+   Console.WriteLine("WORKFORCE_ENGINE_STAGE "+nonce+" engine-create-started"); Console.Out.Flush();
    Need(CreateProcess(binary,new StringBuilder("\""+binary+"\" serve --hostname=127.0.0.1 --port=0"),IntPtr.Zero,IntPtr.Zero,true,4,IntPtr.Zero,cwd,ref s,out p));
+   Console.WriteLine("WORKFORCE_ENGINE_STAGE "+nonce+" engine-create-completed"); Console.Out.Flush();
    Need(AssignProcessToJobObject(job,p.process)); FT birth,unused1,unused2,unused3; Need(GetProcessTimes(p.process,out birth,out unused1,out unused2,out unused3));
    Console.WriteLine("WORKFORCE_ENGINE_IDENTITY "+nonce+" "+p.pid+" "+(((ulong)birth.high<<32)|birth.low)); Console.Out.Flush();
    Need(ResumeThread(p.thread)!=0xffffffff); CloseHandle(p.thread);p.thread=IntPtr.Zero;
@@ -388,7 +393,10 @@ public static class WorkForceEngineJob {
  }
 }
 '@
+$workforceStageNonce=$env:WORKFORCE_ENGINE_CONTROL
+[Console]::WriteLine('WORKFORCE_ENGINE_STAGE '+$workforceStageNonce+' guardian-compile-started'); [Console]::Out.Flush()
 Add-Type -TypeDefinition $source
+[Console]::WriteLine('WORKFORCE_ENGINE_STAGE '+$workforceStageNonce+' guardian-compile-completed'); [Console]::Out.Flush()
 [WorkForceEngineJob]::Run()
 `;
 
@@ -424,7 +432,7 @@ export async function runOpenCodeOwnerSupervisor(root: string, ref: OpenCodeSupe
   let stop = !process.connected, child: ChildProcess | undefined, observed: OpenCodeProcessIdentity | undefined;
   let actualExit = false, treeClosed = false, neverStarted = false, output = '', started = false, admitted = false;
   let admissionReady: (() => void) | undefined;
-  const knownGroup = new Map<number, string>();
+  const knownGroup = new Map<number, string>(), seenGuardianStages = new Set<string>();
   const proof = engineProof(root, ref), { spec, path, key } = proof;
   if (hash(readFileSync(fileURLToPath(import.meta.url))) !== spec.module_sha256 || hash(readFileSync(spec.binary.path)) !== spec.binary.sha256)
     throw new Error('Pinned engine supervisor executable changed before launch.');
@@ -477,6 +485,13 @@ export async function runOpenCodeOwnerSupervisor(root: string, ref: OpenCodeSupe
   child.stdin?.on('error', () => {}); child.stderr?.resume();
   child.stdout?.on('data', (bytes: Buffer) => {
     output = (output + bytes.toString('utf8')).slice(-32768);
+    if (process.platform === 'win32') {
+      const stages = new RegExp(`(?:^|\\n)WORKFORCE_ENGINE_STAGE ${nonce} (${guardianStartupStages.join('|')})(?=\\r?\\n|$)`, 'g');
+      for (const match of output.matchAll(stages)) if (!seenGuardianStages.has(match[1]!)) {
+        seenGuardianStages.add(match[1]!);
+        send({ type: 'startup-stage', stage: match[1] });
+      }
+    }
     if (process.platform === 'win32' && !observed) {
       const match = new RegExp(`WORKFORCE_ENGINE_IDENTITY ${nonce} (\\d+) (\\d+)`).exec(output);
       if (match) { observed = { pid: Number(match[1]), created_at: `win32:${match[2]}`, executable_sha256: spec.binary.sha256 };
@@ -640,20 +655,36 @@ export async function startOpenCodeEngine(root: string, invocationId: string, co
   secureHostPrivateDirectory(directory);
   for (const child of ['config', 'data', 'cache', 'state', 'home', 'tmp']) mkdirSync(join(directory, child), { recursive: true, mode: 0o700 });
   const bootstrap = openCodeBootstrap(), configDirectory = join(directory, 'config', 'opencode');
-  mkdirSync(configDirectory, { recursive: true, mode: 0o700 });
-  // Only the reviewed dependency seed is copied; never reuse auth, plugins,
-  // sessions or project settings from a user's OpenCode configuration.
-  for (const entry of ['package.json', 'package-lock.json', 'node_modules']) cpSync(join(bootstrap.path, entry), join(configDirectory, entry), {
-    recursive: true, dereference: true, errorOnExist: true, force: false,
-    filter: source => {
-      if (lstatSync(source).isSymbolicLink()) {
-        const target = relative(bootstrap.path, realpathSync(source));
-        if (target === '..' || target.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) || isAbsolute(target))
-          throw new Error('WorkForce bootstrap links must stay inside its reviewed dependency tree.');
-      }
-      return true;
-    },
-  });
+  // Exclusive reservation: a duplicate call must never copy into or clean up
+  // the dependency tree already owned by the first preparation/engine.
+  mkdirSync(configDirectory, { mode: 0o700 });
+  // Keep each engine's mutable dependency tree private. Thousands of synchronous
+  // file copies otherwise block the editor's MCP, cancellation and model events.
+  try {
+    for (const entry of ['package.json', 'package-lock.json', 'node_modules']) {
+      signal?.throwIfAborted();
+      await cp(join(bootstrap.path, entry), join(configDirectory, entry), {
+        recursive: true, dereference: true, errorOnExist: true, force: false,
+        filter: async source => {
+          signal?.throwIfAborted();
+          if ((await lstat(source)).isSymbolicLink()) {
+            const target = relative(bootstrap.path, await realpath(source));
+            if (target === '..' || target.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) || isAbsolute(target))
+              throw new Error('WorkForce bootstrap links must stay inside its reviewed dependency tree.');
+          }
+          return true;
+        },
+      });
+    }
+    signal?.throwIfAborted();
+  } catch (error) {
+    const dependencies = join(configDirectory, 'node_modules');
+    if (configDirectory === join(directory, 'config/opencode') && dirname(dependencies) === configDirectory) {
+      try { if (!(await lstat(dependencies)).isSymbolicLink()) await rm(dependencies, { recursive: true, force: true }); }
+      catch { /* Keep the original preparation failure; no engine was admitted. */ }
+    }
+    throw error;
+  }
   const binary = openCodeBinary(), password = randomBytes(32).toString('hex');
   const env = commandEnvironment();
   Object.assign(env, { OPENCODE_CONFIG_CONTENT: JSON.stringify(config), OPENCODE_CONFIG_DIR: configDirectory,

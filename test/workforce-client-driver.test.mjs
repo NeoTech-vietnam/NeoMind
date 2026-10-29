@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -47,7 +47,7 @@ test('native setup sets only the reviewed User runtime and leaves dispatch and c
   const app = fixture(t, { runtimeMismatch: true });
   const configured = await control(app, 'configure-runtime');
   assert.equal(configured.status, 200); assert.equal(configured.result.runtime_binding.matches, true);
-  assert.deepEqual(app.updates, [{ section: 'workforce.bridge', name: 'runtimePath', value: app.root, target: 1 }]);
+  assert.deepEqual(app.updates, [{ section: 'workforce.bridge', name: 'runtimePath', value: realpathSync.native(app.root), target: 1 }]);
   const connected = await control(app, 'connect');
   assert.deepEqual(connected.result, { connection_requested: true, consent_automatically_granted: false });
   assert.deepEqual(app.calls.map(([name]) => name), ['workforce.bridge.enable']);
