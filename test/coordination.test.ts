@@ -74,3 +74,22 @@ test('separate processes cannot own the same run', async () => {
   assert.equal(results.filter(r => r.acquired).length, 1);
   assert.match(results.find(r => !r.acquired)?.message ?? '', /already has an owner/);
 });
+
+test('run ownership can be reclaimed only after the recorded scheduler process has exited', async t => {
+  const { currentProcessIdentity, ownerLiveness } = await import('../src/storage/process-identity.js');
+  if (!currentProcessIdentity()) { t.skip('Linux process identity unavailable'); return; }
+  const dir = mkdtempSync(path.join(tmpdir(), 'neomind-owner-process-')), db = path.join(dir, 'coordination.sqlite');
+  const coordinator = new WorkspaceCoordinator(db);
+  const active = coordinator.acquireRun('active', 'host');
+  assert.equal(ownerLiveness(coordinator.ownerIdentity(active)!), 'alive');
+  assert.throws(() => coordinator.reclaimDeadRun(active), /not verified/);
+  coordinator.releaseRun(active, true);
+  const worker = path.resolve('dist/test/helpers/run-owner-worker.js');
+  const { stdout } = await execFileAsync(process.execPath, [worker, db, 'dead', 'worker-host']);
+  assert.equal((JSON.parse(stdout) as { acquired: boolean }).acquired, true);
+  const previous = coordinator.getRunOwner('dead')!;
+  assert.equal(ownerLiveness(coordinator.ownerIdentity(previous)!), 'dead');
+  coordinator.reclaimDeadRun(previous);
+  const next = coordinator.acquireRun('dead', 'new-host'); assert.ok(next.fence > previous.fence);
+  coordinator.releaseRun(next, true); coordinator.close();
+});

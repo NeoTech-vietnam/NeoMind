@@ -60,6 +60,7 @@ test('lesson proposal stays out of approved memory until trusted user promotion'
     record: { ...record, id: 'learned', type: 'lesson', body: 'Use explicit approval' } });
   assert.equal(store.search({ types: ['lesson'] }).length, 0);
   assert.throws(() => proposals.approve('lesson-1', 'approval-1', 'user', null, { projectWrite: true, confirmedByUser: false }), /confirmation/);
+  assert.throws(() => proposals.approve('lesson-1', 'approval-stale', 'user', null, { projectWrite: true, confirmedByUser: true }, 'a'.repeat(64)), /changed since/);
   proposals.approve('lesson-1', 'approval-1', 'user', null, { projectWrite: true, confirmedByUser: true });
   assert.throws(() => proposals.promote('approval-1', store, { projectWrite: false }), /permission/);
   const promoted = proposals.promote('approval-1', store, { projectWrite: true });

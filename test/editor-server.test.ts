@@ -38,6 +38,27 @@ test('local editor persists drafts and published versions while rejecting unauth
     assert.equal(copy.draft.name, 'Demo copy');
     assert.equal(copy.draft.definition.nodes.find(node => node.id === 'plan')?.label, 'My plan');
     const bootstrap = await fetch(`${editor.url}/api/bootstrap`);
-    assert.equal((await bootstrap.json() as { runtimeAvailable: boolean }).runtimeAvailable, false);
+    assert.equal((await bootstrap.json() as { runtimeAvailable: boolean }).runtimeAvailable, process.platform === 'linux');
+  } finally { await editor.close(); }
+});
+
+test('profile API protects writes and publishes immutable versions independently from drafts', async () => {
+  const project = await mkdtemp(path.join(tmpdir(), 'neomind-profile-api-'));
+  const editor = await startEditorServer(project);
+  const headers = { 'Content-Type': 'application/json', Origin: editor.url, 'X-NeoMind-Token': editor.token };
+  try {
+    assert.equal((await fetch(`${editor.url}/api/profiles`, { method: 'POST', body: '{}' })).status, 403);
+    const create = await fetch(`${editor.url}/api/profiles`, { method: 'POST', headers, body: JSON.stringify({ id: 'reviewer', name: 'Reviewer', template: 'verifier' }) });
+    assert.equal(create.status, 201);
+    const { draft } = await create.json() as { draft: { profileId: string; instructions: string; requestedPermissions: { write: boolean } } };
+    assert.equal(draft.requestedPermissions.write, false); draft.instructions = 'Independent first version';
+    assert.equal((await fetch(`${editor.url}/api/profiles/reviewer/draft`, { method: 'PUT', headers, body: JSON.stringify({ draft }) })).status, 200);
+    const version = await (await fetch(`${editor.url}/api/profiles/reviewer/publish`, { method: 'POST', headers })).json() as { version: { version: number; instructions: string } };
+    assert.equal(version.version.version, 1); assert.equal(version.version.instructions, 'Independent first version');
+    draft.instructions = 'Changed draft';
+    await fetch(`${editor.url}/api/profiles/reviewer/draft`, { method: 'PUT', headers, body: JSON.stringify({ draft }) });
+    assert.equal(version.version.instructions, 'Independent first version');
+    assert.equal((await fetch(`${editor.url}/api/profiles/reviewer/draft`, { method: 'PUT', headers, body: JSON.stringify({ draft: { ...draft, profileId: 'other' } }) })).status, 400);
+    assert.equal((await fetch(`${editor.url}/api/profiles/reviewer/delete`, { method: 'POST', headers, body: JSON.stringify({ confirmedName: 'wrong' }) })).status, 400);
   } finally { await editor.close(); }
 });

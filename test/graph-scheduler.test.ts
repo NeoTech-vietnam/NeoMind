@@ -75,3 +75,16 @@ test('invalid graphs cannot be passed to the graph readiness engine', () => {
   flow.definition.edges.push({ from: 'join', to: 'fork', outcome: 'completed' });
   assert.throws(() => new GraphScheduler(flow, defaultProject.policy), /Invalid flow.*cycle/);
 });
+
+test('repair reopens implementation and review while preserving approved planning', () => {
+  const scheduler = new GraphScheduler(templates.dev, defaultProject.policy);
+  for (const id of ['start', 'plan', 'approval', 'implement', 'repair']) { scheduler.claim(id); scheduler.complete(id, id === 'approval' ? 'pass' : 'completed'); }
+  scheduler.claim('verify'); scheduler.repair('repair');
+  assert.equal(scheduler.snapshot().nodes.approval?.status, 'succeeded');
+  assert.equal(scheduler.snapshot().nodes.plan?.status, 'succeeded');
+  assert.deepEqual(scheduler.ready(), ['implement']);
+  scheduler.claim('implement'); scheduler.complete('implement', 'completed');
+  scheduler.claim('repair'); scheduler.complete('repair', 'completed');
+  assert.deepEqual(scheduler.ready(), ['verify']);
+  assert.throws(() => scheduler.repair('repair'), /active review/);
+});

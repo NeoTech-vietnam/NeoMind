@@ -1,6 +1,10 @@
 # Bàn giao research và thiết kế Adaptive Agent Flow
 
-Cập nhật ngày 28/10/2026. Nhánh làm việc: **`hieu/adaptive-agent-flow`** trong repository **NeoTech-vietnam/NeoMind**.
+Cập nhật ngày 29/10/2026. Nhánh làm việc: **`hieu/adaptive-agent-flow`** trong repository **NeoTech-vietnam/NeoMind**.
+
+## Tiến độ implementation hiện tại
+
+Đọc [bàn giao session 29/10/2026](session-handoff-2026-10-29.md) và [implementation status](implementation-status.md) trước. Codex standalone default flow đã chạy thật trên fixture và qua UI; 101 tests đạt. V1 đầy đủ vẫn chưa xong. Các mục research, probe thất bại và prompt bàn giao bên dưới là lịch sử, không dùng chúng để suy ra runtime hiện tại chưa triển khai hoặc task chưa được cho phép.
 
 ## Tài liệu đọc chính hiện tại
 

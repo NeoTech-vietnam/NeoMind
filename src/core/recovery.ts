@@ -1,11 +1,19 @@
 import { z } from 'zod';
+import { validateMaterializedRun } from '../domain/materialize.js';
+import { hashJson } from '../domain/resolve.js';
 import { flowSchema, projectPolicySchema } from '../domain/schema.js';
-import { approvalMatches, approvalSchema, planSchema } from '../domain/approval.js';
+import { approvalMatches, approvalSchema, planSchema, type Approval, type Plan } from '../domain/approval.js';
 import { GraphScheduler, type Outcome, type SchedulerSnapshot } from './graph-scheduler.js';
 import { evaluateReviews } from './review.js';
 import { runEventSchema, type RunEvent } from '../storage/journal.js';
+import { allocateRepairRound, type BudgetState } from './budget.js';
+import { reviewEvidenceSchema, type ReviewEvidence } from './review-evidence.js';
+import { runtimeArtifactSchema, runtimeContextSchema, runtimeStateSchema, type RuntimeArtifact, type RuntimeContext, type RuntimeState } from './runtime-state.js';
+import { tokenUsageSchema, type TokenUsage } from './usage.js';
+import { evaluateCondition } from './condition.js';
+import type { BindingValues } from '../domain/resolve.js';
 
-const createdSchema = z.strictObject({ flow: z.unknown(), policy: projectPolicySchema });
+const createdSchema = z.strictObject({ flow: z.unknown(), policy: projectPolicySchema, snapshot: z.json().optional() });
 const nodeSchema = z.strictObject({ nodeId: z.string().min(1), writeScopes: z.array(z.string().min(1)).optional() });
 const outcomeSchema = z.enum(['completed', 'pass', 'needs_changes', 'blocked', 'true', 'false']);
 const intentSchema = z.strictObject({ nodeId: z.string().min(1), attemptId: z.string().min(1), sessionId: z.string().min(1) });
@@ -35,14 +43,32 @@ function insideScope(child: string, parent: string): boolean {
 }
 
 export interface RecoveredAttempt {
+  round: number;
   nodeId: string; attemptId: string; sessionId: string; requestId: string;
   receipt: 'missing' | 'accepted' | 'unknown' | 'rejected';
   status: 'unresolved' | 'completed' | 'stopped';
-  baselineHash?: string;
+  baselineHash?: string; runnerTurnId?: string; workspace?: string; workspaceFence?: number; reviewerId?: string; reviewBaselineHash?: string; workerUnit?: string; workerControlGroup?: string;
+  readonlyBaselineHash?: string;
 }
-export interface RecoveredCommit { nodeId: string; requestId: string; baselineHash: string; expectedParent: string; expectedTree: string; confirmed: boolean }
+export interface RecoveredCommit { nodeId: string; requestId: string; baselineHash: string; expectedParent: string; expectedTree: string; confirmed: boolean; workspace?: string; workspaceFence?: number }
 export interface RecoveryReport {
+  bindingSelections: { key: string; values: BindingValues; reason: string }[];
+  timeExtensionsMs: number;
+  usage: { totalTokens: number | null; partial: boolean; reportedAttemptIds: string[]; bySession: Record<string, TokenUsage>; costUSD: null };
+  reviewValidationRetries: { nodeId: string; round: number; reviewerIds: string[] }[];
+  planRevisions: { planningNodeId: string; planId: string; version: number; feedback: string }[];
+  artifacts: RuntimeArtifact[];
+  continuationBaselines: string[];
+  runtimeContext?: RuntimeContext;
+  runtimeState?: RuntimeState;
+  repairRounds: { roundId: string; scopeId: string; baselineHash: string; findingIds: string[] }[];
   graph: SchedulerSnapshot;
+  plans: { nodeId: string; attemptId: string; plan: Plan }[];
+  approvals: { nodeId: string; plan: Plan; approval: Approval }[];
+  reviewerOutputs: { nodeId: string; attemptId: string; summary: string; evidence?: ReviewEvidence; result: z.infer<typeof reviewResultSchema> }[];
+  acceptedReviews: { nodeId: string; baselineHash: string }[];
+  checks: { checkId: string; requestId: string; command: string; baselineHash: string; status: 'unresolved' | 'passed' | 'failed' | 'abandoned'; outputHash?: string; workerUnit?: string; workerControlGroup?: string; workspace: string; workspaceFence: number }[];
+  unresolvedCheckIds: string[];
   attempts: RecoveredAttempt[];
   unresolvedAttemptIds: string[];
   commits: RecoveredCommit[];
@@ -66,16 +92,139 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
   }
   const initial = createdSchema.parse(first.payload);
   const flow = flowSchema.parse(initial.flow);
+  if (initial.snapshot) {
+    const snapshot = validateMaterializedRun(initial.snapshot);
+    if (hashJson(snapshot.configuration.flow) !== hashJson(flow) || hashJson(snapshot.policy) !== hashJson(initial.policy)) throw new Error('Run snapshot does not match flow or policy');
+  }
   const scheduler = new GraphScheduler(initial.flow, initial.policy);
   const attempts = new Map<string, RecoveredAttempt>();
+  const repairRounds: RecoveryReport['repairRounds'] = [];
+  const continuationBaselines: string[] = [];
+  const artifacts: RuntimeArtifact[] = [];
+  const planRevisions: RecoveryReport['planRevisions'] = [];
+  const reviewValidationRetries: RecoveryReport['reviewValidationRetries'] = [];
+  const usageBySession: Record<string, TokenUsage> = {}, usageAttempts = new Set<string>(); let usageReset = false;
+  let timeExtensionsMs = 0;
+  const bindingSelections: RecoveryReport['bindingSelections'] = [];
+  let runtimeContext: RuntimeContext | undefined, runtimeState: RuntimeState | undefined;
+  let budget: BudgetState = { runRoundsUsed: 0, scopesUsed: {}, allocations: {} };
   const requests = new Set<string>();
+  const plans = new Map<string, { nodeId: string; attemptId: string; plan: Plan }>();
+  const approvals: { nodeId: string; plan: Plan; approval: Approval }[] = [];
   const approvedNodes = new Set<string>();
   const approvedScopes: string[][] = [];
+  const reviewerOutputs: RecoveryReport['reviewerOutputs'] = [];
+  const checks = new Map<string, { checkId: string; requestId: string; command: string; baselineHash: string; status: 'unresolved' | 'passed' | 'failed' | 'abandoned'; outputHash?: string; workerUnit?: string; workerControlGroup?: string; workspace: string; workspaceFence: number }>();
   const acceptedReviews = new Map<string, string>();
   const commits = new Map<string, RecoveredCommit>();
   for (const event of events.slice(1)) {
     if (event.runId !== first.runId) throw new Error('Journal contains another run');
     switch (event.type) {
+      case 'binding_fallback_selected': {
+        const payload = z.strictObject({ key: z.string().min(1), values: z.strictObject({ runner: z.string().min(1), provider: z.string().min(1), model: z.string().min(1), reasoning: z.string().min(1) }), reason: z.string().min(1) }).parse(event.payload);
+        const snapshot = initial.snapshot ? validateMaterializedRun(initial.snapshot) : undefined, binding = snapshot?.configuration.bindings[payload.key];
+        if (!binding || !binding.fallback.some(candidate => hashJson(candidate) === hashJson(payload.values)) || [...attempts.values()].some(item => item.nodeId === payload.key.split('/')[0] && item.status === 'unresolved')) throw new Error('Fallback is outside the snapshot allowlist or the step is active');
+        bindingSelections.push(payload); break;
+      }
+      case 'runtime_time_extended': {
+        const { seconds } = z.strictObject({ seconds: z.number().int().positive().max(86400) }).parse(event.payload);
+        if (!runtimeContext || !runtimeState || !['paused', 'blocked', 'recovering'].includes(runtimeState.phase) || [...attempts.values()].some(item => item.status === 'unresolved')) throw new Error('Time extension requires a stopped run');
+        timeExtensionsMs += seconds * 1000; break;
+      }
+      case 'condition_evaluated': {
+        const payload = z.strictObject({ nodeId: z.string().min(1), value: z.boolean() }).parse(event.payload), node = flow.definition.nodes.find(item => item.id === payload.nodeId);
+        if (node?.type !== 'condition') throw new Error('Not a condition node');
+        const value = evaluateCondition(node, { nodes: scheduler.snapshot().nodes, incomingIds: flow.definition.edges.filter(edge => edge.to === node.id).map(edge => edge.from), checks: [...checks.values()], acceptedReviewCount: acceptedReviews.size, repairRounds: repairRounds.length });
+        if (value !== payload.value) throw new Error('Condition result does not match durable facts');
+        scheduler.claim(node.id); scheduler.complete(node.id, value ? 'true' : 'false'); break;
+      }
+      case 'readonly_baseline_bound': {
+        const payload = z.strictObject({ attemptId: z.string().min(1), baselineHash: z.string().min(1) }).parse(event.payload), attempt = attempts.get(payload.attemptId);
+        const node = flow.definition.nodes.find(item => item.id === attempt?.nodeId);
+        if (!attempt || attempt.requestId !== event.requestId || attempt.readonlyBaselineHash || node?.type !== 'agent_task' || node.permissions.write) throw new Error('Invalid read-only baseline binding');
+        attempt.readonlyBaselineHash = payload.baselineHash; break;
+      }
+      case 'usage_observed': {
+        const payload = z.strictObject({ attemptId: z.string().min(1), threadId: z.string().min(1), turnId: z.string().min(1), total: tokenUsageSchema }).parse(event.payload);
+        const attempt = attempts.get(payload.attemptId);
+        if (!attempt || attempt.sessionId !== payload.threadId || attempt.runnerTurnId !== payload.turnId) throw new Error('Usage does not match a dispatched turn');
+        const previous = usageBySession[payload.threadId];
+        if (previous && previous.totalTokens > payload.total.totalTokens) usageReset = true;
+        else usageBySession[payload.threadId] = payload.total;
+        usageAttempts.add(payload.attemptId); break;
+      }
+      case 'git_commit_abandoned': {
+        const { nodeId } = z.strictObject({ nodeId: z.string().min(1) }).parse(event.payload), commit = commits.get(nodeId);
+        if (!commit || commit.confirmed || commit.requestId !== event.requestId) throw new Error('No unresolved Git intent to abandon');
+        commits.delete(nodeId); scheduler.requeue(nodeId); break;
+      }
+      case 'producer_baseline_updated': {
+        const payload = z.strictObject({ attemptId: z.string().min(1), baselineHash: z.string().min(1) }).parse(event.payload);
+        const attempt = attempts.get(payload.attemptId);
+        if (!attempt || attempt.status !== 'completed' || !attempt.baselineHash || !continuationBaselines.includes(payload.baselineHash) || commits.size || [...attempts.values()].some(item => item.status === 'unresolved') || [...checks.values()].some(item => item.status === 'unresolved')) throw new Error('Producer baseline cannot be updated');
+        attempt.baselineHash = payload.baselineHash;
+        for (const node of flow.definition.nodes) if (node.type === 'review_group' && node.targetNodeId === attempt.nodeId) {
+          acceptedReviews.delete(node.id);
+          for (let index = reviewerOutputs.length - 1; index >= 0; index--) if (reviewerOutputs[index]?.nodeId === node.id) reviewerOutputs.splice(index, 1);
+          scheduler.invalidateFrom(node.id);
+        }
+        break;
+      }
+      case 'review_retry_requested': {
+        const { nodeId, reason, reviewerIds } = z.strictObject({ nodeId: z.string().min(1), reason: z.enum(['user', 'validation']).default('user'), reviewerIds: z.array(z.string().min(1)).optional() }).parse(event.payload);
+        if (flow.definition.nodes.find(item => item.id === nodeId)?.type !== 'review_group' || acceptedReviews.has(nodeId) || !['running', 'ready'].includes(scheduler.snapshot().nodes[nodeId]?.status ?? '') || [...attempts.values()].some(item => item.nodeId === nodeId && item.status === 'unresolved')) throw new Error('Review cannot be retried in its current state');
+        if (reason === 'validation') {
+          if (!reviewerIds?.length || reviewValidationRetries.some(item => item.nodeId === nodeId && item.round === repairRounds.length)) throw new Error('Review output validation retry exhausted');
+          reviewValidationRetries.push({ nodeId, round: repairRounds.length, reviewerIds });
+        }
+        for (let index = reviewerOutputs.length - 1; index >= 0; index--) { const output = reviewerOutputs[index]; if (output?.nodeId === nodeId && (!reviewerIds || reviewerIds.includes(output.result.reviewerId))) reviewerOutputs.splice(index, 1); }
+        break;
+      }
+      case 'plan_revision_requested': {
+        const request = z.strictObject({ planningNodeId: z.string().min(1), planId: z.string().min(1), version: z.number().int().positive(), feedback: z.string().min(1).max(10000) }).parse(event.payload);
+        const previous = plans.get(request.planningNodeId);
+        if (!previous || previous.plan.planId !== request.planId || previous.plan.version + 1 !== request.version || approvals.length || [...attempts.values()].some(item => item.status === 'unresolved')) throw new Error('Plan revision does not match an unapproved plan');
+        scheduler.replan(request.planningNodeId); plans.delete(request.planningNodeId); planRevisions.push(request); break;
+      }
+      case 'runtime_artifact': {
+        const artifact = runtimeArtifactSchema.parse(event.payload);
+        if (artifact.attemptId) { const attempt = attempts.get(artifact.attemptId); if (!attempt || attempt.nodeId !== artifact.nodeId || artifact.baselineHash !== (attempt.baselineHash ?? attempt.readonlyBaselineHash)) throw new Error('Artifact does not match producer baseline'); }
+        artifacts.push(artifact); break;
+      }
+      case 'node_requeued': {
+        const { nodeId } = z.strictObject({ nodeId: z.string().min(1) }).parse(event.payload);
+        if ([...attempts.values()].some(attempt => attempt.nodeId === nodeId && attempt.status === 'unresolved') || [...commits.values()].some(item => item.nodeId === nodeId && !item.confirmed) || [...checks.values()].some(item => item.status === 'unresolved')) throw new Error('Cannot requeue unresolved work');
+        scheduler.requeue(nodeId); break;
+      }
+      case 'continuation_baseline': {
+        const { baselineHash } = z.strictObject({ baselineHash: z.string().min(1) }).parse(event.payload);
+        if (!runtimeContext || !approvals.length || [...attempts.values()].some(item => item.status === 'unresolved')) throw new Error('Continuation requires reconciled work and approved scope');
+        continuationBaselines.push(baselineHash); break;
+      }
+      case 'runtime_context': {
+        if (runtimeContext || attempts.size) throw new Error('Runtime context must be recorded once before dispatch');
+        runtimeContext = runtimeContextSchema.parse(event.payload);
+        if (runtimeContext.lease.runId !== first.runId || runtimeContext.lease.workspace !== runtimeContext.workspace) throw new Error('Runtime context lease mismatch');
+        break;
+      }
+      case 'runtime_state': {
+        const next = runtimeStateSchema.parse(event.payload);
+        if (!runtimeContext || next.activeMs < (runtimeState?.activeMs ?? 0)) throw new Error('Invalid runtime checkpoint');
+        runtimeState = next; break;
+      }
+      case 'repair_round_started': {
+        const payload = z.strictObject({ roundId: z.string().min(1), scopeId: z.string().min(1), baselineHash: z.string().min(1), findingIds: z.array(z.string().min(1)).min(1) }).parse(event.payload);
+        const scope = flow.definition.nodes.find(node => node.id === payload.scopeId);
+        if (scope?.type !== 'repair_scope' || repairRounds.some(round => round.roundId === payload.roundId)) throw new Error('Invalid repair round');
+        const outputs = reviewerOutputs.filter(item => item.nodeId === scope.targetReviewId);
+        if (!payload.findingIds.every(id => outputs.some(item => item.result.baselineHash === payload.baselineHash && item.result.verdict === 'needs_changes' && item.result.findingIds.includes(id)))) throw new Error('Repair findings do not match current review');
+        budget = allocateRepairRound(budget, payload.roundId, [scope.id], Math.min(flow.definition.limits.maxRepairRounds, initial.policy.maxRepairRounds), { [scope.id]: scope.maxRounds });
+        if ([...attempts.values()].some(attempt => attempt.status === 'unresolved')) throw new Error('Cannot repair while attempts are unresolved');
+        scheduler.repair(scope.id);
+        for (let index = reviewerOutputs.length - 1; index >= 0; index--) if (reviewerOutputs[index]?.nodeId === scope.targetReviewId) reviewerOutputs.splice(index, 1);
+        acceptedReviews.delete(scope.targetReviewId);
+        repairRounds.push(payload); break;
+      }
       case 'node_claimed': {
         const { nodeId, writeScopes } = nodeSchema.parse(event.payload);
         const node = flow.definition.nodes.find(n => n.id === nodeId);
@@ -123,8 +272,18 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
         const intent = intentSchema.parse(event.payload);
         if (attempts.has(intent.attemptId) || requests.has(event.requestId)) throw new Error('Duplicate attempt or dispatch request');
         if (scheduler.snapshot().nodes[intent.nodeId]?.status !== 'running') throw new Error('Dispatch intent requires a claimed node');
-        attempts.set(intent.attemptId, { ...intent, requestId: event.requestId, receipt: 'missing', status: 'unresolved' });
+        attempts.set(intent.attemptId, { ...intent, round: repairRounds.length, requestId: event.requestId, receipt: 'missing', status: 'unresolved' });
         requests.add(event.requestId); break;
+      }
+      case 'plan_proposed': {
+        const payload = z.strictObject({ nodeId: z.string().min(1), attemptId: z.string().min(1), plan: planSchema }).parse(event.payload);
+        const attempt = attempts.get(payload.attemptId);
+        const revision = [...planRevisions].reverse().find(item => item.planningNodeId === payload.nodeId);
+        if (revision && (payload.plan.planId !== revision.planId || payload.plan.version !== revision.version)) throw new Error('Plan version does not match the requested revision');
+        const node = flow.definition.nodes.find(n => n.id === payload.nodeId);
+        if (node?.type !== 'agent_task' || node.outputContract !== 'plan' || !attempt || attempt.nodeId !== node.id ||
+            (attempt.status !== 'completed' && attempt.status !== 'unresolved') || !attempt.runnerTurnId || attempt.receipt === 'rejected' || plans.has(node.id)) throw new Error('Plan must come from a valid planning attempt');
+        attempt.status = 'completed'; plans.set(node.id, payload); break;
       }
       case 'approval_recorded': {
         const payload = z.strictObject({ nodeId: z.string().min(1), plan: planSchema, approval: approvalSchema }).parse(event.payload);
@@ -132,8 +291,42 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
         if (node?.type !== 'approval' || scheduler.snapshot().nodes[payload.nodeId]?.status !== 'running') {
           throw new Error('Approval must refer to a claimed approval node');
         }
+        const predecessors = flow.definition.edges.filter(edge => edge.to === payload.nodeId).map(edge => plans.get(edge.from)).filter(item => item !== undefined);
+        if (predecessors.length && !predecessors.some(item => JSON.stringify(item.plan) === JSON.stringify(payload.plan))) throw new Error('Approval does not match proposed plan');
         if (!approvalMatches(payload.approval, payload.plan, initial.policy)) throw new Error('Approval does not match plan and policy');
-        approvedNodes.add(payload.nodeId); approvedScopes.push(payload.plan.scope); break;
+        approvals.push(payload); approvedNodes.add(payload.nodeId); approvedScopes.push(payload.plan.scope); break;
+      }
+      case 'check_intent': {
+        const payload = z.strictObject({ checkId: z.string().min(1), command: z.string().min(1), baselineHash: z.string().min(1), workspace: z.string().min(1), workspaceFence: z.number().int().positive() }).parse(event.payload);
+        if (checks.has(payload.checkId) || requests.has(event.requestId)) throw new Error('Duplicate check intent');
+        checks.set(payload.checkId, { ...payload, requestId: event.requestId, status: 'unresolved' }); requests.add(event.requestId); break;
+      }
+      case 'check_scope_bound': {
+        const binding = z.strictObject({ checkId: z.string().min(1), unit: z.string().regex(/^neomind-run-[a-f0-9-]+\.scope$/),
+          controlGroup: z.string().startsWith('/user.slice/') }).parse(event.payload);
+        const check = checks.get(binding.checkId);
+        if (!check || check.status !== 'unresolved' || check.workerUnit || check.requestId !== event.requestId) throw new Error('Unexpected check scope binding');
+        check.workerUnit = binding.unit; check.workerControlGroup = binding.controlGroup; break;
+      }
+      case 'check_abandoned': {
+        const payload = z.strictObject({ checkId: z.string().min(1) }).parse(event.payload), check = checks.get(payload.checkId);
+        if (!check || check.status !== 'unresolved' || check.requestId !== event.requestId || !check.workerUnit) throw new Error('Unexpected check reconciliation');
+        check.status = 'abandoned'; break;
+      }
+      case 'check_finished': {
+        const payload = z.strictObject({ checkId: z.string().min(1), exitCode: z.number().int(), outputHash: z.string().regex(/^[a-f0-9]{64}$/) }).parse(event.payload);
+        const check = checks.get(payload.checkId);
+        if (!check || check.status !== 'unresolved' || check.requestId !== event.requestId) throw new Error('Unexpected check result');
+        check.status = payload.exitCode === 0 ? 'passed' : 'failed'; check.outputHash = payload.outputHash; break;
+      }
+      case 'reviewer_output': {
+        const payload = z.strictObject({ nodeId: z.string().min(1), attemptId: z.string().min(1), summary: z.string().min(1), evidence: reviewEvidenceSchema.optional(), result: reviewResultSchema }).parse(event.payload);
+        const node = flow.definition.nodes.find(n => n.id === payload.nodeId), attempt = attempts.get(payload.attemptId);
+        if (node?.type !== 'review_group' || !node.reviewers.some(r => r.id === payload.result.reviewerId) || !attempt ||
+            attempt.nodeId !== node.id || (attempt.status !== 'completed' && attempt.status !== 'unresolved') || !attempt.runnerTurnId || attempt.receipt === 'rejected' || attempt.sessionId !== payload.result.sessionId || attempt.reviewerId !== payload.result.reviewerId ||
+            attempt.reviewBaselineHash !== payload.result.baselineHash ||
+            reviewerOutputs.some(item => item.attemptId === payload.attemptId || item.nodeId === node.id && item.result.reviewerId === payload.result.reviewerId)) throw new Error('Invalid reviewer output');
+        attempt.status = 'completed'; reviewerOutputs.push({ nodeId: payload.nodeId, attemptId: payload.attemptId, summary: payload.summary, result: payload.result, ...(payload.evidence ? { evidence: payload.evidence } : {}) }); break;
       }
       case 'review_accepted': {
         const payload = z.strictObject({ nodeId: z.string().min(1), baselineHash: z.string().min(1), producerSessionId: z.string().min(1),
@@ -161,11 +354,46 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
           expectedParent: intent.expectedParent, expectedTree: intent.expectedTree, confirmed: false });
         break;
       }
+      case 'git_workspace_bound': {
+        const binding = z.strictObject({ nodeId: z.string().min(1), workspace: z.string().min(1), fence: z.number().int().positive() }).parse(event.payload);
+        const commit = commits.get(binding.nodeId);
+        if (!commit || commit.confirmed || commit.workspace || commit.requestId !== event.requestId) throw new Error('Unexpected Git workspace binding');
+        commit.workspace = binding.workspace; commit.workspaceFence = binding.fence; break;
+      }
       case 'git_commit_receipt': {
         const receipt = commitReceiptSchema.parse(event.payload), intent = commits.get(receipt.nodeId);
         if (!intent || intent.confirmed || intent.requestId !== event.requestId || intent.baselineHash !== receipt.baselineHash ||
             intent.expectedParent !== receipt.parent || intent.expectedTree !== receipt.tree) throw new Error('Git commit receipt does not match intent');
         intent.confirmed = true; break;
+      }
+      case 'worker_scope_bound': {
+        const binding = z.strictObject({ attemptId: z.string().min(1), unit: z.string().regex(/^neomind-run-[a-f0-9-]+\.scope$/),
+          controlGroup: z.string().startsWith('/user.slice/') }).parse(event.payload);
+        const attempt = attempts.get(binding.attemptId);
+        if (!attempt || attempt.requestId !== event.requestId || attempt.workerUnit || attempt.status !== 'unresolved') throw new Error('Unexpected worker scope binding');
+        attempt.workerUnit = binding.unit; attempt.workerControlGroup = binding.controlGroup; break;
+      }
+      case 'reviewer_dispatch_bound': {
+        const binding = z.strictObject({ attemptId: z.string().min(1), reviewerId: z.string().min(1), baselineHash: z.string().min(1) }).parse(event.payload);
+        const attempt = attempts.get(binding.attemptId), node = flow.definition.nodes.find(n => n.id === attempt?.nodeId);
+        if (!attempt || node?.type !== 'review_group' || attempt.requestId !== event.requestId || attempt.reviewerId ||
+            !node.reviewers.some(r => r.id === binding.reviewerId) ||
+            reviewerOutputs.some(item => item.nodeId === node.id && item.result.reviewerId === binding.reviewerId) ||
+            [...attempts.values()].some(item => item.attemptId !== attempt.attemptId && item.nodeId === node.id && item.reviewerId === binding.reviewerId && item.status === 'unresolved')) throw new Error('Unexpected reviewer binding');
+        attempt.reviewerId = binding.reviewerId; attempt.reviewBaselineHash = binding.baselineHash; break;
+      }
+      case 'workspace_dispatch_bound': {
+        const binding = z.strictObject({ attemptId: z.string().min(1), workspace: z.string().min(1), fence: z.number().int().positive() }).parse(event.payload);
+        const attempt = attempts.get(binding.attemptId);
+        if (!attempt || attempt.requestId !== event.requestId || attempt.workspace || attempt.status !== 'unresolved') throw new Error('Unexpected workspace binding');
+        attempt.workspace = binding.workspace; attempt.workspaceFence = binding.fence; break;
+      }
+      case 'codex_turn_bound': {
+        const binding = z.strictObject({ attemptId: z.string().min(1), turnId: z.string().min(1) }).parse(event.payload);
+        const attempt = attempts.get(binding.attemptId);
+        if (!attempt || attempt.requestId !== event.requestId || attempt.runnerTurnId || attempt.status !== 'unresolved' ||
+          [...attempts.values()].some(item => item.runnerTurnId === binding.turnId)) throw new Error('Unexpected or duplicate Codex turn binding');
+        attempt.runnerTurnId = binding.turnId; break;
       }
       case 'dispatch_receipt': {
         const receipt = receiptSchema.parse(event.payload), attempt = attempts.get(receipt.attemptId);
@@ -185,7 +413,7 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
     }
   }
   const list = [...attempts.values()];
-  return { graph: scheduler.snapshot(), attempts: structuredClone(list),
+  return { ...(runtimeContext ? { runtimeContext } : {}), ...(runtimeState ? { runtimeState } : {}), graph: scheduler.snapshot(), bindingSelections, timeExtensionsMs, usage: { totalTokens: usageAttempts.size ? Object.values(usageBySession).reduce((sum, usage) => sum + usage.totalTokens, 0) : null, partial: usageReset || usageAttempts.size < attempts.size, reportedAttemptIds: [...usageAttempts], bySession: usageBySession, costUSD: null }, reviewValidationRetries, planRevisions, artifacts, continuationBaselines, repairRounds: structuredClone(repairRounds), plans: structuredClone([...plans.values()]), approvals: structuredClone(approvals), reviewerOutputs: structuredClone(reviewerOutputs), acceptedReviews: [...acceptedReviews].map(([nodeId, baselineHash]) => ({ nodeId, baselineHash })), checks: structuredClone([...checks.values()]), unresolvedCheckIds: [...checks.values()].filter(item => item.status === 'unresolved').map(item => item.checkId), attempts: structuredClone(list),
     unresolvedAttemptIds: list.filter(a => a.status === 'unresolved').map(a => a.attemptId),
     commits: structuredClone([...commits.values()]), unresolvedCommitNodeIds: [...commits.values()].filter(c => !c.confirmed).map(c => c.nodeId),
     requiresUserContinue: true };

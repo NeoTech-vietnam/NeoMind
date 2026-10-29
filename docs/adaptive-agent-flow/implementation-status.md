@@ -1,34 +1,37 @@
 # NeoMind v1 — trạng thái implementation
 
-Ngày: 28/10/2026. Baseline thiết kế: [design-v1](design-v1.md). Đây là tiến độ đang phát triển, chưa phải v1 hoàn tất.
+Cập nhật: **29/10/2026**. Branch: `hieu/adaptive-agent-flow`. Baseline trước đợt này: `d19c998`. **V1 chưa hoàn tất.** Đọc [bàn giao hiện tại](session-handoff-2026-10-29.md) để tiếp tục; [design-v1](design-v1.md) là phạm vi mục tiêu.
 
-## Đã có
+## Đã hoàn thành trong đợt hiện tại
 
-- Schema flow/profile, graph compiler và templates Fast/Dev/Research; kiểm tra graph, scope, policy, approval và review. Binding kế thừa/ghim, provenance và snapshot; materialization ghim profile và nội dung skill. Validation chưa thay thế enforcement khi chạy.
-- Thư viện flow/profile lưu draft và version bất biến, clone, rename, archive/restore, xóa có xác nhận tên. Các thao tác draft/metadata cần cơ chế đồng bộ ngoài khi nhiều process cùng ghi.
-- Logic thuần về readiness của graph, fork/join, review aggregation, lựa chọn reviewer kiểm tra lại theo phạm vi ảnh hưởng đã xác minh, repair budget, approval, preflight và lifecycle. Journal fsync, kiểm tra recovery và mô phỏng run bằng fake adapter; chưa dispatch agent thật. Run mô phỏng có service tuần tự hóa lệnh và journal được bảo vệ bằng run-owner lease, fencing trong SQLite. Lease không hết hạn tự động; recovery cần xác nhận scheduler cũ đã dừng trước khi giải phóng. Quyền run không xác nhận worker đã dừng và không tự fence các tiến trình bên ngoài NeoMind.
-- SQLite thử nghiệm cho workspace writer lease, fencing và quarantine; Git baseline ghi nhận thay đổi staged/unstaged/untracked mà không đổi index. Đây chưa phải workspace manager hay cơ chế tích hợp/commit.
-- Markdown memory store có CAS và khóa SQLite chia sẻ giữa các process, integrity hash, truy xuất lexical và lesson proposal trong run artifacts; promotion yêu cầu xác nhận từ lớp ứng dụng. CLI có đọc/tìm kiếm khi chỉ rõ root và coordination DB. Registry local map Git common directory đến root và CLI có thể tìm theo project; các host phải được cấu hình dùng cùng database. Có receipt duyệt lesson ràng buộc proposal và revision; chưa có audit receipt cho quyết định project hay giao diện duyệt proposal, và chưa tích hợp host Nimbalyst. Các quyền xác nhận là assertion từ ứng dụng đáng tin cậy, không phải xác thực độc lập.
-- Có tạo detached worktree từ commit đầy đủ và resolve primary checkout, thử với dirty checkout; chưa tích hợp run hay xử lý ghép/conflict.
-- Transport JSONL cho Codex app-server có handshake, phân tuyến sự kiện và đánh dấu timeout effect unknown; đã khởi tạo thành công app-server `codex-cli 0.156.1` local, chưa dispatch inference, stop hay recovery thật. Nút Run vẫn khóa.
-- CLI cho templates, schema, flow/profile library, validate, doctor và editor. Doctor chỉ phát hiện binary, không xác thực capability, đăng nhập hay inference.
-- Flow Studio chạy local, cho tạo từ template, chỉnh canvas kéo thả, kết nối, thiết lập bước và reviewer, lưu nháp, validate, publish, sao chép, đổi tên, lưu trữ/khôi phục và xóa. API giới hạn localhost, kiểm tra origin và token khi ghi. Chưa có quản lý profile đầy đủ, monitor run hay thực thi agent; nút Run bị khóa. Bản sao dùng draft đã lưu.
+- Codex app-server transport và dispatch thật cho plan, write, check, review; orchestrator nối flow mặc định tới commit local trong detached worktree. Cấu hình/model/reasoning/profile/skill và memory được ghim theo run; preview ràng buộc snapshot và source HEAD.
+- Durable journal, scheduler owner/fencing, workspace leases và quarantine; recovery đối chiếu worker/session/code rồi chờ người dùng Continue. Pause/cancel ngừng giao việc, yêu cầu ngắt worker và giữ artifacts/code. Regression đã kiểm tra pause khi check đang giữ hàng đợi service.
+- Worker/check dùng Linux user-systemd scopes và xác minh dừng trước khi giải phóng workspace; turn interrupted đơn lẻ không được coi là bằng chứng dừng shell con. External tools/delegation bị vô hiệu hóa và inventory được kiểm tra trước dispatch.
+- Approval có plan hash, đổi kế hoạch tạo version mới; bounded repair giữ session thực hiện và từng reviewer. Nhiều reviewer độc lập chạy đồng thời theo cap; required/advisory verdict và evidence được tổng hợp. Source citations, check receipts và artifact references được đối chiếu với baseline; một lần retry validation trước khi chờ nếu evidence không hợp lệ.
+- Checks, graph conditions và repair counters có trạng thái bền vững. Active-time budget bỏ thời gian toàn run chờ người dùng; gia hạn có journal. Fallback chỉ trong allowlist. Token usage cộng theo session; thiếu dữ liệu hiển thị unknown/partial, chi phí chưa đo được.
+- Commit theo reviewed tree trong detached worktree; lỗi Git giữ technical acceptance và cho explicit retry khi baseline/intent đã đối chiếu. Git commands có timeout và AbortSignal; chưa chứng minh dừng toàn bộ cây tiến trình ký Git. Commit-tree không chạy hooks.
+- Flow Studio: canvas/flow library, profile CRUD/draft/publish, binding/fallback và condition editors, run preview/monitor/approval/plan changes/pause/resume/cancel/retry Git/gia hạn. API localhost có origin/token checks. CLI có preview/start/list/show/approve/resume/pause/cancel cơ bản.
+- Memory root theo Git common directory, Markdown CAS và audit receipts cho context/quyết định; shared memory được ghim theo run. Lessons sau repair chỉ là proposals; promotion cần duyệt đúng hash và revision. Memory UI đã thử bằng trình duyệt.
+- Local Research tạo artifacts chỉ đọc và review chúng; đã test bằng transport deterministic. Chưa kiểm chứng inference thật cho Research hoặc nguồn web/connector.
 
 ## Kiểm chứng
 
-- Node `v22.22.1`: `npm test` có 61 tests, bao gồm graph, libraries, recovery, workspace fencing, Git baseline, server editor và fake run và memory/registry. `npm run build:ui` thành công; kiểm tra thủ công trên project tạm xác nhận tạo flow, chọn bước và lưu nháp.
-- `npm install --package-lock-only --ignore-scripts` báo 0 lỗ hổng. [Node SQLite](https://nodejs.org/download/release/latest-jod/docs/api/sqlite.html) vẫn experimental trên Node 22; cần xác minh tương thích host.
+- `npm test`: **101/101 pass**, 0 fail, 0 skip; gồm TypeScript build, integration fixtures, crash recovery, leases, evidence, repair, parallel reviewers, memory, lifecycle và Git.
+- `npm run build:ui`: thành công; xem bàn giao cho bước xác minh cuối trước commit.
+- Inference thật với **Luna 6** thực hiện và **Sol 6.1** review: fixture hoàn thành plan → duyệt giả lập → write → checks → review → commit. Không dùng Astra. Terra 6.1 có trong catalog, chưa claim đã inference trong đợt này.
+- Headless Chromium: full fixture chạy qua UI tới commit sau recovery/review; profile được publish và quyết định memory có receipt. Đây là disposable fixture với approval giả lập, không phải người dùng duyệt task Calculator thật.
+- Đã kiểm tra scope recovery sau scheduler crash. Node SQLite trên Node 22 vẫn experimental; chưa xác minh nền tảng khác Linux/user-systemd.
 
-## Còn thiếu
+## Mốc còn lại
 
-| Mốc | Trạng thái |
-| --- | --- |
-| M0 foundation | Schema, store, materialization và preflight cơ bản đã có; cần hoàn thiện contracts và đồng bộ ghi nhiều process. |
-| M1 core | Có service cho fake adapter kết nối scheduler, journal và run-owner coordinator; chưa có run service production hoặc adapter thật, và recovery owner chưa có UI/CLI xác minh scheduler cũ. |
-| M2 workspace/memory/CLI | Có worktree detached và memory CAS nền; chưa có tích hợp run, merge/conflict/commit, audit quyết định project, read leases hoặc CLI chạy flow. |
-| M3 editor/monitor | Editor prototype đã có; còn profile editor, đầy đủ cấu hình graph, accessibility và run monitor. |
-| M4 standalone runtime | Có transport app-server và handshake local; chưa tích hợp adapter vào run service hoặc kiểm chứng inference/auth/stop/resume. |
-| M5 Nimbalyst | Chưa triển khai hoặc kiểm chứng tích hợp host. |
-| M6 acceptance | Chưa thể chạy; v1 chưa hoàn thành. |
+| Mốc | Đã có | Còn thiếu |
+| --- | --- | --- |
+| M0 foundation | Schemas/compiler/libraries/snapshots | Đồng bộ nhiều writer cho draft/metadata; rà soát contracts toàn bộ |
+| M1 core | Default orchestration, reviewer pool, repairs, lifecycle/recovery | Thực thi nhánh writer song song và integration; impact mapping chi tiết |
+| M2 workspace/memory/CLI | Isolated worktree, reviewed commit, memory UI/audit, CLI cơ bản | Current checkout/dirty attribution/shared workspace/read leases; CLI control parity và graceful signals |
+| M3 editor/monitor | Flow/profile/memory/run UI, browser verification | Cấu hình graph đầy đủ và accessibility/acceptance rộng hơn |
+| M4 standalone | Codex Linux default flow E2E thật | Research live, graph branches tổng quát, runner/platform khác |
+| M5 Nimbalyst | Đã khảo sát public SDK 0.7.1 | Chưa adapter; thiếu public stop proof, workspace/sandbox và effective binding contracts |
+| M6 acceptance | 101 tests + fixture/browser evidence | Chưa chạy toàn bộ matrix design-v1 mục 18 và pilot Calculator thật |
 
-Tiếp theo cần hoàn thiện run service và audit quyết định project, tích hợp workspace, sau đó kiểm chứng adapter thực và Nimbalyst. Không coi fake adapter hay schema validation là security boundary.
+Không thay scope thiết kế đã chọn bằng phạm vi executor hiện tại. Các trường hợp chưa hỗ trợ được chặn tại preview/preflight; không mô tả chúng là đã chạy được.

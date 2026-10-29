@@ -26,6 +26,27 @@ export class GraphScheduler {
 
   snapshot(): SchedulerSnapshot { return structuredClone(this.state); }
   ready(): string[] { return this.order.filter(id => this.state.nodes[id]?.status === 'ready'); }
+  requeue(nodeId: string): void {
+    if (this.state.nodes[nodeId]?.status !== 'running') throw new Error('Only an interrupted running node can be requeued');
+    this.state.nodes[nodeId] = { status: 'ready' };
+  }
+  replan(planningId: string): void {
+    if (this.state.nodes[planningId]?.status !== 'succeeded') throw new Error('Planning has not completed');
+    const reset = new Set([planningId]);
+    let changed = true;
+    while (changed) { changed = false; for (const edge of this.flow.definition.edges) if (reset.has(edge.from) && !reset.has(edge.to)) { reset.add(edge.to); changed = true; } }
+    if ([...reset].some(id => id !== planningId && ['running', 'succeeded'].includes(this.state.nodes[id]?.status ?? 'pending'))) throw new Error('Plan revision requires work to remain unstarted');
+    for (const id of reset) this.state.nodes[id] = { status: 'pending' };
+    this.propagate();
+  }
+  invalidateFrom(nodeId: string): void {
+    if (!this.state.nodes[nodeId]) throw new Error('Unknown invalidation node');
+    const reset = new Set([nodeId]);
+    let changed = true;
+    while (changed) { changed = false; for (const edge of this.flow.definition.edges) if (reset.has(edge.from) && !reset.has(edge.to)) { reset.add(edge.to); changed = true; } }
+    for (const id of reset) this.state.nodes[id] = { status: 'pending' };
+    this.propagate();
+  }
 
   claim(nodeId: string): void {
     if (this.state.nodes[nodeId]?.status !== 'ready') throw new Error(`Node ${nodeId} is not ready`);
@@ -41,6 +62,24 @@ export class GraphScheduler {
   fail(nodeId: string, reason: string): void {
     if (this.state.nodes[nodeId]?.status !== 'running') throw new Error(`Node ${nodeId} is not running`);
     this.state.nodes[nodeId] = { status: 'failed', reason };
+    this.propagate();
+  }
+
+  /** Reopen only the approved repair owners and their downstream subgraph. */
+  repair(scopeId: string): void {
+    const scope = this.flow.definition.nodes.find(node => node.id === scopeId);
+    if (scope?.type !== 'repair_scope') throw new Error('Unknown repair scope');
+    if (scope.ownerNodeIds.some(id => this.state.nodes[id]?.status !== 'succeeded')) throw new Error('Repair owners must have completed');
+    const review = this.state.nodes[scope.targetReviewId];
+    if (review?.status !== 'running') throw new Error('Repair requires an active review');
+    const reset = new Set(scope.ownerNodeIds);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const edge of this.flow.definition.edges) if (reset.has(edge.from) && !reset.has(edge.to)) { reset.add(edge.to); changed = true; }
+    }
+    for (const id of reset) if (this.state.nodes[id]?.status === 'running' && id !== scope.targetReviewId) throw new Error('Cannot reopen a graph with active dependent work');
+    for (const id of reset) this.state.nodes[id] = { status: 'pending' };
     this.propagate();
   }
 

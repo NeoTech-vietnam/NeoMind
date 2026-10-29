@@ -1,6 +1,6 @@
 # NeoMind v1 — bàn giao implementation cho GPT-6.1 Terra
 
-Ngày: 28/10/2026. Trạng thái: được người dùng yêu cầu bắt đầu implementation sau khi hoàn thiện thiết kế.
+Tài liệu kế hoạch gốc ngày 28/10/2026. **Cập nhật 29/10/2026:** đọc [bàn giao session hiện tại](session-handoff-2026-10-29.md) và [status](implementation-status.md) trước. Nhiều phần đã được triển khai; M0–M6 bên dưới vẫn là kế hoạch mục tiêu, không phải danh sách tất cả việc còn lại. Người dùng đã yêu cầu commit và push checkpoint hiện tại.
 
 ## Mục tiêu và nguồn chuẩn
 

@@ -16,6 +16,30 @@ async function executableAvailable(name: string): Promise<boolean> {
 }
 
 async function main(args: string[]): Promise<number> {
+  if (args[0] === 'run' && args[2]) {
+    const { RunManager } = await import('../runtime/run-manager.js');
+    const manager = await RunManager.open(await (await import('node:fs/promises')).realpath(args[2]));
+    try {
+      if (args[1] === 'list' && args.length === 3) { console.log(JSON.stringify(await manager.list(), null, 2)); return 0; }
+      if (args[1] === 'show' && args[3] && args.length === 4) { console.log(JSON.stringify(await manager.get(args[3]), null, 2)); return 0; }
+      if (args[1] === 'preview' && args[3] && args.length === 4) { console.log(JSON.stringify(await manager.preview(args[3]), null, 2)); return 0; }
+      if (args[1] === 'start' && args[3] && args[4] && args.length === 5) {
+        const preview = await manager.preview(args[3]);
+        console.log(JSON.stringify({ configuration: preview.snapshot.configuration, workspace: 'isolated', dirtyPaths: preview.dirtyPaths }, null, 2));
+        const run = await manager.create(args[3], args[4], undefined, {}, preview.configurationHash);
+        console.log(JSON.stringify(await manager.settle(run.runId), null, 2)); return 0;
+      }
+      if (args[1] === 'approve' && args[3] && args[4] === '--plan-hash' && args[5] && args.length === 6) {
+        if (!/^[a-f0-9]{64}$/.test(args[5])) throw new Error('Invalid plan hash');
+        await manager.action(args[3], 'approve', 'cli', args[5]); console.log(JSON.stringify(await manager.settle(args[3]), null, 2)); return 0;
+      }
+      if (['resume', 'pause', 'cancel'].includes(args[1] ?? '') && args[3] && args.length === 4) {
+        await manager.action(args[3], args[1] as 'resume' | 'pause' | 'cancel', 'cli');
+        console.log(JSON.stringify(await manager.settle(args[3]), null, 2)); return 0;
+      }
+      throw new Error('Usage: run list <project> | preview <project> <flow> | start <project> <flow> "task" | show|resume|pause|cancel <project> <run-id> | approve <project> <run-id> --plan-hash HASH');
+    } finally { await manager.close(); }
+  }
   if (args[0] === 'editor' && (args.length === 2 || (args.length === 4 && args[2] === '--port'))) {
     const port = args[3] === undefined ? 0 : Number(args[3]);
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid port');

@@ -3,6 +3,7 @@ import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readFileSync, re
 import path from 'node:path';
 import { z } from 'zod';
 import { MemoryStore, type MemoryRecord } from './store.js';
+import { hashJson } from '../domain/resolve.js';
 
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/);
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -43,9 +44,10 @@ export class LessonProposals {
   }
   /** The caller must only provide confirmation after a trusted user action. */
   approve(proposalId: string, approvalId: string, actor: string, expectedRevision: string | null,
-    authorization: { projectWrite: boolean; confirmedByUser: boolean }): LessonApproval {
+    authorization: { projectWrite: boolean; confirmedByUser: boolean }, expectedProposalHash?: string): LessonApproval {
     if (!authorization.projectWrite || !authorization.confirmedByUser) throw new Error('User confirmation and project memory write permission required');
     const proposal = this.read(proposalId);
+    if (expectedProposalHash !== undefined && hashJson(proposal) !== expectedProposalHash) throw new Error('Proposal changed since it was displayed');
     const approval = approvalSchema.parse({ approvalId, proposalId, proposalHash: hash(proposal), expectedRevision, actor,
       approvedAt: new Date().toISOString() });
     this.persist(this.path(approvalId, 'approval'), approval);
