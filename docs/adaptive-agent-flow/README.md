@@ -2,9 +2,19 @@
 
 Cập nhật ngày 28/10/2026. Nhánh làm việc: **`hieu/adaptive-agent-flow`** trong repository **NeoTech-vietnam/NeoMind**.
 
+## Tài liệu đọc chính hiện tại
+
+**[NeoMind v1 — thiết kế tổng hợp](design-v1.md)** là bản đọc một lần: sản phẩm, editor, schema, core, song song, review, memory, persistence/recovery và acceptance. Người dùng đã giao Codex tự hoàn thiện các chi tiết còn lại và yêu cầu chat **GPT-6.1 Terra** bắt đầu implementation sau thiết kế. [Bàn giao implementation](implementation-handoff.md) chỉ rõ checkout và M0–M6.
+
+Các phần bàn giao/research bên dưới là lịch sử; những ghi chú cũ “chưa được phép triển khai”, “chỉ research” hoặc “còn cần hỏi người dùng” được cập nhật bởi yêu cầu mới và bản thiết kế tổng hợp. Không có claim implementation đã chạy được ở thời điểm viết tài liệu thiết kế.
+
 Nguồn thực tế mới: người dùng cung cấp `ai-workflow-kit.zip` đã dùng trong dự án khác và muốn phát triển dựa trên flow này. Xem [snapshot và nguồn gốc](../../references/README.md), rồi đọc [phân tích kế thừa và kết quả test local](ai-workflow-kit-analysis.md). Đây là hướng nghiên cứu bổ sung; chưa cài kit vào NeoMind hoặc triển khai runtime.
 
 ## Đọc trước trong session local
+
+**Thiết kế mới:** [Flow linh hoạt và editor kéo thả](flow-configuration-design.md) mô tả quản lý nhiều flow, bindings model/reasoning, nhánh song song và nhiều reviewer. Người dùng đã chọn thiết kế đầy đủ các khả năng này từ phiên bản đầu, chấp nhận phạm vi lớn hơn; semantics thực thi đang chốt. Pilot đang tạm hoãn.
+
+Đọc [quyết định thiết kế v1 từ 12 câu trả lời](v1-design-decisions.md) trước để cập nhật các điểm đã chốt sau bộ tài liệu bên dưới: duyệt kế hoạch bắt buộc, hai vai agent, tối đa hai vòng sửa, chọn workspace mỗi run và tự commit local khi kiểm tra đạt. Những quyết định này được ưu tiên khi tài liệu cũ còn ghi là đề xuất hoặc chưa chốt.
 
 1. [Định hướng sản phẩm và quyết định của người dùng](product-direction.md).
 2. [Kiến trúc, ranh giới host/runner và default flow đề xuất](architecture.md).

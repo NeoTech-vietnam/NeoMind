@@ -1,5 +1,9 @@
 # Report thảo luận: NeoMind Adaptive Agent Flow + Nimbalyst
 
+**Định hướng cập nhật:** [Thiết kế tổng hợp v1](design-v1.md) là bản đọc/triển khai chính theo yêu cầu mới: Codex tự hoàn thiện thiết kế và giao chat GPT-6.1 Terra bắt đầu implementation. Report này giữ bối cảnh nghiên cứu và quyết định lịch sử; giới hạn “chỉ research” bên dưới không thay thế yêu cầu implementation mới.
+
+**Cập nhật thiết kế:** [12 quyết định v1 của người dùng](v1-design-decisions.md) chốt thêm flow, approval, verification, workspace, Git và memory. Áp dụng các quyết định mới đó khi phần report bên dưới còn ghi những điểm tương ứng là đề xuất/chưa chốt.
+
 Ngày ghi nhận: 28/10/2026. Nhánh: `hieu/adaptive-agent-flow`.
 
 Trạng thái: đã thống nhất định hướng kiến trúc trong thảo luận ngày 28/10/2026; đang research và thiết kế chi tiết. Chưa triển khai runtime hay xác nhận tích hợp end-to-end. Chi tiết ranh giới và contract đề xuất nằm trong [thiết kế kiến trúc](architecture.md).
