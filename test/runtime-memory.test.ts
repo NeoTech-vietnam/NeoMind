@@ -14,7 +14,7 @@ test('runtime memory shares a root, pins approved revisions, audits decisions an
   try {
     assert.equal(manager.readMemory().root, null);
     const configured = await manager.configureMemory({ initializeDefault: true, expectedPrevious: null });
-    assert.equal(configured.root, path.join(project, '.neomind', 'memory'));
+    assert.equal(configured.root, path.join(project, 'neomind', 'memory'), 'a new project keeps NeoMind data in the visible neomind/ folder');
     const record = { id: 'test-decision', type: 'decision' as const, scope: 'project', sources: ['user:confirmed'], tags: ['flow'], body: 'Use independent review' };
     const written = await manager.writeMemory(record, null, 'ui');
     assert.ok(written.record.header.sources.includes(`user-confirmation:${written.actionId}`));

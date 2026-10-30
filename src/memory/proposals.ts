@@ -4,6 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { MemoryStore, type MemoryRecord } from './store.js';
 import { hashJson } from '../domain/resolve.js';
+import { syncDirectorySync } from '../storage/fs-sync.js';
 
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/);
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -31,7 +32,7 @@ export class LessonProposals {
     const fd = openSync(file, 'wx', 0o600);
     try { writeFileSync(fd, JSON.stringify(value) + '\n', 'utf8'); fsyncSync(fd); }
     finally { closeSync(fd); }
-    const dir = openSync(this.root, 'r'); try { fsyncSync(dir); } finally { closeSync(dir); }
+    syncDirectorySync(this.root);
   }
   create(input: LessonProposal): void {
     const value = proposalSchema.parse(input);

@@ -8,13 +8,16 @@ import { WorkspaceCoordinator } from '../src/storage/coordination.js';
 import { OwnedJournal } from '../src/storage/owned-journal.js';
 import { RunService } from '../src/core/run-service.js';
 import { CodexWriteDispatch } from '../src/core/codex-write-dispatch.js';
-import { CodexWorkspaceWriteAdapter } from '../src/adapters/codex-workspace-write.js';
 import { defaultProject } from '../src/domain/templates.js';
+import { resolveWindowsCodex } from '../src/adapters/worker-environment.js';
+
+function scopeHostAvailable(): boolean {
+  if (process.platform === 'win32') { try { resolveWindowsCodex(); return true; } catch { return false; } }
+  return process.platform === 'linux' && spawnSync('systemd-run', ['--user', '--scope', '--quiet', '/bin/true']).status === 0 && spawnSync('codex', ['--version']).status === 0;
+}
 
 test('after scheduler crash, owner is reclaimed and active writer scope is stopped without replay', { timeout: 30000 }, async t => {
-  if (process.platform !== 'linux' || spawnSync('systemd-run', ['--user', '--scope', '--quiet', '/bin/true']).status !== 0 || spawnSync('codex', ['--version']).status !== 0) {
-    t.skip('User systemd or Codex unavailable'); return;
-  }
+  if (!scopeHostAvailable()) { t.skip('User systemd/Windows job host or Codex unavailable'); return; }
   const root = await mkdtemp(path.join(homedir(), '.neomind-crash-test-'));
   const worker = spawn(process.execPath, [path.resolve('dist/test/helpers/crash-worker.js'), root], { stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';
@@ -31,7 +34,7 @@ test('after scheduler crash, owner is reclaimed and active writer scope is stopp
     const owner = coordinator.acquireRun('run', 'recovery-host'), held = coordinator.getWriter(path.join(root, 'work'))!;
     const journal = new OwnedJournal(path.join(root, 'events'), coordinator, owner), service = await RunService.recover(journal);
     const plan = (await service.report()).plans[0]!.plan, approval = (await service.report()).approvals[0]!.approval;
-    const adapter = new CodexWorkspaceWriteAdapter({ request: async () => ({}) }), dispatcher = new CodexWriteDispatch(journal, adapter);
+    const dispatcher = new CodexWriteDispatch(journal);
     await service.reconcileWriteStop(dispatcher, 'write-attempt', { workspace: held.workspace, lease: held, coordinator, plan, approval,
       livePolicy: defaultProject.policy, expectedBaselineHash: 'unused', sandboxVerified: true, stopVerified: true });
     assert.deepEqual((await service.report()).unresolvedAttemptIds, []);

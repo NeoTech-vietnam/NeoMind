@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>NeoMind · Project memory</title>
+<style>
+/* ==== NEOMIND SHARED STYLES (copy this block verbatim into every NeoMind mockup) ==== */
+/* Dark theme in the Claude Code palette: warm charcoal surfaces, ivory text, clay accent. */
+:root {
+  color-scheme: dark;
+  --font: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, -apple-system, sans-serif;
+  --mono: 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --ink: #f2efe8; --ink-2: #d4d0c6; --ink-3: #a9a499; --ink-4: #85817a;
+  --bg: #1f1e1d; --surface: #262624; --soft: #2d2c29; --field: #1c1b1a; --code-bg: #161514;
+  --line: #3b3a36; --line-2: #312f2c;
+  --accent: #d97757; --accent-2: #e8956f; --accent-strong: #c15f3c; --accent-soft: #3a2822; --accent-line: #6b3f2e;
+  --green: #86c99a; --green-soft: #1e3326; --green-line: #2f5a3c;
+  --amber: #e5b567; --amber-soft: #3a2f1b; --amber-line: #6a5328;
+  --red: #f08a80; --red-soft: #3d2222; --red-line: #6e3434;
+  --blue: #8db4ea; --blue-soft: #1d2a3b; --blue-line: #34507a;
+  --gray: #a9a499; --gray-soft: #33322f;
+  --proposal: #6fd3c4; --proposal-soft: #173330; --proposal-line: #3e9e92;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--font); font-size: 14px; color: var(--ink); background: var(--bg); }
+h1, h2, h3, h4, p { margin: 0; }
+code, pre { font-family: var(--mono); font-size: 12.5px; }
+button { font: inherit; cursor: pointer; color: inherit; }
+/* Shell */
+.app { display: grid; grid-template-columns: 232px 1fr; grid-template-rows: 58px 1fr; min-height: 100vh; }
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; font-size: 18px; letter-spacing: -.5px; }
+.brand-mark { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: var(--code-bg); display: grid; place-items: center; font-size: 18px; }
+.brand b { font-weight: 700; }
+.brand-divider { height: 20px; width: 1px; background: var(--line); margin: 0 4px; }
+.product { font-size: 11px; letter-spacing: 1.2px; color: var(--ink-4); font-weight: 700; }
+.project { border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px; color: var(--ink-2); font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: center; white-space: nowrap; background: var(--surface); }
+.project small { color: var(--ink-4); font-weight: 400; }
+.project i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.sidebar { background: var(--bg); border-right: 1px solid var(--line); padding: 18px 12px; }
+.side-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--ink-4); text-transform: uppercase; padding: 0 10px; margin: 0 0 8px; display: flex; justify-content: space-between; }
+.nav { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; color: var(--ink-2); font-size: 13.5px; font-weight: 600; margin: 1px 0; }
+.nav span { width: 18px; text-align: center; color: var(--ink-4); }
+.nav.on { background: var(--soft); color: var(--ink); }
+.nav.on span { color: var(--accent); }
+.nav em { margin-left: auto; font-style: normal; background: var(--accent-soft); color: var(--accent-2); border-radius: 6px; padding: 1px 7px; font-size: 11.5px; }
+.side-divider { height: 1px; background: var(--line-2); margin: 16px 8px; }
+.main { padding: 18px 28px 32px; min-width: 0; }
+.crumbs { font-size: 12.5px; color: var(--ink-4); margin-bottom: 14px; display: flex; gap: 8px; }
+.crumbs b { color: var(--ink-2); font-weight: 600; }
+.page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 18px; }
+.page-head h1 { font-size: 24px; letter-spacing: -.6px; font-weight: 700; }
+.page-head p { color: var(--ink-3); font-size: 13.5px; margin-top: 5px; }
+/* Components */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin-bottom: 16px; }
+.card h2 { font-size: 19px; letter-spacing: -.3px; line-height: 1.4; }
+.card h3 { font-size: 16px; letter-spacing: -.2px; }
+.card h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--ink-4); margin: 14px 0 6px; }
+.card-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.btn { height: 34px; border-radius: 8px; padding: 0 14px; font-size: 13px; font-weight: 600; border: 1px solid var(--line); background: var(--soft); color: var(--ink-2); white-space: nowrap; }
+.btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; box-shadow: 0 2px 8px #c15f3c40; }
+.btn.large { height: 40px; padding: 0 22px; font-size: 14px; }
+.btn.ghost { color: var(--accent-2); border-color: var(--accent-line); background: transparent; }
+.btn.danger { color: var(--red); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.t-green { background: var(--green-soft); color: var(--green); } .t-amber { background: var(--amber-soft); color: var(--amber); }
+.t-red { background: var(--red-soft); color: var(--red); } .t-violet { background: var(--accent-soft); color: var(--accent-2); }
+.t-blue { background: var(--blue-soft); color: var(--blue); } .t-gray { background: var(--gray-soft); color: var(--gray); }
+.pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.callout { border-radius: 8px; padding: 10px 13px; font-size: 13.5px; line-height: 1.5; margin: 12px 0; border: 1px solid transparent; }
+.callout.red { background: var(--red-soft); color: var(--red); border-color: var(--red-line); }
+.callout.amber { background: var(--amber-soft); color: var(--amber); border-color: var(--amber-line); }
+.callout.green { background: var(--green-soft); color: var(--green); border-color: var(--green-line); }
+.callout.violet { background: var(--accent-soft); color: var(--accent-2); border-color: var(--accent-line); }
+.callout.blue { background: var(--blue-soft); color: var(--blue); border-color: var(--blue-line); }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); margin-bottom: 14px; }
+.field small { font-weight: 400; color: var(--ink-3); }
+.input, .select, .textarea { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--field); color: var(--ink); font-weight: 400; font-size: 14px; width: 100%; font-family: var(--font); }
+.select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%), linear-gradient(135deg, var(--ink-3) 50%, transparent 50%); background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 28px; }
+.textarea { min-height: 84px; line-height: 1.5; resize: vertical; }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; padding: 2px; background: var(--field); }
+.segmented span { padding: 5px 11px; border-radius: 6px; font-size: 13px; font-weight: 600; color: var(--ink-3); white-space: nowrap; }
+.segmented span.on { background: var(--soft); color: var(--accent-2); box-shadow: 0 1px 3px #0000004d; }
+.hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
+.muted { color: var(--ink-4); font-size: 12.5px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.green { background: var(--green); } .dot.amber { background: var(--amber); } .dot.red { background: var(--red); } .dot.violet { background: var(--accent); } .dot.gray { background: var(--ink-4); }
+/* Proposal marker: anything not implemented yet carries this tag (teal, so it never reads as the clay accent). */
+.proposal { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; letter-spacing: .3px; color: var(--proposal); background: var(--proposal-soft); border: 1px dashed var(--proposal-line); border-radius: 6px; padding: 1px 7px; vertical-align: middle; }
+.proposal-box { outline: 2px dashed var(--proposal-line); outline-offset: 4px; border-radius: 12px; }
+/* ==== END NEOMIND SHARED STYLES ==== */
+
+/* Page-specific: Project memory */
+.root-card { display: grid; grid-template-columns: 40px 1fr auto; gap: 14px; align-items: center; padding: 16px 20px; }
+.root-card .ricon { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; font-size: 18px; }
+.root-card h3 { display: flex; align-items: center; gap: 10px; }
+.root-path { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+.root-path code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; color: var(--ink-2); }
+.root-path .muted b { color: var(--ink-2); font-weight: 600; }
+.root-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.root-note { font-size: 12.5px; color: var(--ink-3); }
+
+.queue { border-color: var(--amber-line); background: linear-gradient(var(--amber-soft), var(--surface)); padding: 16px 20px; }
+.queue .card-title h3 { display: flex; align-items: center; gap: 10px; }
+.lessons { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.lesson { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 12px 14px; display: flex; flex-direction: column; }
+.lesson .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.lesson code { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.lesson p { font-size: 13.5px; line-height: 1.5; margin: 7px 0 8px; color: var(--ink-2); }
+.lesson p code { font-weight: 400; font-size: 12px; background: var(--soft); border-radius: 4px; padding: 0 4px; }
+.lesson .src { font-size: 12px; color: var(--ink-3); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.lesson .src a { color: var(--accent-2); font-weight: 600; text-decoration: none; }
+.lesson .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-2); }
+.lesson .acts .btn { height: 30px; font-size: 12.5px; }
+.btn.approve { color: var(--green); border-color: var(--green-line); background: var(--green-soft); }
+
+.filters { display: flex; align-items: center; gap: 12px; margin: 4px 0 12px; }
+.filters .search { width: 300px; padding-left: 32px; background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23958ea3' stroke-width='2.4'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E") no-repeat 11px 50%; }
+.tchips { display: flex; gap: 6px; }
+.tchip { font-size: 12.5px; font-weight: 600; border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px; color: var(--ink-3); background: var(--surface); white-space: nowrap; }
+.tchip b { font-weight: 700; color: var(--ink-4); margin-left: 3px; }
+.tchip.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-2); }
+.tchip.on b { color: var(--ink-4); }
+.filters .select { width: 190px; margin-left: auto; font-size: 13.5px; }
+
+.split { display: grid; grid-template-columns: 1fr 400px; gap: 16px; align-items: start; }
+.tbl-card { padding: 0; overflow: hidden; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th { text-align: left; font-size: 11.5px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--ink-4); padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--soft); white-space: nowrap; }
+td { padding: 11px 14px; border-bottom: 1px solid var(--line-2); vertical-align: middle; white-space: nowrap; }
+td.id code { font-size: 12.5px; color: var(--ink); }
+td.id small { display: block; font-size: 12px; color: var(--ink-3); margin-top: 2px; font-family: var(--font); white-space: normal; }
+td .badge { font-size: 11.5px; }
+td.scope code { font-size: 12px; color: var(--ink-2); background: var(--soft); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+td.num { color: var(--ink-3); }
+td.when { color: var(--ink-3); font-size: 13px; }
+tr.sel td { background: var(--soft); }
+tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.tbl-foot { display: flex; justify-content: space-between; padding: 10px 14px; font-size: 12.5px; color: var(--ink-3); }
+
+.detail { padding: 0; }
+.d-head { padding: 16px 18px 14px; border-bottom: 1px solid var(--line); }
+.d-head .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.d-head h3 { font-family: var(--mono); font-size: 15px; letter-spacing: 0; margin-bottom: 8px; }
+.d-sec { padding: 14px 18px; border-bottom: 1px solid var(--line-2); }
+.d-sec h4 { font-size: 11.5px; text-transform: uppercase; letter-spacing: .8px; color: var(--ink-4); margin: 0 0 8px; }
+.body-text { font-size: 14px; line-height: 1.6; color: var(--ink); }
+.body-text code { font-size: 12.5px; background: var(--soft); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.sources { display: flex; flex-direction: column; gap: 6px; }
+.source { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.source .si { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 11px; flex: none; }
+.source code { font-size: 12.5px; color: var(--ink-2); }
+.source span { color: var(--ink-3); font-size: 12.5px; }
+.kv { display: grid; grid-template-columns: 110px 1fr; row-gap: 6px; font-size: 13px; }
+.kv dt { color: var(--ink-3); }
+.kv dd { margin: 0; color: var(--ink-2); }
+.kv code { font-size: 12px; }
+.d-acts { display: flex; gap: 8px; padding: 14px 18px; align-items: center; }
+.d-acts .hint { margin-left: auto; text-align: right; }
+.legend { margin-top: 4px; font-size: 12.5px; color: var(--ink-3); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">✳</span><span>neo<b>mind</b></span><span class="brand-divider"></span><span class="product">FLOW STUDIO</span></div>
+    <div class="project"><i></i>repo1 <small>W:\projects\AI\NeoMind-5da788d\NeoMind\demo\repo1</small></div>
+  </header>
+
+  <aside class="sidebar">
+    <div class="side-title">Workspace</div>
+    <div class="nav"><span>▧</span>Flow library<em>2</em></div>
+    <div class="nav"><span>▶</span>Runs</div>
+    <div class="nav"><span>✦</span>Agent profiles</div>
+    <div class="nav on"><span>◇</span>Project memory</div>
+    <div class="side-divider"></div>
+    <div class="side-title">Flows <span>＋</span></div>
+    <div class="nav"><span>◈</span>Dev</div>
+    <div class="nav"><span>◈</span>Research</div>
+  </aside>
+
+  <main class="main">
+    <div class="crumbs"><span>repo1</span>›<b>Project memory</b></div>
+    <div class="page-head">
+      <div>
+        <h1>Project memory</h1>
+        <p>Context, quyết định và lessons dùng chung cho các frontend.</p>
+      </div>
+      <button class="btn ghost">＋ Bản ghi mới</button>
+    </div>
+
+    <!-- Memory root -->
+    <section class="card root-card">
+      <span class="ricon t-violet">◇</span>
+      <div>
+        <h3>Memory root <span class="badge t-green">● Đang dùng</span><span class="proposal">ĐỀ XUẤT</span></h3>
+        <div class="root-path">
+          <code>W:\projects\AI\NeoMind-5da788d\NeoMind\demo\repo1\.neomind\memory</code>
+          <span class="muted"><b>12</b> bản ghi · <code style="padding:0 5px">context/</code> <code style="padding:0 5px">decisions/</code> <code style="padding:0 5px">lessons/</code></span>
+        </div>
+      </div>
+      <div class="root-side">
+        <button class="btn">Đổi thư mục…</button>
+        <span class="root-note">Run ghim nội dung đã duyệt khi bắt đầu; thay đổi áp dụng cho run mới.</span>
+      </div>
+    </section>
+
+    <!-- Lesson queue -->
+    <section class="card queue proposal-box">
+      <div class="card-title">
+        <h3>Lessons chờ duyệt <span class="badge t-amber">2</span><span class="proposal">ĐỀ XUẤT</span></h3>
+        <span class="hint">Agent đề xuất từ các run gần đây. Chỉ bản bạn duyệt mới vào memory dùng chung.</span>
+      </div>
+      <div class="lessons">
+        <div class="lesson">
+          <div class="top"><code>retry-git-index-lock</code><span class="badge t-gray">src/workspace</span></div>
+          <p>Khi <code>git commit</code> trong worktree báo lỗi <code>index.lock</code> trên Windows, chờ 200 ms rồi thử lại tối đa 3 lần. Không tự xóa file lock.</p>
+          <div class="src"><span>Từ run</span><a>Thêm hàm power(a, b) ↗</a><span>· Dev · Local commit · 2 giờ trước</span></div>
+          <div class="acts"><button class="btn">Bỏ qua</button><button class="btn">Sửa rồi duyệt</button><button class="btn approve">✓ Duyệt</button></div>
+        </div>
+        <div class="lesson">
+          <div class="top"><code>repair-only-cited-findings</code><span class="badge t-gray">project</span></div>
+          <p>Ở vòng sửa, chỉ sửa đúng các finding reviewer nêu. Refactor thêm làm review vòng sau thành “chưa kết luận”.</p>
+          <div class="src"><span>Từ run</span><a>Sửa parse ngày ISO ↗</a><span>· Dev · Bounded repair · hôm qua</span></div>
+          <div class="acts"><button class="btn">Bỏ qua</button><button class="btn">Sửa rồi duyệt</button><button class="btn approve">✓ Duyệt</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Filters -->
+    <div class="filters">
+      <input class="input search" placeholder="Tìm trong nội dung, id, tags…" value="">
+      <div class="tchips">
+        <span class="tchip on">Tất cả <b>12</b></span>
+        <span class="tchip">Context <b>6</b></span>
+        <span class="tchip">Quyết định <b>3</b></span>
+        <span class="tchip">Lesson <b>3</b></span>
+      </div>
+      <span class="proposal">ĐỀ XUẤT</span>
+      <select class="select"><option>Phạm vi: Tất cả</option></select>
+    </div>
+
+    <div class="split">
+      <!-- Records table -->
+      <section class="card tbl-card proposal-box" style="outline-offset:3px">
+        <table>
+          <thead><tr><th>ID</th><th>Loại</th><th>Phạm vi</th><th>Nguồn</th><th>Cập nhật</th></tr></thead>
+          <tbody>
+            <tr><td class="id"><code>build-and-test-commands</code><small>npm ci, npm test, npm run lint — chạy từ thư mục gốc.</small></td><td><span class="badge t-blue">Context</span></td><td class="scope"><code>project</code></td><td class="num">2</td><td class="when">2 giờ trước</td></tr>
+            <tr class="sel"><td class="id"><code>use-vitest-not-jest</code><small>Mọi test mới dùng Vitest; không thêm Jest.</small></td><td><span class="badge t-violet">Quyết định</span></td><td class="scope"><code>project</code></td><td class="num">2</td><td class="when">Hôm qua</td></tr>
+            <tr><td class="id"><code>calc-module-layout</code><small>calc.js xuất hàm thuần; test đặt cạnh file nguồn.</small></td><td><span class="badge t-blue">Context</span></td><td class="scope"><code>src/calc</code></td><td class="num">3</td><td class="when">Hôm qua</td></tr>
+            <tr><td class="id"><code>windows-path-handling</code><small>Dùng path.join, không ghép chuỗi với “/”.</small></td><td><span class="badge t-green">Lesson</span></td><td class="scope"><code>src/platform</code></td><td class="num">2</td><td class="when">3 ngày trước</td></tr>
+            <tr><td class="id"><code>no-network-in-tests</code><small>Test không gọi mạng; mock qua fixtures/.</small></td><td><span class="badge t-violet">Quyết định</span></td><td class="scope"><code>test</code></td><td class="num">1</td><td class="when">5 ngày trước</td></tr>
+            <tr><td class="id"><code>api-error-shape</code><small>Lỗi API trả { error, code }; UI hiện error.</small></td><td><span class="badge t-blue">Context</span></td><td class="scope"><code>src/ui-server</code></td><td class="num">2</td><td class="when">1 tuần trước</td></tr>
+            <tr><td class="id"><code>ui-text-vietnamese</code><small>Nhãn UI tiếng Việt; thuật ngữ kỹ thuật giữ nguyên.</small></td><td><span class="badge t-violet">Quyết định</span></td><td class="scope"><code>ui</code></td><td class="num">1</td><td class="when">1 tuần trước</td></tr>
+            <tr><td class="id"><code>worktree-cleanup-order</code><small>Xóa worktree trước, rồi mới xóa branch tạm.</small></td><td><span class="badge t-green">Lesson</span></td><td class="scope"><code>src/workspace</code></td><td class="num">1</td><td class="when">2 tuần trước</td></tr>
+          </tbody>
+        </table>
+        <div class="tbl-foot"><span>Hiển thị 8 / 12 · sắp theo cập nhật mới nhất</span><span>‹ 1 2 ›</span></div>
+      </section>
+
+      <!-- Detail -->
+      <aside class="card detail proposal-box" style="outline-offset:3px">
+        <div class="d-head">
+          <h3>use-vitest-not-jest</h3>
+          <div class="row"><span class="badge t-violet">Quyết định</span><span class="badge t-gray">project</span><span class="badge t-green">✓ Bạn đã xác nhận</span></div>
+        </div>
+        <div class="d-sec">
+          <h4>Nội dung</h4>
+          <p class="body-text">Dùng Vitest cho mọi test mới. Không thêm Jest hoặc ts-jest. Cấu hình ở <code>vitest.config.ts</code>; chạy bằng <code>npm test</code>. Test đặt cạnh file nguồn, tên <code>*.test.ts</code>.</p>
+        </div>
+        <div class="d-sec">
+          <h4>Nguồn · 2</h4>
+          <div class="sources">
+            <div class="source"><span class="si t-blue">▤</span><code>docs/adr/0003-test-runner.md</code></div>
+            <div class="source"><span class="si t-violet">▶</span><code>run-20261029-1412</code><span>· Plan · “Thêm hàm power”</span></div>
+          </div>
+        </div>
+        <div class="d-sec">
+          <h4>Tags</h4>
+          <div class="chips"><code>testing</code><code>tooling</code><code>vitest</code></div>
+        </div>
+        <div class="d-sec">
+          <dl class="kv">
+            <dt>Revision</dt><dd><code>9c41e2a7…b03f</code></dd>
+            <dt>Cập nhật</dt><dd>29/10/2026 14:12</dd>
+            <dt>Đang ghim bởi</dt><dd>1 run đang chạy (rev này)</dd>
+          </dl>
+        </div>
+        <div class="d-acts">
+          <button class="btn">Chỉnh sửa</button>
+          <button class="btn ghost">Xác nhận lại</button>
+          <span class="hint">Xác nhận lần cuối<br>29/10 · bởi bạn</span>
+        </div>
+      </aside>
+    </div>
+
+    <p class="legend"><span class="proposal">ĐỀ XUẤT</span> Hiện tại: thẻ memory root (khởi tạo / chọn thư mục), ô tìm, danh sách id bên trái và form tạo/sửa context, quyết định. Lessons chỉ duyệt được trong từng run. Bảng, bộ lọc loại/phạm vi, panel chi tiết và hàng đợi lessons là đề xuất.</p>
+  </main>
+</div>
+<script>
+/* ==== NEOMIND PROTOTYPE SCRIPT (same in every mockup) ==== */
+/* Clickable prototype: selections, toggles and copy buttons work in place; main actions move between screens. */
+(() => {
+  const screens = {
+    '00-design-system.mockup.html': 'Design system', '01-run-start.mockup.html': 'Run mới', '02-run-approval.mockup.html': 'Chờ duyệt kế hoạch',
+    '03-run-running.mockup.html': 'Đang chạy', '04-run-blocked.mockup.html': 'Cần xử lý', '05-run-completed.mockup.html': 'Hoàn tất',
+    '06-flow-studio.mockup.html': 'Flow studio', '07-profiles.mockup.html': 'Agent profiles', '08-memory.mockup.html': 'Project memory', '09-session-viewer.mockup.html': 'Xem session',
+  };
+  // Text of a clicked control -> screen it leads to.
+  const routes = [
+    [/^(\+|＋)\s*Run mới$/, '01-run-start.mockup.html'], [/Bắt đầu$/, '02-run-approval.mockup.html'], [/^Duyệt và thực hiện$/, '03-run-running.mockup.html'],
+    [/Chạy lại review|Đổi và chạy lại|^Tiếp tục$/, '03-run-running.mockup.html'], [/Tôi đã xem, duyệt|Áp dụng vào branch/, '05-run-completed.mockup.html'],
+    [/Chạy flow$/, '01-run-start.mockup.html'], [/^Runs$/, '01-run-start.mockup.html'], [/^Flow library|^(Dev|Research|Test1?)$/, '06-flow-studio.mockup.html'],
+    [/^Agent profiles$/, '07-profiles.mockup.html'], [/Xem session|Mở session đầy đủ/, '09-session-viewer.mockup.html'], [/^Project memory$/, '08-memory.mockup.html'],
+  ];
+  const historyRoutes = [[/Đang chạy/, '03-run-running.mockup.html'], [/Chờ duyệt/, '02-run-approval.mockup.html'], [/Cần xử lý/, '04-run-blocked.mockup.html'], [/Hoàn tất/, '05-run-completed.mockup.html']];
+  const here = decodeURIComponent(location.pathname.split('/').pop() || '');
+  const canNavigate = /^(file|https?):$/.test(location.protocol) && location.href !== 'about:srcdoc';
+
+  const style = document.createElement('style');
+  style.textContent = `.proto-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;z-index:9999;background:#30302e;color:#f2efe8;border:1px solid #4a4944;border-radius:10px;padding:9px 14px;font:13px 'Segoe UI',system-ui,sans-serif;box-shadow:0 8px 28px #0008;transition:all .18s;pointer-events:none;max-width:70vw}
+.proto-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}.proto-toast b{color:#e8956f}
+.proto-nav{position:fixed;right:16px;bottom:16px;z-index:9998;font:12px 'Segoe UI',system-ui,sans-serif}
+.proto-nav summary{list-style:none;cursor:pointer;background:#30302e;color:#d4d0c6;border:1px solid #4a4944;border-radius:999px;padding:6px 12px;box-shadow:0 6px 18px #0007}
+.proto-nav summary::-webkit-details-marker{display:none}
+.proto-nav div{position:absolute;right:0;bottom:36px;background:#262624;border:1px solid #4a4944;border-radius:10px;padding:6px;min-width:210px;box-shadow:0 10px 30px #0009}
+.proto-nav a{display:block;padding:6px 9px;border-radius:6px;color:#d4d0c6;text-decoration:none}.proto-nav a:hover{background:#2d2c29}.proto-nav a.here{color:#e8956f;font-weight:600}
+[data-proto-click]{cursor:pointer}`;
+  document.head.appendChild(style);
+  const toast = document.createElement('div'); toast.className = 'proto-toast'; document.body.appendChild(toast);
+  let timer;
+  const say = html => { toast.innerHTML = html; toast.classList.add('show'); clearTimeout(timer); timer = setTimeout(() => toast.classList.remove('show'), 1800); };
+  const go = file => {
+    if (!file || file === here) return false;
+    if (canNavigate) { location.href = file; return true; }
+    say(`→ Màn <b>${screens[file]}</b> · mở file <code>${file}</code>`); return true;
+  };
+  // Screen switcher, bottom right.
+  const nav = document.createElement('details'); nav.className = 'proto-nav';
+  nav.innerHTML = `<summary>☰ Màn: ${screens[here] ?? 'mockup'}</summary><div>${Object.entries(screens).map(([file, name]) => `<a href="${file}" data-goto="${file}" class="${file === here ? 'here' : ''}">${file.slice(0, 2)} · ${name}</a>`).join('')}</div>`;
+  document.body.appendChild(nav);
+
+  const label = el => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const selectable = ['on', 'active', 'selected'];
+  // Move the selection class among siblings of the same kind (tabs, chips, cards, list items).
+  function select(el) {
+    for (let node = el; node && node !== document.body; node = node.parentElement) {
+      const parent = node.parentElement; if (!parent) break;
+      const siblings = [...parent.children].filter(child => child.tagName === node.tagName);
+      const cls = selectable.find(name => siblings.some(child => child !== node && child.classList.contains(name)));
+      if (cls && siblings.length > 1) { siblings.forEach(child => child.classList.remove(cls)); node.classList.add(cls); return true; }
+    }
+    return false;
+  }
+  document.addEventListener('click', event => {
+    const target = event.target;
+    if (target.closest('input, textarea, select, summary, label')) return;
+    const link = target.closest('[data-goto]');
+    if (link) { event.preventDefault(); go(link.getAttribute('data-goto')); nav.removeAttribute('open'); return; }
+    if (target.closest('a[href]')) { event.preventDefault(); }
+    const toggle = target.closest('.toggle, .switch');
+    if (toggle) { toggle.classList.toggle('on'); return; }
+    const control = target.closest('a, button, .btn, .nav, .chip, .preset, .tab, .diff-tab, .filter, .tchip, .version, .flow-card, .choice, .run-item, .run-history-item, .pitem, .issue, .node, .segmented > *, [role="tab"], .copy, .copy-btn');
+    if (!control) return;
+    const text = label(control);
+    if (/Xem trực tiếp/.test(text)) { const live = document.querySelector('[class*="live"]'); if (live) { live.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; } }
+    if (/Sao chép|^Chép/.test(text)) { const old = control.innerHTML; control.textContent = 'Đã chép ✓'; setTimeout(() => { control.innerHTML = old; }, 1300); return; }
+    if (control.matches('[disabled]')) { say('Nút đang bị khóa'); return; }
+    const history = control.closest('.run-item, .run-history-item');
+    if (history) { select(history); const route = historyRoutes.find(([pattern]) => pattern.test(label(history))); if (route) go(route[1]); return; }
+    const selected = select(control);
+    const core = text.replace(/^[^\p{L}\p{N}+＋]+/u, '').replace(/\s+\d+$/, '');
+    const route = routes.find(([pattern]) => pattern.test(text) || pattern.test(core));
+    if (route && go(route[1])) return;
+    if (!selected) say(`Bấm <b>${text.slice(0, 60)}</b> · mockup chưa gắn hành động`);
+  }, true);
+})();
+/* ==== END NEOMIND PROTOTYPE SCRIPT ==== */
+</script>
+</body>
+</html>

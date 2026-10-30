@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { askText } from './dialog';
 import type { Profile } from '../../src/domain/schema';
 import { api } from './api';
 type Metadata = { profileId: string; name: string; archived: boolean };
 export function ProfilePanel() {
+  const revision = useRef<string | undefined>(undefined);
   const [profiles, setProfiles] = useState<Metadata[]>([]), [profile, setProfile] = useState<Profile | null>(null);
   const [versions, setVersions] = useState<number[]>([]), [skills, setSkills] = useState('[]'), [defaults, setDefaults] = useState('{}');
   const [error, setError] = useState(''), [message, setMessage] = useState(''), [busy, setBusy] = useState(false);
@@ -11,13 +13,14 @@ export function ProfilePanel() {
   useEffect(() => { void refresh().catch(e => setError(String(e))); }, []);
   async function action(fn: () => Promise<void>) { setBusy(true); setError(''); setMessage(''); try { await fn(); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } }
   async function open(profileId: string) {
-    const result = await api<{ draft: Profile }>(`/api/profiles/${encodeURIComponent(profileId)}/draft`);
-    setProfile(result.draft); setSkills(JSON.stringify(result.draft.skills, null, 2)); setDefaults(JSON.stringify(result.draft.outputDefaults, null, 2));
+    const result = await api<{ draft: Profile; revision: string }>(`/api/profiles/${encodeURIComponent(profileId)}/draft`);
+    revision.current = result.revision; setProfile(result.draft); setSkills(JSON.stringify(result.draft.skills, null, 2)); setDefaults(JSON.stringify(result.draft.outputDefaults, null, 2));
     setVersions((await api<{ versions: number[] }>(`/api/profiles/${encodeURIComponent(profileId)}/versions`)).versions);
   }
   async function save() {
     if (!profile) return;
-    await api(`/api/profiles/${encodeURIComponent(profile.profileId)}/draft`, 'PUT', { draft: { ...profile, skills: JSON.parse(skills), outputDefaults: JSON.parse(defaults) } });
+    const saved = await api<{ revision: string }>(`/api/profiles/${encodeURIComponent(profile.profileId)}/draft`, 'PUT', { draft: { ...profile, skills: JSON.parse(skills), outputDefaults: JSON.parse(defaults) }, ...(revision.current ? { expectedRevision: revision.current } : {}) });
+    revision.current = saved.revision; return saved.revision;
   }
   const metadata = profiles.find(item => item.profileId === profile?.profileId);
   return <section className="runs-page"><div className="page-heading"><div><h1>Agent profiles</h1><p>Tái sử dụng hướng dẫn, skills và giới hạn quyền giữa các flow.</p></div></div>
@@ -31,11 +34,11 @@ export function ProfilePanel() {
         <h3>Quyền tối đa của profile</h3>{(['read', 'write', 'checks', 'gitCommit'] as const).map(permission => <label className="profile-permission" key={permission}><input type="checkbox" checked={profile.requestedPermissions[permission]} onChange={e => setProfile({ ...profile, requestedPermissions: { ...profile.requestedPermissions, [permission]: e.target.checked } })} />{({ read: 'Đọc', write: 'Sửa file', checks: 'Chạy checks', gitCommit: 'Commit local' })[permission]}</label>)}
         <label>Skills (JSON)<textarea aria-label="Skills (JSON)" rows={5} value={skills} onChange={e => setSkills(e.target.value)} /></label><p className="run-note">Mỗi skill có id, path tương đối với project và sha256. Nội dung được ghim khi bắt đầu run.</p>
         <details><summary>Output defaults</summary><textarea aria-label="Output defaults" rows={4} value={defaults} onChange={e => setDefaults(e.target.value)} /></details>
-        <div className="run-controls"><button className="secondary-btn" disabled={busy} onClick={() => void action(async () => { await save(); setMessage('Đã lưu nháp'); })}>Lưu nháp</button><button className="primary-btn" disabled={busy || metadata?.archived} onClick={() => void action(async () => { await save(); const result = await api<{ version: { version: number } }>(`/api/profiles/${encodeURIComponent(profile.profileId)}/publish`, 'POST'); setMessage(`Đã lưu phiên bản ${result.version.version}`); await open(profile.profileId); })}>Lưu phiên bản</button>
-          <button className="quiet-btn" disabled={busy} onClick={() => { const value = window.prompt('Tên mới', metadata?.name); if (value) void action(async () => { await api(`/api/profiles/${encodeURIComponent(profile.profileId)}/rename`, 'POST', { name: value }); }); }}>Đổi tên</button>
-          <button className="quiet-btn" disabled={busy} onClick={() => { const targetId = window.prompt('ID profile bản sao'); if (targetId) void action(async () => { await save(); await api(`/api/profiles/${encodeURIComponent(profile.profileId)}/clone`, 'POST', { targetId, name: `${metadata?.name ?? profile.name} copy` }); await open(targetId); }); }}>Sao chép</button>
+        <div className="run-controls"><button className="secondary-btn" disabled={busy} onClick={() => void action(async () => { await save(); setMessage('Đã lưu nháp'); })}>Lưu nháp</button><button className="primary-btn" disabled={busy || metadata?.archived} onClick={() => void action(async () => { const expectedRevision = await save(); const result = await api<{ version: { version: number } }>(`/api/profiles/${encodeURIComponent(profile.profileId)}/publish`, 'POST', { expectedRevision }); setMessage(`Đã lưu phiên bản ${result.version.version}`); await open(profile.profileId); })}>Lưu phiên bản</button>
+          <button className="quiet-btn" disabled={busy} onClick={() => void askText('Tên mới', metadata?.name).then(value => { if (value) void action(async () => { await api(`/api/profiles/${encodeURIComponent(profile.profileId)}/rename`, 'POST', { name: value }); }); })}>Đổi tên</button>
+          <button className="quiet-btn" disabled={busy} onClick={() => void askText('ID profile bản sao').then(targetId => { if (targetId) void action(async () => { await save(); await api(`/api/profiles/${encodeURIComponent(profile.profileId)}/clone`, 'POST', { targetId, name: `${metadata?.name ?? profile.name} copy` }); await open(targetId); }); })}>Sao chép</button>
           <button className="quiet-btn" disabled={busy} onClick={() => void action(async () => { await api(`/api/profiles/${encodeURIComponent(profile.profileId)}/${metadata?.archived ? 'restore' : 'archive'}`, 'POST'); })}>{metadata?.archived ? 'Khôi phục' : 'Lưu trữ'}</button>
-          <button className="quiet-btn" disabled={busy} onClick={() => { const confirmedName = window.prompt(`Nhập chính xác tên để xóa profile: ${metadata?.name}`); if (confirmedName) void action(async () => { await api(`/api/profiles/${encodeURIComponent(profile.profileId)}/delete`, 'POST', { confirmedName }); setProfile(null); }); }}>Xóa vĩnh viễn</button></div>
+          <button className="quiet-btn" disabled={busy} onClick={() => void askText(`Nhập chính xác tên để xóa profile: ${metadata?.name}`).then(confirmedName => { if (confirmedName) void action(async () => { await api(`/api/profiles/${encodeURIComponent(profile.profileId)}/delete`, 'POST', { confirmedName }); setProfile(null); }); })}>Xóa vĩnh viễn</button></div>
       </div>}
     </div></div>
   </section>;

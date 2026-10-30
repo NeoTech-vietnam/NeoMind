@@ -5,7 +5,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { RunService } from '../src/core/run-service.js';
 import { CodexReadOnlyDispatch } from '../src/core/codex-readonly-dispatch.js';
-import { CodexReadOnlyAdapter } from '../src/adapters/codex-readonly.js';
+import { fakeRunnerSession } from './helpers/fake-runner.js';
 import { templates, defaultProject } from '../src/domain/templates.js';
 import { WorkspaceCoordinator } from '../src/storage/coordination.js';
 import { OwnedJournal } from '../src/storage/owned-journal.js';
@@ -17,8 +17,8 @@ test('run service approves only the recorded plan and requires continuation afte
   const service = await RunService.create(journal, templates.dev, defaultProject.policy);
   await service.completeControl('start');
   await assert.rejects(service.approveProposedPlan('approval', 'plan', 'user', 'ui'), /No persisted plan/);
-  const adapter = new CodexReadOnlyAdapter({ request: async () => ({ turn: { id: 'turn' } }) });
-  const dispatch = new CodexReadOnlyDispatch(journal, adapter);
+  const { runner, session } = await fakeRunnerSession('thread', { startTurn: async () => 'turn' });
+  const dispatch = new CodexReadOnlyDispatch(journal, runner, session);
   await service.dispatchReadOnly(dispatch, 'plan', 'thread', 'plan the task', 'low', 'attempt', 'request');
   const plan = { planId: 'p1', version: 1, goal: 'Subtract', scope: ['src'], approach: 'Implement',
     acceptanceCriteria: ['tests pass'], checks: ['make test'], riskChanges: [] };
@@ -38,7 +38,8 @@ test('recovery finalizes durable planning output without rerunning the agent', a
   const file = path.join(dir, 'events'), journal = new OwnedJournal(file, coordinator, lease);
   const service = await RunService.create(journal, templates.dev, defaultProject.policy); await service.completeControl('start');
   let calls = 0;
-  const dispatch = new CodexReadOnlyDispatch(journal, new CodexReadOnlyAdapter({ request: async () => { calls++; return { turn: { id: 'turn' } }; } }));
+  const { runner, session } = await fakeRunnerSession('thread', { startTurn: async () => { calls++; return 'turn'; } });
+  const dispatch = new CodexReadOnlyDispatch(journal, runner, session);
   await service.dispatchReadOnly(dispatch, 'plan', 'thread', 'plan', 'low', 'attempt', 'request');
   const plan = { planId: 'p', version: 1, goal: 'test', scope: ['.'], approach: 'edit', acceptanceCriteria: ['done'], checks: [], riskChanges: [] };
   await service.recordReadOnlyPlan(dispatch, 'attempt', { threadId: 'thread', turnId: 'turn', status: 'completed', messages: [JSON.stringify(plan)] });

@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>NeoMind · Agent profiles</title>
+<style>
+/* ==== NEOMIND SHARED STYLES (copy this block verbatim into every NeoMind mockup) ==== */
+/* Dark theme in the Claude Code palette: warm charcoal surfaces, ivory text, clay accent. */
+:root {
+  color-scheme: dark;
+  --font: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, -apple-system, sans-serif;
+  --mono: 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --ink: #f2efe8; --ink-2: #d4d0c6; --ink-3: #a9a499; --ink-4: #85817a;
+  --bg: #1f1e1d; --surface: #262624; --soft: #2d2c29; --field: #1c1b1a; --code-bg: #161514;
+  --line: #3b3a36; --line-2: #312f2c;
+  --accent: #d97757; --accent-2: #e8956f; --accent-strong: #c15f3c; --accent-soft: #3a2822; --accent-line: #6b3f2e;
+  --green: #86c99a; --green-soft: #1e3326; --green-line: #2f5a3c;
+  --amber: #e5b567; --amber-soft: #3a2f1b; --amber-line: #6a5328;
+  --red: #f08a80; --red-soft: #3d2222; --red-line: #6e3434;
+  --blue: #8db4ea; --blue-soft: #1d2a3b; --blue-line: #34507a;
+  --gray: #a9a499; --gray-soft: #33322f;
+  --proposal: #6fd3c4; --proposal-soft: #173330; --proposal-line: #3e9e92;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--font); font-size: 14px; color: var(--ink); background: var(--bg); }
+h1, h2, h3, h4, p { margin: 0; }
+code, pre { font-family: var(--mono); font-size: 12.5px; }
+button { font: inherit; cursor: pointer; color: inherit; }
+/* Shell */
+.app { display: grid; grid-template-columns: 232px 1fr; grid-template-rows: 58px 1fr; min-height: 100vh; }
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; font-size: 18px; letter-spacing: -.5px; }
+.brand-mark { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: var(--code-bg); display: grid; place-items: center; font-size: 18px; }
+.brand b { font-weight: 700; }
+.brand-divider { height: 20px; width: 1px; background: var(--line); margin: 0 4px; }
+.product { font-size: 11px; letter-spacing: 1.2px; color: var(--ink-4); font-weight: 700; }
+.project { border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px; color: var(--ink-2); font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: center; white-space: nowrap; background: var(--surface); }
+.project small { color: var(--ink-4); font-weight: 400; }
+.project i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.sidebar { background: var(--bg); border-right: 1px solid var(--line); padding: 18px 12px; }
+.side-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--ink-4); text-transform: uppercase; padding: 0 10px; margin: 0 0 8px; display: flex; justify-content: space-between; }
+.nav { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; color: var(--ink-2); font-size: 13.5px; font-weight: 600; margin: 1px 0; }
+.nav span { width: 18px; text-align: center; color: var(--ink-4); }
+.nav.on { background: var(--soft); color: var(--ink); }
+.nav.on span { color: var(--accent); }
+.nav em { margin-left: auto; font-style: normal; background: var(--accent-soft); color: var(--accent-2); border-radius: 6px; padding: 1px 7px; font-size: 11.5px; }
+.side-divider { height: 1px; background: var(--line-2); margin: 16px 8px; }
+.main { padding: 18px 28px 32px; min-width: 0; }
+.crumbs { font-size: 12.5px; color: var(--ink-4); margin-bottom: 14px; display: flex; gap: 8px; }
+.crumbs b { color: var(--ink-2); font-weight: 600; }
+.page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 18px; }
+.page-head h1 { font-size: 24px; letter-spacing: -.6px; font-weight: 700; }
+.page-head p { color: var(--ink-3); font-size: 13.5px; margin-top: 5px; }
+/* Components */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin-bottom: 16px; }
+.card h2 { font-size: 19px; letter-spacing: -.3px; line-height: 1.4; }
+.card h3 { font-size: 16px; letter-spacing: -.2px; }
+.card h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--ink-4); margin: 14px 0 6px; }
+.card-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.btn { height: 34px; border-radius: 8px; padding: 0 14px; font-size: 13px; font-weight: 600; border: 1px solid var(--line); background: var(--soft); color: var(--ink-2); white-space: nowrap; }
+.btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; box-shadow: 0 2px 8px #c15f3c40; }
+.btn.large { height: 40px; padding: 0 22px; font-size: 14px; }
+.btn.ghost { color: var(--accent-2); border-color: var(--accent-line); background: transparent; }
+.btn.danger { color: var(--red); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.t-green { background: var(--green-soft); color: var(--green); } .t-amber { background: var(--amber-soft); color: var(--amber); }
+.t-red { background: var(--red-soft); color: var(--red); } .t-violet { background: var(--accent-soft); color: var(--accent-2); }
+.t-blue { background: var(--blue-soft); color: var(--blue); } .t-gray { background: var(--gray-soft); color: var(--gray); }
+.pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.callout { border-radius: 8px; padding: 10px 13px; font-size: 13.5px; line-height: 1.5; margin: 12px 0; border: 1px solid transparent; }
+.callout.red { background: var(--red-soft); color: var(--red); border-color: var(--red-line); }
+.callout.amber { background: var(--amber-soft); color: var(--amber); border-color: var(--amber-line); }
+.callout.green { background: var(--green-soft); color: var(--green); border-color: var(--green-line); }
+.callout.violet { background: var(--accent-soft); color: var(--accent-2); border-color: var(--accent-line); }
+.callout.blue { background: var(--blue-soft); color: var(--blue); border-color: var(--blue-line); }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); margin-bottom: 14px; }
+.field small { font-weight: 400; color: var(--ink-3); }
+.input, .select, .textarea { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--field); color: var(--ink); font-weight: 400; font-size: 14px; width: 100%; font-family: var(--font); }
+.select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%), linear-gradient(135deg, var(--ink-3) 50%, transparent 50%); background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 28px; }
+.textarea { min-height: 84px; line-height: 1.5; resize: vertical; }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; padding: 2px; background: var(--field); }
+.segmented span { padding: 5px 11px; border-radius: 6px; font-size: 13px; font-weight: 600; color: var(--ink-3); white-space: nowrap; }
+.segmented span.on { background: var(--soft); color: var(--accent-2); box-shadow: 0 1px 3px #0000004d; }
+.hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
+.muted { color: var(--ink-4); font-size: 12.5px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.green { background: var(--green); } .dot.amber { background: var(--amber); } .dot.red { background: var(--red); } .dot.violet { background: var(--accent); } .dot.gray { background: var(--ink-4); }
+/* Proposal marker: anything not implemented yet carries this tag (teal, so it never reads as the clay accent). */
+.proposal { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; letter-spacing: .3px; color: var(--proposal); background: var(--proposal-soft); border: 1px dashed var(--proposal-line); border-radius: 6px; padding: 1px 7px; vertical-align: middle; }
+.proposal-box { outline: 2px dashed var(--proposal-line); outline-offset: 4px; border-radius: 12px; }
+/* ==== END NEOMIND SHARED STYLES ==== */
+
+/* Page-specific: Agent profiles */
+.layout { display: grid; grid-template-columns: 330px 1fr; gap: 16px; align-items: start; }
+.card.list { padding: 14px 0 8px; }
+.list-head { display: flex; justify-content: space-between; align-items: center; padding: 0 16px 10px; }
+.list-head h3 { font-size: 15px; }
+.list .search { margin: 0 16px 6px; width: calc(100% - 32px); font-size: 13.5px; padding: 7px 10px; }
+.group { font-size: 11.5px; font-weight: 700; letter-spacing: .9px; color: var(--ink-4); text-transform: uppercase; padding: 14px 16px 6px; display: flex; justify-content: space-between; }
+.group span { letter-spacing: 0; text-transform: none; font-weight: 600; }
+.pitem { display: grid; grid-template-columns: 32px 1fr auto; gap: 10px; align-items: start; padding: 10px 16px; border-left: 3px solid transparent; }
+.pitem.on { background: var(--accent-soft); border-left-color: var(--accent); }
+.pitem .av { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; font-size: 14px; font-weight: 700; }
+.pitem strong { font-size: 13.5px; display: flex; align-items: center; gap: 6px; }
+.pitem p { font-size: 12.5px; color: var(--ink-3); margin-top: 2px; line-height: 1.4; }
+.pitem .ver { font-size: 11.5px; font-weight: 600; color: var(--ink-3); background: var(--gray-soft); border-radius: 6px; padding: 1px 7px; margin-top: 1px; }
+.pitem.on .ver { background: var(--surface); color: var(--accent-2); }
+.pitem .badge { font-size: 11px; padding: 1px 7px; }
+.draft-dot { font-size: 11.5px; color: var(--amber); font-weight: 600; margin-top: 3px; display: block; }
+.archived { display: flex; justify-content: space-between; padding: 12px 16px 6px; margin-top: 6px; border-top: 1px solid var(--line-2); font-size: 13px; color: var(--ink-3); font-weight: 600; }
+
+.editor { padding: 0; }
+.ed-head { padding: 20px 22px 16px; border-bottom: 1px solid var(--line); }
+.ed-title { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.ed-title h2 { display: flex; align-items: center; gap: 10px; }
+.ed-title .meta { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 13px; color: var(--ink-3); }
+.ed-title .meta code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; color: var(--ink-2); }
+.ed-actions { display: flex; gap: 8px; position: relative; }
+.versions { display: flex; align-items: center; gap: 6px; margin-top: 14px; flex-wrap: wrap; }
+.versions .lbl { font-size: 12.5px; font-weight: 600; color: var(--ink-3); margin-right: 4px; }
+.vchip { font-size: 12.5px; font-weight: 600; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; color: var(--ink-3); background: var(--surface); }
+.vchip.used { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-2); }
+.vchip.draft { border-style: dashed; border-color: var(--amber-line); color: var(--amber); background: var(--amber-soft); }
+.versions .hint { margin-left: 8px; }
+
+.menu-demo { padding: 14px 16px; }
+.menu { width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 28px #0000004d; padding: 6px; z-index: 5; }
+.menu div { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: 7px; font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
+.menu div small { font-weight: 400; color: var(--ink-4); font-size: 12px; }
+.menu div:first-child { background: var(--soft); }
+.menu hr { border: 0; border-top: 1px solid var(--line-2); margin: 5px 4px; }
+.menu .del { color: var(--red); }
+
+.sec { padding: 18px 22px; border-bottom: 1px solid var(--line-2); }
+.sec:last-child { border-bottom: 0; }
+.sec-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+.sec-head h3 { font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.sec-head .hint { text-align: right; }
+.instructions { min-height: 216px; font-size: 13.5px; line-height: 1.6; }
+.ta-foot { display: flex; justify-content: space-between; margin-top: 6px; }
+
+.perm { display: grid; grid-template-columns: 30px 1fr auto; gap: 12px; align-items: center; padding: 11px 0; border-top: 1px solid var(--line-2); }
+.perm:first-of-type { border-top: 0; }
+.perm .pic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; font-size: 14px; font-weight: 700; }
+.perm strong { font-size: 13.5px; display: block; }
+.perm p { font-size: 12.5px; color: var(--ink-3); margin-top: 2px; line-height: 1.45; }
+.state { font-size: 12px; font-weight: 600; color: var(--ink-3); margin-right: 10px; }
+.toggle-wrap { display: flex; align-items: center; }
+.toggle { width: 38px; height: 22px; border-radius: 999px; background: var(--line); position: relative; flex: none; }
+.toggle::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); box-shadow: 0 1px 2px #0003; }
+.toggle.on { background: var(--accent); }
+.toggle.on::after { left: 19px; }
+.toggle.locked { opacity: .5; }
+
+.cols { display: grid; grid-template-columns: 1fr 1fr; }
+.cols > .sec:first-child { border-right: 1px solid var(--line-2); }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; font-size: 11.5px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--ink-4); padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--soft); }
+td { padding: 10px; border-bottom: 1px solid var(--line-2); vertical-align: middle; }
+td code { font-size: 12px; }
+.tbl { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.tbl tr:last-child td { border-bottom: 0; }
+.sha { color: var(--ink-3); }
+.row-warn td { background: var(--amber-soft); }
+.warn-note { display: block; font-size: 12px; color: var(--amber); margin-top: 3px; font-family: var(--font); }
+.link { color: var(--accent-2); font-weight: 600; font-size: 12.5px; }
+.link.danger { color: var(--red); }
+.add-skill { margin-top: 10px; display: flex; align-items: center; gap: 12px; }
+.btn.dashed { border-style: dashed; color: var(--accent-2); border-color: var(--accent-line); background: var(--soft); }
+
+.usage { display: flex; flex-direction: column; gap: 8px; }
+.use { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; }
+.use strong { font-size: 13.5px; }
+.use strong span { color: var(--ink-4); font-weight: 400; margin: 0 4px; }
+.use p { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+.use .badge { font-size: 11.5px; }
+.advanced { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.advanced span { color: var(--ink-4); font-weight: 400; font-size: 12px; }
+.legend { margin-top: 4px; font-size: 12.5px; color: var(--ink-3); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">✳</span><span>neo<b>mind</b></span><span class="brand-divider"></span><span class="product">FLOW STUDIO</span></div>
+    <div class="project"><i></i>repo1 <small>W:\projects\AI\NeoMind-5da788d\NeoMind\demo\repo1</small></div>
+  </header>
+
+  <aside class="sidebar">
+    <div class="side-title">Workspace</div>
+    <div class="nav"><span>▧</span>Flow library<em>2</em></div>
+    <div class="nav"><span>▶</span>Runs</div>
+    <div class="nav on"><span>✦</span>Agent profiles</div>
+    <div class="nav"><span>◇</span>Project memory</div>
+    <div class="side-divider"></div>
+    <div class="side-title">Flows <span>＋</span></div>
+    <div class="nav"><span>◈</span>Dev</div>
+    <div class="nav"><span>◈</span>Research</div>
+  </aside>
+
+  <main class="main">
+    <div class="crumbs"><span>repo1</span>›<span>Agent profiles</span>›<b>Security reviewer</b></div>
+    <div class="page-head">
+      <div>
+        <h1>Agent profiles</h1>
+        <p>Tái sử dụng hướng dẫn, skills và giới hạn quyền giữa các flow.</p>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px"><span class="proposal">ĐỀ XUẤT</span><button class="btn ghost">＋ Tạo profile</button></div>
+    </div>
+
+    <div class="layout">
+      <!-- Profile list -->
+      <div>
+      <aside class="card list">
+        <div class="list-head"><h3>Profiles</h3><span class="proposal">ĐỀ XUẤT</span></div>
+        <input class="input search" placeholder="Tìm theo tên hoặc id…">
+
+        <div class="group">Có sẵn <span>2</span></div>
+        <div class="pitem">
+          <span class="av t-blue">✦</span>
+          <div><strong>Implementer <span class="badge t-gray">dùng chung</span></strong><p>Thực hiện kế hoạch đã duyệt, được sửa file.</p></div>
+          <span class="ver">v1</span>
+        </div>
+        <div class="pitem">
+          <span class="av t-green">◎</span>
+          <div><strong>Verifier <span class="badge t-gray">dùng chung</span></strong><p>Kiểm tra độc lập, chỉ đọc và chạy checks.</p></div>
+          <span class="ver">v1</span>
+        </div>
+
+        <div class="group">Của project <span>2</span></div>
+        <div class="pitem on">
+          <span class="av t-red">⛨</span>
+          <div><strong>Security reviewer</strong><p>Review bảo mật: secrets, input, quyền truy cập.</p><span class="draft-dot">● Bản nháp có thay đổi</span></div>
+          <span class="ver">v3</span>
+        </div>
+        <div class="pitem">
+          <span class="av t-violet">✎</span>
+          <div><strong>Docs writer</strong><p>Cập nhật README, CHANGELOG theo thay đổi.</p></div>
+          <span class="ver">v2</span>
+        </div>
+        <div class="archived"><span>▸ Đã lưu trữ</span><span>1</span></div>
+      </aside>
+      <div class="card menu-demo">
+        <div class="card-title" style="margin-bottom:8px"><h3 style="font-size:14px">Menu “Quản lý ▾” khi mở</h3><span class="proposal">ĐỀ XUẤT</span></div>
+        <div class="menu static">
+          <div>Đổi tên <small>F2</small></div>
+          <div>Sao chép <small>tạo id mới</small></div>
+          <div>Lưu trữ <small>ẩn khỏi bước mới</small></div>
+          <hr>
+          <div class="del">Xóa vĩnh viễn… <small>nhập đúng tên</small></div>
+        </div>
+        <p class="hint" style="margin-top:10px">Hiện tại 4 nút này nằm ngang dưới editor. Gom vào menu để chỉ còn Lưu nháp / Lưu phiên bản.</p>
+      </div>
+      </div>
+
+      <!-- Editor -->
+      <section class="card editor">
+        <div class="ed-head">
+          <div class="ed-title">
+            <div>
+              <h2>Security reviewer <span class="badge t-violet">● BẢN NHÁP</span></h2>
+              <div class="meta"><code>security-reviewer</code><span>Tạo từ mẫu Verifier</span><span>·</span><span>Sửa lần cuối 10:31 hôm nay</span></div>
+            </div>
+            <div class="ed-actions">
+              <button class="btn">Quản lý ▾</button>
+              <button class="btn">Lưu nháp</button>
+              <button class="btn primary">Lưu phiên bản</button>
+            </div>
+          </div>
+          <div class="versions">
+            <span class="lbl">Phiên bản</span>
+            <span class="vchip">v1</span>
+            <span class="vchip">v2 · Research</span>
+            <span class="vchip used">v3 · đang dùng bởi Dev</span>
+            <span class="vchip draft">Bản nháp → v4</span>
+            <span class="proposal">ĐỀ XUẤT</span>
+            <span class="hint">Run đã bắt đầu giữ snapshot cũ.</span>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-head"><h3>Hướng dẫn</h3><span class="hint">Gửi kèm mỗi bước dùng profile này. Bước có thể ghi đè trong “Nâng cao”.</span></div>
+          <textarea class="textarea instructions">Bạn là reviewer bảo mật độc lập. Chỉ đọc mã nguồn, không sửa file.
+
+Tập trung vào:
+- Secrets, token, khóa API bị commit hoặc in ra log.
+- Input từ người dùng / file / mạng chưa được kiểm tra (path traversal, injection, deserialize).
+- Lệnh shell được ghép chuỗi, quyền file quá rộng, đường dẫn tuyệt đối ngoài workspace.
+
+Với mỗi phát hiện: ghi file:dòng, mức độ (cao / vừa / thấp), cách khai thác ngắn gọn và đề xuất sửa.
+Nếu không chắc, ghi “chưa kết luận” và nêu bằng chứng còn thiếu — không đoán.</textarea>
+          <div class="ta-foot"><span class="muted">Markdown · 612 ký tự</span><span class="muted">Đã sửa so với v3 · <span class="link">Xem khác biệt</span> <span class="proposal">ĐỀ XUẤT</span></span></div>
+        </div>
+
+        <div class="cols">
+          <div class="sec">
+            <div class="sec-head"><h3>Quyền tối đa <span class="proposal">ĐỀ XUẤT</span></h3></div>
+            <p class="hint" style="margin:-4px 0 6px">Bước trong flow chỉ thu hẹp được, không mở rộng quá giới hạn này.</p>
+            <div class="perm">
+              <span class="pic t-blue">◉</span>
+              <div><strong>Đọc</strong><p>Đọc file trong phạm vi bước được giao.</p></div>
+              <div class="toggle-wrap"><span class="state">Bật</span><span class="toggle on"></span></div>
+            </div>
+            <div class="perm">
+              <span class="pic t-gray">✎</span>
+              <div><strong>Sửa file</strong><p>Reviewer không sửa code. Bước dùng profile này không bật được “Được sửa file”.</p></div>
+              <div class="toggle-wrap"><span class="state">Tắt</span><span class="toggle"></span></div>
+            </div>
+            <div class="perm">
+              <span class="pic t-green">▷</span>
+              <div><strong>Chạy checks</strong><p>Đề xuất lint / test; checks luôn chạy qua Codex.</p></div>
+              <div class="toggle-wrap"><span class="state">Bật</span><span class="toggle on"></span></div>
+            </div>
+            <div class="perm">
+              <span class="pic t-gray">⌘</span>
+              <div><strong>Commit local</strong><p>Tạo commit trong worktree của run. Cần project cho phép.</p></div>
+              <div class="toggle-wrap"><span class="state">Tắt</span><span class="toggle"></span></div>
+            </div>
+          </div>
+
+          <div class="sec proposal-box" style="outline-offset:-6px">
+            <div class="sec-head"><h3>Được dùng ở <span class="proposal">ĐỀ XUẤT</span></h3><span class="badge t-gray">3 bước</span></div>
+            <div class="usage">
+              <div class="use">
+                <div><strong>Dev <span>›</span> Independent review</strong><p>Reviewer “security” · bắt buộc · Codex · GPT-6 Luna</p></div>
+                <span class="badge t-violet">v3</span>
+              </div>
+              <div class="use">
+                <div><strong>Dev <span>›</span> Bounded repair</strong><p>Kiểm tra lại sau mỗi vòng sửa</p></div>
+                <span class="badge t-violet">v3</span>
+              </div>
+              <div class="use">
+                <div><strong>Research <span>›</span> Review sources</strong><p>Reviewer “security” · không bắt buộc</p></div>
+                <span class="badge t-amber">v2 · có bản mới</span>
+              </div>
+            </div>
+            <p class="hint" style="margin-top:10px">Lưu phiên bản v4 không tự đổi các bước trên. Mở flow để chuyển sang v4.</p>
+            <div class="callout violet" style="font-size:12.5px; margin-bottom:0"><b>1 run đang chạy</b> (Dev · “Thêm hàm power”) giữ snapshot v3 đến khi kết thúc.</div>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-head"><h3>Skills <span class="proposal">ĐỀ XUẤT</span></h3><span class="hint">Nội dung được ghim theo sha256 khi bắt đầu run.</span></div>
+          <div class="tbl">
+            <table>
+              <thead><tr><th style="width:22%">ID</th><th>Đường dẫn</th><th style="width:18%">sha256</th><th style="width:150px"></th></tr></thead>
+              <tbody>
+                <tr><td><code>owasp-checklist</code></td><td><code>.neomind/skills/owasp-checklist.md</code></td><td><code class="sha">3f9a1c…e21b</code></td><td style="text-align:right"><span class="link danger">Xóa</span></td></tr>
+                <tr class="row-warn"><td><code>secret-scan</code></td><td><code>.neomind/skills/secret-scan.md</code><span class="warn-note">⚠ File đã đổi sau khi ghim hash</span></td><td><code class="sha">a07d44…9c10</code></td><td style="text-align:right"><span class="link">Cập nhật hash</span>&nbsp;&nbsp;·&nbsp;&nbsp;<span class="link danger">Xóa</span></td></tr>
+                <tr><td><code>threat-model</code></td><td><code>docs/security/threat-model.md</code></td><td><code class="sha">c5e870…41d2</code></td><td style="text-align:right"><span class="link danger">Xóa</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="add-skill"><button class="btn dashed">＋ Thêm skill từ file</button><span class="hint">Chọn file trong project; id và sha256 được điền tự động. Hiện tại: nhập JSON tay.</span></div>
+        </div>
+
+        <div class="sec">
+          <div class="advanced">▸ Output defaults <span>JSON · dùng khi bước không khai báo output contract riêng</span></div>
+        </div>
+      </section>
+    </div>
+    <p class="legend"><span class="proposal">ĐỀ XUẤT</span> Hiện tại: form tạo profile + editor gồm textarea hướng dẫn, 4 checkbox quyền, skills dạng JSON và hàng nút quản lý. Danh sách nhóm, chip phiên bản, toggle có giải thích, bảng skills, “Được dùng ở” và menu Quản lý là đề xuất.</p>
+  </main>
+</div>
+<script>
+/* ==== NEOMIND PROTOTYPE SCRIPT (same in every mockup) ==== */
+/* Clickable prototype: selections, toggles and copy buttons work in place; main actions move between screens. */
+(() => {
+  const screens = {
+    '00-design-system.mockup.html': 'Design system', '01-run-start.mockup.html': 'Run mới', '02-run-approval.mockup.html': 'Chờ duyệt kế hoạch',
+    '03-run-running.mockup.html': 'Đang chạy', '04-run-blocked.mockup.html': 'Cần xử lý', '05-run-completed.mockup.html': 'Hoàn tất',
+    '06-flow-studio.mockup.html': 'Flow studio', '07-profiles.mockup.html': 'Agent profiles', '08-memory.mockup.html': 'Project memory', '09-session-viewer.mockup.html': 'Xem session',
+  };
+  // Text of a clicked control -> screen it leads to.
+  const routes = [
+    [/^(\+|＋)\s*Run mới$/, '01-run-start.mockup.html'], [/Bắt đầu$/, '02-run-approval.mockup.html'], [/^Duyệt và thực hiện$/, '03-run-running.mockup.html'],
+    [/Chạy lại review|Đổi và chạy lại|^Tiếp tục$/, '03-run-running.mockup.html'], [/Tôi đã xem, duyệt|Áp dụng vào branch/, '05-run-completed.mockup.html'],
+    [/Chạy flow$/, '01-run-start.mockup.html'], [/^Runs$/, '01-run-start.mockup.html'], [/^Flow library|^(Dev|Research|Test1?)$/, '06-flow-studio.mockup.html'],
+    [/^Agent profiles$/, '07-profiles.mockup.html'], [/Xem session|Mở session đầy đủ/, '09-session-viewer.mockup.html'], [/^Project memory$/, '08-memory.mockup.html'],
+  ];
+  const historyRoutes = [[/Đang chạy/, '03-run-running.mockup.html'], [/Chờ duyệt/, '02-run-approval.mockup.html'], [/Cần xử lý/, '04-run-blocked.mockup.html'], [/Hoàn tất/, '05-run-completed.mockup.html']];
+  const here = decodeURIComponent(location.pathname.split('/').pop() || '');
+  const canNavigate = /^(file|https?):$/.test(location.protocol) && location.href !== 'about:srcdoc';
+
+  const style = document.createElement('style');
+  style.textContent = `.proto-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;z-index:9999;background:#30302e;color:#f2efe8;border:1px solid #4a4944;border-radius:10px;padding:9px 14px;font:13px 'Segoe UI',system-ui,sans-serif;box-shadow:0 8px 28px #0008;transition:all .18s;pointer-events:none;max-width:70vw}
+.proto-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}.proto-toast b{color:#e8956f}
+.proto-nav{position:fixed;right:16px;bottom:16px;z-index:9998;font:12px 'Segoe UI',system-ui,sans-serif}
+.proto-nav summary{list-style:none;cursor:pointer;background:#30302e;color:#d4d0c6;border:1px solid #4a4944;border-radius:999px;padding:6px 12px;box-shadow:0 6px 18px #0007}
+.proto-nav summary::-webkit-details-marker{display:none}
+.proto-nav div{position:absolute;right:0;bottom:36px;background:#262624;border:1px solid #4a4944;border-radius:10px;padding:6px;min-width:210px;box-shadow:0 10px 30px #0009}
+.proto-nav a{display:block;padding:6px 9px;border-radius:6px;color:#d4d0c6;text-decoration:none}.proto-nav a:hover{background:#2d2c29}.proto-nav a.here{color:#e8956f;font-weight:600}
+[data-proto-click]{cursor:pointer}`;
+  document.head.appendChild(style);
+  const toast = document.createElement('div'); toast.className = 'proto-toast'; document.body.appendChild(toast);
+  let timer;
+  const say = html => { toast.innerHTML = html; toast.classList.add('show'); clearTimeout(timer); timer = setTimeout(() => toast.classList.remove('show'), 1800); };
+  const go = file => {
+    if (!file || file === here) return false;
+    if (canNavigate) { location.href = file; return true; }
+    say(`→ Màn <b>${screens[file]}</b> · mở file <code>${file}</code>`); return true;
+  };
+  // Screen switcher, bottom right.
+  const nav = document.createElement('details'); nav.className = 'proto-nav';
+  nav.innerHTML = `<summary>☰ Màn: ${screens[here] ?? 'mockup'}</summary><div>${Object.entries(screens).map(([file, name]) => `<a href="${file}" data-goto="${file}" class="${file === here ? 'here' : ''}">${file.slice(0, 2)} · ${name}</a>`).join('')}</div>`;
+  document.body.appendChild(nav);
+
+  const label = el => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const selectable = ['on', 'active', 'selected'];
+  // Move the selection class among siblings of the same kind (tabs, chips, cards, list items).
+  function select(el) {
+    for (let node = el; node && node !== document.body; node = node.parentElement) {
+      const parent = node.parentElement; if (!parent) break;
+      const siblings = [...parent.children].filter(child => child.tagName === node.tagName);
+      const cls = selectable.find(name => siblings.some(child => child !== node && child.classList.contains(name)));
+      if (cls && siblings.length > 1) { siblings.forEach(child => child.classList.remove(cls)); node.classList.add(cls); return true; }
+    }
+    return false;
+  }
+  document.addEventListener('click', event => {
+    const target = event.target;
+    if (target.closest('input, textarea, select, summary, label')) return;
+    const link = target.closest('[data-goto]');
+    if (link) { event.preventDefault(); go(link.getAttribute('data-goto')); nav.removeAttribute('open'); return; }
+    if (target.closest('a[href]')) { event.preventDefault(); }
+    const toggle = target.closest('.toggle, .switch');
+    if (toggle) { toggle.classList.toggle('on'); return; }
+    const control = target.closest('a, button, .btn, .nav, .chip, .preset, .tab, .diff-tab, .filter, .tchip, .version, .flow-card, .choice, .run-item, .run-history-item, .pitem, .issue, .node, .segmented > *, [role="tab"], .copy, .copy-btn');
+    if (!control) return;
+    const text = label(control);
+    if (/Xem trực tiếp/.test(text)) { const live = document.querySelector('[class*="live"]'); if (live) { live.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; } }
+    if (/Sao chép|^Chép/.test(text)) { const old = control.innerHTML; control.textContent = 'Đã chép ✓'; setTimeout(() => { control.innerHTML = old; }, 1300); return; }
+    if (control.matches('[disabled]')) { say('Nút đang bị khóa'); return; }
+    const history = control.closest('.run-item, .run-history-item');
+    if (history) { select(history); const route = historyRoutes.find(([pattern]) => pattern.test(label(history))); if (route) go(route[1]); return; }
+    const selected = select(control);
+    const core = text.replace(/^[^\p{L}\p{N}+＋]+/u, '').replace(/\s+\d+$/, '');
+    const route = routes.find(([pattern]) => pattern.test(text) || pattern.test(core));
+    if (route && go(route[1])) return;
+    if (!selected) say(`Bấm <b>${text.slice(0, 60)}</b> · mockup chưa gắn hành động`);
+  }, true);
+})();
+/* ==== END NEOMIND PROTOTYPE SCRIPT ==== */
+</script>
+</body>
+</html>

@@ -110,3 +110,5 @@ Người dùng đã chọn tạm hoãn pilot, tiếp tục thiết kế hệ th�
 **Thời gian và điều khiển F18–F20:** chỉ tính thời gian xử lý tự động, ngừng đếm khi toàn run chờ người dùng. Tạm dừng ngừng dispatch và yêu cầu ngắt agents, tiếp tục phải reconcile. Hủy giữ code/artifacts/lịch sử, xác nhận dừng rồi mới đánh dấu đã hủy; không tự rollback hoặc xóa worktree.
 
 **Khôi phục F21:** sau khi host/CLI đóng hoặc crash rồi mở lại, tự đối chiếu session, code và trạng thái đã lưu; hiển thị kết quả và chờ người dùng bấm Tiếp tục trước khi giao thêm việc. Không tự dispatch chỉ vì startup reconciliation thành công.
+
+**Tích hợp Nimbalyst (30/10/2026, thay hướng "dùng session của host"):** NeoMind vào Nimbalyst dưới dạng extension: backend module chạy core và runner Codex/Claude của NeoMind, panel cho giao diện, tool MCP và lệnh `/neomind:run` để mọi session start và theo dõi flow. Agent trong session được gọi duyệt kế hoạch hoặc áp dụng thay đổi nhưng phải hỏi người dùng trước. Runner dùng session Nimbalyst để sau, khi SDK có stop có bằng chứng, cwd/worktree theo session và model thực tế. Chi tiết và kết quả spike: [nimbalyst-extension.md](nimbalyst-extension.md).

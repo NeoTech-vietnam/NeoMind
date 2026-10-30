@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test dist/test/*.test.js",
+    "test": "npm run build && node scripts/run-tests.mjs",
     "neomind": "node dist/src/cli/main.js",
     "schema": "node dist/src/cli/main.js schema flow",
     "build:ui": "tsc -p tsconfig.ui.json && vite build --config ui/vite.config.ts"

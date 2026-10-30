@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { get } from 'node:http';
 import { startEditorServer } from '../src/ui-server/server.js';
 
 test('local editor persists drafts and published versions while rejecting unauthenticated writes', async () => {
@@ -37,8 +38,15 @@ test('local editor persists drafts and published versions while rejecting unauth
     assert.equal(copy.draft.flowId, 'demo-copy');
     assert.equal(copy.draft.name, 'Demo copy');
     assert.equal(copy.draft.definition.nodes.find(node => node.id === 'plan')?.label, 'My plan');
+    // Drafts carry revisions: a save from a stale view is refused with 409 instead of overwriting newer work.
+    const current = await (await fetch(`${editor.url}/api/flows/demo/draft`)).json() as { draft: unknown; revision: string };
+    const fresh = await fetch(`${editor.url}/api/flows/demo/draft`, { method: 'PUT', headers, body: JSON.stringify({ draft: current.draft, expectedRevision: current.revision }) });
+    assert.equal(fresh.status, 200);
+    const stale = await fetch(`${editor.url}/api/flows/demo/draft`, { method: 'PUT', headers, body: JSON.stringify({ draft: current.draft, expectedRevision: 'f'.repeat(64) }) });
+    assert.equal(stale.status, 409);
+    assert.equal((await fetch(`${editor.url}/api/flows/demo/publish`, { method: 'POST', headers, body: JSON.stringify({ expectedRevision: 'f'.repeat(64) }) })).status, 409);
     const bootstrap = await fetch(`${editor.url}/api/bootstrap`);
-    assert.equal((await bootstrap.json() as { runtimeAvailable: boolean }).runtimeAvailable, process.platform === 'linux');
+    assert.equal((await bootstrap.json() as { runtimeAvailable: boolean }).runtimeAvailable, ['linux', 'win32'].includes(process.platform));
   } finally { await editor.close(); }
 });
 
@@ -60,5 +68,22 @@ test('profile API protects writes and publishes immutable versions independently
     assert.equal(version.version.instructions, 'Independent first version');
     assert.equal((await fetch(`${editor.url}/api/profiles/reviewer/draft`, { method: 'PUT', headers, body: JSON.stringify({ draft: { ...draft, profileId: 'other' } }) })).status, 400);
     assert.equal((await fetch(`${editor.url}/api/profiles/reviewer/delete`, { method: 'POST', headers, body: JSON.stringify({ confirmedName: 'wrong' }) })).status, 400);
+  } finally { await editor.close(); }
+});
+
+test('runner API lists the per-runner model allowlist with the default model first', async () => {
+  const project = await mkdtemp(path.join(tmpdir(), 'neomind-runner-api-'));
+  const editor = await startEditorServer(project);
+  try {
+    const response = await fetch(`${editor.url}/api/runners`);
+    assert.equal(response.status, 200);
+    const { runners } = await response.json() as { runners: { runner: string; provider: string; models: string[]; reasoning: string[] }[] };
+    assert.deepEqual(runners.map(item => [item.runner, item.provider, item.models[0]]), [['codex', 'openai', 'gpt-6-luna'], ['claude-code', 'anthropic', 'claude-sonnet-5-5']]);
+    assert.deepEqual(runners.find(item => item.runner === 'claude-code')?.models, ['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-opus-5-5']);
+    assert.ok(runners.every(item => item.reasoning.join() === 'low,medium,high'));
+    assert.equal((await fetch(`${editor.url}/api/runners`, { method: 'POST', headers: { Origin: editor.url, 'X-NeoMind-Token': editor.token } })).status, 404);
+    // fetch drops a custom Host header, so DNS-rebinding protection is checked with a raw request.
+    const status = await new Promise<number | undefined>((resolve, reject) => get(`${editor.url}/api/runners`, { headers: { Host: 'evil.example' } }, response => { response.resume(); resolve(response.statusCode); }).on('error', reject));
+    assert.equal(status, 403);
   } finally { await editor.close(); }
 });

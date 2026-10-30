@@ -1,3 +1,4 @@
+import { constants } from 'node:fs';
 import { mkdir, open, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
@@ -57,7 +58,8 @@ export class SingleOwnerJournal {
   async append(input: NewRunEvent, expectedSequence: number): Promise<RunEvent> {
     if (input.runId !== this.runId) throw new Error('Run ID does not match journal');
     await mkdir(path.dirname(this.file), { recursive: true });
-    const handle = await open(this.file, 'a+');
+    // Not append mode: Windows cannot truncate an append-only handle, so writes use an explicit offset.
+    const handle = await open(this.file, constants.O_RDWR | constants.O_CREAT);
     try {
       const bytes = await handle.readFile();
       const { events, validBytes } = decode(bytes, this.runId);
@@ -65,7 +67,8 @@ export class SingleOwnerJournal {
       if (events.some(e => e.eventId === input.eventId)) throw new Error('Duplicate event ID');
       const event = runEventSchema.parse({ ...input, sequence: events.length + 1 });
       if (validBytes !== bytes.length) await handle.truncate(validBytes);
-      await handle.writeFile(`${JSON.stringify(event)}\n`, { encoding: 'utf8' });
+      const line = Buffer.from(`${JSON.stringify(event)}\n`, 'utf8');
+      for (let offset = 0; offset < line.length;) offset += (await handle.write(line, offset, line.length - offset, validBytes + offset)).bytesWritten;
       await handle.sync();
       return event;
     } finally { await handle.close(); }

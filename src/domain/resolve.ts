@@ -72,6 +72,10 @@ export function snapshotConfiguration(flow: Flow, project: ProjectConfig, overri
       const binding = flow.definition.bindings[node.bindingId];
       if (!binding) throw new Error(`Unknown binding ${node.bindingId}`);
       bindings[node.id] = resolveBinding(binding, flow.definition.bindingDefaults[node.bindingId], project.roleDefaults[node.profileId], overrides[node.id]);
+    } else if (node.type === 'integration' && node.bindingId && node.profileId) {
+      const binding = flow.definition.bindings[node.bindingId];
+      if (!binding) throw new Error(`Unknown binding ${node.bindingId}`);
+      bindings[node.id] = resolveBinding(binding, flow.definition.bindingDefaults[node.bindingId], project.roleDefaults[node.profileId], overrides[node.id]);
     } else if (node.type === 'review_group') {
       for (const reviewer of node.reviewers) {
         const group = flow.definition.sessionGroups.find(g => g.id === reviewer.sessionGroup);

@@ -16,7 +16,7 @@ export class AppServerTransport {
   private dead = false;
   constructor(command: string, args: string[], private readonly notification: (method: string, params: unknown) => void,
     private readonly serverRequest: (id: string | number, method: string, params: unknown) => void, env: NodeJS.ProcessEnv = process.env) {
-    this.child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], env });
+    this.child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], env, windowsHide: true });
     this.lines = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
     this.child.stderr.resume(); // Never copy runtime stderr or credentials into logs.
     this.lines.on('line', line => this.onLine(line));

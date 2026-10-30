@@ -1,0 +1,6 @@
+{
+  "name": "neomind",
+  "version": "0.1.0",
+  "description": "Start and follow NeoMind flows from an agent session",
+  "keywords": ["neomind", "flows", "agents"]
+}

@@ -1,0 +1,47 @@
+{
+  "id": "local.neomind",
+  "name": "NeoMind",
+  "version": "0.1.0",
+  "author": "NeoMind",
+  "description": "Run NeoMind agent flows (plan, approve, implement, review, commit) from any Nimbalyst session and follow them in a panel.",
+  "main": "dist/index.js",
+  "apiVersion": "1.0.0",
+  "permissions": {
+    "ai": true
+  },
+  "contributions": {
+    "backendModules": [
+      {
+        "id": "neomind-runtime",
+        "entry": "dist/backend.js",
+        "runtime": "utility-process",
+        "permissions": ["mcp-server-register"],
+        "enablement": {
+          "default": "disabled",
+          "promptOn": "firstUse",
+          "purpose": "Run NeoMind flows in this project: start Codex and Claude Code agents in isolated Git worktrees, run checks, and keep each run's journal on this machine."
+        }
+      }
+    ],
+    "panels": [
+      {
+        "id": "neomind",
+        "title": "NeoMind",
+        "icon": "account_tree",
+        "placement": "fullscreen",
+        "order": 60,
+        "component": "NeoMindPanel",
+        "tooltip": "NeoMind runs in this project"
+      }
+    ],
+    "claudePlugin": {
+      "path": "claude-plugin",
+      "displayName": "NeoMind",
+      "description": "Start and follow NeoMind flows from an agent session",
+      "enabledByDefault": true,
+      "commands": [
+        { "name": "run", "description": "Start a NeoMind flow for a task and follow it" }
+      ]
+    }
+  }
+}

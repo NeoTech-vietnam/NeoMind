@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { WorkspaceCoordinator } from '../src/storage/coordination.js';
@@ -10,6 +10,7 @@ import { defaultProject } from '../src/domain/templates.js';
 import { captureBaseline } from '../src/workspace/baseline.js';
 import { CodexWorkspaceWriteAdapter } from '../src/adapters/codex-workspace-write.js';
 import { admitIsolatedWorkspaceWrite } from '../src/workspace/write-admission.js';
+import { fakeBinding, fakeRunnerSession, fakeScope } from './helpers/fake-runner.js';
 
 test('write admission requires live approval, full scope, verified runtime, current lease and matching baseline', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'neomind-admission-')), primary = path.join(dir, 'repo'), workspace = path.join(dir, 'worktree'); await mkdir(primary);
@@ -60,7 +61,6 @@ test('write admission requires live approval, full scope, verified runtime, curr
 
 test('journaled writer requires the recorded approval before dispatch and captures changed baseline', async () => {
   const { RunService } = await import('../src/core/run-service.js');
-  const { CodexReadOnlyAdapter } = await import('../src/adapters/codex-readonly.js');
   const { CodexReadOnlyDispatch } = await import('../src/core/codex-readonly-dispatch.js');
   const { CodexWriteDispatch } = await import('../src/core/codex-write-dispatch.js');
   const { CodexReviewDispatch } = await import('../src/core/codex-review-dispatch.js');
@@ -79,7 +79,8 @@ test('journaled writer requires the recorded approval before dispatch and captur
   const coordinator = new WorkspaceCoordinator(path.join(dir, 'db')), owner = coordinator.acquireRun('run', 'host');
   const lease = coordinator.acquire(workspace, 'run', 'host'), journal = new OwnedJournal(path.join(dir, 'events'), coordinator, owner);
   const service = await RunService.create(journal, templates.dev, defaultProject.policy); await service.completeControl('start');
-  const reader = new CodexReadOnlyDispatch(journal, new CodexReadOnlyAdapter({ request: async () => ({ turn: { id: 'plan-turn' } }) }));
+  const planner = await fakeRunnerSession('thread', { startTurn: async () => 'plan-turn' });
+  const reader = new CodexReadOnlyDispatch(journal, planner.runner, planner.session);
   await service.dispatchReadOnly(reader, 'plan', 'thread', 'plan', 'low', 'plan-attempt', 'plan-request');
   const plan = { planId: 'p', version: 1, goal: 'edit', scope: ['.'], approach: 'edit', acceptanceCriteria: ['done'], checks: ['make test'], riskChanges: [] };
   await service.recordReadOnlyPlan(reader, 'plan-attempt', { threadId: 'thread', turnId: 'plan-turn', status: 'completed', messages: [JSON.stringify(plan)] });
@@ -88,9 +89,9 @@ test('journaled writer requires the recorded approval before dispatch and captur
   const admission = { workspace, lease, coordinator, plan, approval, livePolicy: defaultProject.policy,
     expectedBaselineHash: (await captureBaseline(workspace)).baselineHash, sandboxVerified: true, stopVerified: true };
   let calls = 0;
-  const transport = { request: async () => { calls++; return { turn: { id: 'write-turn' } }; } };
-  const scope = { identity: { unit: 'neomind-run-abcd.scope', controlGroup: '/user.slice/neomind-run-abcd.scope' }, transport, isActive: async () => true, stop: async () => true };
-  const writer = new CodexWriteDispatch(journal, new CodexWorkspaceWriteAdapter(transport));
+  const real = await realpath(workspace), implementer = await fakeRunnerSession('thread', { startTurn: async () => { calls++; return 'write-turn'; },
+    workspace: real, access: { kind: 'write', writableRoots: [real] } });
+  const scope = implementer.runner.scope, writer = new CodexWriteDispatch(journal, implementer.runner, implementer.session);
   await assert.rejects(service.dispatchWrite(writer, 'implement', 'thread', 'edit', 'low', 'write-attempt', 'write-request', { ...admission, stopVerified: false }, scope), /Verified sandbox/);
   assert.equal(calls, 0);
   await service.dispatchWrite(writer, 'implement', 'thread', 'edit', 'low', 'write-attempt', 'write-request', admission, scope);
@@ -101,12 +102,15 @@ test('journaled writer requires the recorded approval before dispatch and captur
   assert.equal(after.attempts.find(item => item.attemptId === 'write-attempt')?.baselineHash, (await captureBaseline(workspace)).baselineHash);
   const reviewedBaseline = after.attempts.find(item => item.attemptId === 'write-attempt')!.baselineHash!;
   await service.completeControl('repair');
-  const review = new CodexReviewDispatch(journal, new CodexReadOnlyAdapter({ request: async () => ({ turn: { id: 'review-turn' } }) }));
+  const reviewer = await fakeRunnerSession('review-thread', { startTurn: async () => 'review-turn', workspace: real });
+  const review = new CodexReviewDispatch(journal, reviewer.runner, reviewer.session);
+  // The implementer's own session must not review its work.
+  const producerSession = await reviewer.runner.openSession({ workspace: real, binding: fakeBinding, access: { kind: 'read' }, resumeSessionId: 'thread' });
   await writeFile(path.join(workspace, 'a'), 'changed after implementation');
   await assert.rejects(service.dispatchReview(review, 'verify', 'required-reviewer', 'review-thread', 'review', 'low', 'review-attempt', 'review-request', reviewedBaseline, admission), /baseline changed/);
   await writeFile(path.join(workspace, 'a'), 'after');
 
-  await assert.rejects(service.dispatchReview(review, 'verify', 'required-reviewer', 'thread', 'review', 'low', 'review-attempt', 'review-request', reviewedBaseline, admission), /independent session/);
+  await assert.rejects(service.dispatchReview(new CodexReviewDispatch(journal, reviewer.runner, producerSession), 'verify', 'required-reviewer', 'thread', 'review', 'low', 'review-attempt', 'review-request', reviewedBaseline, admission), /independent session/);
   await service.dispatchReview(review, 'verify', 'required-reviewer', 'review-thread', 'review', 'low', 'review-attempt', 'review-request', reviewedBaseline, admission);
   const result = { threadId: 'review-thread', turnId: 'review-turn', status: 'completed' as const, messages: [JSON.stringify({ verdict: 'pass', findingIds: [], summary: 'Fixture checks pass' })] };
   await assert.rejects(service.recordReview(review, 'verify', 'wrong-reviewer', reviewedBaseline, 'review-attempt', result, admission), /does not match/);
@@ -132,7 +136,6 @@ test('journaled writer requires the recorded approval before dispatch and captur
 
 test('terminal writer event without verified worker stop quarantines workspace', async () => {
   const { RunService } = await import('../src/core/run-service.js');
-  const { CodexReadOnlyAdapter } = await import('../src/adapters/codex-readonly.js');
   const { CodexReadOnlyDispatch } = await import('../src/core/codex-readonly-dispatch.js');
   const { CodexWriteDispatch } = await import('../src/core/codex-write-dispatch.js');
   const { OwnedJournal } = await import('../src/storage/owned-journal.js');
@@ -144,16 +147,17 @@ test('terminal writer event without verified worker stop quarantines workspace',
   const coordinator = new WorkspaceCoordinator(path.join(dir, 'db')), owner = coordinator.acquireRun('run', 'host');
   const lease = coordinator.acquire(workspace, 'run', 'host'), journal = new OwnedJournal(path.join(dir, 'events'), coordinator, owner);
   const service = await RunService.create(journal, templates.dev, defaultProject.policy); await service.completeControl('start');
-  const reader = new CodexReadOnlyDispatch(journal, new CodexReadOnlyAdapter({ request: async () => ({ turn: { id: 'plan-turn' } }) }));
+  const planner = await fakeRunnerSession('thread', { startTurn: async () => 'plan-turn' });
+  const reader = new CodexReadOnlyDispatch(journal, planner.runner, planner.session);
   await service.dispatchReadOnly(reader, 'plan', 'thread', 'plan', 'low', 'plan-attempt', 'plan-request');
   const plan = { planId: 'p', version: 1, goal: 'edit', scope: ['.'], approach: 'edit', acceptanceCriteria: ['done'], checks: [], riskChanges: [] };
   await service.recordReadOnlyPlan(reader, 'plan-attempt', { threadId: 'thread', turnId: 'plan-turn', status: 'completed', messages: [JSON.stringify(plan)] });
   await service.approveProposedPlan('approval', 'plan', 'user', 'ui');
   const approval = (await service.report()).approvals[0]!.approval;
   const admission = { workspace, lease, coordinator, plan, approval, livePolicy: defaultProject.policy, expectedBaselineHash: (await captureBaseline(workspace)).baselineHash, sandboxVerified: true, stopVerified: true };
-  const transport = { request: async () => ({ turn: { id: 'write-turn' } }) };
-  const scope = { identity: { unit: 'neomind-run-abcd.scope', controlGroup: '/user.slice/neomind-run-abcd.scope' }, transport, isActive: async () => true, stop: async () => false };
-  const writer = new CodexWriteDispatch(journal, new CodexWorkspaceWriteAdapter(transport));
+  const real = await realpath(workspace), scope = fakeScope(async () => false);
+  const implementer = await fakeRunnerSession('thread', { startTurn: async () => 'write-turn', workspace: real, access: { kind: 'write', writableRoots: [real] }, scope });
+  const writer = new CodexWriteDispatch(journal, implementer.runner, implementer.session);
   await service.dispatchWrite(writer, 'implement', 'thread', 'edit', 'low', 'write-attempt', 'write-request', admission, scope);
   await assert.rejects(service.recordWriteTerminal(writer, 'write-attempt', 'thread', 'write-turn', 'stopped', admission, scope), /quarantined/);
   assert.equal(coordinator.isCurrent(lease), false); assert.deepEqual((await service.report()).unresolvedAttemptIds, ['write-attempt']);

@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>NeoMind · Flow studio</title>
+<style>
+/* ==== NEOMIND SHARED STYLES (copy this block verbatim into every NeoMind mockup) ==== */
+/* Dark theme in the Claude Code palette: warm charcoal surfaces, ivory text, clay accent. */
+:root {
+  color-scheme: dark;
+  --font: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, -apple-system, sans-serif;
+  --mono: 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --ink: #f2efe8; --ink-2: #d4d0c6; --ink-3: #a9a499; --ink-4: #85817a;
+  --bg: #1f1e1d; --surface: #262624; --soft: #2d2c29; --field: #1c1b1a; --code-bg: #161514;
+  --line: #3b3a36; --line-2: #312f2c;
+  --accent: #d97757; --accent-2: #e8956f; --accent-strong: #c15f3c; --accent-soft: #3a2822; --accent-line: #6b3f2e;
+  --green: #86c99a; --green-soft: #1e3326; --green-line: #2f5a3c;
+  --amber: #e5b567; --amber-soft: #3a2f1b; --amber-line: #6a5328;
+  --red: #f08a80; --red-soft: #3d2222; --red-line: #6e3434;
+  --blue: #8db4ea; --blue-soft: #1d2a3b; --blue-line: #34507a;
+  --gray: #a9a499; --gray-soft: #33322f;
+  --proposal: #6fd3c4; --proposal-soft: #173330; --proposal-line: #3e9e92;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--font); font-size: 14px; color: var(--ink); background: var(--bg); }
+h1, h2, h3, h4, p { margin: 0; }
+code, pre { font-family: var(--mono); font-size: 12.5px; }
+button { font: inherit; cursor: pointer; color: inherit; }
+/* Shell */
+.app { display: grid; grid-template-columns: 232px 1fr; grid-template-rows: 58px 1fr; min-height: 100vh; }
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; font-size: 18px; letter-spacing: -.5px; }
+.brand-mark { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: var(--code-bg); display: grid; place-items: center; font-size: 18px; }
+.brand b { font-weight: 700; }
+.brand-divider { height: 20px; width: 1px; background: var(--line); margin: 0 4px; }
+.product { font-size: 11px; letter-spacing: 1.2px; color: var(--ink-4); font-weight: 700; }
+.project { border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px; color: var(--ink-2); font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: center; white-space: nowrap; background: var(--surface); }
+.project small { color: var(--ink-4); font-weight: 400; }
+.project i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.sidebar { background: var(--bg); border-right: 1px solid var(--line); padding: 18px 12px; }
+.side-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--ink-4); text-transform: uppercase; padding: 0 10px; margin: 0 0 8px; display: flex; justify-content: space-between; }
+.nav { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; color: var(--ink-2); font-size: 13.5px; font-weight: 600; margin: 1px 0; }
+.nav span { width: 18px; text-align: center; color: var(--ink-4); }
+.nav.on { background: var(--soft); color: var(--ink); }
+.nav.on span { color: var(--accent); }
+.nav em { margin-left: auto; font-style: normal; background: var(--accent-soft); color: var(--accent-2); border-radius: 6px; padding: 1px 7px; font-size: 11.5px; }
+.side-divider { height: 1px; background: var(--line-2); margin: 16px 8px; }
+.main { padding: 18px 28px 32px; min-width: 0; }
+.crumbs { font-size: 12.5px; color: var(--ink-4); margin-bottom: 14px; display: flex; gap: 8px; }
+.crumbs b { color: var(--ink-2); font-weight: 600; }
+.page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 18px; }
+.page-head h1 { font-size: 24px; letter-spacing: -.6px; font-weight: 700; }
+.page-head p { color: var(--ink-3); font-size: 13.5px; margin-top: 5px; }
+/* Components */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin-bottom: 16px; }
+.card h2 { font-size: 19px; letter-spacing: -.3px; line-height: 1.4; }
+.card h3 { font-size: 16px; letter-spacing: -.2px; }
+.card h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--ink-4); margin: 14px 0 6px; }
+.card-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.btn { height: 34px; border-radius: 8px; padding: 0 14px; font-size: 13px; font-weight: 600; border: 1px solid var(--line); background: var(--soft); color: var(--ink-2); white-space: nowrap; }
+.btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; box-shadow: 0 2px 8px #c15f3c40; }
+.btn.large { height: 40px; padding: 0 22px; font-size: 14px; }
+.btn.ghost { color: var(--accent-2); border-color: var(--accent-line); background: transparent; }
+.btn.danger { color: var(--red); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.t-green { background: var(--green-soft); color: var(--green); } .t-amber { background: var(--amber-soft); color: var(--amber); }
+.t-red { background: var(--red-soft); color: var(--red); } .t-violet { background: var(--accent-soft); color: var(--accent-2); }
+.t-blue { background: var(--blue-soft); color: var(--blue); } .t-gray { background: var(--gray-soft); color: var(--gray); }
+.pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.callout { border-radius: 8px; padding: 10px 13px; font-size: 13.5px; line-height: 1.5; margin: 12px 0; border: 1px solid transparent; }
+.callout.red { background: var(--red-soft); color: var(--red); border-color: var(--red-line); }
+.callout.amber { background: var(--amber-soft); color: var(--amber); border-color: var(--amber-line); }
+.callout.green { background: var(--green-soft); color: var(--green); border-color: var(--green-line); }
+.callout.violet { background: var(--accent-soft); color: var(--accent-2); border-color: var(--accent-line); }
+.callout.blue { background: var(--blue-soft); color: var(--blue); border-color: var(--blue-line); }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); margin-bottom: 14px; }
+.field small { font-weight: 400; color: var(--ink-3); }
+.input, .select, .textarea { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--field); color: var(--ink); font-weight: 400; font-size: 14px; width: 100%; font-family: var(--font); }
+.select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%), linear-gradient(135deg, var(--ink-3) 50%, transparent 50%); background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 28px; }
+.textarea { min-height: 84px; line-height: 1.5; resize: vertical; }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; padding: 2px; background: var(--field); }
+.segmented span { padding: 5px 11px; border-radius: 6px; font-size: 13px; font-weight: 600; color: var(--ink-3); white-space: nowrap; }
+.segmented span.on { background: var(--soft); color: var(--accent-2); box-shadow: 0 1px 3px #0000004d; }
+.hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
+.muted { color: var(--ink-4); font-size: 12.5px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.green { background: var(--green); } .dot.amber { background: var(--amber); } .dot.red { background: var(--red); } .dot.violet { background: var(--accent); } .dot.gray { background: var(--ink-4); }
+/* Proposal marker: anything not implemented yet carries this tag (teal, so it never reads as the clay accent). */
+.proposal { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; letter-spacing: .3px; color: var(--proposal); background: var(--proposal-soft); border: 1px dashed var(--proposal-line); border-radius: 6px; padding: 1px 7px; vertical-align: middle; }
+.proposal-box { outline: 2px dashed var(--proposal-line); outline-offset: 4px; border-radius: 12px; }
+/* ==== END NEOMIND SHARED STYLES ==== */
+
+/* Page-specific: Flow studio */
+.head-left h1 { display: flex; align-items: center; gap: 10px; }
+.head-left h1 .badge { font-size: 11.5px; letter-spacing: .4px; }
+.unsaved { font-size: 12.5px; font-weight: 600; color: var(--amber); display: inline-flex; align-items: center; gap: 5px; }
+.unsaved i { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); }
+.head-actions { display: flex; gap: 8px; align-items: center; }
+.head-actions .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+.icon-btn { width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-3); font-size: 15px; display: grid; place-items: center; padding: 0; }
+.icon-btn[disabled] { opacity: .45; cursor: not-allowed; }
+
+.studio { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.studio-top { display: flex; justify-content: space-between; align-items: center; padding: 0 16px 0 18px; height: 50px; border-bottom: 1px solid var(--line); }
+.tabs { display: flex; align-items: center; gap: 18px; height: 100%; }
+.tab { height: 100%; display: flex; align-items: center; font-size: 13.5px; font-weight: 600; color: var(--accent-2); border-bottom: 2px solid var(--accent); padding-top: 2px; }
+.stat { font-size: 13px; color: var(--ink-3); }
+.top-actions { display: flex; align-items: center; gap: 8px; }
+.try-wrap { display: flex; align-items: center; gap: 6px; }
+
+.studio-body { display: grid; grid-template-columns: 84px 1fr 320px; height: 868px; }
+
+/* Step palette */
+.rail { border-right: 1px solid var(--line); padding: 12px 0; display: flex; flex-direction: column; gap: 4px; background: var(--surface); }
+.tool { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 7px 2px; font-size: 11px; white-space: nowrap; font-weight: 600; color: var(--ink-2); text-align: center; border-radius: 8px; margin: 0 3px; }
+.tool b { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; font-size: 14px; font-weight: 700; }
+.ic-violet { background: var(--accent-soft); color: var(--accent); }
+.ic-amber { background: var(--amber-soft); color: var(--amber); }
+.ic-blue { background: var(--blue-soft); color: var(--blue); }
+.ic-red { background: var(--red-soft); color: var(--red); }
+.ic-green { background: var(--green-soft); color: var(--green); }
+
+/* Canvas */
+.canvas { position: relative; background-color: var(--soft); background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 18px 18px; overflow: hidden; }
+.edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.edges path, .edges line { stroke: var(--ink-4); stroke-width: 1.5; fill: none; }
+.edge-label { position: absolute; transform: translate(-50%, -100%); font-size: 11px; font-weight: 700; color: var(--green); padding: 0 1px; line-height: 15px; }
+.node { position: absolute; width: 152px; height: 118px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; box-shadow: 0 1px 3px #00000033; display: flex; flex-direction: column; }
+.node .kind { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-4); font-weight: 600; }
+.node .kind b { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font-size: 10.5px; }
+.node strong { font-size: 13.5px; margin-top: 6px; letter-spacing: -.1px; }
+.node small { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+.node .agent { margin-top: auto; font-size: 11px; font-weight: 500; border-radius: 6px; padding: 3px 7px; line-height: 1.35; align-self: stretch; display: flex; flex-direction: column; }
+.node .agent b { font-weight: 700; }
+.agent.claude { background: var(--accent-soft); color: var(--accent-2); }
+.agent.codex { background: var(--blue-soft); color: var(--blue); }
+.agent.inherit { background: var(--gray-soft); color: var(--ink-3); border: 1px dashed var(--ink-4); font-weight: 500; }
+.agent.inherit b { color: var(--ink-2); }
+.node.selected { border-color: var(--accent); box-shadow: 0 0 0 3px #d9775733, 0 4px 14px #d977571f; }
+.node .port { position: absolute; top: 50%; width: 8px; height: 8px; margin-top: -4px; border-radius: 50%; background: var(--surface); border: 1.5px solid var(--ink-4); }
+.node .port.in { left: -5px; } .node .port.out { right: -5px; }
+.node.selected .port { border-color: var(--accent); }
+.node-tag { position: absolute; top: -10px; right: 8px; }
+.tooltip { position: absolute; background: var(--line); color: var(--ink); border: 1px solid #4a4944; font-size: 12px; line-height: 1.45; border-radius: 8px; padding: 8px 11px; width: 300px; box-shadow: 0 6px 18px #00000066; }
+.tooltip b { font-weight: 700; }
+.tooltip code { font-size: 11.5px; color: var(--accent-line); }
+.tooltip::after { content: ''; position: absolute; bottom: -5px; left: 54px; width: 10px; height: 10px; background: var(--line); transform: rotate(45deg); }
+.zoom { position: absolute; left: 14px; bottom: 44px; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px #0000004d; }
+.zoom span { width: 30px; height: 30px; display: grid; place-items: center; color: var(--ink-2); font-size: 15px; border-bottom: 1px solid var(--line-2); }
+.zoom span:last-child { border-bottom: 0; font-size: 12px; }
+.zoom-level { position: absolute; left: 52px; bottom: 44px; font-size: 11.5px; color: var(--ink-3); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; }
+.canvas-hint { position: absolute; left: 14px; bottom: 14px; font-size: 12px; color: var(--ink-4); }
+
+/* Inspector */
+.inspector { border-left: 1px solid var(--line); background: var(--surface); overflow: hidden; display: flex; flex-direction: column; }
+.insp-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 18px 14px; border-bottom: 1px solid var(--line); }
+.insp-head small { display: block; font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--ink-4); }
+.insp-head h3 { font-size: 16px; margin-top: 3px; }
+.insp-head b { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; }
+.insp-body { padding: 14px 18px 18px; }
+.insp-body .field { margin-bottom: 12px; }
+.insp-body .textarea { min-height: 70px; }
+.type-pill { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-soft); color: var(--accent-2); font-size: 12.5px; font-weight: 600; border-radius: 7px; padding: 4px 10px; margin-bottom: 12px; }
+.sec { font-size: 11.5px; font-weight: 700; letter-spacing: 1px; color: var(--ink-4); margin: 6px 0 8px; padding-top: 12px; border-top: 1px solid var(--line-2); }
+.binding { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--soft); margin-bottom: 12px; }
+.binding .field { margin-bottom: 10px; }
+.binding .field:last-child { margin-bottom: 0; }
+.binding .segmented { background: var(--surface); }
+.binding .hint { margin-top: -2px; }
+.check { display: flex; align-items: center; gap: 9px; font-size: 13.5px; font-weight: 600; color: var(--ink-2); margin: 4px 0 12px; }
+.box { width: 17px; height: 17px; border-radius: 5px; border: 1.5px solid var(--ink-4); display: grid; place-items: center; font-size: 11px; color: #fff; background: var(--surface); flex: none; }
+.box.on { background: var(--accent); border-color: var(--accent); }
+.advanced { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--line-2); padding-top: 12px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.advanced span { color: var(--ink-4); font-weight: 400; font-size: 12px; }
+
+/* Validation bar */
+.vbar { display: flex; align-items: center; gap: 10px; padding: 0 18px; height: 50px; border-top: 1px solid var(--line); background: var(--surface); }
+.ok { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+.vbar strong { font-size: 13.5px; }
+.vbar .hint { font-size: 13px; }
+.issue-pill { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 999px; background: var(--amber-soft); color: var(--amber); border: 1px solid var(--amber-line); font-size: 12.5px; font-weight: 700; margin-left: 6px; }
+.vbar .link { margin-left: auto; color: var(--accent-2); font-size: 13.5px; font-weight: 600; }
+.footnote { margin-top: 12px; font-size: 12px; color: var(--ink-4); }
+
+/* Variant: issues drawer open */
+.variant-head { display: flex; align-items: center; gap: 10px; margin: 30px 0 12px; }
+.variant-head h2 { font-size: 17px; letter-spacing: -.2px; }
+.variant-head p { color: var(--ink-3); font-size: 13px; }
+.variant { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.variant-body { display: grid; grid-template-columns: 1fr 400px; height: 330px; }
+.variant .canvas { border-right: 1px solid var(--line); }
+.node.err { border-color: var(--red-line); box-shadow: 0 0 0 3px #f08a8024; }
+.node.warn { border-color: var(--amber-line); }
+.node .flag { position: absolute; top: -9px; left: 10px; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 0 7px; line-height: 18px; }
+.drawer { display: flex; flex-direction: column; background: var(--surface); }
+.drawer-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px 12px; border-bottom: 1px solid var(--line); }
+.drawer-head h3 { font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.drawer-head .x { color: var(--ink-4); font-size: 16px; }
+.filter { display: flex; gap: 6px; padding: 10px 16px 0; }
+.filter span { font-size: 12px; font-weight: 600; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; color: var(--ink-3); }
+.filter span.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-2); }
+.issue { display: grid; grid-template-columns: 22px 1fr; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line-2); }
+.issue.active { background: var(--red-soft); box-shadow: inset 3px 0 0 var(--red); }
+.issue .sev { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; margin-top: 1px; }
+.issue strong { font-size: 13.5px; display: block; }
+.issue p { font-size: 12.5px; color: var(--ink-3); margin-top: 3px; line-height: 1.45; }
+.issue .goto { display: flex; align-items: center; gap: 8px; margin-top: 7px; font-size: 12px; }
+.issue .goto a { color: var(--accent-2); font-weight: 600; text-decoration: none; }
+.issue .goto code { font-size: 11.5px; color: var(--ink-3); background: var(--soft); border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; }
+.drawer-foot { margin-top: auto; padding: 10px 16px; font-size: 12px; color: var(--ink-4); border-top: 1px solid var(--line-2); }
+.vbar.bad .issue-pill { background: var(--red-soft); color: var(--red); border-color: var(--red-line); }
+.legend { display: flex; gap: 22px; margin-top: 14px; font-size: 12.5px; color: var(--ink-3); flex-wrap: wrap; }
+.legend b { color: var(--ink-2); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">✳</span><span>neo<b>mind</b></span><span class="brand-divider"></span><span class="product">FLOW STUDIO</span></div>
+    <div class="project"><i></i>repo1 <small>W:\projects\AI\NeoMind-5da788d\NeoMind\demo\repo1</small></div>
+  </header>
+
+  <aside class="sidebar">
+    <div class="side-title">Workspace</div>
+    <div class="nav on"><span>▧</span>Flow library<em>2</em></div>
+    <div class="nav"><span>▶</span>Runs</div>
+    <div class="nav"><span>✦</span>Agent profiles</div>
+    <div class="nav"><span>◇</span>Project memory</div>
+    <div class="side-divider"></div>
+    <div class="side-title">Flows <span>＋</span></div>
+    <div class="nav on"><span>◈</span>Dev</div>
+    <div class="nav"><span>◈</span>Research</div>
+  </aside>
+
+  <main class="main">
+    <div class="crumbs"><span>repo1</span>›<span>Flows</span>›<b>Dev</b></div>
+    <div class="page-head">
+      <div class="head-left">
+        <h1>Dev <span class="badge t-violet">● BẢN NHÁP</span><span class="unsaved"><i></i>Chưa lưu</span></h1>
+        <p>Thiết kế quy trình và cấu hình cách các agent phối hợp.</p>
+      </div>
+      <div class="head-actions">
+        <button class="btn">Quản lý ▾</button>
+        <button class="icon-btn" title="Hoàn tác">↶</button>
+        <button class="icon-btn" title="Làm lại · không có thao tác để làm lại" disabled>↷</button>
+        <span class="sep"></span>
+        <button class="btn">Lưu nháp</button>
+        <button class="btn">Kiểm tra</button>
+        <button class="btn primary">Lưu phiên bản ↗</button>
+      </div>
+    </div>
+
+    <section class="studio">
+      <div class="studio-top">
+        <div class="tabs"><span class="tab">Flow canvas</span><span class="stat">8 bước · 7 kết nối</span></div>
+        <div class="top-actions">
+          <div class="try-wrap"><span class="proposal">ĐỀ XUẤT</span><button class="btn" title="Chạy thử đồ thị với kết quả giả lập, không gọi model">⟲ Thử flow</button></div>
+          <button class="btn ghost">▶ Chạy flow</button>
+        </div>
+      </div>
+
+      <div class="studio-body">
+        <nav class="rail">
+          <div class="tool"><b class="ic-violet">✦</b>Agent task</div>
+          <div class="tool"><b class="ic-amber">◇</b>Duyệt</div>
+          <div class="tool"><b class="ic-blue">⑂</b>Phân nhánh</div>
+          <div class="tool"><b class="ic-blue">⋏</b>Hợp nhánh</div>
+          <div class="tool"><b class="ic-amber">◆</b>Điều kiện</div>
+          <div class="tool"><b class="ic-blue">⊞</b>Tích hợp</div>
+          <div class="tool"><b class="ic-red">◎</b>Review</div>
+          <div class="tool"><b class="ic-amber">↻</b>Vòng sửa</div>
+          <div class="tool"><b class="ic-green">⌘</b>Commit local</div>
+          <div class="tool"><b class="ic-green">✓</b>Hoàn tất</div>
+        </nav>
+
+        <div class="canvas">
+          <svg class="edges" xmlns="http://www.w3.org/2000/svg">
+            <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#85817a" stroke="none"/></marker></defs>
+            <!-- row 1: y = 281 (top 222 + 59) -->
+            <line x1="169" y1="281" x2="191" y2="281" marker-end="url(#ah)"/>
+            <line x1="349" y1="281" x2="371" y2="281" marker-end="url(#ah)"/>
+            <line x1="529" y1="281" x2="551" y2="281" marker-end="url(#ah)"/>
+            <!-- wrap: Implement → Bounded repair -->
+            <path d="M709,281 H726 V406 H6 V531 H11" marker-end="url(#ah)"/>
+            <!-- row 2: y = 531 (top 472 + 59) -->
+            <line x1="169" y1="531" x2="191" y2="531" marker-end="url(#ah)"/>
+            <line x1="349" y1="531" x2="371" y2="531" marker-end="url(#ah)"/>
+            <line x1="529" y1="531" x2="551" y2="531" marker-end="url(#ah)"/>
+          </svg>
+          <span class="edge-label" style="left:540px; top:278px">pass</span>
+          <span class="edge-label" style="left:360px; top:528px">pass</span>
+
+          <div class="tooltip" style="left:150px; top:104px"><span class="proposal" style="margin-bottom:5px">ĐỀ XUẤT</span><br>Runner <b>Mặc định</b> → khi chạy dùng <b>Codex · GPT-6 Luna</b>, lấy từ <code>project.json › roleDefaults.planner</code>.</div>
+
+          <!-- Row 1 -->
+          <div class="node" style="left:14px; top:222px"><span class="port out"></span>
+            <span class="kind"><b class="ic-green">↗</b>Bắt đầu</span><strong>Start</strong><small>Nhận yêu cầu</small></div>
+          <div class="node" style="left:194px; top:222px"><span class="port in"></span><span class="port out"></span>
+            <span class="kind"><b class="ic-violet">✦</b>Agent task</span><strong>Plan</strong><small>Chỉ đọc</small>
+            <span class="agent inherit"><span>Mặc định →</span><b>Codex · GPT-6 Luna</b></span></div>
+          <div class="node" style="left:374px; top:222px"><span class="port in"></span><span class="port out"></span>
+            <span class="kind"><b class="ic-amber">◇</b>Duyệt</span><strong>Approve plan</strong><small>Chờ người dùng duyệt</small></div>
+          <div class="node selected" style="left:554px; top:222px"><span class="port in"></span><span class="port out"></span>
+            <span class="kind"><b class="ic-violet">✦</b>Agent task</span><strong>Implement</strong><small>Được sửa file</small>
+            <span class="agent claude"><b>Claude Code</b><span>Sonnet 5.5 · Vừa</span></span></div>
+
+          <!-- Row 2 -->
+          <div class="node" style="left:14px; top:472px"><span class="port in"></span><span class="port out"></span>
+            <span class="kind"><b class="ic-amber">↻</b>Vòng sửa</span><strong>Bounded repair</strong><small>Tối đa 2 vòng</small></div>
+          <div class="node" style="left:194px; top:472px"><span class="port in"></span><span class="port out"></span>
+            <span class="kind"><b class="ic-red">◎</b>Review</span><strong>Independent review</strong><small>1 reviewer · 1 bắt buộc</small>
+            <span class="agent codex"><b>Codex</b><span>GPT-6 Luna · Cao</span></span></div>
+          <div class="node" style="left:374px; top:472px"><span class="port in"></span><span class="port out"></span>
+            <span class="kind"><b class="ic-green">⌘</b>Commit local</span><strong>Local commit</strong><small>Sau kiểm tra đạt</small></div>
+          <div class="node" style="left:554px; top:472px"><span class="port in"></span>
+            <span class="kind"><b class="ic-green">✓</b>Hoàn tất</span><strong>Finish</strong><small>Bàn giao kết quả</small></div>
+
+          <div class="zoom"><span>＋</span><span>－</span><span>⛶</span></div>
+          <span class="zoom-level">100%</span>
+          <span class="canvas-hint">Kéo thẻ để sắp xếp · Kéo từ chấm bên phải sang thẻ khác để nối</span>
+        </div>
+
+        <aside class="inspector">
+          <div class="insp-head">
+            <div><small>THUỘC TÍNH</small><h3>Chi tiết bước</h3></div>
+            <b class="ic-violet">✦</b>
+          </div>
+          <div class="insp-body">
+            <label class="field">Tên bước<input class="input" value="Implement"></label>
+            <span class="type-pill">✦ Agent task</span>
+            <label class="field">Mục tiêu<textarea class="textarea">Implement the approved plan</textarea></label>
+
+            <div class="sec">AGENT</div>
+            <div class="binding">
+              <div class="field">Runner
+                <span class="segmented"><span>Mặc định</span><span>Codex</span><span class="on">Claude Code</span></span>
+                <span class="hint">Provider anthropic · checks vẫn chạy qua Codex</span>
+              </div>
+              <label class="field">Model<select class="select"><option>Sonnet 5.5</option></select></label>
+              <label class="field">Mức suy luận<select class="select"><option>Vừa</option></select></label>
+            </div>
+
+            <div class="sec">QUYỀN</div>
+            <div class="check"><span class="box on">✓</span>Được sửa file</div>
+            <label class="field">Phạm vi được sửa<input class="input" value="."><small>Thư mục hoặc file, phân tách bằng dấu phẩy; . là toàn bộ project.</small></label>
+            <div class="check"><span class="box"></span>Được đề xuất checks</div>
+
+            <div class="advanced">▸ Nâng cao <span>profile, binding, session group</span></div>
+          </div>
+        </aside>
+      </div>
+
+      <div class="vbar">
+        <span class="ok t-green">✓</span>
+        <strong>Sẵn sàng thiết kế</strong>
+        <span class="hint">Kiểm tra flow trước khi lưu phiên bản</span>
+        <span class="issue-pill">⚠ 2 vấn đề ▴</span><span class="proposal">ĐỀ XUẤT</span>
+        <span class="link">Kiểm tra flow ↗</span>
+      </div>
+    </section>
+    <p class="footnote">✳ NeoMind Flow Studio · Thay đổi bản nháp không ảnh hưởng phiên bản đã lưu.</p>
+
+    <!-- Variant: issues drawer open -->
+    <div class="variant-head">
+      <h2>Biến thể · Ngăn “Vấn đề” đang mở</h2><span class="proposal">ĐỀ XUẤT</span>
+      <p>Bấm pill “2 vấn đề” ở thanh dưới. Bấm một vấn đề → canvas cuộn tới bước đó, chọn nó và mở đúng trường trong inspector.</p>
+    </div>
+    <section class="variant proposal-box">
+      <div class="variant-body">
+        <div class="canvas">
+          <svg class="edges" xmlns="http://www.w3.org/2000/svg">
+            <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#85817a" stroke="none"/></marker></defs>
+            <line x1="183" y1="155" x2="203" y2="155" marker-end="url(#ah2)"/>
+            <line x1="365" y1="155" x2="385" y2="155" marker-end="url(#ah2)"/>
+            <line x1="547" y1="155" x2="567" y2="155" marker-end="url(#ah2)"/>
+          </svg>
+          <div class="node" style="left:28px; top:96px"><span class="port in"></span><span class="port out"></span>
+            <span class="kind"><b class="ic-amber">◇</b>Duyệt</span><strong>Approve plan</strong><small>Chờ người dùng duyệt</small></div>
+          <div class="node selected err" style="left:210px; top:96px"><span class="flag t-red">1 lỗi</span><span class="port in"></span><span class="port out"></span>
+            <span class="kind"><b class="ic-violet">✦</b>Agent task</span><strong>Implement</strong><small>Được sửa file</small>
+            <span class="agent claude"><b>Claude Code</b><span>Sonnet 5.5 · Vừa</span></span></div>
+          <div class="node" style="left:392px; top:96px"><span class="port in"></span><span class="port out"></span>
+            <span class="kind"><b class="ic-amber">↻</b>Vòng sửa</span><strong>Bounded repair</strong><small>Tối đa 2 vòng</small></div>
+          <div class="node warn" style="left:574px; top:96px"><span class="flag t-amber">1 cảnh báo</span><span class="port in"></span>
+            <span class="kind"><b class="ic-red">◎</b>Review</span><strong>Independent review</strong><small>1 reviewer · 0 bắt buộc</small>
+            <span class="agent codex"><b>Codex</b><span>GPT-6 Luna · Cao</span></span></div>
+          <span class="canvas-hint">Bước có vấn đề được viền màu và gắn số lượng.</span>
+        </div>
+
+        <aside class="drawer">
+          <div class="drawer-head">
+            <h3>Vấn đề <span class="badge t-gray">2</span></h3>
+            <span class="x">✕</span>
+          </div>
+          <div class="filter"><span class="on">Tất cả 2</span><span>Lỗi 1</span><span>Cảnh báo 1</span></div>
+          <div class="issue active">
+            <span class="sev t-red">✕</span>
+            <div>
+              <strong>Implement không có cạnh “completed”</strong>
+              <p>Bước agent cần một cạnh ra khi hoàn thành, nếu không run sẽ dừng ở đây. Chặn lưu phiên bản.</p>
+              <div class="goto"><a>Tới bước Implement →</a><code>edges[implement].completed</code></div>
+            </div>
+          </div>
+          <div class="issue">
+            <span class="sev t-amber">!</span>
+            <div>
+              <strong>Review chưa có reviewer bắt buộc</strong>
+              <p>Project yêu cầu review độc lập cho code. Đánh dấu ít nhất một reviewer là bắt buộc.</p>
+              <div class="goto"><a>Tới bước Independent review →</a><code>reviewers[0].required</code></div>
+            </div>
+          </div>
+          <div class="drawer-foot">Cập nhật mỗi khi bạn sửa flow · lần kiểm tra cuối 10:42</div>
+        </aside>
+      </div>
+      <div class="vbar bad">
+        <span class="ok t-red">✕</span>
+        <strong>Chưa thể lưu phiên bản</strong>
+        <span class="hint">Sửa lỗi trước; cảnh báo không chặn lưu.</span>
+        <span class="issue-pill">✕ 2 vấn đề ▾</span>
+        <span class="link">Kiểm tra flow ↗</span>
+      </div>
+    </section>
+
+    <div class="legend">
+      <span><b>Thử flow</b> — chạy đồ thị với kết quả giả lập (pass / needs_changes) để xem đường đi, không gọi model, không sửa file.</span>
+      <span><b>Chip “Mặc định → …”</b> — cho thấy runner/model thật sẽ dùng khi bước để Mặc định.</span>
+    </div>
+  </main>
+</div>
+<script>
+/* ==== NEOMIND PROTOTYPE SCRIPT (same in every mockup) ==== */
+/* Clickable prototype: selections, toggles and copy buttons work in place; main actions move between screens. */
+(() => {
+  const screens = {
+    '00-design-system.mockup.html': 'Design system', '01-run-start.mockup.html': 'Run mới', '02-run-approval.mockup.html': 'Chờ duyệt kế hoạch',
+    '03-run-running.mockup.html': 'Đang chạy', '04-run-blocked.mockup.html': 'Cần xử lý', '05-run-completed.mockup.html': 'Hoàn tất',
+    '06-flow-studio.mockup.html': 'Flow studio', '07-profiles.mockup.html': 'Agent profiles', '08-memory.mockup.html': 'Project memory', '09-session-viewer.mockup.html': 'Xem session',
+  };
+  // Text of a clicked control -> screen it leads to.
+  const routes = [
+    [/^(\+|＋)\s*Run mới$/, '01-run-start.mockup.html'], [/Bắt đầu$/, '02-run-approval.mockup.html'], [/^Duyệt và thực hiện$/, '03-run-running.mockup.html'],
+    [/Chạy lại review|Đổi và chạy lại|^Tiếp tục$/, '03-run-running.mockup.html'], [/Tôi đã xem, duyệt|Áp dụng vào branch/, '05-run-completed.mockup.html'],
+    [/Chạy flow$/, '01-run-start.mockup.html'], [/^Runs$/, '01-run-start.mockup.html'], [/^Flow library|^(Dev|Research|Test1?)$/, '06-flow-studio.mockup.html'],
+    [/^Agent profiles$/, '07-profiles.mockup.html'], [/Xem session|Mở session đầy đủ/, '09-session-viewer.mockup.html'], [/^Project memory$/, '08-memory.mockup.html'],
+  ];
+  const historyRoutes = [[/Đang chạy/, '03-run-running.mockup.html'], [/Chờ duyệt/, '02-run-approval.mockup.html'], [/Cần xử lý/, '04-run-blocked.mockup.html'], [/Hoàn tất/, '05-run-completed.mockup.html']];
+  const here = decodeURIComponent(location.pathname.split('/').pop() || '');
+  const canNavigate = /^(file|https?):$/.test(location.protocol) && location.href !== 'about:srcdoc';
+
+  const style = document.createElement('style');
+  style.textContent = `.proto-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;z-index:9999;background:#30302e;color:#f2efe8;border:1px solid #4a4944;border-radius:10px;padding:9px 14px;font:13px 'Segoe UI',system-ui,sans-serif;box-shadow:0 8px 28px #0008;transition:all .18s;pointer-events:none;max-width:70vw}
+.proto-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}.proto-toast b{color:#e8956f}
+.proto-nav{position:fixed;right:16px;bottom:16px;z-index:9998;font:12px 'Segoe UI',system-ui,sans-serif}
+.proto-nav summary{list-style:none;cursor:pointer;background:#30302e;color:#d4d0c6;border:1px solid #4a4944;border-radius:999px;padding:6px 12px;box-shadow:0 6px 18px #0007}
+.proto-nav summary::-webkit-details-marker{display:none}
+.proto-nav div{position:absolute;right:0;bottom:36px;background:#262624;border:1px solid #4a4944;border-radius:10px;padding:6px;min-width:210px;box-shadow:0 10px 30px #0009}
+.proto-nav a{display:block;padding:6px 9px;border-radius:6px;color:#d4d0c6;text-decoration:none}.proto-nav a:hover{background:#2d2c29}.proto-nav a.here{color:#e8956f;font-weight:600}
+[data-proto-click]{cursor:pointer}`;
+  document.head.appendChild(style);
+  const toast = document.createElement('div'); toast.className = 'proto-toast'; document.body.appendChild(toast);
+  let timer;
+  const say = html => { toast.innerHTML = html; toast.classList.add('show'); clearTimeout(timer); timer = setTimeout(() => toast.classList.remove('show'), 1800); };
+  const go = file => {
+    if (!file || file === here) return false;
+    if (canNavigate) { location.href = file; return true; }
+    say(`→ Màn <b>${screens[file]}</b> · mở file <code>${file}</code>`); return true;
+  };
+  // Screen switcher, bottom right.
+  const nav = document.createElement('details'); nav.className = 'proto-nav';
+  nav.innerHTML = `<summary>☰ Màn: ${screens[here] ?? 'mockup'}</summary><div>${Object.entries(screens).map(([file, name]) => `<a href="${file}" data-goto="${file}" class="${file === here ? 'here' : ''}">${file.slice(0, 2)} · ${name}</a>`).join('')}</div>`;
+  document.body.appendChild(nav);
+
+  const label = el => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const selectable = ['on', 'active', 'selected'];
+  // Move the selection class among siblings of the same kind (tabs, chips, cards, list items).
+  function select(el) {
+    for (let node = el; node && node !== document.body; node = node.parentElement) {
+      const parent = node.parentElement; if (!parent) break;
+      const siblings = [...parent.children].filter(child => child.tagName === node.tagName);
+      const cls = selectable.find(name => siblings.some(child => child !== node && child.classList.contains(name)));
+      if (cls && siblings.length > 1) { siblings.forEach(child => child.classList.remove(cls)); node.classList.add(cls); return true; }
+    }
+    return false;
+  }
+  document.addEventListener('click', event => {
+    const target = event.target;
+    if (target.closest('input, textarea, select, summary, label')) return;
+    const link = target.closest('[data-goto]');
+    if (link) { event.preventDefault(); go(link.getAttribute('data-goto')); nav.removeAttribute('open'); return; }
+    if (target.closest('a[href]')) { event.preventDefault(); }
+    const toggle = target.closest('.toggle, .switch');
+    if (toggle) { toggle.classList.toggle('on'); return; }
+    const control = target.closest('a, button, .btn, .nav, .chip, .preset, .tab, .diff-tab, .filter, .tchip, .version, .flow-card, .choice, .run-item, .run-history-item, .pitem, .issue, .node, .segmented > *, [role="tab"], .copy, .copy-btn');
+    if (!control) return;
+    const text = label(control);
+    if (/Xem trực tiếp/.test(text)) { const live = document.querySelector('[class*="live"]'); if (live) { live.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; } }
+    if (/Sao chép|^Chép/.test(text)) { const old = control.innerHTML; control.textContent = 'Đã chép ✓'; setTimeout(() => { control.innerHTML = old; }, 1300); return; }
+    if (control.matches('[disabled]')) { say('Nút đang bị khóa'); return; }
+    const history = control.closest('.run-item, .run-history-item');
+    if (history) { select(history); const route = historyRoutes.find(([pattern]) => pattern.test(label(history))); if (route) go(route[1]); return; }
+    const selected = select(control);
+    const core = text.replace(/^[^\p{L}\p{N}+＋]+/u, '').replace(/\s+\d+$/, '');
+    const route = routes.find(([pattern]) => pattern.test(text) || pattern.test(core));
+    if (route && go(route[1])) return;
+    if (!selected) say(`Bấm <b>${text.slice(0, 60)}</b> · mockup chưa gắn hành động`);
+  }, true);
+})();
+/* ==== END NEOMIND PROTOTYPE SCRIPT ==== */
+</script>
+</body>
+</html>

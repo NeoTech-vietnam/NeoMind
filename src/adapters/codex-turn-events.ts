@@ -11,8 +11,12 @@ export interface TurnResult { threadId: string; turnId: string; status: 'complet
 /** Correlates terminal events and completed agent messages, including events received before binding. */
 export class CodexTurnEvents {
   private readonly turns = new Map<string, { messages: Map<string, string>; commands: Set<string>; status?: TurnResult['status']; bytes: number; error?: string; usage?: TokenUsage }>();
+  private readonly observers = new Set<(method: string, payload: unknown) => void>();
   private key(threadId: string, turnId: string) { return JSON.stringify([threadId, turnId]); }
+  /** See every notification first (transcripts); an observer that throws is ignored and never faults the turn. */
+  observe(observer: (method: string, payload: unknown) => void): () => void { this.observers.add(observer); return () => this.observers.delete(observer); }
   accept(method: string, payload: unknown): void {
+    for (const observer of this.observers) { try { observer(method, payload); } catch { /* observation only */ } }
     if (method === 'thread/tokenUsage/updated') {
       const parsed = z.object({ threadId: z.string(), turnId: z.string(), tokenUsage: z.object({ total: tokenUsageSchema }) }).safeParse(payload);
       if (!parsed.success) return;

@@ -1,5 +1,5 @@
 import { CodexTurnEvents, type TurnResult } from '../adapters/codex-turn-events.js';
-import { SystemdScope, type WorkerScope } from '../adapters/systemd-scope.js';
+import { startWorkerScope, type WorkerScope } from '../adapters/worker-scope.js';
 import { z } from 'zod';
 
 export interface RuntimeWorker { scope: WorkerScope; events: CodexTurnEvents; fault(): Error | undefined }
@@ -25,7 +25,7 @@ export async function verifyLocalTools(worker: RuntimeWorker, threadId: string):
 export const startRuntimeWorker: WorkerFactory = async (workspace) => {
   const events = new CodexTurnEvents();
   let fault: Error | undefined;
-  const bootstrap = await SystemdScope.start(() => {}, () => {});
+  const bootstrap = await startWorkerScope(() => {}, () => {});
   let names: string[];
   try {
     const response = z.object({ config: z.record(z.string(), z.unknown()) }).parse(await bootstrap.transport.request('config/read', { includeLayers: false, ...(workspace ? { cwd: workspace } : {}) }));
@@ -34,7 +34,7 @@ export const startRuntimeWorker: WorkerFactory = async (workspace) => {
   if (names.some(name => !/^[A-Za-z0-9_-]+$/.test(name))) throw new Error('MCP server name cannot be safely disabled by this CLI');
   const disabled = ['apps', 'plugins', 'remote_plugin', 'multi_agent', 'multi_agent_v2', 'computer_use', 'browser_use', 'browser_use_external', 'in_app_browser', 'image_generation', 'hooks', 'skill_mcp_dependency_install'];
   const overrides = [...disabled.flatMap(feature => ['--disable', feature]), '-c', 'web_search="disabled"', ...names.flatMap(name => ['-c', `mcp_servers.${name}.enabled=false`])];
-  const scope = await SystemdScope.start((method, params) => {
+  const scope = await startWorkerScope((method, params) => {
     try { events.accept(method, params); } catch (error) { fault = error instanceof Error ? error : new Error(String(error)); }
   }, (_id, method) => { fault = new Error(`Runner đang chờ tương tác: ${method}`); }, overrides);
   return { scope, events, fault: () => fault };

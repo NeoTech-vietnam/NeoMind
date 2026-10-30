@@ -12,6 +12,9 @@ import { runtimeArtifactSchema, runtimeContextSchema, runtimeStateSchema, type R
 import { tokenUsageSchema, type TokenUsage } from './usage.js';
 import { evaluateCondition } from './condition.js';
 import type { BindingValues } from '../domain/resolve.js';
+import { scopeBindingIdentity } from '../adapters/worker-scope.js';
+import { branchLayout } from '../domain/branches.js';
+import { IMPACT_RULE_VERSION, selectReviewersForChanges, sharedImpactPaths } from './review-impact.js';
 
 const createdSchema = z.strictObject({ flow: z.unknown(), policy: projectPolicySchema, snapshot: z.json().optional() });
 const nodeSchema = z.strictObject({ nodeId: z.string().min(1), writeScopes: z.array(z.string().min(1)).optional() });
@@ -21,7 +24,7 @@ const receiptSchema = z.strictObject({ attemptId: z.string().min(1), status: z.e
 const finishedSchema = z.strictObject({ attemptId: z.string().min(1), status: z.enum(['completed', 'stopped']), baselineHash: z.string().min(1).optional() });
 const gitObject = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
 const commitIntentSchema = z.strictObject({ nodeId: z.string().min(1), reviewNodeId: z.string().min(1),
-  baselineHash: z.string().min(1), expectedParent: gitObject, expectedTree: gitObject });
+  baselineHash: z.string().min(1), expectedParent: gitObject, expectedTree: gitObject, workspaceTree: gitObject.optional() });
 const commitReceiptSchema = z.strictObject({ nodeId: z.string().min(1), baselineHash: z.string().min(1),
   parent: gitObject, tree: gitObject, commit: gitObject });
 const reviewResultSchema = z.strictObject({ reviewerId: z.string().min(1), sessionId: z.string().min(1),
@@ -49,8 +52,14 @@ export interface RecoveredAttempt {
   status: 'unresolved' | 'completed' | 'stopped';
   baselineHash?: string; runnerTurnId?: string; workspace?: string; workspaceFence?: number; reviewerId?: string; reviewBaselineHash?: string; workerUnit?: string; workerControlGroup?: string;
   readonlyBaselineHash?: string;
+  /** Produced by core (integration merge), not by a runner session. */
+  core?: true;
 }
-export interface RecoveredCommit { nodeId: string; requestId: string; baselineHash: string; expectedParent: string; expectedTree: string; confirmed: boolean; workspace?: string; workspaceFence?: number }
+/** Proof that a reviewer's pass at an earlier baseline still applies: nothing it reviewed changed and nothing shared changed. */
+export interface ImpactReceipt { fromBaselineHash: string; oldTree: string; newTree: string; changedPaths: string[]; scopes: string[]; ruleVersion: number }
+export interface RecoveredBranchWorkspace { nodeId: string; requestId: string; workspace: string; baseCommit: string; hostId?: string; fence?: number }
+export interface RecoveredIntegration { nodeId: string; requestId: string; baseCommit: string; branches: { nodeId: string; commit: string; tree: string; baselineHash: string }[]; mergedTree: string; conflicts: string[]; baselineHash?: string }
+export interface RecoveredCommit { nodeId: string; requestId: string; baselineHash: string; expectedParent: string; expectedTree: string; workspaceTree?: string; confirmed: boolean; workspace?: string; workspaceFence?: number; commit?: string }
 export interface RecoveryReport {
   bindingSelections: { key: string; values: BindingValues; reason: string }[];
   timeExtensionsMs: number;
@@ -61,11 +70,11 @@ export interface RecoveryReport {
   continuationBaselines: string[];
   runtimeContext?: RuntimeContext;
   runtimeState?: RuntimeState;
-  repairRounds: { roundId: string; scopeId: string; baselineHash: string; findingIds: string[] }[];
+  repairRounds: { roundId: string; scopeId: string; baselineHash: string; findingIds: string[]; reviewedTree?: string }[];
   graph: SchedulerSnapshot;
   plans: { nodeId: string; attemptId: string; plan: Plan }[];
   approvals: { nodeId: string; plan: Plan; approval: Approval }[];
-  reviewerOutputs: { nodeId: string; attemptId: string; summary: string; evidence?: ReviewEvidence; result: z.infer<typeof reviewResultSchema> }[];
+  reviewerOutputs: { nodeId: string; attemptId: string; summary: string; evidence?: ReviewEvidence; result: z.infer<typeof reviewResultSchema>; carried?: ImpactReceipt }[];
   acceptedReviews: { nodeId: string; baselineHash: string }[];
   checks: { checkId: string; requestId: string; command: string; baselineHash: string; status: 'unresolved' | 'passed' | 'failed' | 'abandoned'; outputHash?: string; workerUnit?: string; workerControlGroup?: string; workspace: string; workspaceFence: number }[];
   unresolvedCheckIds: string[];
@@ -73,6 +82,17 @@ export interface RecoveryReport {
   unresolvedAttemptIds: string[];
   commits: RecoveredCommit[];
   unresolvedCommitNodeIds: string[];
+  branchWorkspaces: RecoveredBranchWorkspace[];
+  integrations: RecoveredIntegration[];
+  unresolvedIntegrationNodeIds: string[];
+  /** Commit nodes where the user chose to include the imported uncommitted changes. */
+  includeImportedCommitNodeIds: string[];
+  /** A flow without a commit hands its changes to the user: the patch applied (or being applied) to the checkout. */
+  checkoutApply?: { tree: string; paths: string[]; patchHash: string; applied: boolean };
+  /** Removal of a finished run's worktrees: refs written first to keep its commits, files knowingly discarded, and whether it finished. */
+  workspaceCleanup?: { workspaces: string[]; refs: { ref: string; commit: string }[]; discarded: string[]; cleaned: boolean };
+  /** Per review group, the reviewer outputs of the round the latest repair replaced. */
+  priorReviewerOutputs: Record<string, RecoveryReport['reviewerOutputs']>;
   requiresUserContinue: true;
 }
 
@@ -117,6 +137,12 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
   const checks = new Map<string, { checkId: string; requestId: string; command: string; baselineHash: string; status: 'unresolved' | 'passed' | 'failed' | 'abandoned'; outputHash?: string; workerUnit?: string; workerControlGroup?: string; workspace: string; workspaceFence: number }>();
   const acceptedReviews = new Map<string, string>();
   const commits = new Map<string, RecoveredCommit>();
+  const layout = branchLayout(flow), branchWorkspaces = new Map<string, RecoveredBranchWorkspace>(), integrations = new Map<string, RecoveredIntegration>();
+  const includeImported = new Set<string>();
+  let checkoutApply: RecoveryReport['checkoutApply'];
+  let workspaceCleanup: RecoveryReport['workspaceCleanup'];
+  /** Reviewer outputs from the round a repair replaced; only these may be carried forward. */
+  const priorOutputs = new Map<string, RecoveryReport['reviewerOutputs']>();
   for (const event of events.slice(1)) {
     if (event.runId !== first.runId) throw new Error('Journal contains another run');
     switch (event.type) {
@@ -213,7 +239,7 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
         runtimeState = next; break;
       }
       case 'repair_round_started': {
-        const payload = z.strictObject({ roundId: z.string().min(1), scopeId: z.string().min(1), baselineHash: z.string().min(1), findingIds: z.array(z.string().min(1)).min(1) }).parse(event.payload);
+        const payload = z.strictObject({ roundId: z.string().min(1), scopeId: z.string().min(1), baselineHash: z.string().min(1), findingIds: z.array(z.string().min(1)).min(1), reviewedTree: gitObject.optional() }).parse(event.payload);
         const scope = flow.definition.nodes.find(node => node.id === payload.scopeId);
         if (scope?.type !== 'repair_scope' || repairRounds.some(round => round.roundId === payload.roundId)) throw new Error('Invalid repair round');
         const outputs = reviewerOutputs.filter(item => item.nodeId === scope.targetReviewId);
@@ -221,9 +247,10 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
         budget = allocateRepairRound(budget, payload.roundId, [scope.id], Math.min(flow.definition.limits.maxRepairRounds, initial.policy.maxRepairRounds), { [scope.id]: scope.maxRounds });
         if ([...attempts.values()].some(attempt => attempt.status === 'unresolved')) throw new Error('Cannot repair while attempts are unresolved');
         scheduler.repair(scope.id);
+        priorOutputs.set(scope.targetReviewId, outputs.filter(item => item.result.baselineHash === payload.baselineHash));
         for (let index = reviewerOutputs.length - 1; index >= 0; index--) if (reviewerOutputs[index]?.nodeId === scope.targetReviewId) reviewerOutputs.splice(index, 1);
         acceptedReviews.delete(scope.targetReviewId);
-        repairRounds.push(payload); break;
+        const { reviewedTree, ...round } = payload; repairRounds.push(reviewedTree ? { ...round, reviewedTree } : round); break;
       }
       case 'node_claimed': {
         const { nodeId, writeScopes } = nodeSchema.parse(event.payload);
@@ -249,6 +276,10 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
         if (node?.type === 'agent_task' &&
             ![...attempts.values()].some(a => a.nodeId === nodeId && a.status === 'completed')) {
           throw new Error(`Cannot complete agent node ${nodeId} without a completed attempt`);
+        }
+        if (node?.type === 'integration') {
+          const latest = [...attempts.values()].filter(a => a.nodeId === nodeId).at(-1);
+          if (!integrations.get(nodeId)?.baselineHash || latest?.status !== 'completed' || !latest.baselineHash) throw new Error(`Cannot complete integration ${nodeId} without an applied merge and a completed result`);
         }
         if (node?.type === 'approval' && outcome === 'pass' && !approvedNodes.has(nodeId)) {
           throw new Error(`Cannot pass approval node ${nodeId} without a matching user approval`);
@@ -294,6 +325,8 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
         const predecessors = flow.definition.edges.filter(edge => edge.to === payload.nodeId).map(edge => plans.get(edge.from)).filter(item => item !== undefined);
         if (predecessors.length && !predecessors.some(item => JSON.stringify(item.plan) === JSON.stringify(payload.plan))) throw new Error('Approval does not match proposed plan');
         if (!approvalMatches(payload.approval, payload.plan, initial.policy)) throw new Error('Approval does not match plan and policy');
+        // NeoMind approves only an approval node the flow marked automatic, and only when the run's policy allowed it.
+        if (payload.approval.source === 'flow' && (node.mode !== 'auto' || initial.policy.allowAutoApproval === false)) throw new Error('Automatic approval is not allowed for this approval node');
         approvals.push(payload); approvedNodes.add(payload.nodeId); approvedScopes.push(payload.plan.scope); break;
       }
       case 'check_intent': {
@@ -302,8 +335,7 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
         checks.set(payload.checkId, { ...payload, requestId: event.requestId, status: 'unresolved' }); requests.add(event.requestId); break;
       }
       case 'check_scope_bound': {
-        const binding = z.strictObject({ checkId: z.string().min(1), unit: z.string().regex(/^neomind-run-[a-f0-9-]+\.scope$/),
-          controlGroup: z.string().startsWith('/user.slice/') }).parse(event.payload);
+        const binding = z.strictObject({ checkId: z.string().min(1), ...scopeBindingIdentity }).parse(event.payload);
         const check = checks.get(binding.checkId);
         if (!check || check.status !== 'unresolved' || check.workerUnit || check.requestId !== event.requestId) throw new Error('Unexpected check scope binding');
         check.workerUnit = binding.unit; check.workerControlGroup = binding.controlGroup; break;
@@ -351,7 +383,7 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
         if (acceptedReviews.get(intent.reviewNodeId) !== intent.baselineHash) throw new Error('Git intent must match an accepted review baseline');
         if (commits.has(intent.nodeId)) throw new Error('Duplicate Git commit intent');
         commits.set(intent.nodeId, { nodeId: intent.nodeId, requestId: event.requestId, baselineHash: intent.baselineHash,
-          expectedParent: intent.expectedParent, expectedTree: intent.expectedTree, confirmed: false });
+          expectedParent: intent.expectedParent, expectedTree: intent.expectedTree, ...(intent.workspaceTree ? { workspaceTree: intent.workspaceTree } : {}), confirmed: false });
         break;
       }
       case 'git_workspace_bound': {
@@ -364,11 +396,10 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
         const receipt = commitReceiptSchema.parse(event.payload), intent = commits.get(receipt.nodeId);
         if (!intent || intent.confirmed || intent.requestId !== event.requestId || intent.baselineHash !== receipt.baselineHash ||
             intent.expectedParent !== receipt.parent || intent.expectedTree !== receipt.tree) throw new Error('Git commit receipt does not match intent');
-        intent.confirmed = true; break;
+        intent.confirmed = true; intent.commit = receipt.commit; break;
       }
       case 'worker_scope_bound': {
-        const binding = z.strictObject({ attemptId: z.string().min(1), unit: z.string().regex(/^neomind-run-[a-f0-9-]+\.scope$/),
-          controlGroup: z.string().startsWith('/user.slice/') }).parse(event.payload);
+        const binding = z.strictObject({ attemptId: z.string().min(1), ...scopeBindingIdentity }).parse(event.payload);
         const attempt = attempts.get(binding.attemptId);
         if (!attempt || attempt.requestId !== event.requestId || attempt.workerUnit || attempt.status !== 'unresolved') throw new Error('Unexpected worker scope binding');
         attempt.workerUnit = binding.unit; attempt.workerControlGroup = binding.controlGroup; break;
@@ -409,12 +440,93 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
         if (result.baselineHash) attempt.baselineHash = result.baselineHash;
         break;
       }
+      case 'branch_workspace_intent': {
+        const payload = z.strictObject({ nodeId: z.string().min(1), workspace: z.string().min(1), baseCommit: gitObject }).parse(event.payload);
+        if (!runtimeContext || payload.baseCommit !== runtimeContext.sourceHead || !layout.branchWriters.some(writer => writer.id === payload.nodeId) ||
+          branchWorkspaces.has(payload.nodeId) || [...branchWorkspaces.values()].some(item => item.workspace === payload.workspace) || payload.workspace === runtimeContext.workspace) throw new Error('Invalid branch workspace intent');
+        branchWorkspaces.set(payload.nodeId, { ...payload, requestId: event.requestId }); break;
+      }
+      case 'branch_workspace_bound': {
+        const payload = z.strictObject({ nodeId: z.string().min(1), workspace: z.string().min(1), hostId: z.string().min(1), fence: z.number().int().positive() }).parse(event.payload);
+        const branch = branchWorkspaces.get(payload.nodeId);
+        if (!branch || branch.requestId !== event.requestId || branch.fence !== undefined || branch.workspace !== payload.workspace) throw new Error('Unexpected branch workspace binding');
+        branch.hostId = payload.hostId; branch.fence = payload.fence; break;
+      }
+      case 'integration_intent': {
+        const payload = z.strictObject({ nodeId: z.string().min(1), baseCommit: gitObject, mergedTree: gitObject, conflicts: z.array(z.string().min(1)),
+          branches: z.array(z.strictObject({ nodeId: z.string().min(1), commit: gitObject, tree: gitObject, baselineHash: z.string().min(1) })).min(1) }).parse(event.payload);
+        const expected = layout.writersFor(payload.nodeId).map(writer => writer.id).sort();
+        if (flow.definition.nodes.find(node => node.id === payload.nodeId)?.type !== 'integration' || scheduler.snapshot().nodes[payload.nodeId]?.status !== 'running' ||
+          integrations.has(payload.nodeId) || !runtimeContext || payload.baseCommit !== runtimeContext.sourceHead ||
+          JSON.stringify(payload.branches.map(branch => branch.nodeId).sort()) !== JSON.stringify(expected)) throw new Error('Invalid integration intent');
+        for (const branch of payload.branches) {
+          const workspace = branchWorkspaces.get(branch.nodeId), latest = [...attempts.values()].filter(item => item.nodeId === branch.nodeId).at(-1);
+          if (workspace?.fence === undefined || latest?.status !== 'completed' || latest.baselineHash !== branch.baselineHash || latest.workspace !== workspace.workspace) throw new Error('Integration branch does not match a completed branch attempt');
+        }
+        integrations.set(payload.nodeId, { ...payload, requestId: event.requestId }); break;
+      }
+      case 'integration_applied': {
+        const payload = z.strictObject({ nodeId: z.string().min(1), baselineHash: z.string().min(1) }).parse(event.payload), integration = integrations.get(payload.nodeId);
+        if (!integration || integration.requestId !== event.requestId || integration.baselineHash || !runtimeContext) throw new Error('Unexpected integration result');
+        integration.baselineHash = payload.baselineHash;
+        const attemptId = `integration:${payload.nodeId}`;
+        attempts.set(attemptId, { round: repairRounds.length, nodeId: payload.nodeId, attemptId, sessionId: 'core-integration', requestId: event.requestId, receipt: 'accepted',
+          status: 'completed', baselineHash: payload.baselineHash, workspace: runtimeContext.workspace, workspaceFence: runtimeContext.lease.fence, core: true });
+        break;
+      }
+      case 'review_carried_forward': {
+        const payload = z.strictObject({ nodeId: z.string().min(1), reviewerId: z.string().min(1), toBaselineHash: z.string().min(1),
+          receipt: z.strictObject({ fromBaselineHash: z.string().min(1), oldTree: gitObject, newTree: gitObject, changedPaths: z.array(z.string().min(1)).min(1), scopes: z.array(z.string().min(1)).min(1), ruleVersion: z.literal(IMPACT_RULE_VERSION) }) }).parse(event.payload);
+        const node = flow.definition.nodes.find(item => item.id === payload.nodeId), round = repairRounds.at(-1), prior = priorOutputs.get(payload.nodeId) ?? [];
+        const reviewer = node?.type === 'review_group' ? node.reviewers.find(item => item.id === payload.reviewerId) : undefined;
+        const previous = prior.find(item => item.result.reviewerId === payload.reviewerId);
+        if (node?.type !== 'review_group' || !reviewer || !round || !previous || previous.result.verdict !== 'pass' || round.reviewedTree !== payload.receipt.oldTree ||
+          round.baselineHash !== payload.receipt.fromBaselineHash || JSON.stringify(reviewer.scope) !== JSON.stringify(payload.receipt.scopes) ||
+          reviewerOutputs.some(item => item.nodeId === node.id && item.result.reviewerId === reviewer.id)) throw new Error('Review cannot be carried forward');
+        // Recompute the rule: the reviewer must not be selected for the changed paths, and nothing shared may have changed.
+        const selection = selectReviewersForChanges(node.reviewers.map(item => ({ id: item.id, required: item.required, scopes: item.scope })), payload.receipt.changedPaths,
+          prior.filter(item => item.result.verdict !== 'pass').map(item => item.result.reviewerId), sharedImpactPaths(payload.receipt.changedPaths).length === 0);
+        if (selection.reason !== 'scoped' || selection.reviewerIds.includes(reviewer.id)) throw new Error('Impact receipt does not exempt this reviewer');
+        reviewerOutputs.push({ ...structuredClone(previous), result: { ...previous.result, baselineHash: payload.toBaselineHash }, carried: payload.receipt }); break;
+      }
+      case 'commit_scope_selected': {
+        const { nodeId } = z.strictObject({ nodeId: z.string().min(1), includeImported: z.literal(true) }).parse(event.payload);
+        if (flow.definition.nodes.find(node => node.id === nodeId)?.type !== 'git_commit' || !runtimeContext?.imported || commits.has(nodeId) || includeImported.has(nodeId)) throw new Error('Commit scope can only widen an imported run before its commit');
+        includeImported.add(nodeId); break;
+      }
+      case 'checkout_apply_intent': {
+        const payload = z.strictObject({ tree: gitObject, paths: z.array(z.string().min(1)).min(1), patchHash: z.string().regex(/^[a-f0-9]{64}$/) }).parse(event.payload);
+        const finished = flow.definition.nodes.some(node => node.type === 'finish' && scheduler.snapshot().nodes[node.id]?.status === 'succeeded');
+        if (!finished || workspaceCleanup || flow.definition.nodes.some(node => node.type === 'git_commit') || checkoutApply?.applied || (checkoutApply && checkoutApply.patchHash !== payload.patchHash)) throw new Error('Only a finished run without a commit applies its changes, once');
+        checkoutApply = { ...payload, applied: false }; break;
+      }
+      case 'checkout_applied': {
+        const { patchHash } = z.strictObject({ patchHash: z.string().regex(/^[a-f0-9]{64}$/) }).parse(event.payload);
+        if (!checkoutApply || checkoutApply.applied || checkoutApply.patchHash !== patchHash) throw new Error('Checkout apply receipt does not match its intent');
+        checkoutApply.applied = true; break;
+      }
+      case 'workspace_cleanup_intent': {
+        const payload = z.strictObject({ workspaces: z.array(z.string().min(1)).min(1), refs: z.array(z.strictObject({ ref: z.string().startsWith('refs/neomind/'), commit: gitObject })),
+          discarded: z.array(z.string().min(1)) }).parse(event.payload);
+        // Only a run that has stopped for good, with nothing in flight, gives up its worktrees.
+        if (!runtimeState || !['completed', 'cancelled'].includes(runtimeState.phase) || workspaceCleanup || [...attempts.values()].some(item => item.status === 'unresolved')
+          || [...commits.values()].some(item => !item.confirmed) || (checkoutApply && !checkoutApply.applied)) throw new Error('Only a finished run with nothing in flight cleans its workspaces, once');
+        workspaceCleanup = { ...payload, cleaned: false }; break;
+      }
+      case 'workspace_cleaned': {
+        z.strictObject({}).parse(event.payload);
+        if (!workspaceCleanup || workspaceCleanup.cleaned) throw new Error('Workspace cleanup receipt without its intent');
+        workspaceCleanup.cleaned = true; break;
+      }
       default: throw new Error(`Unknown run event type: ${event.type}`);
     }
   }
   const list = [...attempts.values()];
-  return { ...(runtimeContext ? { runtimeContext } : {}), ...(runtimeState ? { runtimeState } : {}), graph: scheduler.snapshot(), bindingSelections, timeExtensionsMs, usage: { totalTokens: usageAttempts.size ? Object.values(usageBySession).reduce((sum, usage) => sum + usage.totalTokens, 0) : null, partial: usageReset || usageAttempts.size < attempts.size, reportedAttemptIds: [...usageAttempts], bySession: usageBySession, costUSD: null }, reviewValidationRetries, planRevisions, artifacts, continuationBaselines, repairRounds: structuredClone(repairRounds), plans: structuredClone([...plans.values()]), approvals: structuredClone(approvals), reviewerOutputs: structuredClone(reviewerOutputs), acceptedReviews: [...acceptedReviews].map(([nodeId, baselineHash]) => ({ nodeId, baselineHash })), checks: structuredClone([...checks.values()]), unresolvedCheckIds: [...checks.values()].filter(item => item.status === 'unresolved').map(item => item.checkId), attempts: structuredClone(list),
+  return { ...(runtimeContext ? { runtimeContext } : {}), ...(runtimeState ? { runtimeState } : {}), graph: scheduler.snapshot(), bindingSelections, timeExtensionsMs, usage: { totalTokens: usageAttempts.size ? Object.values(usageBySession).reduce((sum, usage) => sum + usage.totalTokens, 0) : null, partial: usageReset || usageAttempts.size < list.filter(item => !item.core).length, reportedAttemptIds: [...usageAttempts], bySession: usageBySession, costUSD: null }, reviewValidationRetries, planRevisions, artifacts, continuationBaselines, repairRounds: structuredClone(repairRounds), plans: structuredClone([...plans.values()]), approvals: structuredClone(approvals), reviewerOutputs: structuredClone(reviewerOutputs), acceptedReviews: [...acceptedReviews].map(([nodeId, baselineHash]) => ({ nodeId, baselineHash })), checks: structuredClone([...checks.values()]), unresolvedCheckIds: [...checks.values()].filter(item => item.status === 'unresolved').map(item => item.checkId), attempts: structuredClone(list),
     unresolvedAttemptIds: list.filter(a => a.status === 'unresolved').map(a => a.attemptId),
     commits: structuredClone([...commits.values()]), unresolvedCommitNodeIds: [...commits.values()].filter(c => !c.confirmed).map(c => c.nodeId),
+    branchWorkspaces: structuredClone([...branchWorkspaces.values()]), integrations: structuredClone([...integrations.values()]),
+    unresolvedIntegrationNodeIds: [...integrations.values()].filter(item => !item.baselineHash).map(item => item.nodeId),
+    includeImportedCommitNodeIds: [...includeImported], ...(checkoutApply ? { checkoutApply: structuredClone(checkoutApply) } : {}), ...(workspaceCleanup ? { workspaceCleanup: structuredClone(workspaceCleanup) } : {}), priorReviewerOutputs: structuredClone(Object.fromEntries(priorOutputs)),
     requiresUserContinue: true };
 }

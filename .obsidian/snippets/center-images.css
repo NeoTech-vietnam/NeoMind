@@ -1,0 +1,16 @@
+/* Center images in notes (reading view, live preview, and exported HTML).
+   Keeps Markdown clean: images stay as ![alt|width](src), centering is styling. */
+.markdown-rendered img,
+.markdown-preview-view img,
+.markdown-source-view.mod-cm6 .cm-content img,
+.cm-s-obsidian .image-embed img {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Center the italic figure caption that immediately follows an image */
+.markdown-rendered p:has(> img) + p > em {
+  display: block;
+  text-align: center;
+}

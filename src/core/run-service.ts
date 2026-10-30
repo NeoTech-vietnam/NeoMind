@@ -4,7 +4,8 @@ import { validateMaterializedRun, type MaterializedRun } from '../domain/materia
 import { recordApproval } from '../domain/approval.js';
 import { flowSchema, projectPolicySchema, type Flow, type ProjectPolicy } from '../domain/schema.js';
 import { OwnedJournal } from '../storage/owned-journal.js';
-import { SystemdScope, type WorkerScope } from '../adapters/systemd-scope.js';
+import { stopExistingWorkerScope, type WorkerScope } from '../adapters/worker-scope.js';
+import type { RunnerScope } from '../runners/agent-runner.js';
 import type { CodexCheckDispatch } from './codex-check-dispatch.js';
 import type { CheckSpec } from '../adapters/codex-check.js';
 import type { GitCommitDispatch } from './git-commit-dispatch.js';
@@ -20,6 +21,11 @@ import { captureBaseline } from '../workspace/baseline.js';
 import { hashJson } from '../domain/resolve.js';
 import { evaluateCondition } from './condition.js';
 import type { BindingValues } from '../domain/resolve.js';
+import { IntegrationDispatch } from './integration-dispatch.js';
+import { changedPaths } from '../workspace/dirty-import.js';
+import { IMPACT_RULE_VERSION, selectReviewersForChanges, sharedImpactPaths } from './review-impact.js';
+import { buildReviewTree } from '../workspace/review-tree.js';
+import type { WorkspaceCoordinator, WorkspaceLease } from '../storage/coordination.js';
 
 function freezeSnapshot<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -93,11 +99,25 @@ export class RunService {
       if (!context) throw new Error('Run has no runtime workspace');
       const baseline = await captureBaseline(context.workspace), scope = report.approvals.flatMap(item => item.plan.scope);
       if (baseline.head !== context.sourceHead && !report.commits.some(item => item.confirmed)) throw new Error('Workspace HEAD changed; approval must be reviewed');
-      if (baseline.entries.some(entry => !scope.some(allowed => allowed === '.' || entry.path === allowed || entry.path.startsWith(`${allowed.replace(/\/$/, '')}/`)) )) throw new Error('Workspace changes exceed the approved scope');
+      // Imported uncommitted changes are input; only changes made since the import must lie inside the approved scope.
+      const changed = context.imported && baseline.head === context.sourceHead
+        ? await changedPaths(context.workspace, context.imported.tree, (await buildReviewTree(context.workspace, baseline.baselineHash)).tree)
+        : baseline.entries.map(entry => entry.path);
+      if (changed.some(file => !scope.some(allowed => allowed === '.' || file === allowed || file.startsWith(`${allowed.replace(/\/$/, '')}/`)))) throw new Error('Workspace changes exceed the approved scope');
       await this.append('continuation_baseline', { baselineHash: baseline.baselineHash });
       return baseline.baselineHash;
     });
   }
+  /** A user decision: commit the reviewed result including the imported uncommitted changes it cannot be separated from. */
+  /** Journal applying a finished run's changes to the user's checkout: the intent before touching it, the receipt after. */
+  recordCheckoutApply(stage: 'intent', payload: { tree: string; paths: string[]; patchHash: string }): Promise<void>;
+  recordCheckoutApply(stage: 'applied', payload: { patchHash: string }): Promise<void>;
+  recordCheckoutApply(stage: 'intent' | 'applied', payload: unknown) { return this.serialize(() => this.append(stage === 'intent' ? 'checkout_apply_intent' : 'checkout_applied', payload)); }
+  /** Journal removing a finished run's worktrees: the plan (refs to keep, files discarded) before touching them, the receipt after. */
+  recordWorkspaceCleanup(stage: 'intent', payload: { workspaces: string[]; refs: { ref: string; commit: string }[]; discarded: string[] }): Promise<void>;
+  recordWorkspaceCleanup(stage: 'cleaned'): Promise<void>;
+  recordWorkspaceCleanup(stage: 'intent' | 'cleaned', payload: unknown = {}) { return this.serialize(() => this.append(stage === 'intent' ? 'workspace_cleanup_intent' : 'workspace_cleaned', payload)); }
+  includeImportedInCommit(nodeId: string) { return this.serialize(() => this.append('commit_scope_selected', { nodeId, includeImported: true })); }
   requeueStoppedNode(nodeId: string) { return this.serialize(() => { this.requireContinue(); return this.append('node_requeued', { nodeId }); }); }
   retryReview(nodeId: string, reason: 'user' | 'validation' = 'user', reviewerIds?: string[]) { return this.serialize(() => { this.requireContinue(); return this.append('review_retry_requested', { nodeId, reason, ...(reviewerIds ? { reviewerIds } : {}) }); }); }
   updateProducerBaseline(attemptId: string, baselineHash: string) {
@@ -112,22 +132,50 @@ export class RunService {
     return this.serialize(async () => {
       const attempt = replayRun(await this.journal.read()).attempts.find(item => item.attemptId === attemptId);
       if (!attempt || attempt.status !== 'unresolved' || !attempt.workerUnit || !attempt.workerControlGroup) throw new Error('No persisted worker scope to reconcile');
-      if (!await SystemdScope.stopExisting({ unit: attempt.workerUnit, controlGroup: attempt.workerControlGroup })) throw new Error('Worker stop is unconfirmed');
+      if (!await stopExistingWorkerScope({ unit: attempt.workerUnit, controlGroup: attempt.workerControlGroup })) throw new Error('Worker stop is unconfirmed');
       await this.append('attempt_finished', { attemptId, status: 'stopped' });
     });
   }
-  beginRepair(scopeId: string, baselineHash: string, findingIds: string[]) {
+  beginRepair(scopeId: string, baselineHash: string, findingIds: string[], reviewedTree?: string) {
     return this.serialize(async () => {
       this.requireContinue();
       const roundId = randomUUID();
-      await this.append('repair_round_started', { roundId, scopeId, baselineHash, findingIds });
+      await this.append('repair_round_started', { roundId, scopeId, baselineHash, findingIds, ...(reviewedTree ? { reviewedTree } : {}) });
       return roundId;
+    });
+  }
+  /**
+   * Keep the passing reviewers of the replaced round whose scopes the repair did not touch. Core derives the changed paths
+   * from the reviewed tree and the current workspace; replay re-applies the same rule. Returns the reviewers still to run.
+   */
+  carryUnaffectedReviews(nodeId: string, baselineHash: string) {
+    return this.serialize(async () => {
+      this.requireContinue();
+      const report = replayRun(await this.journal.read()), round = report.repairRounds.at(-1), context = report.runtimeContext;
+      const node = this.flow.definition.nodes.find(item => item.id === nodeId);
+      if (node?.type !== 'review_group' || !context) throw new Error('Not a review group');
+      const all = node.reviewers.map(item => item.id), done = report.reviewerOutputs.filter(item => item.nodeId === nodeId).map(item => item.result.reviewerId);
+      if (!round?.reviewedTree || done.length) return all.filter(id => !done.includes(id));
+      const reviewed = await buildReviewTree(context.workspace, baselineHash);
+      const changed = await changedPaths(context.workspace, round.reviewedTree, reviewed.tree);
+      if (!changed.length) return all;
+      const prior = report.priorReviewerOutputs[nodeId] ?? [];
+      const selection = selectReviewersForChanges(node.reviewers.map(item => ({ id: item.id, required: item.required, scopes: item.scope })), changed,
+        prior.filter(item => item.result.verdict !== 'pass').map(item => item.result.reviewerId), sharedImpactPaths(changed).length === 0);
+      if (selection.reason !== 'scoped') return all;
+      for (const reviewer of node.reviewers) {
+        if (selection.reviewerIds.includes(reviewer.id) || prior.find(item => item.result.reviewerId === reviewer.id)?.result.verdict !== 'pass') continue;
+        await this.append('review_carried_forward', { nodeId, reviewerId: reviewer.id, toBaselineHash: baselineHash, receipt: { fromBaselineHash: round.baselineHash,
+          oldTree: round.reviewedTree, newTree: reviewed.tree, changedPaths: changed, scopes: reviewer.scope, ruleVersion: IMPACT_RULE_VERSION } });
+      }
+      const carried = replayRun(await this.journal.read()).reviewerOutputs.filter(item => item.nodeId === nodeId).map(item => item.result.reviewerId);
+      return all.filter(id => !carried.includes(id));
     });
   }
   continueAfterRecovery() {
     return this.serialize(async () => {
       const report = replayRun(await this.journal.read());
-      if (report.unresolvedAttemptIds.length || report.unresolvedCommitNodeIds.length || report.unresolvedCheckIds.length) throw new Error('Reconcile uncertain effects before continuing');
+      if (report.unresolvedAttemptIds.length || report.unresolvedCommitNodeIds.length || report.unresolvedCheckIds.length || report.unresolvedIntegrationNodeIds.length) throw new Error('Reconcile uncertain effects before continuing');
       this.resumed = true;
     });
   }
@@ -159,9 +207,10 @@ export class RunService {
       if (node?.type === 'agent_task' && report.plans.some(item => item.nodeId === nodeId)) outcome = 'completed';
       else if (node?.type === 'agent_task') {
         const attempt = [...report.attempts].reverse().find(item => item.nodeId === nodeId);
-        if (!attempt || attempt.status !== 'completed' || !attempt.baselineHash || !report.runtimeContext || (await captureBaseline(report.runtimeContext.workspace)).baselineHash !== attempt.baselineHash) throw new Error('No durable agent result for this baseline');
+        if (!attempt || attempt.status !== 'completed' || !attempt.baselineHash || !attempt.workspace || (await captureBaseline(attempt.workspace)).baselineHash !== attempt.baselineHash) throw new Error('No durable agent result for this baseline');
         outcome = 'completed';
       }
+      else if (node?.type === 'integration') { await new IntegrationDispatch(this.journal).complete(nodeId); return; }
       else if (node?.type === 'review_group' && report.acceptedReviews.some(item => item.nodeId === nodeId)) outcome = 'pass';
       else if (node?.type === 'git_commit' && report.commits.some(item => item.nodeId === nodeId && item.confirmed)) outcome = 'completed';
       else throw new Error('No durable result to finalize');
@@ -169,7 +218,7 @@ export class RunService {
     });
   }
   dispatchReadOnly(dispatcher: CodexReadOnlyDispatch, nodeId: string, threadId: string, prompt: string,
-    effort: string, attemptId: string, requestId: string, scope?: WorkerScope, context?: ReviewWorkspace) {
+    effort: string, attemptId: string, requestId: string, scope?: RunnerScope, context?: ReviewWorkspace) {
     return this.serialize(async () => {
       this.requireContinue();
       if (!dispatcher.usesJournal(this.journal)) throw new Error('Dispatcher uses another run journal');
@@ -189,7 +238,7 @@ export class RunService {
     });
   }
   dispatchWrite(dispatcher: CodexWriteDispatch, nodeId: string, threadId: string, prompt: string, effort: string,
-    attemptId: string, requestId: string, admission: Parameters<typeof admitIsolatedWorkspaceWrite>[0], scope: WorkerScope) {
+    attemptId: string, requestId: string, admission: Parameters<typeof admitIsolatedWorkspaceWrite>[0], scope: RunnerScope) {
     return this.serialize(() => {
       this.requireContinue();
       if (!dispatcher.usesJournal(this.journal)) throw new Error('Dispatcher uses another run journal');
@@ -203,7 +252,7 @@ export class RunService {
     });
   }
   recordWriteTerminal(dispatcher: CodexWriteDispatch, attemptId: string, threadId: string, turnId: string,
-    status: 'completed' | 'stopped', admission: Parameters<typeof admitIsolatedWorkspaceWrite>[0], scope: WorkerScope) {
+    status: 'completed' | 'stopped', admission: Parameters<typeof admitIsolatedWorkspaceWrite>[0], scope: RunnerScope) {
     return this.serialize(() => {
       if (!dispatcher.usesJournal(this.journal)) throw new Error('Dispatcher uses another run journal');
       return dispatcher.recordTerminal(attemptId, threadId, turnId, status, admission, scope);
@@ -223,7 +272,7 @@ export class RunService {
     });
   }
   dispatchReview(dispatcher: CodexReviewDispatch, nodeId: string, reviewerId: string, threadId: string, prompt: string,
-    effort: string, attemptId: string, requestId: string, baselineHash: string, context: ReviewWorkspace, scope?: WorkerScope) {
+    effort: string, attemptId: string, requestId: string, baselineHash: string, context: ReviewWorkspace, scope?: RunnerScope) {
     return this.serialize(() => {
       this.requireContinue();
       if (!dispatcher.usesJournal(this.journal)) throw new Error('Dispatcher uses another run journal');
@@ -266,8 +315,50 @@ export class RunService {
       return dispatcher.commit({ ...input, authorized: true });
     });
   }
-  /** Call only for an authenticated user action, not content generated by an agent. */
-  approveProposedPlan(nodeId: string, planningNodeId: string, actor: string, source: 'ui' | 'cli') {
+  /** Accept the current content of a branch worktree on explicit user continuation; it must stay inside the packet scope. */
+  authorizeBranchContinuation(nodeId: string) {
+    return this.serialize(async () => {
+      this.requireContinue();
+      const report = replayRun(await this.journal.read()), branch = report.branchWorkspaces.find(item => item.nodeId === nodeId);
+      const packet = report.approvals.at(-1)?.plan.workPackets?.find(item => item.nodeId === nodeId);
+      if (!branch || !packet) throw new Error('No branch workspace to continue');
+      const baseline = await captureBaseline(branch.workspace);
+      if (baseline.head !== branch.baseCommit) throw new Error('Branch workspace HEAD changed; approval must be reviewed');
+      if (baseline.entries.some(entry => !packet.scope.some(allowed => allowed === '.' || entry.path === allowed || entry.path.startsWith(`${allowed.replace(/\/$/, '')}/`)))) throw new Error('Branch changes exceed the work packet scope');
+      await this.append('continuation_baseline', { baselineHash: baseline.baselineHash });
+      return baseline.baselineHash;
+    });
+  }
+  prepareBranchWorkspace(dispatcher: IntegrationDispatch, nodeId: string, coordinator: WorkspaceCoordinator, hostId: string) {
+    return this.serialize(() => {
+      this.requireContinue();
+      if (!dispatcher.usesJournal(this.journal)) throw new Error('Dispatcher uses another run journal');
+      return dispatcher.prepareBranch(nodeId, coordinator, hostId);
+    });
+  }
+  integrate(dispatcher: IntegrationDispatch, nodeId: string, coordinator: WorkspaceCoordinator, lease: WorkspaceLease) {
+    return this.serialize(() => {
+      this.requireContinue();
+      if (!dispatcher.usesJournal(this.journal)) throw new Error('Dispatcher uses another run journal');
+      return dispatcher.integrate(nodeId, coordinator, lease);
+    });
+  }
+  /** Recovery only: complete an interrupted, already journaled merge. */
+  reconcileIntegration(dispatcher: IntegrationDispatch, nodeId: string, coordinator: WorkspaceCoordinator, lease: WorkspaceLease) {
+    return this.serialize(() => {
+      if (!dispatcher.usesJournal(this.journal)) throw new Error('Dispatcher uses another run journal');
+      return dispatcher.reconcile(nodeId, coordinator, lease);
+    });
+  }
+  completeIntegration(dispatcher: IntegrationDispatch, nodeId: string) {
+    return this.serialize(() => {
+      this.requireContinue();
+      if (!dispatcher.usesJournal(this.journal)) throw new Error('Dispatcher uses another run journal');
+      return dispatcher.complete(nodeId);
+    });
+  }
+  /** Call only for an authenticated user action or a flow-declared automatic approval, never for content generated by an agent. */
+  approveProposedPlan(nodeId: string, planningNodeId: string, actor: string, source: 'ui' | 'cli' | 'flow' | 'session') {
     return this.serialize(async () => {
       this.requireContinue();
       const report = replayRun(await this.journal.read()), proposal = report.plans.find(item => item.nodeId === planningNodeId);

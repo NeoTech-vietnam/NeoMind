@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>NeoMind · Xem session (ngăn bên)</title>
+<style>
+/* ==== NEOMIND SHARED STYLES (copy this block verbatim into every NeoMind mockup) ==== */
+/* Dark theme in the Claude Code palette: warm charcoal surfaces, ivory text, clay accent. */
+:root {
+  color-scheme: dark;
+  --font: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, -apple-system, sans-serif;
+  --mono: 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --ink: #f2efe8; --ink-2: #d4d0c6; --ink-3: #a9a499; --ink-4: #85817a;
+  --bg: #1f1e1d; --surface: #262624; --soft: #2d2c29; --field: #1c1b1a; --code-bg: #161514;
+  --line: #3b3a36; --line-2: #312f2c;
+  --accent: #d97757; --accent-2: #e8956f; --accent-strong: #c15f3c; --accent-soft: #3a2822; --accent-line: #6b3f2e;
+  --green: #86c99a; --green-soft: #1e3326; --green-line: #2f5a3c;
+  --amber: #e5b567; --amber-soft: #3a2f1b; --amber-line: #6a5328;
+  --red: #f08a80; --red-soft: #3d2222; --red-line: #6e3434;
+  --blue: #8db4ea; --blue-soft: #1d2a3b; --blue-line: #34507a;
+  --gray: #a9a499; --gray-soft: #33322f;
+  --proposal: #6fd3c4; --proposal-soft: #173330; --proposal-line: #3e9e92;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--font); font-size: 14px; color: var(--ink); background: var(--bg); }
+h1, h2, h3, h4, p { margin: 0; }
+code, pre { font-family: var(--mono); font-size: 12.5px; }
+button { font: inherit; cursor: pointer; color: inherit; }
+/* Shell */
+.app { display: grid; grid-template-columns: 232px 1fr; grid-template-rows: 58px 1fr; min-height: 100vh; }
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; font-size: 18px; letter-spacing: -.5px; }
+.brand-mark { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: var(--code-bg); display: grid; place-items: center; font-size: 18px; }
+.brand b { font-weight: 700; }
+.brand-divider { height: 20px; width: 1px; background: var(--line); margin: 0 4px; }
+.product { font-size: 11px; letter-spacing: 1.2px; color: var(--ink-4); font-weight: 700; }
+.project { border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px; color: var(--ink-2); font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: center; white-space: nowrap; background: var(--surface); }
+.project small { color: var(--ink-4); font-weight: 400; }
+.project i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.sidebar { background: var(--bg); border-right: 1px solid var(--line); padding: 18px 12px; }
+.side-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--ink-4); text-transform: uppercase; padding: 0 10px; margin: 0 0 8px; display: flex; justify-content: space-between; }
+.nav { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; color: var(--ink-2); font-size: 13.5px; font-weight: 600; margin: 1px 0; }
+.nav span { width: 18px; text-align: center; color: var(--ink-4); }
+.nav.on { background: var(--soft); color: var(--ink); }
+.nav.on span { color: var(--accent); }
+.nav em { margin-left: auto; font-style: normal; background: var(--accent-soft); color: var(--accent-2); border-radius: 6px; padding: 1px 7px; font-size: 11.5px; }
+.side-divider { height: 1px; background: var(--line-2); margin: 16px 8px; }
+.main { padding: 18px 28px 32px; min-width: 0; }
+.crumbs { font-size: 12.5px; color: var(--ink-4); margin-bottom: 14px; display: flex; gap: 8px; }
+.crumbs b { color: var(--ink-2); font-weight: 600; }
+.page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 18px; }
+.page-head h1 { font-size: 24px; letter-spacing: -.6px; font-weight: 700; }
+.page-head p { color: var(--ink-3); font-size: 13.5px; margin-top: 5px; }
+/* Components */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin-bottom: 16px; }
+.card h2 { font-size: 19px; letter-spacing: -.3px; line-height: 1.4; }
+.card h3 { font-size: 16px; letter-spacing: -.2px; }
+.card h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--ink-4); margin: 14px 0 6px; }
+.card-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.btn { height: 34px; border-radius: 8px; padding: 0 14px; font-size: 13px; font-weight: 600; border: 1px solid var(--line); background: var(--soft); color: var(--ink-2); white-space: nowrap; }
+.btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; box-shadow: 0 2px 8px #c15f3c40; }
+.btn.large { height: 40px; padding: 0 22px; font-size: 14px; }
+.btn.ghost { color: var(--accent-2); border-color: var(--accent-line); background: transparent; }
+.btn.danger { color: var(--red); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.t-green { background: var(--green-soft); color: var(--green); } .t-amber { background: var(--amber-soft); color: var(--amber); }
+.t-red { background: var(--red-soft); color: var(--red); } .t-violet { background: var(--accent-soft); color: var(--accent-2); }
+.t-blue { background: var(--blue-soft); color: var(--blue); } .t-gray { background: var(--gray-soft); color: var(--gray); }
+.pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.callout { border-radius: 8px; padding: 10px 13px; font-size: 13.5px; line-height: 1.5; margin: 12px 0; border: 1px solid transparent; }
+.callout.red { background: var(--red-soft); color: var(--red); border-color: var(--red-line); }
+.callout.amber { background: var(--amber-soft); color: var(--amber); border-color: var(--amber-line); }
+.callout.green { background: var(--green-soft); color: var(--green); border-color: var(--green-line); }
+.callout.violet { background: var(--accent-soft); color: var(--accent-2); border-color: var(--accent-line); }
+.callout.blue { background: var(--blue-soft); color: var(--blue); border-color: var(--blue-line); }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); margin-bottom: 14px; }
+.field small { font-weight: 400; color: var(--ink-3); }
+.input, .select, .textarea { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--field); color: var(--ink); font-weight: 400; font-size: 14px; width: 100%; font-family: var(--font); }
+.select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%), linear-gradient(135deg, var(--ink-3) 50%, transparent 50%); background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 28px; }
+.textarea { min-height: 84px; line-height: 1.5; resize: vertical; }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; padding: 2px; background: var(--field); }
+.segmented span { padding: 5px 11px; border-radius: 6px; font-size: 13px; font-weight: 600; color: var(--ink-3); white-space: nowrap; }
+.segmented span.on { background: var(--soft); color: var(--accent-2); box-shadow: 0 1px 3px #0000004d; }
+.hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
+.muted { color: var(--ink-4); font-size: 12.5px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.green { background: var(--green); } .dot.amber { background: var(--amber); } .dot.red { background: var(--red); } .dot.violet { background: var(--accent); } .dot.gray { background: var(--ink-4); }
+/* Proposal marker: anything not implemented yet carries this tag (teal, so it never reads as the clay accent). */
+.proposal { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; letter-spacing: .3px; color: var(--proposal); background: var(--proposal-soft); border: 1px dashed var(--proposal-line); border-radius: 6px; padding: 1px 7px; vertical-align: middle; }
+.proposal-box { outline: 2px dashed var(--proposal-line); outline-offset: 4px; border-radius: 12px; }
+/* ==== END NEOMIND SHARED STYLES ==== */
+/* ---- Run detail page (shared by 03/04/05 mockups) ---- */
+.runs-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 20px; align-items: start; }
+.history { padding: 10px; position: sticky; top: 16px; }
+.new-run { width: 100%; border: 1px dashed var(--accent-line); background: var(--soft); color: var(--accent-2); border-radius: 9px; padding: 9px; font-weight: 600; font-size: 13.5px; }
+.history-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--ink-4); text-transform: uppercase; margin: 16px 8px 6px; }
+.run-item { display: flex; gap: 10px; align-items: flex-start; padding: 9px 8px; border-radius: 8px; margin: 1px 0; }
+.run-item .dot { margin-top: 5px; }
+.run-item strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13.5px; font-weight: 600; line-height: 1.35; }
+.run-item small { display: block; color: var(--ink-3); margin-top: 3px; font-size: 12px; }
+.run-item.selected { background: var(--accent-soft); }
+
+.run-header-top { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
+.run-header-text { min-width: 0; }
+.run-header h2 { margin-top: 8px; }
+.meta-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-top: 8px; font-size: 13px; color: var(--ink-3); }
+.run-actions { display: flex; gap: 8px; flex: none; }
+.card p, .card li { line-height: 1.55; }
+
+.stepper { list-style: none; padding: 0; margin: 18px 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.step { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--surface); min-width: 0; }
+.step > div { min-width: 0; }
+.step strong { display: block; font-size: 13.5px; }
+.step small { display: block; font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+.step small.step-agent { color: var(--ink-4); font-size: 11.5px; line-height: 1.4; }
+.step-icon { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none; background: var(--gray-soft); color: var(--gray); }
+.step.done .step-icon { background: var(--green-soft); color: var(--green); }
+.step.live { border-color: var(--accent-line); background: var(--soft); box-shadow: 0 0 0 3px #d977571f; }
+.step.live .step-icon { background: var(--accent); color: #fff; animation: pulse 1.4s ease-in-out infinite; }
+.step.paused { border-color: var(--amber-line); } .step.paused .step-icon { background: var(--amber-soft); color: var(--amber); font-size: 9px; }
+.step.wait strong { color: var(--ink-3); }
+
+.plan-goal { font-size: 15px; font-weight: 600; line-height: 1.5; }
+.plan-approach { color: var(--ink-2); margin-top: 8px; font-size: 14px; }
+.plan-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 24px; }
+.criteria { padding-left: 0; list-style: none; margin: 0; }
+.criteria li { padding-left: 22px; position: relative; margin: 4px 0; font-size: 14px; }
+.criteria li::before { content: '•'; position: absolute; left: 6px; color: var(--accent); }
+
+.card details { margin: 10px 0; }
+.card summary { cursor: pointer; color: var(--accent-2); font-weight: 600; font-size: 13.5px; }
+.logs { margin: 0 !important; }
+.logs + .logs { margin-top: 10px !important; }
+.logs > summary { color: var(--ink-2); }
+
+.verify-row { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--line-2); }
+.verify-row.first { border-top: 0; padding-top: 4px; }
+.verify-row > .badge { margin-top: 2px; min-width: 96px; justify-content: center; }
+.verify-row.superseded { opacity: .6; }
+.verify-body { min-width: 0; flex: 1; }
+.verify-body p { margin-top: 4px; color: var(--ink-2); font-size: 13.5px; }
+.verify-body details { margin: 6px 0 0; }
+.verify-body small { color: var(--ink-4); font-size: 12.5px; }
+.criteria-status { list-style: none; padding: 0; margin: 8px 0 0; }
+.criteria-status li { display: flex; gap: 8px; align-items: baseline; margin: 5px 0; font-size: 13.5px; }
+.criteria-status .badge { min-width: 76px; justify-content: center; }
+.finding { font-size: 13px; background: var(--amber-soft); border-radius: 6px; padding: 6px 9px; margin-top: 6px; line-height: 1.5; }
+
+.copy-btn { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; font-size: 12px; padding: 3px 9px; color: var(--ink-2); }
+.command { display: flex; align-items: center; gap: 10px; background: var(--code-bg); color: var(--ink); border-radius: 8px; padding: 9px 12px; margin-top: 6px; }
+.command code { flex: 1; }
+.command .copy-btn { background: var(--soft); color: var(--ink); border-color: var(--line); }
+
+/* Unified diff (proposal in 04/05) */
+.diff-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-top: 12px; }
+.diff-tab { padding: 7px 12px; font-family: var(--mono); font-size: 12.5px; color: var(--ink-3); border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; margin-bottom: -1px; display: flex; gap: 8px; align-items: center; }
+.diff-tab.on { background: var(--surface); border-color: var(--line); color: var(--ink); font-weight: 600; }
+.add-n { color: var(--green); font-weight: 600; } .del-n { color: var(--red); font-weight: 600; }
+.diff { border: 1px solid var(--line); border-top: 0; border-radius: 0 0 8px 8px; overflow: hidden; font-family: var(--mono); font-size: 12.5px; line-height: 1.65; background: var(--surface); }
+.diff .ln { display: grid; grid-template-columns: 38px 38px 18px 1fr; white-space: pre; }
+.diff .ln span:nth-child(-n+2) { color: var(--ink-4); text-align: right; padding-right: 8px; background: var(--soft); font-size: 11.5px; }
+.diff .ln span:nth-child(3) { text-align: center; color: var(--ink-4); }
+.diff .ln.hunk { background: var(--blue-soft); color: var(--blue); }
+.diff .ln.hunk span { background: transparent !important; color: var(--blue) !important; }
+.diff .ln.add { background: var(--green-soft); } .diff .ln.add span:nth-child(-n+2) { background: var(--green-soft); } .diff .ln.add span:nth-child(3) { color: var(--green); }
+.diff .ln.del { background: var(--red-soft); } .diff .ln.del span:nth-child(-n+2) { background: var(--red-soft); } .diff .ln.del span:nth-child(3) { color: var(--red); }
+
+/* Design notes at the bottom of each mockup */
+.notes { background: transparent; border-style: dashed; }
+.notes h3 { font-size: 14px; color: var(--ink-3); }
+.notes ol { margin: 8px 0 0; padding-left: 20px; color: var(--ink-3); font-size: 13px; }
+.notes li { margin: 4px 0; }
+
+/* ---- Page-specific: 05 run completed ---- */
+.delivery-card { border-color: var(--green-line); background: linear-gradient(180deg, var(--green-soft), var(--surface) 220px); }
+.delivery-commit { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
+.delivery-commit span { font-weight: 600; color: var(--ink-2); }
+.delivery-commit code { font-size: 14px; background: var(--green-soft); color: var(--green); padding: 2px 8px; border-radius: 6px; }
+.delivery-commit .muted { font-weight: 400; margin-left: auto; }
+.diff-wrap { margin-top: 18px; padding: 8px 10px 10px; }
+.diff-wrap .diff-title { display: flex; align-items: center; gap: 8px; margin-top: 0; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+
+/* ---- Page-specific: 09 session viewer drawer ---- */
+/* Stage: the completed run sits behind a scrim; the drawer column decides page height. */
+.stage { display: grid; min-height: 100vh; }
+.stage > * { grid-area: 1 / 1; }
+.behind { pointer-events: none; user-select: none; }
+.scrim { background: #0e0d0cc2; }
+.step-link { display: inline-block; margin-top: 6px; font-size: 12px; font-weight: 600; color: var(--accent-2); border: 1px solid var(--accent-line); border-radius: 6px; padding: 1px 7px; }
+
+.drawer { justify-self: end; width: 760px; min-height: 100vh; background: var(--bg); border-left: 1px solid var(--line); box-shadow: -28px 0 70px #000a; display: flex; flex-direction: column; z-index: 2; }
+
+/* Header */
+.dw-head { padding: 18px 22px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.dw-title { display: flex; align-items: center; gap: 10px; }
+.dw-title h2 { font-size: 19px; letter-spacing: -.3px; font-weight: 700; }
+.dw-title h2 span { color: var(--ink-4); font-weight: 400; }
+.dw-close { margin-left: auto; width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--line); background: var(--soft); color: var(--ink-2); font-size: 15px; display: grid; place-items: center; }
+.dw-sub { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.dw-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px; font-size: 12.5px; color: var(--ink-3); align-items: center; }
+.dw-meta .kv { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.dw-meta .kv > span { color: var(--ink-4); }
+.dw-meta code { font-size: 12px; color: var(--ink-2); background: var(--field); border: 1px solid var(--line-2); border-radius: 5px; padding: 1px 6px; }
+.dw-meta code.trunc { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
+.dw-meta .copy-btn { padding: 1px 8px; font-size: 11.5px; background: var(--soft); }
+.dw-stats { display: flex; gap: 16px; margin-top: 8px; font-size: 12.5px; color: var(--ink-3); }
+.dw-stats b { color: var(--ink-2); font-weight: 600; }
+
+/* Source switch: NeoMind transcript (B) vs runner's original history (A) */
+.source { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 14px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--field); }
+.source .lbl { font-size: 12px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--ink-4); margin-right: 2px; }
+.src-opt { font-size: 13px; font-weight: 600; color: var(--ink-4); display: inline-flex; align-items: center; gap: 6px; }
+.src-opt.a { color: var(--ink); }
+.src-opt.a i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+.source:has(.switch.on) .src-opt.a { color: var(--ink-4); }
+.source:has(.switch.on) .src-opt.a i { background: var(--ink-4); }
+.source:has(.switch.on) .src-opt.b { color: var(--ink); }
+.switch { width: 34px; height: 19px; border-radius: 99px; background: var(--soft); border: 1px solid var(--line); position: relative; flex: none; cursor: pointer; }
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: var(--ink-3); transition: left .15s; }
+.switch.on { background: var(--accent-soft); border-color: var(--accent-line); }
+.switch.on::after { left: 17px; background: var(--accent-2); }
+.source .hint { flex-basis: 100%; font-size: 12px; color: var(--ink-4); }
+.source .hint code { font-size: 11.5px; color: var(--ink-3); }
+
+/* Turn tabs + pinned tooltip on turn 1 */
+.turns { display: flex; gap: 2px; padding: 0 22px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.turns button { border: 0; background: none; padding: 11px 14px 10px; font-size: 13.5px; font-weight: 600; color: var(--ink-3); border-bottom: 2px solid transparent; margin-bottom: -1px; display: inline-flex; gap: 8px; align-items: center; }
+.turns button small { font-weight: 400; color: var(--ink-4); font-size: 12px; }
+.turns button.warn { color: var(--amber); }
+.turns button.on { color: var(--ink); border-bottom-color: var(--accent); }
+.tip { position: relative; margin: 10px 22px 0; max-width: 470px; background: #33302a; border: 1px solid var(--amber-line); border-radius: 8px; padding: 8px 12px; font-size: 12.5px; color: var(--ink-2); line-height: 1.5; box-shadow: 0 8px 22px #0007; }
+.tip::before { content: ''; position: absolute; top: -6px; left: 44px; width: 10px; height: 10px; background: #33302a; border-left: 1px solid var(--amber-line); border-top: 1px solid var(--amber-line); transform: rotate(45deg); }
+.tip b { color: var(--amber); }
+.tip code { font-size: 12px; color: var(--ink); white-space: nowrap; }
+
+/* Toolbar */
+.tl-tools { display: flex; gap: 10px; align-items: center; padding: 14px 22px 10px; }
+.filters { display: flex; gap: 6px; }
+.filter { border: 1px solid var(--line); background: var(--surface); color: var(--ink-3); border-radius: 999px; padding: 4px 11px; font-size: 12.5px; font-weight: 600; }
+.filter b { font-weight: 600; color: var(--ink-4); margin-left: 3px; }
+.filter.err { color: var(--red); }
+.filter.on { background: var(--accent-soft); color: var(--accent-2); border-color: var(--accent-line); }
+.filter.on b { color: var(--accent-2); }
+.search { margin-left: auto; width: 230px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--field); border-radius: 8px; padding: 6px 10px; color: var(--ink-4); font-size: 13px; }
+.search input { border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; flex: 1; min-width: 0; }
+.search input::placeholder { color: var(--ink-4); }
+
+/* Timeline */
+.timeline { padding: 4px 22px 6px; }
+.ev { display: grid; grid-template-columns: 58px 26px minmax(0, 1fr); column-gap: 12px; }
+.ev-time { font-family: var(--mono); font-size: 11.5px; color: var(--ink-4); text-align: right; padding-top: 6px; font-variant-numeric: tabular-nums; }
+.ev-rail { position: relative; display: flex; justify-content: center; }
+.ev-rail::before { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: var(--line); }
+.ev:first-child .ev-rail::before { top: 14px; }
+.ev:last-child .ev-rail::before { bottom: auto; height: 14px; }
+.ev-icon { position: relative; z-index: 1; width: 24px; height: 24px; margin-top: 2px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--soft); color: var(--ink-3); border: 1px solid var(--line); }
+.k-msg { background: var(--accent-soft); color: var(--accent-2); border-color: var(--accent-line); }
+.k-read { background: var(--blue-soft); color: var(--blue); border-color: var(--blue-line); }
+.k-edit { background: var(--green-soft); color: var(--green); border-color: var(--green-line); }
+.k-err { background: var(--red-soft); color: var(--red); border-color: var(--red-line); }
+.k-think { background: var(--bg); color: var(--ink-4); border-style: dashed; }
+.k-cmd { background: var(--code-bg); color: var(--ink-2); font-family: var(--mono); }
+.k-out { background: var(--green-soft); color: var(--green); border-color: var(--green-line); }
+.ev-body { padding: 4px 0 18px; min-width: 0; }
+.ev-head { display: flex; align-items: center; gap: 8px; font-size: 13px; min-height: 22px; }
+.ev-kind { font-weight: 600; color: var(--ink-2); }
+.ev-head .file { font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
+.ev-head .r { margin-left: auto; color: var(--ink-4); font-size: 12px; white-space: nowrap; }
+.ev-head .r a { color: var(--accent-2); font-weight: 600; text-decoration: none; margin-left: 6px; }
+
+/* Collapsible rows */
+.fold { margin: 0; }
+.fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 13px; min-height: 22px; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary .chev { color: var(--ink-4); font-size: 10px; width: 10px; transition: transform .15s; }
+.fold[open] > summary .chev { transform: rotate(90deg); }
+.fold > summary .r { margin-left: auto; color: var(--ink-4); font-size: 12px; white-space: nowrap; }
+.fold .open-lbl { color: var(--accent-2); font-weight: 600; }
+.fold[open] .open-lbl::after { content: 'Thu gọn'; }
+.fold:not([open]) .open-lbl::after { content: 'Mở'; }
+.first-line { margin-top: 6px; font-family: var(--mono); font-size: 12px; color: var(--ink-3); background: var(--field); border: 1px solid var(--line-2); border-radius: 7px; padding: 6px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prompt-full { margin-top: 6px; font-family: var(--mono); font-size: 12px; color: var(--ink-2); background: var(--field); border: 1px solid var(--line-2); border-radius: 7px; padding: 8px 10px; white-space: pre-wrap; line-height: 1.55; }
+.fold[open] + .first-line { display: none; }
+
+.msg { margin-top: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 13px; color: var(--ink); line-height: 1.6; font-size: 13.5px; }
+.msg code { font-size: 12.5px; background: var(--soft); border-radius: 4px; padding: 0 4px; }
+.msg.final { border-color: var(--accent-line); box-shadow: inset 3px 0 0 var(--accent); }
+
+.tool-err { margin-top: 6px; background: var(--red-soft); border: 1px solid var(--red-line); border-radius: 8px; padding: 8px 12px; }
+.tool-err code { color: var(--red); font-size: 12.5px; }
+.tool-err p { font-size: 12.5px; color: var(--ink-2); margin-top: 4px; line-height: 1.5; }
+
+.code { margin-top: 8px; background: var(--code-bg); border: 1px solid var(--line-2); border-radius: 8px; padding: 7px 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.65; overflow: hidden; }
+.code .l { display: grid; grid-template-columns: 38px 1fr; white-space: pre; }
+.code .l > span:first-child { color: var(--ink-4); text-align: right; padding-right: 14px; user-select: none; }
+.kw { color: #d6a0e0; } .fn { color: var(--blue); } .str { color: var(--green); } .num { color: var(--amber); }
+
+.think-sum { color: var(--ink-4); font-style: italic; }
+.think-body { margin-top: 6px; color: var(--ink-3); font-size: 13px; font-style: italic; border-left: 2px dashed var(--line); padding: 2px 0 2px 12px; line-height: 1.55; }
+
+.timeline .diff { border-top: 1px solid var(--line); border-radius: 8px; margin-top: 8px; }
+
+.usage { display: flex; gap: 6px 18px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-3); margin-top: 4px; }
+.usage b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; margin-left: 4px; }
+.usage .total { margin-left: auto; }
+
+/* Footer */
+.dw-foot { margin-top: auto; display: flex; align-items: center; gap: 14px; padding: 14px 22px; border-top: 1px solid var(--line); background: var(--surface); }
+.dw-foot .lock { width: 28px; height: 28px; border-radius: 8px; background: var(--soft); border: 1px solid var(--line); display: grid; place-items: center; color: var(--ink-3); flex: none; font-size: 13px; }
+.dw-foot p { font-size: 12.5px; color: var(--ink-3); line-height: 1.5; flex: 1; }
+.dw-foot p b { color: var(--ink-2); }
+
+/* Variant: Codex reviewer session */
+.variant-band { display: flex; align-items: center; gap: 10px; padding: 30px 22px 12px; }
+.variant-band span { font-size: 12px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: var(--ink-3); white-space: nowrap; }
+.variant-band::after { content: ''; flex: 1; border-top: 1px dashed var(--line); }
+.mini { margin: 0 22px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--bg); }
+.mini .dw-head { padding: 14px 18px 12px; }
+.mini .dw-title h2 { font-size: 16px; }
+.mini .timeline { padding: 14px 18px 4px; }
+.cmd { margin-top: 6px; border: 1px solid var(--line-2); border-radius: 8px; overflow: hidden; background: var(--code-bg); }
+.cmd-line { display: flex; align-items: center; gap: 8px; padding: 7px 11px; font-family: var(--mono); font-size: 12.5px; color: var(--ink); border-bottom: 1px solid var(--line-2); background: #1a1918; }
+.cmd-line .ps { color: var(--accent-2); }
+.cmd-line .badge { margin-left: auto; font-family: var(--font); font-size: 11.5px; }
+.out { margin: 0; padding: 8px 11px; font-size: 12px; line-height: 1.6; color: var(--ink-3); white-space: pre; overflow: hidden; }
+.out .o-add { color: var(--green); } .out .o-del { color: var(--red); } .out .o-hunk { color: var(--blue); } .out .o-meta { color: var(--ink-4); }
+.cmd .fold { padding: 6px 11px; } .cmd .fold > summary { font-size: 12.5px; color: var(--ink-3); }
+.cmd .fold .out { padding: 6px 0 2px; }
+.json { margin: 6px 0 0; padding: 10px 13px; background: var(--code-bg); border: 1px solid var(--green-line); border-radius: 8px; font-size: 12px; line-height: 1.6; color: var(--ink-2); white-space: pre; overflow: hidden; }
+.json .k { color: var(--blue); } .json .s { color: var(--green); } .json .p { color: var(--ink-4); }
+
+.notes-mini { margin: 22px 22px 40px; padding: 14px 16px; border: 1px dashed var(--line); border-radius: 12px; }
+.notes-mini h3 { font-size: 14px; color: var(--ink-3); }
+.notes-mini ol { margin: 8px 0 0; padding-left: 20px; color: var(--ink-3); font-size: 13px; line-height: 1.55; }
+.notes-mini li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<div class="stage">
+<!-- Behind: completed run (05), dimmed -->
+<div class="app behind" aria-hidden="true">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">✳</span><span>neo<b>mind</b></span><span class="brand-divider"></span><span class="product">FLOW STUDIO</span></div>
+    <div class="project"><i></i>claude-e2e1 <small>W:\projects\…\demo\claude-e2e1</small></div>
+  </header>
+  <aside class="sidebar">
+    <div class="side-title">Workspace</div>
+    <div class="nav"><span>▧</span>Flow library<em>2</em></div>
+    <div class="nav on"><span>▶</span>Runs</div>
+    <div class="nav"><span>✦</span>Agent profiles</div>
+    <div class="nav"><span>◇</span>Project memory</div>
+    <div class="side-divider"></div>
+    <div class="side-title">Flows <span>＋</span></div>
+    <div class="nav"><span>◆</span>Dev</div>
+    <div class="nav"><span>◆</span>Research</div>
+  </aside>
+  <main class="main">
+    <div class="crumbs"><span>claude-e2e1</span>›<b>Runs</b></div>
+    <div class="page-head"><div><h1>Runs</h1><p>Giao việc cho agent, duyệt kế hoạch và theo dõi tới khi có commit.</p></div></div>
+    <div class="runs-layout">
+      <div class="card history">
+        <button class="new-run">＋ Run mới</button>
+        <div class="history-title">Lịch sử</div>
+        <div class="run-item selected"><span class="dot green"></span><div><strong>Thêm hàm power(base, exponent) vào calc.js dùng Math.pow, export và thêm assertion trong test.js</strong><small>Hoàn tất · Dev · 1 phút 58 giây</small></div></div>
+        <div class="run-item"><span class="dot green"></span><div><strong>Thêm hàm divide(a, b) vào calc.js, ném Error khi chia cho 0</strong><small>Hoàn tất · Dev · 1 phút 25 giây</small></div></div>
+        <div class="run-item"><span class="dot red"></span><div><strong>Thêm hàm subtract(a, b) vào calc.js, export và thêm assertion trong test.js</strong><small>Cần xử lý · Dev · 1 giây</small></div></div>
+        <div class="run-item"><span class="dot green"></span><div><strong>Thêm hàm subtract(a, b) vào calc.js, export và thêm assertion trong test.js</strong><small>Hoàn tất · Dev · 52 giây</small></div></div>
+      </div>
+      <div>
+        <div class="card run-header">
+          <span class="badge t-green">Hoàn tất</span>
+          <h2>Thêm hàm power(base, exponent) vào calc.js dùng Math.pow, export và thêm assertion trong test.js</h2>
+          <div class="meta-row"><span>Dev v1</span><span>⏱ 1 phút 58 giây</span><span>107k tokens*</span></div>
+          <ol class="stepper">
+            <li class="step done"><span class="step-icon">✓</span><div><strong>Plan</strong><small>Xong</small><small class="step-agent">Claude Code · Sonnet 5.5 · Vừa</small><span class="step-link">Xem session</span></div></li>
+            <li class="step done"><span class="step-icon">✓</span><div><strong>Approve plan</strong><small>Xong</small></div></li>
+            <li class="step done live"><span class="step-icon" style="animation:none">✓</span><div><strong>Implement</strong><small>Xong · 2 lượt</small><small class="step-agent">Claude Code · Sonnet 5.5 · Vừa</small><span class="step-link">Xem session</span></div></li>
+            <li class="step done"><span class="step-icon">✓</span><div><strong>Bounded repair</strong><small>Xong</small></div></li>
+            <li class="step done"><span class="step-icon">✓</span><div><strong>Independent review</strong><small>Xong</small><small class="step-agent">required-reviewer: Codex · GPT-6 Luna · Vừa</small><span class="step-link">Xem session</span></div></li>
+            <li class="step done"><span class="step-icon">✓</span><div><strong>Local commit</strong><small>Xong</small></div></li>
+          </ol>
+        </div>
+        <div class="card delivery-card">
+          <div class="card-title"><h3>Kết quả</h3><span class="badge t-green">Đã commit local</span></div>
+          <div class="delivery-commit"><span>Commit</span><code>f3bc52df5586</code><span class="muted">2 file · <span class="add-n">+7</span> <span class="del-n">−1</span></span></div>
+        </div>
+        <div class="card">
+          <div class="card-title"><h3>Kiểm tra</h3><span class="badge t-green">Review đã chấp nhận</span></div>
+          <div class="verify-row first"><span class="badge t-green">Đạt</span><div class="verify-body"><code>npm test</code></div></div>
+          <div class="verify-row"><span class="badge t-green">Đạt</span><div class="verify-body"><strong>Independent review · required-reviewer</strong> <small>Codex · GPT-6 Luna · Vừa</small></div></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<div class="scrim"></div>
+
+<!-- Drawer -->
+<aside class="drawer" role="dialog" aria-label="Xem session">
+  <div class="dw-head">
+    <div class="dw-title">
+      <h2>Session <span>·</span> Implement</h2>
+      <span class="proposal">ĐỀ XUẤT</span>
+      <button class="dw-close" title="Đóng (Esc)">✕</button>
+    </div>
+    <div class="dw-sub">
+      <span class="badge t-violet">Claude Code · Sonnet 5.5 · suy luận vừa</span>
+      <span class="badge t-green">Xong</span>
+    </div>
+    <div class="dw-meta">
+      <span class="kv"><span>Session</span><code>16ff3999-7318…</code><button class="copy-btn">Chép</button></span>
+      <span class="kv"><span>Worktree</span><code class="trunc" title="C:\Users\hieutran\AppData\Local\neomind\b0001352…\workspaces\run-e25824d9">%LOCALAPPDATA%\neomind\…\workspaces\run-e25824d9</code></span>
+    </div>
+    <div class="dw-stats"><span><b>2</b> lượt</span><span>⏱ <b>1 phút 12 giây</b></span><span><b>58k</b> tokens</span></div>
+    <div class="source">
+      <span class="lbl">Nguồn</span>
+      <span class="src-opt a"><i></i>Ghi bởi NeoMind</span>
+      <span class="switch" role="switch" aria-checked="false" title="Đổi nguồn"></span>
+      <span class="src-opt b">Lịch sử gốc Claude Code</span>
+      <span class="hint">Mặc định là transcript NeoMind ghi trong lúc chạy. Lịch sử gốc: đọc từ <code>~/.claude/projects/…</code> — dùng cho run cũ.</span>
+    </div>
+  </div>
+
+  <div class="turns" role="tablist">
+    <button role="tab" class="warn"><span class="dot amber"></span>Lượt 1 · bị dừng <small>31 giây</small></button>
+    <button role="tab" class="on"><span class="dot green"></span>Lượt 2 · xong <small>41 giây</small></button>
+  </div>
+  <div class="tip"><b>Lượt 1 · bị dừng.</b> Run bị dừng giữa lượt; Claude ghi <code>'No response requested.'</code> NeoMind hiện đây là lượt bị dừng, không coi là câu trả lời của agent.</div>
+
+  <div class="tl-tools">
+    <div class="filters">
+      <button class="filter on">Tất cả<b>9</b></button>
+      <button class="filter">Tin nhắn<b>2</b></button>
+      <button class="filter">Đọc<b>1</b></button>
+      <button class="filter">Sửa<b>2</b></button>
+      <button class="filter err">Lỗi<b>1</b></button>
+    </div>
+    <label class="search"><span>⌕</span><input placeholder="Tìm trong session"></label>
+  </div>
+
+  <div class="timeline">
+    <!-- Prompt -->
+    <div class="ev">
+      <div class="ev-time">14:02:52</div>
+      <div class="ev-rail"><span class="ev-icon">›</span></div>
+      <div class="ev-body">
+        <details class="fold">
+          <summary><span class="chev">▶</span><span class="ev-kind">Prompt</span><span class="muted">từ NeoMind</span><span class="r">1.516 ký tự · <span class="open-lbl"></span></span></summary>
+          <div class="prompt-full">Implement the approved plan in this worktree. Goal: Thêm hàm power(base, exponent) vào calc.js dùng Math.pow, export và thêm assertion trong test.js.
+Approach: add power next to add, export both, add assertions before the final console.log.
+…</div>
+        </details>
+        <div class="first-line">Implement the approved plan in this worktree. Goal: Thêm hàm power(base, exponent) vào calc.js dùng Math.pow, export và…</div>
+      </div>
+    </div>
+
+    <!-- Edit calc.js: tool error -->
+    <div class="ev">
+      <div class="ev-time">14:02:58</div>
+      <div class="ev-rail"><span class="ev-icon k-err">!</span></div>
+      <div class="ev-body">
+        <div class="ev-head"><span class="ev-kind">Sửa</span><span class="file">calc.js</span><span class="badge t-red">Lỗi tool</span></div>
+        <div class="tool-err">
+          <code>File has been modified since read</code>
+          <p>Lượt trước đã sửa một phần <code>calc.js</code> rồi bị dừng, nên bản Claude đọc trước đó đã cũ. Edit bị từ chối, file không đổi.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Agent message -->
+    <div class="ev">
+      <div class="ev-time">14:03:00</div>
+      <div class="ev-rail"><span class="ev-icon k-msg">✳</span></div>
+      <div class="ev-body">
+        <div class="ev-head"><span class="ev-kind">Tin nhắn agent</span></div>
+        <div class="msg">calc.js changed since I read it, so I'll re-read it before editing.</div>
+      </div>
+    </div>
+
+    <!-- Read calc.js -->
+    <div class="ev">
+      <div class="ev-time">14:03:01</div>
+      <div class="ev-rail"><span class="ev-icon k-read">≡</span></div>
+      <div class="ev-body">
+        <details class="fold" open>
+          <summary><span class="chev">▶</span><span class="ev-kind">Đọc</span><span class="file" style="font-family:var(--mono);font-size:12.5px">calc.js</span><span class="muted">6 dòng</span><span class="r"><span class="open-lbl"></span></span></summary>
+          <div class="code">
+            <div class="l"><span>1</span><span><span class="kw">const</span> <span class="fn">add</span> = (a, b) =&gt; a + b;</span></div>
+            <div class="l"><span>2</span><span></span></div>
+            <div class="l"><span>3</span><span><span class="kw">function</span> <span class="fn">power</span>(base, exponent) {</span></div>
+            <div class="l"><span>4</span><span>  <span class="kw">return</span> Math.<span class="fn">pow</span>(base, exponent);</span></div>
+            <div class="l"><span>5</span><span>}</span></div>
+            <div class="l"><span>6</span><span>module.exports = { add, power };</span></div>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <!-- Thinking -->
+    <div class="ev">
+      <div class="ev-time">14:03:04</div>
+      <div class="ev-rail"><span class="ev-icon k-think">∴</span></div>
+      <div class="ev-body">
+        <details class="fold">
+          <summary><span class="chev">▶</span><span class="think-sum">Suy nghĩ · 3 dòng</span><span class="r"><span class="open-lbl"></span></span></summary>
+          <div class="think-body">power is already there and exported, from the interrupted turn. Only test.js is missing. Add three assertions before the console.log.</div>
+        </details>
+      </div>
+    </div>
+
+    <!-- Edit test.js -->
+    <div class="ev">
+      <div class="ev-time">14:03:09</div>
+      <div class="ev-rail"><span class="ev-icon k-edit">✎</span></div>
+      <div class="ev-body">
+        <div class="ev-head"><span class="ev-kind">Sửa</span><span class="file">test.js</span><span class="add-n">+3</span><span class="r">Edit · thành công</span></div>
+        <div class="diff">
+          <div class="ln hunk"><span></span><span></span><span></span><span>@@ -1,4 +1,7 @@</span></div>
+          <div class="ln"><span>3</span><span>3</span><span></span><span>assert.equal(calc.add(2, 3), 5);</span></div>
+          <div class="ln add"><span></span><span>4</span><span>+</span><span>assert.equal(calc.power(2, 3), 8);</span></div>
+          <div class="ln add"><span></span><span>5</span><span>+</span><span>assert.equal(calc.power(5, 0), 1);</span></div>
+          <div class="ln add"><span></span><span>6</span><span>+</span><span>assert.equal(calc.power(2, -1), 0.5);</span></div>
+          <div class="ln"><span>4</span><span>7</span><span></span><span>console.log('all tests passed');</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Final message -->
+    <div class="ev">
+      <div class="ev-time">14:03:31</div>
+      <div class="ev-rail"><span class="ev-icon k-msg">✳</span></div>
+      <div class="ev-body">
+        <div class="ev-head"><span class="ev-kind">Tin nhắn cuối</span><span class="r">kết quả của bước</span></div>
+        <div class="msg final"><code>power(base, exponent)</code> was already in calc.js from the interrupted turn: it uses <code>Math.pow</code> and is exported next to <code>add</code>. I added three assertions to test.js (positive, zero and negative exponent) before the final <code>console.log</code>. <code>add</code> and the existing assertion are unchanged.</div>
+      </div>
+    </div>
+
+    <!-- Usage -->
+    <div class="ev">
+      <div class="ev-time">14:03:33</div>
+      <div class="ev-rail"><span class="ev-icon">Σ</span></div>
+      <div class="ev-body">
+        <div class="ev-head"><span class="ev-kind">Token lượt 2</span></div>
+        <div class="usage"><span>Vào<b>12,4k</b></span><span>Ra<b>1,9k</b></span><span>Cache đọc<b>18,7k</b></span><span>Cache ghi<b>0</b></span><span class="total">Tổng<b>33k</b></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="dw-foot">
+    <span class="lock">⊙</span>
+    <p><b>Chỉ xem.</b> Không có nút tiếp tục session: chạy agent ngoài NeoMind sẽ không được journal và không bị giới hạn quyền.</p>
+    <button class="btn">Xuất transcript (.md)</button>
+  </div>
+
+  <!-- Variant: Codex reviewer -->
+  <div class="variant-band"><span>Biến thể: session reviewer Codex</span></div>
+  <div class="mini">
+    <div class="dw-head">
+      <div class="dw-title">
+        <h2>Session <span>·</span> Independent review</h2>
+        <span class="proposal">ĐỀ XUẤT</span>
+        <button class="dw-close" title="Đóng (Esc)">✕</button>
+      </div>
+      <div class="dw-sub">
+        <span class="badge t-blue">Codex · GPT-6 Luna · suy luận vừa</span>
+        <span class="badge t-green">Đạt</span>
+      </div>
+      <div class="dw-meta">
+        <span class="kv"><span>Thread</span><code>01a18b1c-a824…</code><button class="copy-btn">Chép</button></span>
+        <span class="kv"><span><b style="color:var(--ink-2)">1</b> lượt</span></span>
+        <span class="kv"><span>⏱ <b style="color:var(--ink-2)">12 giây</b></span></span>
+        <span class="kv"><span><b style="color:var(--ink-2)">28k*</b> tokens</span></span>
+        <span class="kv"><span>Nguồn</span><span style="color:var(--ink-2)">Ghi bởi NeoMind</span></span>
+      </div>
+    </div>
+    <div class="timeline">
+      <div class="ev">
+        <div class="ev-time">14:04:10</div>
+        <div class="ev-rail"><span class="ev-icon">›</span></div>
+        <div class="ev-body">
+          <details class="fold">
+            <summary><span class="chev">▶</span><span class="ev-kind">Prompt</span><span class="muted">từ NeoMind</span><span class="r">2.204 ký tự · <span class="open-lbl"></span></span></summary>
+            <div class="prompt-full">You are the required reviewer. Check the diff in this worktree against the approved plan and its criteria. Reply with the verdict schema.
+…</div>
+          </details>
+          <div class="first-line">You are the required reviewer. Check the diff in this worktree against the approved plan and its criteria…</div>
+        </div>
+      </div>
+      <div class="ev">
+        <div class="ev-time">14:04:12</div>
+        <div class="ev-rail"><span class="ev-icon k-msg">◆</span></div>
+        <div class="ev-body">
+          <div class="ev-head"><span class="ev-kind">Tin nhắn agent</span></div>
+          <div class="msg">I'll compare the diff against the approved plan, then check which files are in the worktree.</div>
+        </div>
+      </div>
+      <div class="ev">
+        <div class="ev-time">14:04:13</div>
+        <div class="ev-rail"><span class="ev-icon k-cmd">$</span></div>
+        <div class="ev-body">
+          <div class="ev-head"><span class="ev-kind">Chạy lệnh</span><span class="r">0,3 giây</span></div>
+          <div class="cmd">
+            <div class="cmd-line"><span class="ps">PS&gt;</span>git diff -- calc.js test.js<span class="badge t-green">exit 0</span></div>
+<pre class="out"><span class="o-meta">diff --git a/calc.js b/calc.js</span>
+<span class="o-hunk">@@ -1,2 +1,6 @@</span>
+ const add = (a, b) =&gt; a + b;
+<span class="o-del">-module.exports = { add };</span>
+<span class="o-add">+</span>
+<span class="o-add">+function power(base, exponent) {</span>
+<span class="o-add">+  return Math.pow(base, exponent);</span>
+<span class="o-add">+}</span>
+<span class="o-add">+module.exports = { add, power };</span>
+<span class="o-meta">diff --git a/test.js b/test.js</span>
+<span class="o-hunk">@@ -3,2 +3,5 @@</span>
+ assert.equal(calc.add(2, 3), 5);
+<span class="o-add">+assert.equal(calc.power(2, 3), 8);</span>
+<span class="o-add">+assert.equal(calc.power(5, 0), 1);</span>
+<span class="o-add">+assert.equal(calc.power(2, -1), 0.5);</span>
+ console.log('all tests passed');</pre>
+          </div>
+        </div>
+      </div>
+      <div class="ev">
+        <div class="ev-time">14:04:15</div>
+        <div class="ev-rail"><span class="ev-icon k-cmd">$</span></div>
+        <div class="ev-body">
+          <div class="ev-head"><span class="ev-kind">Chạy lệnh</span><span class="r">0,6 giây</span></div>
+          <div class="cmd">
+            <div class="cmd-line"><span class="ps">PS&gt;</span>Get-ChildItem<span class="badge t-green">exit 0</span></div>
+            <details class="fold">
+              <summary><span class="chev">▶</span>Output · 8 dòng<span class="r"><span class="open-lbl"></span></span></summary>
+<pre class="out">    Directory: C:\…\neomind\…\workspaces\run-e25824d9
+
+Mode          LastWriteTime   Length Name
+----          -------------   ------ ----
+-a---   30/10/2026  14:03        118 calc.js
+-a---   30/10/2026  13:58         96 package.json
+-a---   30/10/2026  14:03        209 test.js</pre>
+            </details>
+          </div>
+        </div>
+      </div>
+      <div class="ev">
+        <div class="ev-time">14:04:22</div>
+        <div class="ev-rail"><span class="ev-icon k-out">✓</span></div>
+        <div class="ev-body">
+          <div class="ev-head"><span class="ev-kind">Output có cấu trúc · verdict</span><span class="badge t-green">Đạt</span><span class="r">kết quả của bước</span></div>
+<pre class="json"><span class="p">{</span>
+  <span class="k">"verdict"</span>: <span class="s">"pass"</span>,
+  <span class="k">"summary"</span>: <span class="s">"Matches the approved plan. add is unchanged; npm test passes."</span>,
+  <span class="k">"criteria"</span>: <span class="p">[</span>
+    { <span class="k">"id"</span>: <span class="s">"power-uses-math-pow"</span>, <span class="k">"status"</span>: <span class="s">"pass"</span> },
+    { <span class="k">"id"</span>: <span class="s">"power-exported"</span>, <span class="k">"status"</span>: <span class="s">"pass"</span> },
+    { <span class="k">"id"</span>: <span class="s">"tests-cover-pos-zero-neg"</span>, <span class="k">"status"</span>: <span class="s">"pass"</span> },
+    { <span class="k">"id"</span>: <span class="s">"add-unchanged"</span>, <span class="k">"status"</span>: <span class="s">"pass"</span> }
+  <span class="p">]</span>,
+  <span class="k">"findings"</span>: <span class="p">[]</span>
+<span class="p">}</span></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes-mini">
+    <h3>Ghi chú thiết kế</h3>
+    <ol>
+      <li>Mở từ link "Xem session" trên mỗi bước agent. Nguồn mặc định là transcript NeoMind ghi trong lúc chạy (<code>runs/&lt;runId&gt;/transcripts/&lt;attemptId&gt;.jsonl</code>); run cũ chưa có transcript thì tự chuyển sang lịch sử gốc của runner.</li>
+      <li>Codex và Claude hiện cùng một dòng thời gian: tin nhắn, đọc, sửa, chạy lệnh, output có cấu trúc, token. Output lệnh và nội dung file đọc bị cắt theo giới hạn kích thước.</li>
+      <li>Khi bước đang chạy, dòng thời gian cập nhật trực tiếp và lượt hiện tại có nhãn "Đang chạy".</li>
+    </ol>
+  </div>
+</aside>
+</div>
+<script>
+/* ==== NEOMIND PROTOTYPE SCRIPT (same in every mockup) ==== */
+/* Clickable prototype: selections, toggles and copy buttons work in place; main actions move between screens. */
+(() => {
+  const screens = {
+    '00-design-system.mockup.html': 'Design system', '01-run-start.mockup.html': 'Run mới', '02-run-approval.mockup.html': 'Chờ duyệt kế hoạch',
+    '03-run-running.mockup.html': 'Đang chạy', '04-run-blocked.mockup.html': 'Cần xử lý', '05-run-completed.mockup.html': 'Hoàn tất',
+    '06-flow-studio.mockup.html': 'Flow studio', '07-profiles.mockup.html': 'Agent profiles', '08-memory.mockup.html': 'Project memory', '09-session-viewer.mockup.html': 'Xem session',
+  };
+  // Text of a clicked control -> screen it leads to.
+  const routes = [
+    [/^(\+|＋)\s*Run mới$/, '01-run-start.mockup.html'], [/Bắt đầu$/, '02-run-approval.mockup.html'], [/^Duyệt và thực hiện$/, '03-run-running.mockup.html'],
+    [/Chạy lại review|Đổi và chạy lại|^Tiếp tục$/, '03-run-running.mockup.html'], [/Tôi đã xem, duyệt|Áp dụng vào branch/, '05-run-completed.mockup.html'],
+    [/Chạy flow$/, '01-run-start.mockup.html'], [/^Runs$/, '01-run-start.mockup.html'], [/^Flow library|^(Dev|Research|Test1?)$/, '06-flow-studio.mockup.html'],
+    [/^Agent profiles$/, '07-profiles.mockup.html'], [/Xem session|Mở session đầy đủ/, '09-session-viewer.mockup.html'], [/^Project memory$/, '08-memory.mockup.html'],
+  ];
+  const historyRoutes = [[/Đang chạy/, '03-run-running.mockup.html'], [/Chờ duyệt/, '02-run-approval.mockup.html'], [/Cần xử lý/, '04-run-blocked.mockup.html'], [/Hoàn tất/, '05-run-completed.mockup.html']];
+  const here = decodeURIComponent(location.pathname.split('/').pop() || '');
+  const canNavigate = /^(file|https?):$/.test(location.protocol) && location.href !== 'about:srcdoc';
+
+  const style = document.createElement('style');
+  style.textContent = `.proto-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;z-index:9999;background:#30302e;color:#f2efe8;border:1px solid #4a4944;border-radius:10px;padding:9px 14px;font:13px 'Segoe UI',system-ui,sans-serif;box-shadow:0 8px 28px #0008;transition:all .18s;pointer-events:none;max-width:70vw}
+.proto-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}.proto-toast b{color:#e8956f}
+.proto-nav{position:fixed;right:16px;bottom:16px;z-index:9998;font:12px 'Segoe UI',system-ui,sans-serif}
+.proto-nav summary{list-style:none;cursor:pointer;background:#30302e;color:#d4d0c6;border:1px solid #4a4944;border-radius:999px;padding:6px 12px;box-shadow:0 6px 18px #0007}
+.proto-nav summary::-webkit-details-marker{display:none}
+.proto-nav div{position:absolute;right:0;bottom:36px;background:#262624;border:1px solid #4a4944;border-radius:10px;padding:6px;min-width:210px;box-shadow:0 10px 30px #0009}
+.proto-nav a{display:block;padding:6px 9px;border-radius:6px;color:#d4d0c6;text-decoration:none}.proto-nav a:hover{background:#2d2c29}.proto-nav a.here{color:#e8956f;font-weight:600}
+[data-proto-click]{cursor:pointer}`;
+  document.head.appendChild(style);
+  const toast = document.createElement('div'); toast.className = 'proto-toast'; document.body.appendChild(toast);
+  let timer;
+  const say = html => { toast.innerHTML = html; toast.classList.add('show'); clearTimeout(timer); timer = setTimeout(() => toast.classList.remove('show'), 1800); };
+  const go = file => {
+    if (!file || file === here) return false;
+    if (canNavigate) { location.href = file; return true; }
+    say(`→ Màn <b>${screens[file]}</b> · mở file <code>${file}</code>`); return true;
+  };
+  // Screen switcher, bottom right.
+  const nav = document.createElement('details'); nav.className = 'proto-nav';
+  nav.innerHTML = `<summary>☰ Màn: ${screens[here] ?? 'mockup'}</summary><div>${Object.entries(screens).map(([file, name]) => `<a href="${file}" data-goto="${file}" class="${file === here ? 'here' : ''}">${file.slice(0, 2)} · ${name}</a>`).join('')}</div>`;
+  document.body.appendChild(nav);
+
+  const label = el => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const selectable = ['on', 'active', 'selected'];
+  // Move the selection class among siblings of the same kind (tabs, chips, cards, list items).
+  function select(el) {
+    for (let node = el; node && node !== document.body; node = node.parentElement) {
+      const parent = node.parentElement; if (!parent) break;
+      const siblings = [...parent.children].filter(child => child.tagName === node.tagName);
+      const cls = selectable.find(name => siblings.some(child => child !== node && child.classList.contains(name)));
+      if (cls && siblings.length > 1) { siblings.forEach(child => child.classList.remove(cls)); node.classList.add(cls); return true; }
+    }
+    return false;
+  }
+  document.addEventListener('click', event => {
+    const target = event.target;
+    if (target.closest('input, textarea, select, summary, label')) return;
+    const link = target.closest('[data-goto]');
+    if (link) { event.preventDefault(); go(link.getAttribute('data-goto')); nav.removeAttribute('open'); return; }
+    if (target.closest('a[href]')) { event.preventDefault(); }
+    const toggle = target.closest('.toggle, .switch');
+    if (toggle) { toggle.classList.toggle('on'); return; }
+    const control = target.closest('a, button, .btn, .nav, .chip, .preset, .tab, .diff-tab, .filter, .tchip, .version, .flow-card, .choice, .run-item, .run-history-item, .pitem, .issue, .node, .segmented > *, [role="tab"], .copy, .copy-btn');
+    if (!control) return;
+    const text = label(control);
+    if (/Xem trực tiếp/.test(text)) { const live = document.querySelector('[class*="live"]'); if (live) { live.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; } }
+    if (/Sao chép|^Chép/.test(text)) { const old = control.innerHTML; control.textContent = 'Đã chép ✓'; setTimeout(() => { control.innerHTML = old; }, 1300); return; }
+    if (control.matches('[disabled]')) { say('Nút đang bị khóa'); return; }
+    const history = control.closest('.run-item, .run-history-item');
+    if (history) { select(history); const route = historyRoutes.find(([pattern]) => pattern.test(label(history))); if (route) go(route[1]); return; }
+    const selected = select(control);
+    const core = text.replace(/^[^\p{L}\p{N}+＋]+/u, '').replace(/\s+\d+$/, '');
+    const route = routes.find(([pattern]) => pattern.test(text) || pattern.test(core));
+    if (route && go(route[1])) return;
+    if (!selected) say(`Bấm <b>${text.slice(0, 60)}</b> · mockup chưa gắn hành động`);
+  }, true);
+})();
+/* ==== END NEOMIND PROTOTYPE SCRIPT ==== */
+</script>
+</body>
+</html>

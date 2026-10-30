@@ -1,0 +1,1709 @@
+{
+	"nodes": [
+		{
+			"id": "title",
+			"type": "text",
+			"x": 0,
+			"y": 0,
+			"width": 1500,
+			"height": 160,
+			"text": "NeoMind v1 · Roadmap\nCập nhật 30/10/2026 (chiều) · branch hieu/adaptive-agent-flow · thêm 6 mục ở hàng 2 của ĐÃ LÀM\nnpm test (Windows 11): 181 test · 179 pass · 0 fail · 2 skip · Acceptance matrix: 5/10 đạt, 4 một phần, 1 chưa\nĐọc nhanh: dải TÀI LIỆU cuối board mở trực tiếp 5 file .md chính.",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "legend-done",
+			"type": "text",
+			"x": 1600,
+			"y": 0,
+			"width": 220,
+			"height": 60,
+			"color": "4",
+			"text": "Đã xong",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "sticky"
+				}
+			}
+		},
+		{
+			"id": "legend-partial",
+			"type": "text",
+			"x": 1860,
+			"y": 0,
+			"width": 220,
+			"height": 60,
+			"color": "3",
+			"text": "Một phần",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "sticky"
+				}
+			}
+		},
+		{
+			"id": "legend-todo",
+			"type": "text",
+			"x": 1600,
+			"y": 100,
+			"width": 220,
+			"height": 60,
+			"color": "1",
+			"text": "Chưa làm",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "sticky"
+				}
+			}
+		},
+		{
+			"id": "legend-blocked",
+			"type": "text",
+			"x": 1860,
+			"y": 100,
+			"width": 220,
+			"height": 60,
+			"color": "6",
+			"text": "Bị chặn",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "sticky"
+				}
+			}
+		},
+		{
+			"id": "lane-done",
+			"type": "group",
+			"x": -40,
+			"y": 240,
+			"width": 3960,
+			"height": 920,
+			"label": "ĐÃ LÀM (15) · hàng 1: đến Claude runner · hàng 2: đợt 30/10",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "group"
+				}
+			}
+		},
+		{
+			"id": "done-base",
+			"type": "text",
+			"x": 0,
+			"y": 300,
+			"width": 360,
+			"height": 360,
+			"color": "4",
+			"text": "Nền tảng (trước 29/10)\n\n• M0: schema, compiler, thư viện flow/profile, snapshot, fake adapter\n• M1: journal, scheduler, approval, review, repair, recovery\n• Flow Dev chạy thật với Codex trên Linux\n\nCommit 5da788d",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "done-win",
+			"type": "text",
+			"x": 440,
+			"y": 300,
+			"width": 360,
+			"height": 360,
+			"color": "4",
+			"text": "Windows native\n\n• Job Object kill-on-close thay user-systemd\n• Probe: sandbox chặn ghi ngoài + lệnh sandbox chết khi dừng job\n• Định danh tiến trình: PID + creation time + BootId\n\nBằng chứng: crash-recovery chạy thật\nCommit 83c8346 · START-HERE-WINDOWS.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "done-h1",
+			"type": "text",
+			"x": 880,
+			"y": 300,
+			"width": 360,
+			"height": 360,
+			"color": "4",
+			"text": "Mục 1 · Lifecycle/CLI\n\n• Lệnh mới: run changes, retry-git, extend-time\n• Ctrl+C/SIGTERM: tạm dừng, chờ stop proof rồi thoát; lần 2 thoát ngay\n\nBằng chứng: Ctrl+C thật giữa Implement, resume tới commit\nCommit 83c8346",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "done-h2",
+			"type": "text",
+			"x": 1320,
+			"y": 300,
+			"width": 360,
+			"height": 360,
+			"color": "4",
+			"text": "Mục 2 · Writer song song\n\n• Template parallel: mỗi nhánh một worktree\n• Work packet giới hạn sandbox từng nhánh\n• Gộp bằng git merge-tree; conflict giao agent integration\n\nBằng chứng: run thật tới commit, 7 test deterministic\nCommit dd68170 · parallel-writers.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "done-h31",
+			"type": "text",
+			"x": 1760,
+			"y": 300,
+			"width": 360,
+			"height": 360,
+			"color": "4",
+			"text": "Mục 3.1 · Thay đổi chưa commit\n\n• Preview liệt kê + mã xác nhận\n• Chép vào worktree run; checkout không bị sửa\n• Commit chỉ phần của run; chồng lấn thì chờ bạn chọn\n\nBằng chứng: run thật, commit chỉ có diff của run\nCommit ee4a4cd",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "done-h4",
+			"type": "text",
+			"x": 2200,
+			"y": 300,
+			"width": 360,
+			"height": 360,
+			"color": "4",
+			"text": "Mục 4 · Đồng thời & review\n\n• Khóa SQLite liên process cho thư viện flow/profile\n• Draft có revision; lưu bản cũ → HTTP 409\n• Repair: reviewer không bị ảnh hưởng giữ verdict qua impact receipt\n\nBằng chứng: test 4 process, test 2 reviewer\nCommit 06a4643",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "done-h5",
+			"type": "text",
+			"x": 2640,
+			"y": 300,
+			"width": 360,
+			"height": 360,
+			"color": "4",
+			"text": "Mục 5 · Research local\n\n• Thêm tiêu chí \"answers the task\" và vòng repair\n• Reviewer fail báo cáo không trả lời task\n\nBằng chứng: run thật, lượt đầu sai bị chặn, repair trả lời đúng\nCommit b741ca7",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "done-h6",
+			"type": "text",
+			"x": 3080,
+			"y": 300,
+			"width": 360,
+			"height": 360,
+			"color": "4",
+			"text": "Mục 6 · Acceptance matrix\n\n• Đối chiếu 10 mục với test và run thật\n• Thêm test: crash khi commit một phần, history sau xóa flow\n\nKết quả: 5 đạt · 4 một phần · 1 chưa\nCommit e71a08a · acceptance-matrix.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "done-claude",
+			"type": "text",
+			"x": 3520,
+			"y": 300,
+			"width": 360,
+			"height": 360,
+			"color": "4",
+			"text": "Claude Code runner\n\n• Runtime không phụ thuộc runner; registry chọn theo binding\n• Mỗi dispatch một claude -p trong Job Object; init được kiểm tra\n• Quyền theo vai trò, writer không có shell; probe trên máy\n• UI chọn runner/model\n\nE2E thật: Claude+Codex, toàn Claude, crash rồi resume\nclaude-code-runner.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "lane-remaining",
+			"type": "group",
+			"x": -40,
+			"y": 1260,
+			"width": 2880,
+			"height": 500,
+			"label": "CÒN LẠI ĐỂ ĐẠT V1 (6 nhóm)",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "group"
+				}
+			}
+		},
+		{
+			"id": "rem-partial",
+			"type": "text",
+			"x": 0,
+			"y": 1320,
+			"width": 400,
+			"height": 380,
+			"color": "3",
+			"text": "Lấp acceptance còn thiếu\n\n• #2 Hiển thị nguồn binding trên UI; test snapshot không chứa secret\n• #4 Test hai run cùng lúc vượt cap của một run\n• #5 Workspace chung với write scope enforce được\n• #7 Timeout cho từng trạng thái chờ\n\nXem: acceptance-matrix.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "rem-verify",
+			"type": "text",
+			"x": 480,
+			"y": 1320,
+			"width": 400,
+			"height": 380,
+			"color": "1",
+			"text": "Kiểm chứng với model thật\n\n• Task buộc 2 nhánh sửa cùng chỗ → agent integration xử lý conflict\n• Run có 2 reviewer theo scope + 1 vòng repair → kiểm impact receipt\n• Chạy lại npm test và 1 flow Dev trên Linux/WSL",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "rem-features",
+			"type": "text",
+			"x": 960,
+			"y": 1320,
+			"width": 400,
+			"height": 380,
+			"color": "1",
+			"text": "Tính năng còn thiếu\n\n• Chạy trên checkout hiện tại: phát hiện sửa song song, commit không đụng staging\n• Import cho flow song song (nhánh tạo từ commit nội bộ của import)\n• Browser test UI tự động (#10): canvas, approval, recovery\n• Runner OpenCode; Claude Code trên Linux; check không phụ thuộc Codex",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "rem-pilot",
+			"type": "text",
+			"x": 1440,
+			"y": 1320,
+			"width": 400,
+			"height": 380,
+			"color": "1",
+			"text": "Pilot Calculator\n\n• Repo NeoPlayground, branch neomind/demo-c-flow\n• Thư mục languages/c/neomind-calculator\n• Bạn tự duyệt plan thật trong Flow Studio\n• Ghi kết quả vào implementation-status.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "rem-nimbalyst",
+			"type": "text",
+			"x": 1920,
+			"y": 1320,
+			"width": 400,
+			"height": 380,
+			"color": "3",
+			"text": "Nimbalyst extension (spike xong)\n\nĐã chốt 30/10: extension + tool MCP cho mọi session; agent chạy bằng runner NeoMind\n• Spike chạy thật trong Nimbalyst: git, Claude, Codex, Job Object, sqlite đều được\n• Còn: đủ tool như CLI, panel dùng lại UI, báo session khi cần duyệt\n• Runner dùng session Nimbalyst: chờ SDK\n\nXem: nimbalyst-extension.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "goal-v1",
+			"type": "text",
+			"x": 3000,
+			"y": 1360,
+			"width": 360,
+			"height": 300,
+			"color": "1",
+			"text": "v1 hoàn tất (M6)\n\n• Acceptance matrix đạt 10/10\n• Standalone và Nimbalyst cùng chạy một định nghĩa flow\n• Fast / Research / Dev / song song với profile, memory, history\n• Pilot thật được người dùng duyệt",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "lane-docs",
+			"type": "group",
+			"x": -40,
+			"y": 1860,
+			"width": 3800,
+			"height": 1040,
+			"label": "TÀI LIỆU · nhóm theo thứ tự đọc, mỗi nhóm mở sẵn file chính",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "group"
+				}
+			}
+		},
+		{
+			"id": "doc-research",
+			"type": "text",
+			"x": 0,
+			"y": 1920,
+			"width": 680,
+			"height": 300,
+			"text": "Định hướng & nghiên cứu\n\n• Repo Plan — docs/Repo Plan.md\n• Nghiên cứu workflow 2026 — docs/research/\n• Antigravity — antigravity-research.md\n• Probe CLI — cli-invocation-probe.md\n• Phân tích ai-workflow-kit — ai-workflow-kit-analysis.md\n• Định hướng sản phẩm — product-direction.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "file-research",
+			"type": "file",
+			"x": 0,
+			"y": 2320,
+			"width": 680,
+			"height": 520,
+			"file": "docs/adaptive-agent-flow/product-direction.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "file",
+					"path": "docs/adaptive-agent-flow/product-direction.md"
+				},
+				"label": "Định hướng sản phẩm"
+			}
+		},
+		{
+			"id": "doc-design",
+			"type": "text",
+			"x": 760,
+			"y": 1920,
+			"width": 680,
+			"height": 300,
+			"text": "Thiết kế\n\n• 12 quyết định v1 — v1-design-decisions.md\n• Kiến trúc — architecture.md\n• Cấu hình flow — flow-configuration-design.md\n• Phạm vi chuẩn — design-v1.md\n• Writer song song — parallel-writers.md\n• Transcript session — session-transcripts.md\n• UI: design system + mockup — docs/design/README.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "file-design",
+			"type": "file",
+			"x": 760,
+			"y": 2320,
+			"width": 680,
+			"height": 520,
+			"file": "docs/adaptive-agent-flow/design-v1.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "file",
+					"path": "docs/adaptive-agent-flow/design-v1.md"
+				},
+				"label": "design-v1 · phạm vi chuẩn"
+			}
+		},
+		{
+			"id": "doc-build",
+			"type": "text",
+			"x": 1520,
+			"y": 1920,
+			"width": 680,
+			"height": 300,
+			"text": "Triển khai & bàn giao\n\n• So sánh hướng triển khai — implementation-comparison.md\n• Kế hoạch M0–M6 — implementation-handoff.md\n• Bàn giao 29/10 — session-handoff-2026-10-29.md\n• Trạng thái hiện tại — implementation-status.md\n• Claude Code runner — claude-code-runner.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "file-build",
+			"type": "file",
+			"x": 1520,
+			"y": 2320,
+			"width": 680,
+			"height": 520,
+			"file": "docs/adaptive-agent-flow/implementation-status.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "file",
+					"path": "docs/adaptive-agent-flow/implementation-status.md"
+				},
+				"label": "Trạng thái triển khai"
+			}
+		},
+		{
+			"id": "doc-accept",
+			"type": "text",
+			"x": 2280,
+			"y": 1920,
+			"width": 680,
+			"height": 300,
+			"text": "Nghiệm thu\n\n• Acceptance matrix — acceptance-matrix.md\n• Bằng chứng test ai-workflow-kit — evidence/ai-workflow-kit-tests.txt\n• Roadmap này — neomind-status.canvas",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "file-accept",
+			"type": "file",
+			"x": 2280,
+			"y": 2320,
+			"width": 680,
+			"height": 520,
+			"file": "docs/adaptive-agent-flow/acceptance-matrix.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "file",
+					"path": "docs/adaptive-agent-flow/acceptance-matrix.md"
+				},
+				"label": "Acceptance matrix"
+			}
+		},
+		{
+			"id": "doc-guide",
+			"type": "text",
+			"x": 3040,
+			"y": 1920,
+			"width": 680,
+			"height": 300,
+			"text": "Hướng dẫn sử dụng\n\n• Tổng quan, CLI — README.md\n• Chạy trên Windows — START-HERE-WINDOWS.md\n• Mục lục thư mục — docs/adaptive-agent-flow/README.md\n• Reference snapshots — references/README.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "file-guide",
+			"type": "file",
+			"x": 3040,
+			"y": 2320,
+			"width": 680,
+			"height": 520,
+			"file": "START-HERE-WINDOWS.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "file",
+					"path": "START-HERE-WINDOWS.md"
+				},
+				"label": "Bắt đầu trên Windows"
+			}
+		},
+		{
+			"id": "tpl-lane",
+			"type": "group",
+			"x": -40,
+			"y": 3040,
+			"width": 3960,
+			"height": 2200,
+			"label": "FLOW MẶC ĐỊNH · 4 mẫu có sẵn trong NeoMind (Flow studio › Run mới › chọn flow)",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "group"
+				}
+			}
+		},
+		{
+			"id": "tpl-intro",
+			"type": "text",
+			"x": 0,
+			"y": 3100,
+			"width": 1500,
+			"height": 160,
+			"color": "5",
+			"text": "Mỗi thẻ là một BƯỚC, không phải một agent. Dòng 2: loại bước · ai làm. Dòng 3: agent khi project chưa cấu hình (neomind/project.json › roleDefaults), mặc định Codex · GPT-6 Luna.\nMàu: cam = agent làm · tím = agent review độc lập · vàng = bạn duyệt · xanh lá = NeoMind tự làm. Mũi tên ↺ = vòng sửa tự động khi review chưa đạt (luật của bước Bounded repair, không phải cạnh của flow).\nCác bước cùng session (ví dụ Plan và Implement của Dev) nối tiếp cùng một cuộc hội thoại agent; reviewer luôn ở session riêng.",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "sticky"
+				}
+			}
+		},
+		{
+			"id": "tpl-review-note",
+			"type": "text",
+			"x": 1580,
+			"y": 3100,
+			"width": 900,
+			"height": 160,
+			"color": "4",
+			"text": "ĐÃ CHỐT 30/10: Fast = Plan nhanh (suy luận thấp) → NeoMind tự duyệt → Implement → kết thúc.\nKhông agent review, không checks, không commit; khi xong bạn xem diff rồi bấm \"Áp dụng vào checkout\" (chỉ chép file, không stage).\nHai ngoại lệ này do flow khai báo; project có thể cấm bằng allowAutoApproval / allowHumanReview: false.",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "sticky"
+				}
+			}
+		},
+		{
+			"id": "tpl-dev-frame",
+			"type": "group",
+			"x": 0,
+			"y": 3320,
+			"width": 3880,
+			"height": 340,
+			"label": "Dev (dev) · 8 bước",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "group"
+				}
+			}
+		},
+		{
+			"id": "tpl-dev-about",
+			"type": "text",
+			"x": 20,
+			"y": 3360,
+			"width": 400,
+			"height": 280,
+			"color": "5",
+			"text": "Dev (dev)\nTính năng hoặc sửa lỗi: lập kế hoạch, bạn duyệt, code, check, review độc lập, commit local.\nGiới hạn: 30 phút · tối đa 2 vòng sửa · 4 agent đồng thời\nSession: implementation, verification",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-dev-start",
+			"type": "text",
+			"x": 460,
+			"y": 3380,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Start\nBắt đầu · NeoMind nhận yêu cầu",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-dev-plan",
+			"type": "text",
+			"x": 760,
+			"y": 3380,
+			"width": 240,
+			"height": 200,
+			"color": "2",
+			"text": "Plan\nAgent task · Agent chỉ đọc\nCodex · GPT-6 Luna · suy luận thấp",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-dev-approval",
+			"type": "text",
+			"x": 1060,
+			"y": 3380,
+			"width": 240,
+			"height": 200,
+			"color": "3",
+			"text": "Approve plan\nDuyệt · Bạn duyệt",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-dev-implement",
+			"type": "text",
+			"x": 1360,
+			"y": 3380,
+			"width": 240,
+			"height": 200,
+			"color": "2",
+			"text": "Implement\nAgent task · Agent sửa code\nCodex · GPT-6 Luna · suy luận thấp",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-dev-repair",
+			"type": "text",
+			"x": 1660,
+			"y": 3380,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Bounded repair\nVòng sửa · NeoMind điều phối sửa lại, tối đa 2 vòng",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-dev-verify",
+			"type": "text",
+			"x": 1960,
+			"y": 3380,
+			"width": 240,
+			"height": 200,
+			"color": "6",
+			"text": "Independent review\nReview · Agent review độc lập · 1/1 bắt buộc đạt\nrequired-reviewer: Codex · GPT-6 Luna · suy luận thấp",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-dev-commit",
+			"type": "text",
+			"x": 2260,
+			"y": 3380,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Local commit\nCommit local · NeoMind tạo commit",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-dev-finish",
+			"type": "text",
+			"x": 2560,
+			"y": 3380,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Finish\nHoàn tất · NeoMind kết thúc run",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-fast-frame",
+			"type": "group",
+			"x": 0,
+			"y": 3740,
+			"width": 3880,
+			"height": 340,
+			"label": "Fast (fast) · 5 bước",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "group"
+				}
+			}
+		},
+		{
+			"id": "tpl-fast-about",
+			"type": "text",
+			"x": 20,
+			"y": 3780,
+			"width": 400,
+			"height": 280,
+			"color": "5",
+			"text": "Fast (fast)\nPlan nhanh (suy luận thấp), NeoMind tự duyệt, agent làm luôn. Không agent review, không commit: bạn xem thay đổi rồi bấm Áp dụng vào checkout.\nGiới hạn: 20 phút · không vòng sửa · 2 agent đồng thời\nSession: planning, implementation",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-fast-start",
+			"type": "text",
+			"x": 460,
+			"y": 3800,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Start\nBắt đầu · NeoMind nhận yêu cầu",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-fast-plan",
+			"type": "text",
+			"x": 760,
+			"y": 3800,
+			"width": 240,
+			"height": 200,
+			"color": "2",
+			"text": "Quick plan\nAgent task · Agent chỉ đọc\nCodex · GPT-6 Luna · suy luận thấp",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-fast-approval",
+			"type": "text",
+			"x": 1060,
+			"y": 3800,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Auto-approve plan\nDuyệt · NeoMind tự duyệt",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-fast-implement",
+			"type": "text",
+			"x": 1360,
+			"y": 3800,
+			"width": 240,
+			"height": 200,
+			"color": "2",
+			"text": "Implement\nAgent task · Agent sửa code\nCodex · GPT-6 Luna · suy luận thấp",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-fast-finish",
+			"type": "text",
+			"x": 1660,
+			"y": 3800,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Finish\nHoàn tất · NeoMind kết thúc run",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-parallel-frame",
+			"type": "group",
+			"x": 0,
+			"y": 4160,
+			"width": 3880,
+			"height": 560,
+			"label": "Dev song song (parallel) · 12 bước",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "group"
+				}
+			}
+		},
+		{
+			"id": "tpl-parallel-about",
+			"type": "text",
+			"x": 20,
+			"y": 4200,
+			"width": 400,
+			"height": 500,
+			"color": "5",
+			"text": "Dev song song (parallel)\nKế hoạch chia 2 gói việc; 2 agent code song song ở 2 worktree; NeoMind ghép, agent tích hợp xử lý xung đột; review rồi commit.\nGiới hạn: 40 phút · tối đa 2 vòng sửa · 4 agent đồng thời\nSession: planning, branch-a, branch-b, integration, verification",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-parallel-start",
+			"type": "text",
+			"x": 460,
+			"y": 4340,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Start\nBắt đầu · NeoMind nhận yêu cầu",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-parallel-plan",
+			"type": "text",
+			"x": 760,
+			"y": 4340,
+			"width": 240,
+			"height": 200,
+			"color": "2",
+			"text": "Plan\nAgent task · Agent chỉ đọc\nCodex · GPT-6 Luna · suy luận thấp",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-parallel-approval",
+			"type": "text",
+			"x": 1060,
+			"y": 4340,
+			"width": 240,
+			"height": 200,
+			"color": "3",
+			"text": "Approve plan\nDuyệt · Bạn duyệt",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-parallel-fork",
+			"type": "text",
+			"x": 1360,
+			"y": 4340,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Split work\nPhân nhánh · NeoMind chia nhánh song song",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-parallel-implement-a",
+			"type": "text",
+			"x": 1660,
+			"y": 4220,
+			"width": 240,
+			"height": 200,
+			"color": "2",
+			"text": "Implement A\nAgent task · Agent sửa code\nCodex · GPT-6 Luna · suy luận thấp",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-parallel-implement-b",
+			"type": "text",
+			"x": 1660,
+			"y": 4460,
+			"width": 240,
+			"height": 200,
+			"color": "2",
+			"text": "Implement B\nAgent task · Agent sửa code\nCodex · GPT-6 Luna · suy luận thấp",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-parallel-join",
+			"type": "text",
+			"x": 1960,
+			"y": 4340,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Join\nHợp nhánh · NeoMind chờ các nhánh (2 bắt buộc)",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-parallel-integrate",
+			"type": "text",
+			"x": 2260,
+			"y": 4340,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Integrate\nTích hợp · NeoMind ghép thay đổi\nAgent khi có xung đột: Codex · GPT-6 Luna · suy luận thấp",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-parallel-repair",
+			"type": "text",
+			"x": 2560,
+			"y": 4340,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Bounded repair\nVòng sửa · NeoMind điều phối sửa lại, tối đa 2 vòng",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-parallel-verify",
+			"type": "text",
+			"x": 2860,
+			"y": 4340,
+			"width": 240,
+			"height": 200,
+			"color": "6",
+			"text": "Independent review\nReview · Agent review độc lập · 1/1 bắt buộc đạt\nrequired-reviewer: Codex · GPT-6 Luna · suy luận thấp",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-parallel-commit",
+			"type": "text",
+			"x": 3160,
+			"y": 4340,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Local commit\nCommit local · NeoMind tạo commit",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-parallel-finish",
+			"type": "text",
+			"x": 3460,
+			"y": 4340,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Finish\nHoàn tất · NeoMind kết thúc run",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-research-frame",
+			"type": "group",
+			"x": 0,
+			"y": 4800,
+			"width": 3880,
+			"height": 340,
+			"label": "Research (research) · 5 bước",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "group"
+				}
+			}
+		},
+		{
+			"id": "tpl-research-about",
+			"type": "text",
+			"x": 20,
+			"y": 4840,
+			"width": 400,
+			"height": 280,
+			"color": "5",
+			"text": "Research (research)\nChỉ đọc: agent khảo sát code/tài liệu và viết báo cáo có trích nguồn; reviewer kiểm tra nguồn và việc trả lời đúng câu hỏi. Không sửa file, không commit.\nGiới hạn: 30 phút · tối đa 2 vòng sửa\nSession: research, review",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-research-start",
+			"type": "text",
+			"x": 460,
+			"y": 4860,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Start\nBắt đầu · NeoMind nhận yêu cầu",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-research-research",
+			"type": "text",
+			"x": 760,
+			"y": 4860,
+			"width": 240,
+			"height": 200,
+			"color": "2",
+			"text": "Research\nAgent task · Agent chỉ đọc\nCodex · GPT-6 Luna · suy luận thấp",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-research-repair",
+			"type": "text",
+			"x": 1060,
+			"y": 4860,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Bounded repair\nVòng sửa · NeoMind điều phối sửa lại, tối đa 2 vòng",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-research-review",
+			"type": "text",
+			"x": 1360,
+			"y": 4860,
+			"width": 240,
+			"height": 200,
+			"color": "6",
+			"text": "Review sources\nReview · Agent review độc lập · 1/1 bắt buộc đạt\nsource-reviewer: Codex · GPT-6 Luna · suy luận thấp",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "tpl-research-finish",
+			"type": "text",
+			"x": 1660,
+			"y": 4860,
+			"width": 240,
+			"height": 200,
+			"color": "4",
+			"text": "Finish\nHoàn tất · NeoMind kết thúc run",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "done-ui",
+			"type": "text",
+			"x": 0,
+			"y": 740,
+			"width": 360,
+			"height": 360,
+			"color": "4",
+			"text": "Giao diện & design\n\n• Màn Runs: stepper, thẻ kết quả, kế hoạch, kiểm tra\n• Inspector flow studio gọn lại\n• Theme tối theo bảng màu Claude Code\n• Design system + 10 mockup bấm được (docs/design)\n\nCommit f57d34a · 93e8b51 · 0687abd · 0e9786b",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "done-canvas",
+			"type": "text",
+			"x": 440,
+			"y": 740,
+			"width": 360,
+			"height": 360,
+			"color": "4",
+			"text": "Flow ⇄ canvas\n\n• Xuất/nhập flow dạng JSON Canvas 1.0 (Nimbalyst, Obsidian)\n• Thẻ ghi rõ ai làm bước, mũi tên theo kết quả, vòng sửa, chú giải\n• Không chồng thẻ; nhập giữ cấu hình bản nháp\n\nCommit 3c7e6c1 · 59d4690 · 5a45138",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "done-dir",
+			"type": "text",
+			"x": 880,
+			"y": 740,
+			"width": 360,
+			"height": 360,
+			"color": "4",
+			"text": "Thư mục neomind/\n\n• Dữ liệu project trong neomind/ (Obsidian thấy được)\n• Project cũ .neomind/ vẫn chạy\n• Lệnh project migrate; đã chuyển claude-e2e1, claude-e2e2\n\nCommit df83dcf",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "done-fast",
+			"type": "text",
+			"x": 1320,
+			"y": 740,
+			"width": 360,
+			"height": 360,
+			"color": "4",
+			"text": "Fast mới\n\n• Plan nhanh (suy luận thấp) → NeoMind tự duyệt → Implement\n• Không agent review, không commit\n• Nút Áp dụng vào checkout / run apply\n• Project cấm được: allowAutoApproval, allowHumanReview\n\nCommit 4b836f7",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "done-transcripts",
+			"type": "text",
+			"x": 1760,
+			"y": 740,
+			"width": 360,
+			"height": 360,
+			"color": "4",
+			"text": "Xem agent làm gì\n\n• Transcript mỗi lượt (Codex + Claude): tin nhắn, đọc, sửa kèm diff, lệnh kèm output\n• Hoạt động trực tiếp 2 cột; bước xong thu thành tóm tắt\n• Ngăn Xem session; đọc lại session gốc của runner\n\nCommit 0a9f300 · session-transcripts.md",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "done-cleanup",
+			"type": "text",
+			"x": 2200,
+			"y": 740,
+			"width": 360,
+			"height": 360,
+			"color": "4",
+			"text": "Dọn worktree\n\n• Tự dọn sau commit Dev, sau Áp dụng (Fast), run chỉ đọc\n• Commit giữ ở refs/neomind/<run>/delivery/<bước>\n• run clean [--all] [--force]; nút trong editor\n• Test tự xóa thư mục tạm\n\nCommit 098b6eb",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		},
+		{
+			"id": "rem-followups",
+			"type": "text",
+			"x": 2400,
+			"y": 1320,
+			"width": 400,
+			"height": 380,
+			"color": "1",
+			"text": "Việc phát sinh đợt 30/10\n\n• Tách cấu hình Codex của worker khỏi ~/.codex (AGENTS.md, skills cá nhân đang lọt vào lượt chạy)\n• Writer Claude không có shell nên không tự chạy check (thấy trong transcript); cho lệnh check có giới hạn hoặc nói rõ trong prompt\n• refs/neomind/<run>/* giữ mãi: cần dọn ref cũ theo tuổi\n• Transcript chưa có chính sách giữ / giới hạn tổng theo run\n• Đặt tên thread Codex để dễ nhận trong lịch sử Codex",
+			"x-nimbalyst": {
+				"reference": {
+					"kind": "native",
+					"nativeKind": "text"
+				}
+			}
+		}
+	],
+	"edges": [
+		{
+			"id": "e-done-base-done-win",
+			"fromNode": "done-base",
+			"fromSide": "right",
+			"toNode": "done-win",
+			"toSide": "left",
+			"color": "4"
+		},
+		{
+			"id": "e-done-win-done-h1",
+			"fromNode": "done-win",
+			"fromSide": "right",
+			"toNode": "done-h1",
+			"toSide": "left",
+			"color": "4"
+		},
+		{
+			"id": "e-done-h1-done-h2",
+			"fromNode": "done-h1",
+			"fromSide": "right",
+			"toNode": "done-h2",
+			"toSide": "left",
+			"color": "4"
+		},
+		{
+			"id": "e-done-h2-done-h31",
+			"fromNode": "done-h2",
+			"fromSide": "right",
+			"toNode": "done-h31",
+			"toSide": "left",
+			"color": "4"
+		},
+		{
+			"id": "e-done-h31-done-h4",
+			"fromNode": "done-h31",
+			"fromSide": "right",
+			"toNode": "done-h4",
+			"toSide": "left",
+			"color": "4"
+		},
+		{
+			"id": "e-done-h4-done-h5",
+			"fromNode": "done-h4",
+			"fromSide": "right",
+			"toNode": "done-h5",
+			"toSide": "left",
+			"color": "4"
+		},
+		{
+			"id": "e-done-h5-done-h6",
+			"fromNode": "done-h5",
+			"fromSide": "right",
+			"toNode": "done-h6",
+			"toSide": "left",
+			"color": "4"
+		},
+		{
+			"id": "e-done-remaining",
+			"fromNode": "lane-done",
+			"fromSide": "bottom",
+			"toNode": "lane-remaining",
+			"toSide": "top",
+			"label": "tiếp theo"
+		},
+		{
+			"id": "e-remaining-goal",
+			"fromNode": "lane-remaining",
+			"fromSide": "right",
+			"toNode": "goal-v1",
+			"toSide": "left"
+		},
+		{
+			"id": "e-open-research",
+			"fromNode": "doc-research",
+			"fromSide": "bottom",
+			"toNode": "file-research",
+			"toSide": "top",
+			"label": "mở",
+			"color": "5"
+		},
+		{
+			"id": "e-open-design",
+			"fromNode": "doc-design",
+			"fromSide": "bottom",
+			"toNode": "file-design",
+			"toSide": "top",
+			"label": "mở",
+			"color": "5"
+		},
+		{
+			"id": "e-read-research-design",
+			"fromNode": "doc-research",
+			"fromSide": "right",
+			"toNode": "doc-design",
+			"toSide": "left"
+		},
+		{
+			"id": "e-open-build",
+			"fromNode": "doc-build",
+			"fromSide": "bottom",
+			"toNode": "file-build",
+			"toSide": "top",
+			"label": "mở",
+			"color": "5"
+		},
+		{
+			"id": "e-read-design-build",
+			"fromNode": "doc-design",
+			"fromSide": "right",
+			"toNode": "doc-build",
+			"toSide": "left"
+		},
+		{
+			"id": "e-open-accept",
+			"fromNode": "doc-accept",
+			"fromSide": "bottom",
+			"toNode": "file-accept",
+			"toSide": "top",
+			"label": "mở",
+			"color": "5"
+		},
+		{
+			"id": "e-read-build-accept",
+			"fromNode": "doc-build",
+			"fromSide": "right",
+			"toNode": "doc-accept",
+			"toSide": "left"
+		},
+		{
+			"id": "e-open-guide",
+			"fromNode": "doc-guide",
+			"fromSide": "bottom",
+			"toNode": "file-guide",
+			"toSide": "top",
+			"label": "mở",
+			"color": "5"
+		},
+		{
+			"id": "e-read-accept-guide",
+			"fromNode": "doc-accept",
+			"fromSide": "right",
+			"toNode": "doc-guide",
+			"toSide": "left"
+		},
+		{
+			"id": "e-done-h6-done-claude",
+			"fromNode": "done-h6",
+			"fromSide": "right",
+			"toNode": "done-claude",
+			"toSide": "left",
+			"color": "4"
+		},
+		{
+			"id": "tpl-dev-e-start-plan",
+			"fromNode": "tpl-dev-start",
+			"fromSide": "right",
+			"toNode": "tpl-dev-plan",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-dev-e-plan-approval",
+			"fromNode": "tpl-dev-plan",
+			"fromSide": "right",
+			"toNode": "tpl-dev-approval",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-dev-e-approval-implement",
+			"fromNode": "tpl-dev-approval",
+			"fromSide": "right",
+			"toNode": "tpl-dev-implement",
+			"toSide": "left",
+			"label": "pass"
+		},
+		{
+			"id": "tpl-dev-e-implement-repair",
+			"fromNode": "tpl-dev-implement",
+			"fromSide": "right",
+			"toNode": "tpl-dev-repair",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-dev-e-repair-verify",
+			"fromNode": "tpl-dev-repair",
+			"fromSide": "right",
+			"toNode": "tpl-dev-verify",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-dev-e-verify-commit",
+			"fromNode": "tpl-dev-verify",
+			"fromSide": "right",
+			"toNode": "tpl-dev-commit",
+			"toSide": "left",
+			"label": "pass"
+		},
+		{
+			"id": "tpl-dev-e-commit-finish",
+			"fromNode": "tpl-dev-commit",
+			"fromSide": "right",
+			"toNode": "tpl-dev-finish",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-dev-loop-implement",
+			"fromNode": "tpl-dev-verify",
+			"fromSide": "bottom",
+			"toNode": "tpl-dev-implement",
+			"toSide": "bottom",
+			"color": "3",
+			"label": "↺ chưa đạt: sửa lại (tối đa 2 vòng)"
+		},
+		{
+			"id": "tpl-fast-e-start-plan",
+			"fromNode": "tpl-fast-start",
+			"fromSide": "right",
+			"toNode": "tpl-fast-plan",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-fast-e-plan-approval",
+			"fromNode": "tpl-fast-plan",
+			"fromSide": "right",
+			"toNode": "tpl-fast-approval",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-fast-e-approval-implement",
+			"fromNode": "tpl-fast-approval",
+			"fromSide": "right",
+			"toNode": "tpl-fast-implement",
+			"toSide": "left",
+			"label": "pass"
+		},
+		{
+			"id": "tpl-fast-e-implement-finish",
+			"fromNode": "tpl-fast-implement",
+			"fromSide": "right",
+			"toNode": "tpl-fast-finish",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-parallel-e-start-plan",
+			"fromNode": "tpl-parallel-start",
+			"fromSide": "right",
+			"toNode": "tpl-parallel-plan",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-parallel-e-plan-approval",
+			"fromNode": "tpl-parallel-plan",
+			"fromSide": "right",
+			"toNode": "tpl-parallel-approval",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-parallel-e-approval-fork",
+			"fromNode": "tpl-parallel-approval",
+			"fromSide": "right",
+			"toNode": "tpl-parallel-fork",
+			"toSide": "left",
+			"label": "pass"
+		},
+		{
+			"id": "tpl-parallel-e-fork-implement-a",
+			"fromNode": "tpl-parallel-fork",
+			"fromSide": "right",
+			"toNode": "tpl-parallel-implement-a",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-parallel-e-fork-implement-b",
+			"fromNode": "tpl-parallel-fork",
+			"fromSide": "right",
+			"toNode": "tpl-parallel-implement-b",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-parallel-e-implement-a-join",
+			"fromNode": "tpl-parallel-implement-a",
+			"fromSide": "right",
+			"toNode": "tpl-parallel-join",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-parallel-e-implement-b-join",
+			"fromNode": "tpl-parallel-implement-b",
+			"fromSide": "right",
+			"toNode": "tpl-parallel-join",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-parallel-e-join-integrate",
+			"fromNode": "tpl-parallel-join",
+			"fromSide": "right",
+			"toNode": "tpl-parallel-integrate",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-parallel-e-integrate-repair",
+			"fromNode": "tpl-parallel-integrate",
+			"fromSide": "right",
+			"toNode": "tpl-parallel-repair",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-parallel-e-repair-verify",
+			"fromNode": "tpl-parallel-repair",
+			"fromSide": "right",
+			"toNode": "tpl-parallel-verify",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-parallel-e-verify-commit",
+			"fromNode": "tpl-parallel-verify",
+			"fromSide": "right",
+			"toNode": "tpl-parallel-commit",
+			"toSide": "left",
+			"label": "pass"
+		},
+		{
+			"id": "tpl-parallel-e-commit-finish",
+			"fromNode": "tpl-parallel-commit",
+			"fromSide": "right",
+			"toNode": "tpl-parallel-finish",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-parallel-loop-integrate",
+			"fromNode": "tpl-parallel-verify",
+			"fromSide": "bottom",
+			"toNode": "tpl-parallel-integrate",
+			"toSide": "bottom",
+			"color": "3",
+			"label": "↺ chưa đạt: sửa lại (tối đa 2 vòng)"
+		},
+		{
+			"id": "tpl-research-e-start-research",
+			"fromNode": "tpl-research-start",
+			"fromSide": "right",
+			"toNode": "tpl-research-research",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-research-e-research-repair",
+			"fromNode": "tpl-research-research",
+			"fromSide": "right",
+			"toNode": "tpl-research-repair",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-research-e-repair-review",
+			"fromNode": "tpl-research-repair",
+			"fromSide": "right",
+			"toNode": "tpl-research-review",
+			"toSide": "left"
+		},
+		{
+			"id": "tpl-research-e-review-finish",
+			"fromNode": "tpl-research-review",
+			"fromSide": "right",
+			"toNode": "tpl-research-finish",
+			"toSide": "left",
+			"label": "pass"
+		},
+		{
+			"id": "tpl-research-loop-research",
+			"fromNode": "tpl-research-review",
+			"fromSide": "bottom",
+			"toNode": "tpl-research-research",
+			"toSide": "bottom",
+			"color": "3",
+			"label": "↺ chưa đạt: sửa lại (tối đa 2 vòng)"
+		},
+		{
+			"id": "e-done-ui-done-canvas",
+			"fromNode": "done-ui",
+			"fromSide": "right",
+			"toNode": "done-canvas",
+			"toSide": "left",
+			"color": "4"
+		},
+		{
+			"id": "e-done-canvas-done-dir",
+			"fromNode": "done-canvas",
+			"fromSide": "right",
+			"toNode": "done-dir",
+			"toSide": "left",
+			"color": "4"
+		},
+		{
+			"id": "e-done-dir-done-fast",
+			"fromNode": "done-dir",
+			"fromSide": "right",
+			"toNode": "done-fast",
+			"toSide": "left",
+			"color": "4"
+		},
+		{
+			"id": "e-done-fast-done-transcripts",
+			"fromNode": "done-fast",
+			"fromSide": "right",
+			"toNode": "done-transcripts",
+			"toSide": "left",
+			"color": "4"
+		},
+		{
+			"id": "e-done-transcripts-done-cleanup",
+			"fromNode": "done-transcripts",
+			"fromSide": "right",
+			"toNode": "done-cleanup",
+			"toSide": "left",
+			"color": "4"
+		}
+	],
+	"x-nimbalyst": {
+		"version": 1,
+		"meta": {
+			"name": "NeoMind v1 · Roadmap",
+			"description": "Đã làm, còn lại để đạt v1, và tài liệu chính mở trực tiếp"
+		}
+	}
+}

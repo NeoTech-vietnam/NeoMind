@@ -32,7 +32,7 @@ test('shared memory requires sources and permission, enforces CAS and detects ta
 test('missing memory root and symlinked record directory are rejected', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'neomind-memory-path-'));
   assert.throws(() => new MemoryStore(path.join(dir, 'missing'), path.join(dir, 'db')));
-  const root = path.join(dir, 'memory'); mkdirSync(root); symlinkSync(dir, path.join(root, 'context'));
+  const root = path.join(dir, 'memory'); mkdirSync(root); symlinkSync(dir, path.join(root, 'context'), 'junction');
   const store = new MemoryStore(root, path.join(dir, 'db'));
   assert.throws(() => store.write(record, null, { projectWrite: true, confirmedByUser: false }), /real directory/);
   store.close();

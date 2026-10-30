@@ -1,20 +1,23 @@
 import { effectiveBinding } from './run-binding.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { planSchema } from '../domain/approval.js';
+import { normalizePlan, plannerOutputSchema } from '../domain/approval.js';
 import type { TurnResult } from '../adapters/codex-turn-events.js';
-import { CodexReadOnlyAdapter } from '../adapters/codex-readonly.js';
+import type { AgentRunner, RunnerScope, VerifiedRunnerSession } from '../runners/agent-runner.js';
+import { assertSessionBound, verifiedSession } from '../runners/registry.js';
 import { flowSchema, projectPolicySchema } from '../domain/schema.js';
 import { OwnedJournal } from '../storage/owned-journal.js';
 import { replayRun } from './recovery.js';
 import { validateMaterializedRun } from '../domain/materialize.js';
-import type { WorkerScope } from '../adapters/systemd-scope.js';
 import type { ReviewWorkspace } from './codex-review-dispatch.js';
 import { captureBaseline } from '../workspace/baseline.js';
 
-/** Caller must hold the run owner lease and serialize all run operations around this service. */
+/**
+ * Caller must hold the run owner lease and serialize all run operations around this service. The runner and its verified
+ * session are needed only to dispatch; any runner works (the journal keeps its Codex-era event names).
+ */
 export class CodexReadOnlyDispatch {
-  constructor(private readonly journal: OwnedJournal, private readonly adapter: CodexReadOnlyAdapter) {}
+  constructor(private readonly journal: OwnedJournal, private readonly runner?: AgentRunner, private readonly session?: VerifiedRunnerSession) {}
   usesJournal(journal: OwnedJournal): boolean { return this.journal === journal; }
   private async append(type: string, payload: unknown, requestId: string = randomUUID()) {
     const events = await this.journal.read();
@@ -25,7 +28,7 @@ export class CodexReadOnlyDispatch {
   }
   /** Explicit caller authorization is required after any recovery, before calling dispatch. */
   async dispatch(nodeId: string, threadId: string, prompt: string, effort: string,
-    attemptId: string, requestId: string, authorized: boolean, scope?: WorkerScope, context?: ReviewWorkspace): Promise<string> {
+    attemptId: string, requestId: string, authorized: boolean, scope?: RunnerScope, context?: ReviewWorkspace): Promise<string> {
     if (!authorized) throw new Error('Explicit run continuation required');
     const events = await this.journal.read(), report = replayRun(events);
     const created = z.object({ flow: flowSchema, policy: projectPolicySchema }).parse(events[0]?.payload);
@@ -34,12 +37,14 @@ export class CodexReadOnlyDispatch {
     const payload = z.object({ snapshot: z.json().optional() }).parse(events[0]?.payload);
     const binding = payload.snapshot ? effectiveBinding(validateMaterializedRun(payload.snapshot), report.bindingSelections, nodeId) : undefined;
     if (payload.snapshot && !binding) throw new Error('Missing run binding');
-    if (binding) { if (binding.reasoning !== effort) throw new Error('Reasoning does not match run binding'); this.adapter.assertBound(threadId, binding); }
+    const { runner, session } = verifiedSession(this.runner, this.session, threadId);
+    if (binding) { if (binding.reasoning !== effort) throw new Error('Reasoning does not match run binding'); assertSessionBound(session, binding); }
     if (report.unresolvedAttemptIds.length) throw new Error('Reconcile unresolved attempts before dispatch');
-    if (scope && (!this.adapter.usesTransport(scope.transport) || !await scope.isActive())) throw new Error('Verified worker scope is required');
+    if (scope && (scope !== runner.scope || !await scope.isActive())) throw new Error('Verified worker scope is required');
     const baseline = context ? await captureBaseline(context.workspace) : undefined;
     if (context && (context.lease.runId !== this.journal.runId || context.lease.workspace !== baseline?.root || !context.coordinator.isCurrent(context.lease))) throw new Error('Read-only workspace lease mismatch');
-    if (binding && context) this.adapter.assertBound(threadId, binding, context.workspace);
+    if (binding && context) assertSessionBound(session, binding, context.workspace);
+    await runner.verifyNoDelegation(session);
     await this.append('node_claimed', { nodeId });
     await this.append('dispatch_intent', { nodeId, sessionId: threadId, attemptId }, requestId);
     if (context && baseline) {
@@ -48,8 +53,8 @@ export class CodexReadOnlyDispatch {
     }
     if (scope) await this.append('worker_scope_bound', { attemptId, unit: scope.identity.unit, controlGroup: scope.identity.controlGroup }, requestId);
     let turnId: string;
-    try { const output = node.outputContract === 'plan' ? z.toJSONSchema(planSchema) : undefined;
-      turnId = binding ? await this.adapter.startBoundTurn(threadId, prompt, binding, output) : await this.adapter.startTurn(threadId, prompt, effort, output); }
+    try { const output = node.outputContract === 'plan' ? z.toJSONSchema(plannerOutputSchema) : undefined;
+      turnId = await runner.startTurn(session, { prompt, effort, ...(output === undefined ? {} : { outputSchema: output }) }); }
     catch (error) {
       await this.append('dispatch_receipt', { attemptId, status: 'unknown' }, requestId);
       throw error;
@@ -73,7 +78,7 @@ export class CodexReadOnlyDispatch {
     const report = replayRun(await this.journal.read()), attempt = report.attempts.find(item => item.attemptId === attemptId);
     if (!attempt || attempt.sessionId !== result.threadId || attempt.runnerTurnId !== result.turnId ||
       attempt.status !== 'unresolved' || result.status !== 'completed' || result.messages.length === 0) throw new Error('Plan result does not match a successful pending attempt');
-    const plan = planSchema.parse(JSON.parse(result.messages[result.messages.length - 1]!) as unknown);
+    const plan = normalizePlan(JSON.parse(result.messages[result.messages.length - 1]!) as unknown);
     await this.append('plan_proposed', { nodeId: attempt.nodeId, attemptId, plan });
     await this.append('node_completed', { nodeId: attempt.nodeId, outcome: 'completed' });
   }

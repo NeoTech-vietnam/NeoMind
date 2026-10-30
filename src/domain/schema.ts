@@ -42,11 +42,15 @@ const reviewer = z.strictObject({
 export const nodeSchema = z.discriminatedUnion('type', [
   z.strictObject({ ...base, type: z.literal('start') }),
   z.strictObject({ ...base, type: z.literal('finish') }),
-  z.strictObject({ ...base, type: z.literal('approval'), purpose: z.string().min(1) }),
+  // `auto`: NeoMind approves the plan itself (a flow exception the project policy can forbid).
+  z.strictObject({ ...base, type: z.literal('approval'), purpose: z.string().min(1), mode: z.enum(['user', 'auto']).optional() }),
   z.strictObject({ ...base, type: z.literal('fork') }),
   z.strictObject({ ...base, type: z.literal('join'), requiredBranches: z.array(id).min(1) }),
   z.strictObject({ ...base, type: z.literal('condition'), field: z.string().min(1), operator: z.enum(['eq', 'ne', 'in', 'exists', 'all', 'any']), value: z.json().optional() }),
-  z.strictObject({ ...base, type: z.literal('integration'), writeScopes: z.array(z.string().min(1)).min(1) }),
+  // Agent fields are optional in the schema; executors that resolve conflicts or repairs require them.
+  z.strictObject({ ...base, type: z.literal('integration'), writeScopes: z.array(z.string().min(1)).min(1),
+    profileId: id.optional(), profileVersion: z.number().int().min(1).optional(), sessionGroup: id.optional(), bindingId: id.optional(),
+    instructionsOverride: z.string().optional(), skillsOverride: z.array(skillReferenceSchema).optional() }),
   z.strictObject({ ...base, type: z.literal('git_commit') }),
   z.strictObject({ ...base, type: z.literal('agent_task'), goal: z.string().min(1), profileId: id, profileVersion: z.number().int().min(1),
     sessionGroup: id, bindingId: id, permissions: permissionsSchema,
@@ -74,6 +78,8 @@ export const flowDefinitionSchema = z.strictObject({
     maxRepairRounds: z.number().int().min(0), activeTimeSeconds: z.number().int().min(1) }),
   workspacePolicy: z.enum(['isolated', 'shared']),
   outputContract: z.string().min(1),
+  // `human`: the user reviews the changes outside the flow, so the flow has no review gate and never commits.
+  review: z.enum(['independent', 'human']).optional(),
 });
 
 export const flowSchema = z.strictObject({
@@ -87,6 +93,10 @@ export const projectPolicySchema = z.strictObject({
   requireApprovalBeforeWrite: z.boolean(), requireIndependentReviewForCode: z.boolean(),
   allowGitCommit: z.boolean(), maxConcurrency: z.number().int().min(1),
   maxRepairRounds: z.number().int().min(0),
+  // Flow exceptions a project can forbid; omitted means allowed.
+  allowAutoApproval: z.boolean().optional(), allowHumanReview: z.boolean().optional(),
+  // Keep a run's worktrees after it delivered (commit or applied changes) instead of removing them; omitted means remove.
+  keepRunWorktrees: z.boolean().optional(),
 });
 
 export const projectSchema = z.strictObject({

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
@@ -18,7 +19,7 @@ async function fixture(repair = false, kind: 'dev' | 'research' = 'dev', reviewe
   const root = await mkdtemp(path.join(tmpdir(), 'neomind-local-runtime-')), project = path.join(root, 'repo'), state = path.join(root, 'state');
   await mkdir(project); await mkdir(path.join(state, 'runs'), { recursive: true }); await mkdir(path.join(state, 'workspaces'));
   const git = (...args: string[]) => execFileSync('git', ['-C', project, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  git('init', '-q'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.test');
+  git('init', '-q'); git('config', 'core.autocrlf', 'false'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.test');
   await writeFile(path.join(project, 'README.md'), 'Fixture\n'); git('add', '.'); git('commit', '-qm', 'baseline');
   const role = { runner: 'codex', provider: 'openai', model: 'gpt-6-luna', reasoning: 'low' };
   const config = { ...structuredClone(defaultProject), roleDefaults: { implementer: role, verifier: role } };
@@ -57,7 +58,7 @@ async function fixture(repair = false, kind: 'dev' | 'research' = 'dev', reviewe
         const text = (await readFile(path.join(thread.cwd, filename), 'utf8')).trim(), failed = kind !== 'research' && text !== 'ok';
         const reference = { kind: 'source', path: filename, line: 1, quote: text };
         output = { verdict: failed ? 'needs_changes' : 'pass', findingIds: failed ? ['wrong-proof'] : [], summary: failed ? 'Proof is wrong' : 'Proof matches',
-          evidence: { criteria: (kind === 'research' ? ['sources', 'claims'] : ['approved plan', 'checks', 'regressions', 'proof']).map(criterion => ({ criterion, status: failed && criterion === 'proof' ? 'fail' : 'pass', references: [reference] })),
+          evidence: { criteria: (kind === 'research' ? ['answers the task', 'sources', 'claims'] : ['approved plan', 'checks', 'regressions', 'proof']).map(criterion => ({ criterion, status: failed && criterion === 'proof' ? 'fail' : 'pass', references: [reference] })),
             findings: failed ? [{ id: 'wrong-proof', criterion: 'proof', explanation: 'Expected ok', references: [reference] }] : [] } };
       } else if (thread.sandbox === 'read-only') { output = 'README.md line 1 contains Fixture. This report is based on that local source.'; }
       else { writes++; await writeFile(path.join(thread.cwd, 'proof.txt'), repair && writes === 1 ? 'wrong\n' : 'ok\n'); output = 'Implemented'; }
@@ -89,7 +90,9 @@ test('real orchestration services wait for approval, resume after reopen and com
     assert.equal(report.runtimeState.phase, 'completed', report.runtimeState.reason);
     assert.equal(report.commits[0]?.confirmed, true); assert.equal(f.writes(), 1);
     assert.equal(report.usage.totalTokens, 300); assert.equal(report.usage.partial, false);
-    assert.equal(await readFile(path.join(run.context.workspace, 'proof.txt'), 'utf8'), 'ok\n');
+    // The worktree is gone after delivery; the commit stays reachable under its NeoMind ref.
+    assert.equal(execFileSync('git', ['-C', run.context.projectRoot, 'show', `refs/neomind/${run.runId}/delivery/${report.commits[0]!.nodeId}:proof.txt`], { encoding: 'utf8' }), 'ok\n');
+    assert.ok(!existsSync(run.context.workspace) && report.workspaceCleanup?.cleaned);
   } finally { await run.close(); f.coordinator.close(); }
 });
 

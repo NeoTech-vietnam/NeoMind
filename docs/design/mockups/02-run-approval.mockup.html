@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>NeoMind · Run chờ duyệt kế hoạch</title>
+<style>
+/* ==== NEOMIND SHARED STYLES (copy this block verbatim into every NeoMind mockup) ==== */
+/* Dark theme in the Claude Code palette: warm charcoal surfaces, ivory text, clay accent. */
+:root {
+  color-scheme: dark;
+  --font: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, -apple-system, sans-serif;
+  --mono: 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --ink: #f2efe8; --ink-2: #d4d0c6; --ink-3: #a9a499; --ink-4: #85817a;
+  --bg: #1f1e1d; --surface: #262624; --soft: #2d2c29; --field: #1c1b1a; --code-bg: #161514;
+  --line: #3b3a36; --line-2: #312f2c;
+  --accent: #d97757; --accent-2: #e8956f; --accent-strong: #c15f3c; --accent-soft: #3a2822; --accent-line: #6b3f2e;
+  --green: #86c99a; --green-soft: #1e3326; --green-line: #2f5a3c;
+  --amber: #e5b567; --amber-soft: #3a2f1b; --amber-line: #6a5328;
+  --red: #f08a80; --red-soft: #3d2222; --red-line: #6e3434;
+  --blue: #8db4ea; --blue-soft: #1d2a3b; --blue-line: #34507a;
+  --gray: #a9a499; --gray-soft: #33322f;
+  --proposal: #6fd3c4; --proposal-soft: #173330; --proposal-line: #3e9e92;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--font); font-size: 14px; color: var(--ink); background: var(--bg); }
+h1, h2, h3, h4, p { margin: 0; }
+code, pre { font-family: var(--mono); font-size: 12.5px; }
+button { font: inherit; cursor: pointer; color: inherit; }
+/* Shell */
+.app { display: grid; grid-template-columns: 232px 1fr; grid-template-rows: 58px 1fr; min-height: 100vh; }
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; font-size: 18px; letter-spacing: -.5px; }
+.brand-mark { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: var(--code-bg); display: grid; place-items: center; font-size: 18px; }
+.brand b { font-weight: 700; }
+.brand-divider { height: 20px; width: 1px; background: var(--line); margin: 0 4px; }
+.product { font-size: 11px; letter-spacing: 1.2px; color: var(--ink-4); font-weight: 700; }
+.project { border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px; color: var(--ink-2); font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: center; white-space: nowrap; background: var(--surface); }
+.project small { color: var(--ink-4); font-weight: 400; }
+.project i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.sidebar { background: var(--bg); border-right: 1px solid var(--line); padding: 18px 12px; }
+.side-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--ink-4); text-transform: uppercase; padding: 0 10px; margin: 0 0 8px; display: flex; justify-content: space-between; }
+.nav { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; color: var(--ink-2); font-size: 13.5px; font-weight: 600; margin: 1px 0; }
+.nav span { width: 18px; text-align: center; color: var(--ink-4); }
+.nav.on { background: var(--soft); color: var(--ink); }
+.nav.on span { color: var(--accent); }
+.nav em { margin-left: auto; font-style: normal; background: var(--accent-soft); color: var(--accent-2); border-radius: 6px; padding: 1px 7px; font-size: 11.5px; }
+.side-divider { height: 1px; background: var(--line-2); margin: 16px 8px; }
+.main { padding: 18px 28px 32px; min-width: 0; }
+.crumbs { font-size: 12.5px; color: var(--ink-4); margin-bottom: 14px; display: flex; gap: 8px; }
+.crumbs b { color: var(--ink-2); font-weight: 600; }
+.page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 18px; }
+.page-head h1 { font-size: 24px; letter-spacing: -.6px; font-weight: 700; }
+.page-head p { color: var(--ink-3); font-size: 13.5px; margin-top: 5px; }
+/* Components */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin-bottom: 16px; }
+.card h2 { font-size: 19px; letter-spacing: -.3px; line-height: 1.4; }
+.card h3 { font-size: 16px; letter-spacing: -.2px; }
+.card h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--ink-4); margin: 14px 0 6px; }
+.card-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.btn { height: 34px; border-radius: 8px; padding: 0 14px; font-size: 13px; font-weight: 600; border: 1px solid var(--line); background: var(--soft); color: var(--ink-2); white-space: nowrap; }
+.btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; box-shadow: 0 2px 8px #c15f3c40; }
+.btn.large { height: 40px; padding: 0 22px; font-size: 14px; }
+.btn.ghost { color: var(--accent-2); border-color: var(--accent-line); background: transparent; }
+.btn.danger { color: var(--red); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.t-green { background: var(--green-soft); color: var(--green); } .t-amber { background: var(--amber-soft); color: var(--amber); }
+.t-red { background: var(--red-soft); color: var(--red); } .t-violet { background: var(--accent-soft); color: var(--accent-2); }
+.t-blue { background: var(--blue-soft); color: var(--blue); } .t-gray { background: var(--gray-soft); color: var(--gray); }
+.pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.callout { border-radius: 8px; padding: 10px 13px; font-size: 13.5px; line-height: 1.5; margin: 12px 0; border: 1px solid transparent; }
+.callout.red { background: var(--red-soft); color: var(--red); border-color: var(--red-line); }
+.callout.amber { background: var(--amber-soft); color: var(--amber); border-color: var(--amber-line); }
+.callout.green { background: var(--green-soft); color: var(--green); border-color: var(--green-line); }
+.callout.violet { background: var(--accent-soft); color: var(--accent-2); border-color: var(--accent-line); }
+.callout.blue { background: var(--blue-soft); color: var(--blue); border-color: var(--blue-line); }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); margin-bottom: 14px; }
+.field small { font-weight: 400; color: var(--ink-3); }
+.input, .select, .textarea { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--field); color: var(--ink); font-weight: 400; font-size: 14px; width: 100%; font-family: var(--font); }
+.select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%), linear-gradient(135deg, var(--ink-3) 50%, transparent 50%); background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 28px; }
+.textarea { min-height: 84px; line-height: 1.5; resize: vertical; }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; padding: 2px; background: var(--field); }
+.segmented span { padding: 5px 11px; border-radius: 6px; font-size: 13px; font-weight: 600; color: var(--ink-3); white-space: nowrap; }
+.segmented span.on { background: var(--soft); color: var(--accent-2); box-shadow: 0 1px 3px #0000004d; }
+.hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
+.muted { color: var(--ink-4); font-size: 12.5px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.green { background: var(--green); } .dot.amber { background: var(--amber); } .dot.red { background: var(--red); } .dot.violet { background: var(--accent); } .dot.gray { background: var(--ink-4); }
+/* Proposal marker: anything not implemented yet carries this tag (teal, so it never reads as the clay accent). */
+.proposal { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; letter-spacing: .3px; color: var(--proposal); background: var(--proposal-soft); border: 1px dashed var(--proposal-line); border-radius: 6px; padding: 1px 7px; vertical-align: middle; }
+.proposal-box { outline: 2px dashed var(--proposal-line); outline-offset: 4px; border-radius: 12px; }
+/* ==== END NEOMIND SHARED STYLES ==== */
+
+/* Page-specific: Runs layout */
+.runs-grid { display: grid; grid-template-columns: 270px 1fr; gap: 20px; align-items: start; }
+.legend { font-size: 12px; color: var(--ink-4); display: flex; align-items: center; gap: 6px; }
+.history { padding: 10px; }
+.new-run { width: 100%; height: 38px; border-radius: 9px; border: 1px dashed var(--accent-line); background: var(--surface); color: var(--accent-2); font-weight: 600; font-size: 13.5px; }
+.history-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--ink-4); padding: 0 8px; margin: 18px 0 6px; }
+.run-item { display: grid; grid-template-columns: 9px 1fr; gap: 10px; padding: 9px 8px; border-radius: 8px; }
+.run-item.on { background: var(--accent-soft); }
+.run-item .dot { margin-top: 5px; }
+.run-item p { font-size: 13.5px; font-weight: 600; color: var(--ink); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.run-item small { display: block; font-size: 12px; color: var(--ink-4); margin-top: 3px; }
+.run-item small.bad { color: var(--red); }
+.run-item small.wait { color: var(--amber); }
+/* Page-specific: run header */
+.run-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+.run-head h2 { margin-top: 8px; }
+.meta { display: flex; gap: 14px; margin-top: 6px; font-size: 13px; color: var(--ink-3); }
+.callout .proposal { margin-left: 8px; }
+.next { display: block; margin-top: 2px; }
+/* Steps */
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 4px; }
+.step { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--surface); }
+.step strong { display: block; font-size: 13.5px; }
+.step small { display: block; font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+.step small.who { color: var(--ink-4); }
+.step-icon { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none; }
+.step.ready { border-color: var(--amber-line); background: var(--amber-soft); box-shadow: 0 0 0 3px #e5b5671a; }
+.step.pending strong { color: var(--ink-2); }
+/* Plan card */
+.plan { border-color: var(--amber-line); box-shadow: 0 0 0 3px #e5b56714; }
+.version { display: flex; align-items: center; gap: 10px; }
+.version a { font-size: 12.5px; color: var(--accent-2); font-weight: 600; text-decoration: none; }
+.goal { font-weight: 700; font-size: 14.5px; line-height: 1.5; margin-bottom: 8px; }
+.approach { color: var(--ink-2); line-height: 1.6; font-size: 13.5px; }
+.approach code { font-size: 12px; background: var(--soft); border-radius: 4px; padding: 0 4px; }
+.diff { margin: 14px 0 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); padding: 10px 14px; }
+.diff-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-3); margin-bottom: 8px; }
+.diff-head b { color: var(--ink-2); }
+.diff-line { display: grid; grid-template-columns: 18px 1fr; font-size: 13px; line-height: 1.5; padding: 2px 8px; border-radius: 5px; }
+.diff-line.del { background: var(--red-soft); color: var(--red); text-decoration: line-through; text-decoration-color: #f08a8088; }
+.diff-line.add { background: var(--green-soft); color: var(--green); margin-top: 3px; }
+.diff-line span { font-family: var(--mono); font-weight: 700; text-decoration: none; }
+.plan-grid { display: grid; grid-template-columns: 1fr 300px; gap: 28px; margin-top: 6px; }
+.criteria { margin: 0; padding-left: 18px; }
+.criteria li { margin: 5px 0; line-height: 1.5; font-size: 13.5px; }
+.criteria li::marker { color: var(--accent); }
+.criteria li.new { color: var(--green); }
+.criteria .badge { font-size: 11px; padding: 0 7px; margin-left: 4px; }
+.side-block { margin-bottom: 4px; }
+.files { list-style: none; padding: 0; margin: 0; }
+.files li { display: grid; grid-template-columns: 22px 1fr; gap: 4px 6px; padding: 5px 0; font-size: 13px; }
+.files code { font-weight: 600; color: var(--ink); }
+.files small { grid-column: 2; color: var(--ink-3); font-size: 12px; }
+.chg { display: inline-block; width: 18px; height: 18px; line-height: 18px; text-align: center; border-radius: 4px; font-family: var(--mono); font-weight: 700; font-size: 11.5px; background: var(--amber-line); color: var(--amber); }
+.files-box { padding: 2px 6px 4px; margin-top: 14px; }
+/* Approval bar */
+.approval { border-top: 1px solid var(--line-2); margin-top: 18px; padding-top: 16px; }
+.quick { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding: 2px 4px; }
+.quick > span:first-child { font-size: 12.5px; color: var(--ink-3); }
+.chip { border: 1px solid var(--line); border-radius: 999px; padding: 3px 11px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); background: var(--surface); }
+.chip::before { content: "＋ "; color: var(--ink-4); font-weight: 400; }
+.approval .textarea { min-height: 62px; }
+.actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 10px; }
+.actions .muted { margin-right: auto; }
+/* Collapsed sections */
+.collapsed { padding: 6px 22px; }
+.collapsed div { display: flex; align-items: center; gap: 10px; padding: 10px 0; font-weight: 600; font-size: 13.5px; color: var(--ink-2); }
+.collapsed div + div { border-top: 1px solid var(--line-2); }
+.collapsed i { font-style: normal; color: var(--ink-4); font-size: 11px; }
+.collapsed .muted { font-weight: 400; margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">✳</span><span>neo<b>mind</b></span><span class="brand-divider"></span><span class="product">FLOW STUDIO</span></div>
+    <div class="project"><i></i>claude-e2e1 <small>W:\projects\…\demo\claude-e2e1</small></div>
+  </header>
+
+  <aside class="sidebar">
+    <div class="side-title">Workspace</div>
+    <div class="nav"><span>▧</span>Flow library<em>2</em></div>
+    <div class="nav on"><span>▶</span>Runs</div>
+    <div class="nav"><span>✦</span>Agent profiles</div>
+    <div class="nav"><span>◇</span>Project memory</div>
+    <div class="side-divider"></div>
+    <div class="side-title">Flows <span>＋</span></div>
+    <div class="nav"><span>⑂</span>Dev</div>
+    <div class="nav"><span>⌕</span>Research</div>
+  </aside>
+
+  <main class="main">
+    <div class="crumbs">claude-e2e1 <span>›</span> <b>Runs</b></div>
+    <div class="page-head">
+      <div>
+        <h1>Runs</h1>
+        <p>Giao việc cho agent, duyệt kế hoạch và theo dõi tới khi có commit.</p>
+      </div>
+      <div class="legend"><span class="proposal">ĐỀ XUẤT</span> = chưa có trong code hiện tại</div>
+    </div>
+
+    <div class="runs-grid">
+      <!-- Left: history -->
+      <div class="card history">
+        <button class="new-run">＋ Run mới</button>
+        <div class="history-title">LỊCH SỬ</div>
+        <div class="run-item on"><span class="dot amber"></span><div><p>Add a power(base, exponent) function to calc.js using Math.pow, export it…</p><small class="wait">Chờ duyệt kế hoạch · Dev · 11 giây</small></div></div>
+        <div class="run-item"><span class="dot green"></span><div><p>Add a divide(a, b) function to calc.js that throws an Error when b is 0</p><small>Hoàn tất · Dev · 1 phút 25 giây</small></div></div>
+        <div class="run-item"><span class="dot red"></span><div><p>Add a subtract(a, b) function to calc.js, export it, and add assertions</p><small class="bad">Cần xử lý · Dev · 1 giây</small></div></div>
+        <div class="run-item"><span class="dot green"></span><div><p>Add a subtract(a, b) function to calc.js, export it, and add assertions</p><small>Hoàn tất · Dev · 52 giây</small></div></div>
+      </div>
+
+      <!-- Right: run detail -->
+      <div>
+        <div class="card">
+          <div class="run-head">
+            <div>
+              <span class="badge t-amber">Chờ duyệt kế hoạch</span>
+              <h2>Add a power(base, exponent) function to calc.js using Math.pow, export it, and add assertions for it in test.js</h2>
+              <div class="meta"><span>Dev v1</span><span>⏱ 11 giây</span><span>20k tokens</span></div>
+            </div>
+            <button class="btn danger">Hủy run</button>
+          </div>
+
+          <!-- Proposal 1: plain-language reason + what happens next -->
+          <div class="callout amber">
+            <b>Agent đã lập kế hoạch. Chưa file nào bị sửa.</b><span class="proposal">ĐỀ XUẤT</span>
+            <span class="next">Duyệt để Claude Code bắt đầu viết code, hoặc góp ý để agent lập lại kế hoạch.</span>
+          </div>
+
+          <div class="steps">
+            <div class="step"><span class="step-icon t-green">✓</span><div><strong>Plan</strong><small>Xong</small><small class="who">Claude Code · Sonnet 5.5 · Vừa</small></div></div>
+            <div class="step"><span class="step-icon t-blue">○</span><div><strong>Approve plan</strong><small>Sẵn sàng</small></div></div>
+            <div class="step pending"><span class="step-icon t-gray">○</span><div><strong>Implement</strong><small>Chờ</small><small class="who">Claude Code · Sonnet 5.5 · Vừa</small></div></div>
+            <div class="step pending"><span class="step-icon t-gray">○</span><div><strong>Bounded repair</strong><small>Chờ</small></div></div>
+            <div class="step pending"><span class="step-icon t-gray">○</span><div><strong>Independent review</strong><small>Chờ</small><small class="who">required-reviewer: Codex · GPT-6 Luna · Vừa</small></div></div>
+            <div class="step pending"><span class="step-icon t-gray">○</span><div><strong>Local commit</strong><small>Chờ</small></div></div>
+          </div>
+        </div>
+
+        <!-- Plan card -->
+        <div class="card plan">
+          <div class="card-title">
+            <h3>Kế hoạch đang chờ bạn duyệt</h3>
+            <!-- Proposal 3: version switcher -->
+            <div class="version proposal-box">
+              <span class="segmented"><span>Phiên bản 1</span><span class="on">Phiên bản 2</span></span>
+              <a href="#">Xem thay đổi so với phiên bản 1</a>
+              <span class="proposal">ĐỀ XUẤT</span>
+            </div>
+          </div>
+
+          <p class="goal">calc.js provides an exported power(base, exponent) function backed by Math.pow, with assertions in test.js.</p>
+          <p class="approach">In calc.js, add <code>function power(base, exponent) { return Math.pow(base, exponent); }</code> after add, and change the export to <code>module.exports = { add, power };</code>. In test.js, import power with <code>const { add, power } = require('./calc');</code> and add assertions before the final console.log: assert.equal(power(2, 3), 8); assert.equal(power(5, 0), 1); assert.equal(power(2, -1), 0.5). Existing add code and assertions are left unchanged.</p>
+
+          <!-- Proposal 3 (cont.): inline diff of changed criteria -->
+          <div class="diff proposal-box">
+            <div class="diff-head"><b>Thay đổi so với phiên bản 1</b> · theo góp ý của bạn: “Thêm test cho số mũ 0 và số âm”</div>
+            <div class="diff-line del"><span>−</span>test.js contains assertions for power</div>
+            <div class="diff-line add"><span>+</span>test.js contains assertions for power, including a zero exponent and a negative exponent</div>
+          </div>
+
+          <div class="plan-grid">
+            <div>
+              <h4>Tiêu chí hoàn thành</h4>
+              <ul class="criteria">
+                <li>calc.js defines power(base, exponent) that returns Math.pow(base, exponent)</li>
+                <li>calc.js exports both add and power</li>
+                <li class="new">test.js contains assertions for power, including a zero exponent and a negative exponent <span class="badge t-green">mới ở v2</span></li>
+                <li>Existing add function and assertions are unchanged</li>
+                <li>npm test exits 0 and prints 'all tests passed'</li>
+              </ul>
+            </div>
+            <div>
+              <div class="side-block">
+                <h4>Phạm vi sửa</h4>
+                <div class="chips"><code>toàn bộ project</code></div>
+              </div>
+              <div class="side-block">
+                <h4>Checks</h4>
+                <div class="chips"><code>npm test</code></div>
+              </div>
+              <!-- Proposal 2: planned file changes -->
+              <div class="files-box proposal-box">
+                <h4 style="margin-top:4px">File dự kiến sửa <span class="proposal">ĐỀ XUẤT</span></h4>
+                <ul class="files">
+                  <li><span class="chg">M</span><code>calc.js</code><small>thêm power, sửa module.exports</small></li>
+                  <li><span class="chg">M</span><code>test.js</code><small>import power, thêm 3 assertions</small></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="approval">
+            <!-- Proposal 4: quick feedback chips -->
+            <div class="quick proposal-box">
+              <span>Góp ý nhanh</span>
+              <span class="chip">Thêm test cho số âm</span>
+              <span class="chip">Không đổi API cũ</span>
+              <span class="chip">Giữ thay đổi nhỏ</span>
+              <span class="proposal" style="margin-left:auto">ĐỀ XUẤT</span>
+            </div>
+            <textarea class="textarea" placeholder="Muốn đổi gì trong kế hoạch? (không bắt buộc)"></textarea>
+            <div class="actions">
+              <span class="muted">Nhập góp ý để yêu cầu sửa kế hoạch.</span>
+              <button class="btn" disabled>Yêu cầu sửa kế hoạch</button>
+              <button class="btn primary">Duyệt và thực hiện</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card collapsed">
+          <div><i>▶</i>Logs và output (0)</div>
+          <div><i>▶</i>Chi tiết kỹ thuật</div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script>
+/* ==== NEOMIND PROTOTYPE SCRIPT (same in every mockup) ==== */
+/* Clickable prototype: selections, toggles and copy buttons work in place; main actions move between screens. */
+(() => {
+  const screens = {
+    '00-design-system.mockup.html': 'Design system', '01-run-start.mockup.html': 'Run mới', '02-run-approval.mockup.html': 'Chờ duyệt kế hoạch',
+    '03-run-running.mockup.html': 'Đang chạy', '04-run-blocked.mockup.html': 'Cần xử lý', '05-run-completed.mockup.html': 'Hoàn tất',
+    '06-flow-studio.mockup.html': 'Flow studio', '07-profiles.mockup.html': 'Agent profiles', '08-memory.mockup.html': 'Project memory', '09-session-viewer.mockup.html': 'Xem session',
+  };
+  // Text of a clicked control -> screen it leads to.
+  const routes = [
+    [/^(\+|＋)\s*Run mới$/, '01-run-start.mockup.html'], [/Bắt đầu$/, '02-run-approval.mockup.html'], [/^Duyệt và thực hiện$/, '03-run-running.mockup.html'],
+    [/Chạy lại review|Đổi và chạy lại|^Tiếp tục$/, '03-run-running.mockup.html'], [/Tôi đã xem, duyệt|Áp dụng vào branch/, '05-run-completed.mockup.html'],
+    [/Chạy flow$/, '01-run-start.mockup.html'], [/^Runs$/, '01-run-start.mockup.html'], [/^Flow library|^(Dev|Research|Test1?)$/, '06-flow-studio.mockup.html'],
+    [/^Agent profiles$/, '07-profiles.mockup.html'], [/Xem session|Mở session đầy đủ/, '09-session-viewer.mockup.html'], [/^Project memory$/, '08-memory.mockup.html'],
+  ];
+  const historyRoutes = [[/Đang chạy/, '03-run-running.mockup.html'], [/Chờ duyệt/, '02-run-approval.mockup.html'], [/Cần xử lý/, '04-run-blocked.mockup.html'], [/Hoàn tất/, '05-run-completed.mockup.html']];
+  const here = decodeURIComponent(location.pathname.split('/').pop() || '');
+  const canNavigate = /^(file|https?):$/.test(location.protocol) && location.href !== 'about:srcdoc';
+
+  const style = document.createElement('style');
+  style.textContent = `.proto-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;z-index:9999;background:#30302e;color:#f2efe8;border:1px solid #4a4944;border-radius:10px;padding:9px 14px;font:13px 'Segoe UI',system-ui,sans-serif;box-shadow:0 8px 28px #0008;transition:all .18s;pointer-events:none;max-width:70vw}
+.proto-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}.proto-toast b{color:#e8956f}
+.proto-nav{position:fixed;right:16px;bottom:16px;z-index:9998;font:12px 'Segoe UI',system-ui,sans-serif}
+.proto-nav summary{list-style:none;cursor:pointer;background:#30302e;color:#d4d0c6;border:1px solid #4a4944;border-radius:999px;padding:6px 12px;box-shadow:0 6px 18px #0007}
+.proto-nav summary::-webkit-details-marker{display:none}
+.proto-nav div{position:absolute;right:0;bottom:36px;background:#262624;border:1px solid #4a4944;border-radius:10px;padding:6px;min-width:210px;box-shadow:0 10px 30px #0009}
+.proto-nav a{display:block;padding:6px 9px;border-radius:6px;color:#d4d0c6;text-decoration:none}.proto-nav a:hover{background:#2d2c29}.proto-nav a.here{color:#e8956f;font-weight:600}
+[data-proto-click]{cursor:pointer}`;
+  document.head.appendChild(style);
+  const toast = document.createElement('div'); toast.className = 'proto-toast'; document.body.appendChild(toast);
+  let timer;
+  const say = html => { toast.innerHTML = html; toast.classList.add('show'); clearTimeout(timer); timer = setTimeout(() => toast.classList.remove('show'), 1800); };
+  const go = file => {
+    if (!file || file === here) return false;
+    if (canNavigate) { location.href = file; return true; }
+    say(`→ Màn <b>${screens[file]}</b> · mở file <code>${file}</code>`); return true;
+  };
+  // Screen switcher, bottom right.
+  const nav = document.createElement('details'); nav.className = 'proto-nav';
+  nav.innerHTML = `<summary>☰ Màn: ${screens[here] ?? 'mockup'}</summary><div>${Object.entries(screens).map(([file, name]) => `<a href="${file}" data-goto="${file}" class="${file === here ? 'here' : ''}">${file.slice(0, 2)} · ${name}</a>`).join('')}</div>`;
+  document.body.appendChild(nav);
+
+  const label = el => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const selectable = ['on', 'active', 'selected'];
+  // Move the selection class among siblings of the same kind (tabs, chips, cards, list items).
+  function select(el) {
+    for (let node = el; node && node !== document.body; node = node.parentElement) {
+      const parent = node.parentElement; if (!parent) break;
+      const siblings = [...parent.children].filter(child => child.tagName === node.tagName);
+      const cls = selectable.find(name => siblings.some(child => child !== node && child.classList.contains(name)));
+      if (cls && siblings.length > 1) { siblings.forEach(child => child.classList.remove(cls)); node.classList.add(cls); return true; }
+    }
+    return false;
+  }
+  document.addEventListener('click', event => {
+    const target = event.target;
+    if (target.closest('input, textarea, select, summary, label')) return;
+    const link = target.closest('[data-goto]');
+    if (link) { event.preventDefault(); go(link.getAttribute('data-goto')); nav.removeAttribute('open'); return; }
+    if (target.closest('a[href]')) { event.preventDefault(); }
+    const toggle = target.closest('.toggle, .switch');
+    if (toggle) { toggle.classList.toggle('on'); return; }
+    const control = target.closest('a, button, .btn, .nav, .chip, .preset, .tab, .diff-tab, .filter, .tchip, .version, .flow-card, .choice, .run-item, .run-history-item, .pitem, .issue, .node, .segmented > *, [role="tab"], .copy, .copy-btn');
+    if (!control) return;
+    const text = label(control);
+    if (/Xem trực tiếp/.test(text)) { const live = document.querySelector('[class*="live"]'); if (live) { live.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; } }
+    if (/Sao chép|^Chép/.test(text)) { const old = control.innerHTML; control.textContent = 'Đã chép ✓'; setTimeout(() => { control.innerHTML = old; }, 1300); return; }
+    if (control.matches('[disabled]')) { say('Nút đang bị khóa'); return; }
+    const history = control.closest('.run-item, .run-history-item');
+    if (history) { select(history); const route = historyRoutes.find(([pattern]) => pattern.test(label(history))); if (route) go(route[1]); return; }
+    const selected = select(control);
+    const core = text.replace(/^[^\p{L}\p{N}+＋]+/u, '').replace(/\s+\d+$/, '');
+    const route = routes.find(([pattern]) => pattern.test(text) || pattern.test(core));
+    if (route && go(route[1])) return;
+    if (!selected) say(`Bấm <b>${text.slice(0, 60)}</b> · mockup chưa gắn hành động`);
+  }, true);
+})();
+/* ==== END NEOMIND PROTOTYPE SCRIPT ==== */
+</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { SystemdScope, type WorkerScope } from '../adapters/systemd-scope.js';
+import { stopExistingWorkerScope, type WorkerScope } from '../adapters/worker-scope.js';
 import { CodexCheckExecutor, type CheckSpec } from '../adapters/codex-check.js';
 import { OwnedJournal } from '../storage/owned-journal.js';
 import { captureBaseline } from '../workspace/baseline.js';
@@ -23,7 +23,7 @@ export class CodexCheckDispatch {
     if (!check || check.status !== 'unresolved' || !check.workerUnit || !check.workerControlGroup || !held ||
       held.runId !== this.journal.runId || check.workspace !== held.workspace || check.workspaceFence !== held.fence ||
       context.lease.fence !== held.fence || context.lease.hostId !== held.hostId) throw new Error('Check or workspace lease does not match');
-    if (!await SystemdScope.stopExisting({ unit: check.workerUnit, controlGroup: check.workerControlGroup })) {
+    if (!await stopExistingWorkerScope({ unit: check.workerUnit, controlGroup: check.workerControlGroup })) {
       if (!held.quarantined) context.coordinator.quarantine(context.lease);
       throw new Error('Check worker stop remains unconfirmed; workspace quarantined');
     }

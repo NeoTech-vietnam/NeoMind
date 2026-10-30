@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>NeoMind · Run cần xử lý (review chưa kết luận)</title>
+<style>
+/* ==== NEOMIND SHARED STYLES (copy this block verbatim into every NeoMind mockup) ==== */
+/* Dark theme in the Claude Code palette: warm charcoal surfaces, ivory text, clay accent. */
+:root {
+  color-scheme: dark;
+  --font: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, -apple-system, sans-serif;
+  --mono: 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --ink: #f2efe8; --ink-2: #d4d0c6; --ink-3: #a9a499; --ink-4: #85817a;
+  --bg: #1f1e1d; --surface: #262624; --soft: #2d2c29; --field: #1c1b1a; --code-bg: #161514;
+  --line: #3b3a36; --line-2: #312f2c;
+  --accent: #d97757; --accent-2: #e8956f; --accent-strong: #c15f3c; --accent-soft: #3a2822; --accent-line: #6b3f2e;
+  --green: #86c99a; --green-soft: #1e3326; --green-line: #2f5a3c;
+  --amber: #e5b567; --amber-soft: #3a2f1b; --amber-line: #6a5328;
+  --red: #f08a80; --red-soft: #3d2222; --red-line: #6e3434;
+  --blue: #8db4ea; --blue-soft: #1d2a3b; --blue-line: #34507a;
+  --gray: #a9a499; --gray-soft: #33322f;
+  --proposal: #6fd3c4; --proposal-soft: #173330; --proposal-line: #3e9e92;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--font); font-size: 14px; color: var(--ink); background: var(--bg); }
+h1, h2, h3, h4, p { margin: 0; }
+code, pre { font-family: var(--mono); font-size: 12.5px; }
+button { font: inherit; cursor: pointer; color: inherit; }
+/* Shell */
+.app { display: grid; grid-template-columns: 232px 1fr; grid-template-rows: 58px 1fr; min-height: 100vh; }
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; font-size: 18px; letter-spacing: -.5px; }
+.brand-mark { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: var(--code-bg); display: grid; place-items: center; font-size: 18px; }
+.brand b { font-weight: 700; }
+.brand-divider { height: 20px; width: 1px; background: var(--line); margin: 0 4px; }
+.product { font-size: 11px; letter-spacing: 1.2px; color: var(--ink-4); font-weight: 700; }
+.project { border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px; color: var(--ink-2); font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: center; white-space: nowrap; background: var(--surface); }
+.project small { color: var(--ink-4); font-weight: 400; }
+.project i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.sidebar { background: var(--bg); border-right: 1px solid var(--line); padding: 18px 12px; }
+.side-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--ink-4); text-transform: uppercase; padding: 0 10px; margin: 0 0 8px; display: flex; justify-content: space-between; }
+.nav { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; color: var(--ink-2); font-size: 13.5px; font-weight: 600; margin: 1px 0; }
+.nav span { width: 18px; text-align: center; color: var(--ink-4); }
+.nav.on { background: var(--soft); color: var(--ink); }
+.nav.on span { color: var(--accent); }
+.nav em { margin-left: auto; font-style: normal; background: var(--accent-soft); color: var(--accent-2); border-radius: 6px; padding: 1px 7px; font-size: 11.5px; }
+.side-divider { height: 1px; background: var(--line-2); margin: 16px 8px; }
+.main { padding: 18px 28px 32px; min-width: 0; }
+.crumbs { font-size: 12.5px; color: var(--ink-4); margin-bottom: 14px; display: flex; gap: 8px; }
+.crumbs b { color: var(--ink-2); font-weight: 600; }
+.page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 18px; }
+.page-head h1 { font-size: 24px; letter-spacing: -.6px; font-weight: 700; }
+.page-head p { color: var(--ink-3); font-size: 13.5px; margin-top: 5px; }
+/* Components */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin-bottom: 16px; }
+.card h2 { font-size: 19px; letter-spacing: -.3px; line-height: 1.4; }
+.card h3 { font-size: 16px; letter-spacing: -.2px; }
+.card h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--ink-4); margin: 14px 0 6px; }
+.card-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.btn { height: 34px; border-radius: 8px; padding: 0 14px; font-size: 13px; font-weight: 600; border: 1px solid var(--line); background: var(--soft); color: var(--ink-2); white-space: nowrap; }
+.btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; box-shadow: 0 2px 8px #c15f3c40; }
+.btn.large { height: 40px; padding: 0 22px; font-size: 14px; }
+.btn.ghost { color: var(--accent-2); border-color: var(--accent-line); background: transparent; }
+.btn.danger { color: var(--red); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.t-green { background: var(--green-soft); color: var(--green); } .t-amber { background: var(--amber-soft); color: var(--amber); }
+.t-red { background: var(--red-soft); color: var(--red); } .t-violet { background: var(--accent-soft); color: var(--accent-2); }
+.t-blue { background: var(--blue-soft); color: var(--blue); } .t-gray { background: var(--gray-soft); color: var(--gray); }
+.pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.callout { border-radius: 8px; padding: 10px 13px; font-size: 13.5px; line-height: 1.5; margin: 12px 0; border: 1px solid transparent; }
+.callout.red { background: var(--red-soft); color: var(--red); border-color: var(--red-line); }
+.callout.amber { background: var(--amber-soft); color: var(--amber); border-color: var(--amber-line); }
+.callout.green { background: var(--green-soft); color: var(--green); border-color: var(--green-line); }
+.callout.violet { background: var(--accent-soft); color: var(--accent-2); border-color: var(--accent-line); }
+.callout.blue { background: var(--blue-soft); color: var(--blue); border-color: var(--blue-line); }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); margin-bottom: 14px; }
+.field small { font-weight: 400; color: var(--ink-3); }
+.input, .select, .textarea { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--field); color: var(--ink); font-weight: 400; font-size: 14px; width: 100%; font-family: var(--font); }
+.select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%), linear-gradient(135deg, var(--ink-3) 50%, transparent 50%); background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 28px; }
+.textarea { min-height: 84px; line-height: 1.5; resize: vertical; }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; padding: 2px; background: var(--field); }
+.segmented span { padding: 5px 11px; border-radius: 6px; font-size: 13px; font-weight: 600; color: var(--ink-3); white-space: nowrap; }
+.segmented span.on { background: var(--soft); color: var(--accent-2); box-shadow: 0 1px 3px #0000004d; }
+.hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
+.muted { color: var(--ink-4); font-size: 12.5px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.green { background: var(--green); } .dot.amber { background: var(--amber); } .dot.red { background: var(--red); } .dot.violet { background: var(--accent); } .dot.gray { background: var(--ink-4); }
+/* Proposal marker: anything not implemented yet carries this tag (teal, so it never reads as the clay accent). */
+.proposal { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; letter-spacing: .3px; color: var(--proposal); background: var(--proposal-soft); border: 1px dashed var(--proposal-line); border-radius: 6px; padding: 1px 7px; vertical-align: middle; }
+.proposal-box { outline: 2px dashed var(--proposal-line); outline-offset: 4px; border-radius: 12px; }
+/* ==== END NEOMIND SHARED STYLES ==== */
+/* ---- Run detail page (shared by 03/04/05 mockups) ---- */
+.runs-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 20px; align-items: start; }
+.history { padding: 10px; position: sticky; top: 16px; }
+.new-run { width: 100%; border: 1px dashed var(--accent-line); background: var(--soft); color: var(--accent-2); border-radius: 9px; padding: 9px; font-weight: 600; font-size: 13.5px; }
+.history-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--ink-4); text-transform: uppercase; margin: 16px 8px 6px; }
+.run-item { display: flex; gap: 10px; align-items: flex-start; padding: 9px 8px; border-radius: 8px; margin: 1px 0; }
+.run-item .dot { margin-top: 5px; }
+.run-item strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13.5px; font-weight: 600; line-height: 1.35; }
+.run-item small { display: block; color: var(--ink-3); margin-top: 3px; font-size: 12px; }
+.run-item.selected { background: var(--accent-soft); }
+
+.run-header-top { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
+.run-header-text { min-width: 0; }
+.run-header h2 { margin-top: 8px; }
+.meta-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-top: 8px; font-size: 13px; color: var(--ink-3); }
+.run-actions { display: flex; gap: 8px; flex: none; }
+.card p, .card li { line-height: 1.55; }
+
+.stepper { list-style: none; padding: 0; margin: 18px 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.step { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--surface); min-width: 0; }
+.step > div { min-width: 0; }
+.step strong { display: block; font-size: 13.5px; }
+.step small { display: block; font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+.step small.step-agent { color: var(--ink-4); font-size: 11.5px; line-height: 1.4; }
+.step-icon { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none; background: var(--gray-soft); color: var(--gray); }
+.step.done .step-icon { background: var(--green-soft); color: var(--green); }
+.step.live { border-color: var(--accent-line); background: var(--soft); box-shadow: 0 0 0 3px #d977571f; }
+.step.live .step-icon { background: var(--accent); color: #fff; animation: pulse 1.4s ease-in-out infinite; }
+.step.paused { border-color: var(--amber-line); } .step.paused .step-icon { background: var(--amber-soft); color: var(--amber); font-size: 9px; }
+.step.wait strong { color: var(--ink-3); }
+
+.plan-goal { font-size: 15px; font-weight: 600; line-height: 1.5; }
+.plan-approach { color: var(--ink-2); margin-top: 8px; font-size: 14px; }
+.plan-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 24px; }
+.criteria { padding-left: 0; list-style: none; margin: 0; }
+.criteria li { padding-left: 22px; position: relative; margin: 4px 0; font-size: 14px; }
+.criteria li::before { content: '•'; position: absolute; left: 6px; color: var(--accent); }
+
+.card details { margin: 10px 0; }
+.card summary { cursor: pointer; color: var(--accent-2); font-weight: 600; font-size: 13.5px; }
+.logs { margin: 0 !important; }
+.logs + .logs { margin-top: 10px !important; }
+.logs > summary { color: var(--ink-2); }
+
+.verify-row { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--line-2); }
+.verify-row.first { border-top: 0; padding-top: 4px; }
+.verify-row > .badge { margin-top: 2px; min-width: 96px; justify-content: center; }
+.verify-row.superseded { opacity: .6; }
+.verify-body { min-width: 0; flex: 1; }
+.verify-body p { margin-top: 4px; color: var(--ink-2); font-size: 13.5px; }
+.verify-body details { margin: 6px 0 0; }
+.verify-body small { color: var(--ink-4); font-size: 12.5px; }
+.criteria-status { list-style: none; padding: 0; margin: 8px 0 0; }
+.criteria-status li { display: flex; gap: 8px; align-items: baseline; margin: 5px 0; font-size: 13.5px; }
+.criteria-status .badge { min-width: 76px; justify-content: center; }
+.finding { font-size: 13px; background: var(--amber-soft); border-radius: 6px; padding: 6px 9px; margin-top: 6px; line-height: 1.5; }
+
+.copy-btn { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; font-size: 12px; padding: 3px 9px; color: var(--ink-2); }
+.command { display: flex; align-items: center; gap: 10px; background: var(--code-bg); color: var(--ink); border-radius: 8px; padding: 9px 12px; margin-top: 6px; }
+.command code { flex: 1; }
+.command .copy-btn { background: var(--soft); color: var(--ink); border-color: var(--line); }
+
+/* Unified diff (proposal in 04/05) */
+.diff-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-top: 12px; }
+.diff-tab { padding: 7px 12px; font-family: var(--mono); font-size: 12.5px; color: var(--ink-3); border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; margin-bottom: -1px; display: flex; gap: 8px; align-items: center; }
+.diff-tab.on { background: var(--surface); border-color: var(--line); color: var(--ink); font-weight: 600; }
+.add-n { color: var(--green); font-weight: 600; } .del-n { color: var(--red); font-weight: 600; }
+.diff { border: 1px solid var(--line); border-top: 0; border-radius: 0 0 8px 8px; overflow: hidden; font-family: var(--mono); font-size: 12.5px; line-height: 1.65; background: var(--surface); }
+.diff .ln { display: grid; grid-template-columns: 38px 38px 18px 1fr; white-space: pre; }
+.diff .ln span:nth-child(-n+2) { color: var(--ink-4); text-align: right; padding-right: 8px; background: var(--soft); font-size: 11.5px; }
+.diff .ln span:nth-child(3) { text-align: center; color: var(--ink-4); }
+.diff .ln.hunk { background: var(--blue-soft); color: var(--blue); }
+.diff .ln.hunk span { background: transparent !important; color: var(--blue) !important; }
+.diff .ln.add { background: var(--green-soft); } .diff .ln.add span:nth-child(-n+2) { background: var(--green-soft); } .diff .ln.add span:nth-child(3) { color: var(--green); }
+.diff .ln.del { background: var(--red-soft); } .diff .ln.del span:nth-child(-n+2) { background: var(--red-soft); } .diff .ln.del span:nth-child(3) { color: var(--red); }
+
+/* Design notes at the bottom of each mockup */
+.notes { background: transparent; border-style: dashed; }
+.notes h3 { font-size: 14px; color: var(--ink-3); }
+.notes ol { margin: 8px 0 0; padding-left: 20px; color: var(--ink-3); font-size: 13px; }
+.notes li { margin: 4px 0; }
+
+/* ---- Page-specific: 04 run blocked ---- */
+.raw-reason code { font-size: 12.5px; }
+.why-card { border-color: var(--red-line); }
+.why-lead { font-size: 14.5px; line-height: 1.6; color: var(--ink); }
+.why-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.why-col { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--soft); }
+.why-col h4 { margin: 0 0 8px !important; }
+.why-col p { font-size: 13.5px; color: var(--ink-2); }
+.why-col p + p { margin-top: 6px; }
+.why-col code { font-size: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.done-list { list-style: none; padding: 0; margin: 0; font-size: 13px; }
+.done-list li { display: grid; grid-template-columns: 18px 1fr; gap: 6px; margin: 4px 0; color: var(--ink-2); line-height: 1.45; }
+.done-list li i { font-style: normal; font-weight: 700; text-align: center; }
+.done-list .ok { color: var(--green); } .done-list .wait { color: var(--amber); } .done-list .stop { color: var(--red); }
+
+.choices-title { display: flex; align-items: baseline; justify-content: space-between; margin: 20px 0 10px; }
+.choices-title h3 { font-size: 15px; }
+.choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.choice { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; background: var(--surface); }
+.choice.recommended { border-color: var(--accent-line); background: var(--soft); box-shadow: 0 0 0 3px #d977571f; }
+.choice.override { border-color: var(--amber-line); }
+.choice-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.choice-head strong { font-size: 14px; }
+.choice p { font-size: 13px; color: var(--ink-3); line-height: 1.5; flex: 1; }
+.choice-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 4px; }
+.choice-foot .muted { font-size: 12px; }
+
+.diff-card summary { color: var(--ink) !important; font-size: 16px !important; font-weight: 600; letter-spacing: -.2px; }
+.diff-card summary .muted { font-weight: 400; font-size: 12.5px; margin-left: 6px; }
+.diff-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">✳</span><span>neo<b>mind</b></span><span class="brand-divider"></span><span class="product">FLOW STUDIO</span></div>
+    <div class="project"><i></i>claude-e2e1 <small>W:\projects\…\demo\claude-e2e1</small></div>
+  </header>
+
+  <aside class="sidebar">
+    <div class="side-title">Workspace</div>
+    <div class="nav"><span>▧</span>Flow library<em>2</em></div>
+    <div class="nav on"><span>▶</span>Runs</div>
+    <div class="nav"><span>✦</span>Agent profiles</div>
+    <div class="nav"><span>◇</span>Project memory</div>
+    <div class="side-divider"></div>
+    <div class="side-title">Flows <span>＋</span></div>
+    <div class="nav"><span>◆</span>Dev</div>
+    <div class="nav"><span>◆</span>Research</div>
+  </aside>
+
+  <main class="main">
+    <div class="crumbs"><span>claude-e2e1</span>›<b>Runs</b></div>
+    <div class="page-head">
+      <div><h1>Runs</h1><p>Giao việc cho agent, duyệt kế hoạch và theo dõi tới khi có commit.</p></div>
+    </div>
+
+    <div class="runs-layout">
+      <!-- History -->
+      <div class="card history">
+        <button class="new-run">＋ Run mới</button>
+        <div class="history-title">Lịch sử</div>
+        <div class="run-item selected"><span class="dot red"></span><div><strong>Thêm hàm power(base, exponent) vào calc.js dùng Math.pow, export và thêm assertion trong test.js</strong><small>Cần xử lý · Dev · 2 phút 14 giây</small></div></div>
+        <div class="run-item"><span class="dot green"></span><div><strong>Thêm hàm divide(a, b) vào calc.js, ném Error khi chia cho 0</strong><small>Hoàn tất · Dev · 1 phút 25 giây</small></div></div>
+        <div class="run-item"><span class="dot red"></span><div><strong>Thêm hàm subtract(a, b) vào calc.js, export và thêm assertion trong test.js</strong><small>Cần xử lý · Dev · 1 giây</small></div></div>
+        <div class="run-item"><span class="dot green"></span><div><strong>Thêm hàm subtract(a, b) vào calc.js, export và thêm assertion trong test.js</strong><small>Hoàn tất · Dev · 52 giây</small></div></div>
+      </div>
+
+      <div>
+        <!-- Run header (baseline) -->
+        <div class="card run-header">
+          <div class="run-header-top">
+            <div class="run-header-text">
+              <span class="badge t-red">Cần xử lý</span>
+              <h2>Thêm hàm power(base, exponent) vào calc.js dùng Math.pow, export và thêm assertion trong test.js</h2>
+              <div class="meta-row"><span>Dev v1</span><span>⏱ 2 phút 14 giây</span><span>96k tokens*</span></div>
+            </div>
+            <div class="run-actions"><button class="btn" title="Giống 'Chạy lại review' bên dưới">Tiếp tục</button><button class="btn danger">Hủy run</button></div>
+          </div>
+          <div class="callout red raw-reason"><code>required-reviewer: evidence or criteria not verified</code></div>
+          <ol class="stepper">
+            <li class="step done"><span class="step-icon">✓</span><div><strong>Plan</strong><small>Xong</small><small class="step-agent">Claude Code · Sonnet 5.5 · Vừa</small></div></li>
+            <li class="step done"><span class="step-icon">✓</span><div><strong>Approve plan</strong><small>Xong</small></div></li>
+            <li class="step done"><span class="step-icon">✓</span><div><strong>Implement</strong><small>Xong</small><small class="step-agent">Claude Code · Sonnet 5.5 · Vừa</small></div></li>
+            <li class="step done"><span class="step-icon">✓</span><div><strong>Bounded repair</strong><small>Xong</small></div></li>
+            <li class="step paused"><span class="step-icon">❚❚</span><div><strong>Independent review</strong><small>Dừng giữa chừng</small><small class="step-agent">required-reviewer: Claude Code · Haiku 5.5 · Thấp</small></div></li>
+            <li class="step wait"><span class="step-icon">○</span><div><strong>Local commit</strong><small>Chờ</small></div></li>
+          </ol>
+        </div>
+
+        <!-- Why did the run stop + next actions (proposal) -->
+        <div class="card why-card proposal-box">
+          <div class="card-title"><h3>Vì sao run dừng? <span class="proposal">ĐỀ XUẤT</span></h3><span class="badge t-amber">Review chưa kết luận · 2 lượt</span></div>
+          <p class="why-lead">Code đã viết xong và <b>npm test đạt</b>. Reviewer xác nhận được <b>7/8 tiêu chí</b>, nhưng 2 lượt liên tiếp không kiểm được tiêu chí còn lại, nên NeoMind dừng trước khi commit để bạn quyết định.</p>
+          <div class="why-grid">
+            <div class="why-col">
+              <h4>Chưa xác nhận được</h4>
+              <p><b>“Hàm add và assertion cũ giữ nguyên”</b></p>
+              <p>Muốn biết add có bị đổi không thì phải so với bản trước khi sửa.</p>
+            </div>
+            <div class="why-col">
+              <h4>Vì sao</h4>
+              <p>Reviewer <b>Claude Code · Haiku 5.5</b> chỉ được đọc file, không được chạy shell, nên không xem được <code>git diff</code>.</p>
+              <p>Nó chỉ thấy file hiện tại, không có bản cũ để so.</p>
+            </div>
+            <div class="why-col">
+              <h4>NeoMind đã làm</h4>
+              <ul class="done-list">
+                <li><i class="ok">✓</i>Review lượt 1 · Chưa kết luận</li>
+                <li><i class="ok">✓</i>Tự chạy lại review (đã thử lại 1 lần)</li>
+                <li><i class="wait">!</i>Review lượt 2 · Chưa kết luận, cùng lý do</li>
+                <li><i class="stop">■</i>Dừng run, chưa commit. Worktree giữ nguyên.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="choices-title"><h3>Bạn muốn làm gì tiếp?</h3><span class="muted">Chọn một cách</span></div>
+          <div class="choices">
+            <div class="choice recommended">
+              <div class="choice-head"><strong>Chạy lại review kèm diff</strong><span class="badge t-violet">Nên chọn</span></div>
+              <p>NeoMind gửi kèm diff của run cho reviewer, nên không cần shell vẫn so được với bản cũ. Giữ nguyên Claude Code · Haiku 5.5.</p>
+              <div class="choice-foot"><span class="muted">~20 giây · ~15k tokens</span><button class="btn primary">Chạy lại review</button></div>
+            </div>
+            <div class="choice">
+              <div class="choice-head"><strong>Đổi reviewer sang Codex · GPT-6 Luna rồi chạy lại</strong></div>
+              <p>Codex chạy được <code>git diff</code> trong sandbox chỉ đọc. Chỉ đổi cho run này, flow Dev không đổi.</p>
+              <div class="choice-foot"><span class="muted">~30 giây · ~25k tokens</span><button class="btn ghost">Đổi và chạy lại</button></div>
+            </div>
+            <div class="choice override">
+              <div class="choice-head"><strong>Xem diff và tự duyệt</strong><span class="badge t-amber">Bỏ qua review</span></div>
+              <p>Bạn xác nhận thay cho reviewer rồi run commit tiếp. Run được ghi là “duyệt bởi bạn”, không có review độc lập.</p>
+              <div class="choice-foot"><span class="muted">Diff ở ngay bên dưới</span><button class="btn">Tôi đã xem, duyệt</button></div>
+            </div>
+            <div class="choice">
+              <div class="choice-head"><strong>Hủy run</strong></div>
+              <p>Không commit. Worktree và thay đổi của run vẫn được giữ để xem lại sau.</p>
+              <div class="choice-foot"><span class="muted">Không hoàn tác được</span><button class="btn danger">Hủy run</button></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Diff under review (proposal) -->
+        <div class="card diff-card proposal-box">
+          <details open>
+            <summary>Diff đang được review <span class="proposal">ĐỀ XUẤT</span><span class="muted">2 file · <span class="add-n">+7</span> <span class="del-n">−1</span> · so với main@a41c9e2</span></summary>
+            <div class="diff-tabs">
+              <span class="diff-tab on">calc.js <span class="add-n">+4</span><span class="del-n">−1</span></span>
+              <span class="diff-tab">test.js <span class="add-n">+3</span></span>
+            </div>
+            <div class="diff">
+              <div class="ln hunk"><span></span><span></span><span></span><span>@@ -1,5 +1,9 @@</span></div>
+              <div class="ln"><span>1</span><span>1</span><span></span><span>function add(a, b) {</span></div>
+              <div class="ln"><span>2</span><span>2</span><span></span><span>  return a + b;</span></div>
+              <div class="ln"><span>3</span><span>3</span><span></span><span>}</span></div>
+              <div class="ln"><span>4</span><span>4</span><span></span><span></span></div>
+              <div class="ln del"><span>5</span><span></span><span>−</span><span>module.exports = { add };</span></div>
+              <div class="ln add"><span></span><span>5</span><span>+</span><span>function power(base, exponent) {</span></div>
+              <div class="ln add"><span></span><span>6</span><span>+</span><span>  return Math.pow(base, exponent);</span></div>
+              <div class="ln add"><span></span><span>7</span><span>+</span><span>}</span></div>
+              <div class="ln add"><span></span><span>8</span><span>+</span><span></span></div>
+              <div class="ln add"><span></span><span>9</span><span>+</span><span>module.exports = { add, power };</span></div>
+            </div>
+            <div class="diff-meta"><span class="hint">Dòng 1–3 (hàm add) không đổi: đây chính là điều reviewer chưa kiểm được.</span><button class="copy-btn">Mở trong editor</button></div>
+          </details>
+        </div>
+
+        <!-- Checks (baseline) -->
+        <div class="card">
+          <div class="card-title"><h3>Kiểm tra</h3></div>
+          <div class="verify-row first"><span class="badge t-green">Đạt</span><div class="verify-body"><code>npm test</code>
+            <details><summary>Output</summary></details></div></div>
+
+          <div class="verify-row"><span class="badge t-amber">Chưa kết luận</span>
+            <div class="verify-body"><strong>Independent review · required-reviewer</strong> <small>Claude Code · Haiku 5.5 · Thấp</small>
+              <p>power được thêm vào calc.js, dùng Math.pow và được export; test.js có assertion cho số mũ dương, 0 và âm; npm test đạt. Không xác nhận được hàm add và assertion cũ có giữ nguyên hay không vì không xem được diff.</p>
+              <details open><summary>8 tiêu chí</summary>
+                <ul class="criteria-status">
+                  <li><span class="badge t-green">Đạt</span>calc.js định nghĩa power(base, exponent) trả về Math.pow(base, exponent)</li>
+                  <li><span class="badge t-green">Đạt</span>calc.js export cả add và power</li>
+                  <li><span class="badge t-green">Đạt</span>test.js có assertion cho power với số mũ dương</li>
+                  <li><span class="badge t-green">Đạt</span>test.js có assertion cho power với số mũ 0</li>
+                  <li><span class="badge t-green">Đạt</span>test.js có assertion cho power với số mũ âm</li>
+                  <li><span class="badge t-red">Bị chặn</span>Hàm add và assertion cũ giữ nguyên</li>
+                  <li><span class="badge t-green">Đạt</span>Chỉ sửa calc.js và test.js</li>
+                  <li><span class="badge t-green">Đạt</span>npm test thoát 0 và in 'all tests passed'</li>
+                </ul>
+                <p class="finding"><strong>F1</strong> · Hàm add và assertion cũ giữ nguyên: không chạy được git diff (không có quyền shell) nên không so được với bản trước khi sửa; chỉ đọc được nội dung hiện tại của calc.js và test.js.</p>
+              </details>
+            </div></div>
+
+          <div class="verify-row superseded"><span class="badge t-amber">Chưa kết luận</span>
+            <div class="verify-body"><strong>Independent review · required-reviewer</strong> <small>Claude Code · Haiku 5.5 · Thấp · lượt trước</small>
+              <p>Phần power đúng kế hoạch. Không đủ bằng chứng để xác nhận add không đổi.</p>
+              <details><summary>8 tiêu chí</summary></details>
+            </div></div>
+        </div>
+
+        <!-- Logs (baseline) -->
+        <div class="card">
+          <details class="logs"><summary>Logs và output (7)</summary></details>
+          <details class="logs"><summary>Chi tiết kỹ thuật</summary></details>
+        </div>
+
+        <div class="card notes">
+          <h3>Ghi chú thiết kế</h3>
+          <ol>
+            <li>Lý do thô (<code>required-reviewer: evidence or criteria not verified</code>) vẫn giữ trong callout đỏ, panel "Vì sao run dừng?" diễn giải lại bằng lời thường.</li>
+            <li>Chỉ một nút primary: "Chạy lại review". Khi có thẻ hành động, nút "Tiếp tục" ở header hạ xuống secondary (cùng hành động).</li>
+            <li>"Tự duyệt" bỏ qua review độc lập nên dùng tone amber và ghi vào lịch sử run.</li>
+            <li>Thẻ "Kế hoạch đã duyệt" (giống màn 03) vẫn có trên màn thật, mockup lược bớt cho gọn.</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script>
+/* ==== NEOMIND PROTOTYPE SCRIPT (same in every mockup) ==== */
+/* Clickable prototype: selections, toggles and copy buttons work in place; main actions move between screens. */
+(() => {
+  const screens = {
+    '00-design-system.mockup.html': 'Design system', '01-run-start.mockup.html': 'Run mới', '02-run-approval.mockup.html': 'Chờ duyệt kế hoạch',
+    '03-run-running.mockup.html': 'Đang chạy', '04-run-blocked.mockup.html': 'Cần xử lý', '05-run-completed.mockup.html': 'Hoàn tất',
+    '06-flow-studio.mockup.html': 'Flow studio', '07-profiles.mockup.html': 'Agent profiles', '08-memory.mockup.html': 'Project memory', '09-session-viewer.mockup.html': 'Xem session',
+  };
+  // Text of a clicked control -> screen it leads to.
+  const routes = [
+    [/^(\+|＋)\s*Run mới$/, '01-run-start.mockup.html'], [/Bắt đầu$/, '02-run-approval.mockup.html'], [/^Duyệt và thực hiện$/, '03-run-running.mockup.html'],
+    [/Chạy lại review|Đổi và chạy lại|^Tiếp tục$/, '03-run-running.mockup.html'], [/Tôi đã xem, duyệt|Áp dụng vào branch/, '05-run-completed.mockup.html'],
+    [/Chạy flow$/, '01-run-start.mockup.html'], [/^Runs$/, '01-run-start.mockup.html'], [/^Flow library|^(Dev|Research|Test1?)$/, '06-flow-studio.mockup.html'],
+    [/^Agent profiles$/, '07-profiles.mockup.html'], [/Xem session|Mở session đầy đủ/, '09-session-viewer.mockup.html'], [/^Project memory$/, '08-memory.mockup.html'],
+  ];
+  const historyRoutes = [[/Đang chạy/, '03-run-running.mockup.html'], [/Chờ duyệt/, '02-run-approval.mockup.html'], [/Cần xử lý/, '04-run-blocked.mockup.html'], [/Hoàn tất/, '05-run-completed.mockup.html']];
+  const here = decodeURIComponent(location.pathname.split('/').pop() || '');
+  const canNavigate = /^(file|https?):$/.test(location.protocol) && location.href !== 'about:srcdoc';
+
+  const style = document.createElement('style');
+  style.textContent = `.proto-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;z-index:9999;background:#30302e;color:#f2efe8;border:1px solid #4a4944;border-radius:10px;padding:9px 14px;font:13px 'Segoe UI',system-ui,sans-serif;box-shadow:0 8px 28px #0008;transition:all .18s;pointer-events:none;max-width:70vw}
+.proto-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}.proto-toast b{color:#e8956f}
+.proto-nav{position:fixed;right:16px;bottom:16px;z-index:9998;font:12px 'Segoe UI',system-ui,sans-serif}
+.proto-nav summary{list-style:none;cursor:pointer;background:#30302e;color:#d4d0c6;border:1px solid #4a4944;border-radius:999px;padding:6px 12px;box-shadow:0 6px 18px #0007}
+.proto-nav summary::-webkit-details-marker{display:none}
+.proto-nav div{position:absolute;right:0;bottom:36px;background:#262624;border:1px solid #4a4944;border-radius:10px;padding:6px;min-width:210px;box-shadow:0 10px 30px #0009}
+.proto-nav a{display:block;padding:6px 9px;border-radius:6px;color:#d4d0c6;text-decoration:none}.proto-nav a:hover{background:#2d2c29}.proto-nav a.here{color:#e8956f;font-weight:600}
+[data-proto-click]{cursor:pointer}`;
+  document.head.appendChild(style);
+  const toast = document.createElement('div'); toast.className = 'proto-toast'; document.body.appendChild(toast);
+  let timer;
+  const say = html => { toast.innerHTML = html; toast.classList.add('show'); clearTimeout(timer); timer = setTimeout(() => toast.classList.remove('show'), 1800); };
+  const go = file => {
+    if (!file || file === here) return false;
+    if (canNavigate) { location.href = file; return true; }
+    say(`→ Màn <b>${screens[file]}</b> · mở file <code>${file}</code>`); return true;
+  };
+  // Screen switcher, bottom right.
+  const nav = document.createElement('details'); nav.className = 'proto-nav';
+  nav.innerHTML = `<summary>☰ Màn: ${screens[here] ?? 'mockup'}</summary><div>${Object.entries(screens).map(([file, name]) => `<a href="${file}" data-goto="${file}" class="${file === here ? 'here' : ''}">${file.slice(0, 2)} · ${name}</a>`).join('')}</div>`;
+  document.body.appendChild(nav);
+
+  const label = el => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const selectable = ['on', 'active', 'selected'];
+  // Move the selection class among siblings of the same kind (tabs, chips, cards, list items).
+  function select(el) {
+    for (let node = el; node && node !== document.body; node = node.parentElement) {
+      const parent = node.parentElement; if (!parent) break;
+      const siblings = [...parent.children].filter(child => child.tagName === node.tagName);
+      const cls = selectable.find(name => siblings.some(child => child !== node && child.classList.contains(name)));
+      if (cls && siblings.length > 1) { siblings.forEach(child => child.classList.remove(cls)); node.classList.add(cls); return true; }
+    }
+    return false;
+  }
+  document.addEventListener('click', event => {
+    const target = event.target;
+    if (target.closest('input, textarea, select, summary, label')) return;
+    const link = target.closest('[data-goto]');
+    if (link) { event.preventDefault(); go(link.getAttribute('data-goto')); nav.removeAttribute('open'); return; }
+    if (target.closest('a[href]')) { event.preventDefault(); }
+    const toggle = target.closest('.toggle, .switch');
+    if (toggle) { toggle.classList.toggle('on'); return; }
+    const control = target.closest('a, button, .btn, .nav, .chip, .preset, .tab, .diff-tab, .filter, .tchip, .version, .flow-card, .choice, .run-item, .run-history-item, .pitem, .issue, .node, .segmented > *, [role="tab"], .copy, .copy-btn');
+    if (!control) return;
+    const text = label(control);
+    if (/Xem trực tiếp/.test(text)) { const live = document.querySelector('[class*="live"]'); if (live) { live.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; } }
+    if (/Sao chép|^Chép/.test(text)) { const old = control.innerHTML; control.textContent = 'Đã chép ✓'; setTimeout(() => { control.innerHTML = old; }, 1300); return; }
+    if (control.matches('[disabled]')) { say('Nút đang bị khóa'); return; }
+    const history = control.closest('.run-item, .run-history-item');
+    if (history) { select(history); const route = historyRoutes.find(([pattern]) => pattern.test(label(history))); if (route) go(route[1]); return; }
+    const selected = select(control);
+    const core = text.replace(/^[^\p{L}\p{N}+＋]+/u, '').replace(/\s+\d+$/, '');
+    const route = routes.find(([pattern]) => pattern.test(text) || pattern.test(core));
+    if (route && go(route[1])) return;
+    if (!selected) say(`Bấm <b>${text.slice(0, 60)}</b> · mockup chưa gắn hành động`);
+  }, true);
+})();
+/* ==== END NEOMIND PROTOTYPE SCRIPT ==== */
+</script>
+</body>
+</html>

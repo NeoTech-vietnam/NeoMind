@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>NeoMind · Run mới</title>
+<style>
+/* ==== NEOMIND SHARED STYLES (copy this block verbatim into every NeoMind mockup) ==== */
+/* Dark theme in the Claude Code palette: warm charcoal surfaces, ivory text, clay accent. */
+:root {
+  color-scheme: dark;
+  --font: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, -apple-system, sans-serif;
+  --mono: 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --ink: #f2efe8; --ink-2: #d4d0c6; --ink-3: #a9a499; --ink-4: #85817a;
+  --bg: #1f1e1d; --surface: #262624; --soft: #2d2c29; --field: #1c1b1a; --code-bg: #161514;
+  --line: #3b3a36; --line-2: #312f2c;
+  --accent: #d97757; --accent-2: #e8956f; --accent-strong: #c15f3c; --accent-soft: #3a2822; --accent-line: #6b3f2e;
+  --green: #86c99a; --green-soft: #1e3326; --green-line: #2f5a3c;
+  --amber: #e5b567; --amber-soft: #3a2f1b; --amber-line: #6a5328;
+  --red: #f08a80; --red-soft: #3d2222; --red-line: #6e3434;
+  --blue: #8db4ea; --blue-soft: #1d2a3b; --blue-line: #34507a;
+  --gray: #a9a499; --gray-soft: #33322f;
+  --proposal: #6fd3c4; --proposal-soft: #173330; --proposal-line: #3e9e92;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--font); font-size: 14px; color: var(--ink); background: var(--bg); }
+h1, h2, h3, h4, p { margin: 0; }
+code, pre { font-family: var(--mono); font-size: 12.5px; }
+button { font: inherit; cursor: pointer; color: inherit; }
+/* Shell */
+.app { display: grid; grid-template-columns: 232px 1fr; grid-template-rows: 58px 1fr; min-height: 100vh; }
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; font-size: 18px; letter-spacing: -.5px; }
+.brand-mark { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: var(--code-bg); display: grid; place-items: center; font-size: 18px; }
+.brand b { font-weight: 700; }
+.brand-divider { height: 20px; width: 1px; background: var(--line); margin: 0 4px; }
+.product { font-size: 11px; letter-spacing: 1.2px; color: var(--ink-4); font-weight: 700; }
+.project { border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px; color: var(--ink-2); font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: center; white-space: nowrap; background: var(--surface); }
+.project small { color: var(--ink-4); font-weight: 400; }
+.project i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.sidebar { background: var(--bg); border-right: 1px solid var(--line); padding: 18px 12px; }
+.side-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--ink-4); text-transform: uppercase; padding: 0 10px; margin: 0 0 8px; display: flex; justify-content: space-between; }
+.nav { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; color: var(--ink-2); font-size: 13.5px; font-weight: 600; margin: 1px 0; }
+.nav span { width: 18px; text-align: center; color: var(--ink-4); }
+.nav.on { background: var(--soft); color: var(--ink); }
+.nav.on span { color: var(--accent); }
+.nav em { margin-left: auto; font-style: normal; background: var(--accent-soft); color: var(--accent-2); border-radius: 6px; padding: 1px 7px; font-size: 11.5px; }
+.side-divider { height: 1px; background: var(--line-2); margin: 16px 8px; }
+.main { padding: 18px 28px 32px; min-width: 0; }
+.crumbs { font-size: 12.5px; color: var(--ink-4); margin-bottom: 14px; display: flex; gap: 8px; }
+.crumbs b { color: var(--ink-2); font-weight: 600; }
+.page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 18px; }
+.page-head h1 { font-size: 24px; letter-spacing: -.6px; font-weight: 700; }
+.page-head p { color: var(--ink-3); font-size: 13.5px; margin-top: 5px; }
+/* Components */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin-bottom: 16px; }
+.card h2 { font-size: 19px; letter-spacing: -.3px; line-height: 1.4; }
+.card h3 { font-size: 16px; letter-spacing: -.2px; }
+.card h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--ink-4); margin: 14px 0 6px; }
+.card-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.btn { height: 34px; border-radius: 8px; padding: 0 14px; font-size: 13px; font-weight: 600; border: 1px solid var(--line); background: var(--soft); color: var(--ink-2); white-space: nowrap; }
+.btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; box-shadow: 0 2px 8px #c15f3c40; }
+.btn.large { height: 40px; padding: 0 22px; font-size: 14px; }
+.btn.ghost { color: var(--accent-2); border-color: var(--accent-line); background: transparent; }
+.btn.danger { color: var(--red); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.t-green { background: var(--green-soft); color: var(--green); } .t-amber { background: var(--amber-soft); color: var(--amber); }
+.t-red { background: var(--red-soft); color: var(--red); } .t-violet { background: var(--accent-soft); color: var(--accent-2); }
+.t-blue { background: var(--blue-soft); color: var(--blue); } .t-gray { background: var(--gray-soft); color: var(--gray); }
+.pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.callout { border-radius: 8px; padding: 10px 13px; font-size: 13.5px; line-height: 1.5; margin: 12px 0; border: 1px solid transparent; }
+.callout.red { background: var(--red-soft); color: var(--red); border-color: var(--red-line); }
+.callout.amber { background: var(--amber-soft); color: var(--amber); border-color: var(--amber-line); }
+.callout.green { background: var(--green-soft); color: var(--green); border-color: var(--green-line); }
+.callout.violet { background: var(--accent-soft); color: var(--accent-2); border-color: var(--accent-line); }
+.callout.blue { background: var(--blue-soft); color: var(--blue); border-color: var(--blue-line); }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); margin-bottom: 14px; }
+.field small { font-weight: 400; color: var(--ink-3); }
+.input, .select, .textarea { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--field); color: var(--ink); font-weight: 400; font-size: 14px; width: 100%; font-family: var(--font); }
+.select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%), linear-gradient(135deg, var(--ink-3) 50%, transparent 50%); background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 28px; }
+.textarea { min-height: 84px; line-height: 1.5; resize: vertical; }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; padding: 2px; background: var(--field); }
+.segmented span { padding: 5px 11px; border-radius: 6px; font-size: 13px; font-weight: 600; color: var(--ink-3); white-space: nowrap; }
+.segmented span.on { background: var(--soft); color: var(--accent-2); box-shadow: 0 1px 3px #0000004d; }
+.hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
+.muted { color: var(--ink-4); font-size: 12.5px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.green { background: var(--green); } .dot.amber { background: var(--amber); } .dot.red { background: var(--red); } .dot.violet { background: var(--accent); } .dot.gray { background: var(--ink-4); }
+/* Proposal marker: anything not implemented yet carries this tag (teal, so it never reads as the clay accent). */
+.proposal { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; letter-spacing: .3px; color: var(--proposal); background: var(--proposal-soft); border: 1px dashed var(--proposal-line); border-radius: 6px; padding: 1px 7px; vertical-align: middle; }
+.proposal-box { outline: 2px dashed var(--proposal-line); outline-offset: 4px; border-radius: 12px; }
+/* ==== END NEOMIND SHARED STYLES ==== */
+
+/* Page-specific: Runs layout */
+.runs-grid { display: grid; grid-template-columns: 270px 1fr; gap: 20px; align-items: start; }
+.legend { font-size: 12px; color: var(--ink-4); display: flex; align-items: center; gap: 6px; }
+.history { padding: 10px; }
+.new-run { width: 100%; height: 38px; border-radius: 9px; border: 1px solid var(--accent-line); background: var(--accent-soft); color: var(--accent-2); font-weight: 600; font-size: 13.5px; }
+.history-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--ink-4); padding: 0 8px; margin: 18px 0 6px; }
+.run-item { display: grid; grid-template-columns: 9px 1fr; gap: 10px; padding: 9px 8px; border-radius: 8px; }
+.run-item .dot { margin-top: 5px; }
+.run-item p { font-size: 13.5px; font-weight: 600; color: var(--ink); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.run-item small { display: block; font-size: 12px; color: var(--ink-4); margin-top: 3px; }
+.run-item small.bad { color: var(--red); }
+/* Page-specific: Run mới */
+.start .card-title { margin-bottom: 4px; }
+.lead { color: var(--ink-3); font-size: 13.5px; line-height: 1.5; margin-bottom: 18px; }
+.label-row { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink-2); margin-bottom: 8px; }
+.label-row .muted { font-weight: 400; margin-left: auto; }
+.flow-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+.flow-card { border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; display: grid; grid-template-columns: 16px 1fr; gap: 4px 10px; background: var(--surface); }
+.flow-card.on { border-color: var(--accent); background: var(--soft); box-shadow: 0 0 0 3px #d977571f; }
+.radio { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--ink-4); margin-top: 2px; }
+.flow-card.on .radio { border: 5px solid var(--accent); }
+.flow-name { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; }
+.flow-desc { grid-column: 2; font-size: 12.5px; color: var(--ink-3); line-height: 1.45; }
+.chain { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 5px; font-size: 11.5px; color: var(--ink-4); }
+.chain b { font-weight: 600; color: var(--ink-2); background: var(--soft); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+.chain b.gate { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-line); }
+.section { border-top: 1px solid var(--line-2); padding-top: 18px; margin-top: 4px; margin-bottom: 18px; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.section-head h3 { font-size: 15.5px; }
+.presets { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 2px 4px; }
+.presets > span { font-size: 12.5px; color: var(--ink-3); }
+.preset { border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); background: var(--surface); }
+.preset.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-2); }
+.preset.custom { border-style: dashed; color: var(--ink-3); }
+.binding { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.b-row { display: grid; grid-template-columns: 1.45fr 196px 1fr 112px; gap: 14px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--line-2); }
+.b-row:first-child { border-top: 0; }
+.b-head { background: var(--soft); font-size: 12px; font-weight: 600; color: var(--ink-3); padding: 8px 14px; }
+.b-step { font-weight: 600; font-size: 13.5px; line-height: 1.35; }
+.b-step small { display: block; font-family: var(--mono); font-size: 11.5px; font-weight: 400; color: var(--ink-4); }
+.b-row .segmented { justify-self: start; }
+.b-row .select { padding: 6px 10px; padding-right: 28px; font-size: 13.5px; }
+.estimate { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 8px 12px; border-radius: 8px; background: var(--soft); font-size: 13px; color: var(--ink-2); }
+.estimate .muted { margin-left: auto; }
+.limits { display: flex; align-items: flex-start; gap: 36px; margin-bottom: 12px; }
+.limits .field { margin: 0; }
+.suffix { display: flex; align-items: center; gap: 8px; font-weight: 400; color: var(--ink-3); }
+.suffix .input { width: 76px; }
+.fact { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.fact strong, .fact code { font-size: 14px; color: var(--ink); line-height: 36px; }
+.check-line { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-weight: 600; }
+.check-line input { width: 15px; height: 15px; accent-color: var(--amber); }
+.file-list { list-style: none; padding: 0; margin: 8px 0 0; display: flex; gap: 14px; font-family: var(--mono); font-size: 12.5px; }
+.chg { display: inline-block; width: 18px; text-align: center; border-radius: 4px; font-weight: 700; margin-right: 6px; }
+.chg.m { background: var(--amber-line); } .chg.a { background: var(--green-soft); color: var(--green); }
+.footer { display: flex; justify-content: flex-end; align-items: center; gap: 16px; border-top: 1px solid var(--line-2); padding-top: 16px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">✳</span><span>neo<b>mind</b></span><span class="brand-divider"></span><span class="product">FLOW STUDIO</span></div>
+    <div class="project"><i></i>claude-e2e1 <small>W:\projects\…\demo\claude-e2e1</small></div>
+  </header>
+
+  <aside class="sidebar">
+    <div class="side-title">Workspace</div>
+    <div class="nav"><span>▧</span>Flow library<em>2</em></div>
+    <div class="nav on"><span>▶</span>Runs</div>
+    <div class="nav"><span>✦</span>Agent profiles</div>
+    <div class="nav"><span>◇</span>Project memory</div>
+    <div class="side-divider"></div>
+    <div class="side-title">Flows <span>＋</span></div>
+    <div class="nav"><span>⑂</span>Dev</div>
+    <div class="nav"><span>⌕</span>Research</div>
+  </aside>
+
+  <main class="main">
+    <div class="crumbs">claude-e2e1 <span>›</span> <b>Runs</b></div>
+    <div class="page-head">
+      <div>
+        <h1>Runs</h1>
+        <p>Giao việc cho agent, duyệt kế hoạch và theo dõi tới khi có commit.</p>
+      </div>
+      <div class="legend"><span class="proposal">ĐỀ XUẤT</span> = chưa có trong code hiện tại</div>
+    </div>
+
+    <div class="runs-grid">
+      <!-- Left: history -->
+      <div class="card history">
+        <button class="new-run">＋ Run mới</button>
+        <div class="history-title">LỊCH SỬ</div>
+        <div class="run-item"><span class="dot green"></span><div><p>Add a power(base, exponent) function to calc.js using Math.pow, export it…</p><small>Hoàn tất · Dev · 49 giây</small></div></div>
+        <div class="run-item"><span class="dot green"></span><div><p>Add a divide(a, b) function to calc.js that throws an Error when b is 0</p><small>Hoàn tất · Dev · 1 phút 25 giây</small></div></div>
+        <div class="run-item"><span class="dot red"></span><div><p>Add a subtract(a, b) function to calc.js, export it, and add assertions</p><small class="bad">Cần xử lý · Dev · 1 giây</small></div></div>
+        <div class="run-item"><span class="dot green"></span><div><p>Add a subtract(a, b) function to calc.js, export it, and add assertions</p><small>Hoàn tất · Dev · 52 giây</small></div></div>
+      </div>
+
+      <!-- Right: new run form -->
+      <div class="card start">
+        <div class="card-title"><h2>Run mới</h2></div>
+        <p class="lead">Mô tả việc cần làm, chọn agent cho từng bước rồi bắt đầu. Agent sẽ lập kế hoạch và chờ bạn duyệt trước khi sửa file.</p>
+
+        <!-- Proposal 1: flow picker cards -->
+        <div class="label-row">Flow <span class="proposal">ĐỀ XUẤT</span><span class="muted">Hiện tại: ô chọn (select) + mô tả</span></div>
+        <div class="flow-cards proposal-box">
+          <div class="flow-card on">
+            <span class="radio"></span>
+            <div class="flow-name">Dev <span class="badge t-gray">mẫu có sẵn</span></div>
+            <p class="flow-desc">Lập kế hoạch, chờ bạn duyệt, rồi code và review độc lập.</p>
+            <div class="chain"><b>Plan</b>→<b class="gate">Duyệt</b>→<b>Implement</b>→<b>Review</b>→<b>Commit</b></div>
+          </div>
+          <div class="flow-card">
+            <span class="radio"></span>
+            <div class="flow-name">Fast</div>
+            <p class="flow-desc">Plan nhanh, NeoMind tự duyệt, agent làm luôn. Bạn tự review rồi áp dụng; không commit.</p>
+            <div class="chain"><b>Plan nhanh</b>→<b>Tự duyệt</b>→<b>Implement</b>→<b class="gate">Bạn review</b></div>
+          </div>
+          <div class="flow-card">
+            <span class="radio"></span>
+            <div class="flow-name">Research</div>
+            <p class="flow-desc">Chỉ đọc code và trả lời câu hỏi, không sửa file nào.</p>
+            <div class="chain"><b>Explore</b>→<b>Tổng hợp</b>→<b>Báo cáo</b></div>
+          </div>
+          <div class="flow-card">
+            <span class="radio"></span>
+            <div class="flow-name">Dev song song</div>
+            <p class="flow-desc">Chia kế hoạch thành nhiều phần cho nhiều agent làm cùng lúc.</p>
+            <div class="chain"><b>Plan</b>→<b class="gate">Duyệt</b>→<b>Implement ×3</b>→<b>Review</b>→<b>Commit</b></div>
+          </div>
+        </div>
+
+        <label class="field">Yêu cầu
+          <textarea class="textarea">Add a power(base, exponent) function to calc.js using Math.pow, export it, and add assertions for it in test.js</textarea>
+        </label>
+
+        <!-- Agents per step -->
+        <section class="section">
+          <div class="section-head"><h3>Agent cho từng bước</h3></div>
+
+          <div class="presets proposal-box">
+            <span>Thiết lập nhanh</span>
+            <span class="preset on">Claude viết · Codex review</span>
+            <span class="preset">Toàn Claude</span>
+            <span class="preset">Toàn Codex</span>
+            <span class="preset custom">Tùy chỉnh</span>
+            <span class="proposal" style="margin-left:auto">ĐỀ XUẤT</span>
+          </div>
+
+          <div class="binding">
+            <div class="b-row b-head"><span>Bước</span><span>Runner</span><span>Model</span><span>Mức suy luận</span></div>
+            <div class="b-row">
+              <span class="b-step">Plan<small>plan</small></span>
+              <span class="segmented"><span>Codex</span><span class="on">Claude Code</span></span>
+              <select class="select"><option>Sonnet 5.5</option></select>
+              <select class="select"><option>Vừa</option></select>
+            </div>
+            <div class="b-row">
+              <span class="b-step">Implement<small>implement</small></span>
+              <span class="segmented"><span>Codex</span><span class="on">Claude Code</span></span>
+              <select class="select"><option>Sonnet 5.5</option></select>
+              <select class="select"><option>Vừa</option></select>
+            </div>
+            <div class="b-row">
+              <span class="b-step">Independent review · required-reviewer<small>verify/required-reviewer</small></span>
+              <span class="segmented"><span class="on">Codex</span><span>Claude Code</span></span>
+              <select class="select"><option>GPT-6 Luna</option></select>
+              <select class="select"><option>Cao</option></select>
+            </div>
+          </div>
+
+          <div class="estimate proposal-box">
+            <span>Ước tính: <b>~70k tokens</b> · <b>1–2 phút</b></span>
+            <span class="muted">theo 3 run gần nhất của flow Dev</span>
+            <span class="proposal">ĐỀ XUẤT</span>
+          </div>
+
+          <p class="hint" style="margin-top:12px">Claude Code chạy bằng tài khoản Claude đang đăng nhập và chỉ được đọc, ghi file trong phạm vi được duyệt (không có shell). Checks vẫn chạy qua Codex.</p>
+        </section>
+
+        <!-- Limits and source -->
+        <section class="section">
+          <div class="section-head"><h3>Giới hạn và mã nguồn</h3></div>
+          <div class="limits">
+            <label class="field">Thời gian xử lý tối đa
+              <span class="suffix"><input class="input" value="30"> phút</span>
+            </label>
+            <div class="fact"><span>Vòng sửa tối đa</span><strong>2</strong></div>
+            <div class="fact"><span>Bắt đầu từ commit</span><code>3648ef206f</code></div>
+          </div>
+          <p class="hint">Run làm việc trong worktree riêng; checkout của bạn không bị sửa. Kết quả là một commit local sau khi checks và review đạt (Git hooks không chạy).</p>
+
+          <div class="callout amber">
+            <b>Checkout có 2 thay đổi chưa commit.</b>
+            <label class="check-line"><input type="checkbox" checked> Mang các thay đổi này vào run <span style="font-weight:400">(commit của run chỉ chứa phần run làm)</span></label>
+            <ul class="file-list">
+              <li><span class="chg m">M</span>calc.js</li>
+              <li><span class="chg a">A</span>notes.md</li>
+            </ul>
+          </div>
+        </section>
+
+        <div class="footer">
+          <span class="muted">Bước đầu chỉ lập kế hoạch — chưa file nào bị sửa cho tới khi bạn duyệt.</span>
+          <button class="btn primary large">▶ Bắt đầu</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script>
+/* ==== NEOMIND PROTOTYPE SCRIPT (same in every mockup) ==== */
+/* Clickable prototype: selections, toggles and copy buttons work in place; main actions move between screens. */
+(() => {
+  const screens = {
+    '00-design-system.mockup.html': 'Design system', '01-run-start.mockup.html': 'Run mới', '02-run-approval.mockup.html': 'Chờ duyệt kế hoạch',
+    '03-run-running.mockup.html': 'Đang chạy', '04-run-blocked.mockup.html': 'Cần xử lý', '05-run-completed.mockup.html': 'Hoàn tất',
+    '06-flow-studio.mockup.html': 'Flow studio', '07-profiles.mockup.html': 'Agent profiles', '08-memory.mockup.html': 'Project memory', '09-session-viewer.mockup.html': 'Xem session',
+  };
+  // Text of a clicked control -> screen it leads to.
+  const routes = [
+    [/^(\+|＋)\s*Run mới$/, '01-run-start.mockup.html'], [/Bắt đầu$/, '02-run-approval.mockup.html'], [/^Duyệt và thực hiện$/, '03-run-running.mockup.html'],
+    [/Chạy lại review|Đổi và chạy lại|^Tiếp tục$/, '03-run-running.mockup.html'], [/Tôi đã xem, duyệt|Áp dụng vào branch/, '05-run-completed.mockup.html'],
+    [/Chạy flow$/, '01-run-start.mockup.html'], [/^Runs$/, '01-run-start.mockup.html'], [/^Flow library|^(Dev|Research|Test1?)$/, '06-flow-studio.mockup.html'],
+    [/^Agent profiles$/, '07-profiles.mockup.html'], [/Xem session|Mở session đầy đủ/, '09-session-viewer.mockup.html'], [/^Project memory$/, '08-memory.mockup.html'],
+  ];
+  const historyRoutes = [[/Đang chạy/, '03-run-running.mockup.html'], [/Chờ duyệt/, '02-run-approval.mockup.html'], [/Cần xử lý/, '04-run-blocked.mockup.html'], [/Hoàn tất/, '05-run-completed.mockup.html']];
+  const here = decodeURIComponent(location.pathname.split('/').pop() || '');
+  const canNavigate = /^(file|https?):$/.test(location.protocol) && location.href !== 'about:srcdoc';
+
+  const style = document.createElement('style');
+  style.textContent = `.proto-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;z-index:9999;background:#30302e;color:#f2efe8;border:1px solid #4a4944;border-radius:10px;padding:9px 14px;font:13px 'Segoe UI',system-ui,sans-serif;box-shadow:0 8px 28px #0008;transition:all .18s;pointer-events:none;max-width:70vw}
+.proto-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}.proto-toast b{color:#e8956f}
+.proto-nav{position:fixed;right:16px;bottom:16px;z-index:9998;font:12px 'Segoe UI',system-ui,sans-serif}
+.proto-nav summary{list-style:none;cursor:pointer;background:#30302e;color:#d4d0c6;border:1px solid #4a4944;border-radius:999px;padding:6px 12px;box-shadow:0 6px 18px #0007}
+.proto-nav summary::-webkit-details-marker{display:none}
+.proto-nav div{position:absolute;right:0;bottom:36px;background:#262624;border:1px solid #4a4944;border-radius:10px;padding:6px;min-width:210px;box-shadow:0 10px 30px #0009}
+.proto-nav a{display:block;padding:6px 9px;border-radius:6px;color:#d4d0c6;text-decoration:none}.proto-nav a:hover{background:#2d2c29}.proto-nav a.here{color:#e8956f;font-weight:600}
+[data-proto-click]{cursor:pointer}`;
+  document.head.appendChild(style);
+  const toast = document.createElement('div'); toast.className = 'proto-toast'; document.body.appendChild(toast);
+  let timer;
+  const say = html => { toast.innerHTML = html; toast.classList.add('show'); clearTimeout(timer); timer = setTimeout(() => toast.classList.remove('show'), 1800); };
+  const go = file => {
+    if (!file || file === here) return false;
+    if (canNavigate) { location.href = file; return true; }
+    say(`→ Màn <b>${screens[file]}</b> · mở file <code>${file}</code>`); return true;
+  };
+  // Screen switcher, bottom right.
+  const nav = document.createElement('details'); nav.className = 'proto-nav';
+  nav.innerHTML = `<summary>☰ Màn: ${screens[here] ?? 'mockup'}</summary><div>${Object.entries(screens).map(([file, name]) => `<a href="${file}" data-goto="${file}" class="${file === here ? 'here' : ''}">${file.slice(0, 2)} · ${name}</a>`).join('')}</div>`;
+  document.body.appendChild(nav);
+
+  const label = el => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const selectable = ['on', 'active', 'selected'];
+  // Move the selection class among siblings of the same kind (tabs, chips, cards, list items).
+  function select(el) {
+    for (let node = el; node && node !== document.body; node = node.parentElement) {
+      const parent = node.parentElement; if (!parent) break;
+      const siblings = [...parent.children].filter(child => child.tagName === node.tagName);
+      const cls = selectable.find(name => siblings.some(child => child !== node && child.classList.contains(name)));
+      if (cls && siblings.length > 1) { siblings.forEach(child => child.classList.remove(cls)); node.classList.add(cls); return true; }
+    }
+    return false;
+  }
+  document.addEventListener('click', event => {
+    const target = event.target;
+    if (target.closest('input, textarea, select, summary, label')) return;
+    const link = target.closest('[data-goto]');
+    if (link) { event.preventDefault(); go(link.getAttribute('data-goto')); nav.removeAttribute('open'); return; }
+    if (target.closest('a[href]')) { event.preventDefault(); }
+    const toggle = target.closest('.toggle, .switch');
+    if (toggle) { toggle.classList.toggle('on'); return; }
+    const control = target.closest('a, button, .btn, .nav, .chip, .preset, .tab, .diff-tab, .filter, .tchip, .version, .flow-card, .choice, .run-item, .run-history-item, .pitem, .issue, .node, .segmented > *, [role="tab"], .copy, .copy-btn');
+    if (!control) return;
+    const text = label(control);
+    if (/Xem trực tiếp/.test(text)) { const live = document.querySelector('[class*="live"]'); if (live) { live.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; } }
+    if (/Sao chép|^Chép/.test(text)) { const old = control.innerHTML; control.textContent = 'Đã chép ✓'; setTimeout(() => { control.innerHTML = old; }, 1300); return; }
+    if (control.matches('[disabled]')) { say('Nút đang bị khóa'); return; }
+    const history = control.closest('.run-item, .run-history-item');
+    if (history) { select(history); const route = historyRoutes.find(([pattern]) => pattern.test(label(history))); if (route) go(route[1]); return; }
+    const selected = select(control);
+    const core = text.replace(/^[^\p{L}\p{N}+＋]+/u, '').replace(/\s+\d+$/, '');
+    const route = routes.find(([pattern]) => pattern.test(text) || pattern.test(core));
+    if (route && go(route[1])) return;
+    if (!selected) say(`Bấm <b>${text.slice(0, 60)}</b> · mockup chưa gắn hành động`);
+  }, true);
+})();
+/* ==== END NEOMIND PROTOTYPE SCRIPT ==== */
+</script>
+</body>
+</html>

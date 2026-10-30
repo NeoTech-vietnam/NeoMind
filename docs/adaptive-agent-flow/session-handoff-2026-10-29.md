@@ -1,5 +1,8 @@
 # Bàn giao session — 29/10/2026
 
+> [!NOTE]
+> Trạng thái hiện tại xem [bàn giao 30/10/2026](session-handoff-2026-10-30.md). Bản này còn giá trị cho các ràng buộc và bài học lõi.
+
 ## Đọc trước
 
 Repo `/home/hieu-tran/projects/NeoProject/NeoMind`, branch `hieu/adaptive-agent-flow`. Người dùng yêu cầu chốt đợt hiện tại, cập nhật tiến độ, commit và push để **session khác tiếp tục**. Đây là checkpoint; không đánh dấu toàn bộ v1 hoàn thành. Baseline trước checkpoint là `d19c998`; dùng `git log -1` để lấy commit bàn giao.
@@ -49,11 +52,11 @@ State local ở `${XDG_STATE_HOME:-~/.local/state}/neomind/<hash Git common dire
 ## Việc tiếp theo theo thứ tự đề xuất
 
 1. **Củng cố lifecycle/CLI:** thêm controls còn thiếu (`changes`, `retry-git`, `extend-time`) và xử lý SIGINT/SIGTERM có stop/reconcile đúng; test scheduler crash/timeout/Git subprocess. Không tự mở lại inference nếu effect trước chưa rõ.
-2. **Workspace và parallel graph:** thiết kế/triển khai nhiều writer worktrees, integration không conflict và agent xử lý conflict trong plan đã duyệt. Hiện `standaloneDiagnostics()` chặn integration, nhiều writer, shared/current checkout và nhiều planning nodes. Graph khác reviewers vẫn được drive tuần tự; chưa có tổng quát parallel execution.
-3. **Current checkout và dirty baseline:** attribution changes có sẵn, user choice, stable read leases, commit chỉ phần thuộc run; không bật trước khi enforce được.
-4. **Storage concurrency và review impact:** serialize/CAS draft+metadata khi nhiều process ghi; wire impact receipts để rerun reviewer theo phạm vi xác định. Khi không rõ, rerun tất cả required reviewers.
-5. **Research/runner/host:** xác minh local Research bằng inference thật trên fixture nhỏ; không gọi là web research. Giải quyết public host contracts bên dưới trước khi cho Nimbalyst write flow.
-6. **Acceptance và demo:** chạy matrix design-v1 mục 18, browser/accessibility/advanced graph; sau đó chạy Calculator pilot với preview và duyệt plan thật. Update status/capability evidence theo kết quả.
+2. **Workspace và parallel graph** (lát cắt đầu đã làm ngày 29/10/2026, xem [parallel-writers.md](parallel-writers.md); còn lại: writer trước fork, nhiều integration, conflict với model thật)**:** thiết kế/triển khai nhiều writer worktrees, integration không conflict và agent xử lý conflict trong plan đã duyệt. Hiện `standaloneDiagnostics()` chặn integration, nhiều writer, shared/current checkout và nhiều planning nodes. Graph khác reviewers vẫn được drive tuần tự; chưa có tổng quát parallel execution.
+3. **Current checkout và dirty baseline** (phần 1, mang thay đổi chưa commit vào worktree riêng và commit chỉ phần của run, đã làm ngày 29/10/2026; còn chạy trực tiếp trên checkout hiện tại)**:** attribution changes có sẵn, user choice, stable read leases, commit chỉ phần thuộc run; không bật trước khi enforce được.
+4. **Storage concurrency và review impact** (đã làm ngày 30/10/2026, xem implementation-status)**:** serialize/CAS draft+metadata khi nhiều process ghi; wire impact receipts để rerun reviewer theo phạm vi xác định. Khi không rõ, rerun tất cả required reviewers.
+5. **Research/runner/host** (Research local đã kiểm chứng với model thật ngày 30/10/2026; Nimbalyst vẫn chờ contract)**:** xác minh local Research bằng inference thật trên fixture nhỏ; không gọi là web research. Giải quyết public host contracts bên dưới trước khi cho Nimbalyst write flow.
+6. **Acceptance và demo** (đối chiếu hiện trạng: [acceptance-matrix.md](acceptance-matrix.md); pilot Calculator chưa chạy)**:** chạy matrix design-v1 mục 18, browser/accessibility/advanced graph; sau đó chạy Calculator pilot với preview và duyệt plan thật. Update status/capability evidence theo kết quả.
 
 Các tính năng trên còn thiếu thực tế, không chỉ thiếu tài liệu. UI có thể tạo graph mà executor hiện từ chối; phải giữ validation/preflight rõ ràng.
 

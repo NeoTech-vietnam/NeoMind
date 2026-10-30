@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>NeoMind · Run đang chạy (Implement song song)</title>
+<style>
+/* ==== NEOMIND SHARED STYLES (copy this block verbatim into every NeoMind mockup) ==== */
+/* Dark theme in the Claude Code palette: warm charcoal surfaces, ivory text, clay accent. */
+:root {
+  color-scheme: dark;
+  --font: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, -apple-system, sans-serif;
+  --mono: 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --ink: #f2efe8; --ink-2: #d4d0c6; --ink-3: #a9a499; --ink-4: #85817a;
+  --bg: #1f1e1d; --surface: #262624; --soft: #2d2c29; --field: #1c1b1a; --code-bg: #161514;
+  --line: #3b3a36; --line-2: #312f2c;
+  --accent: #d97757; --accent-2: #e8956f; --accent-strong: #c15f3c; --accent-soft: #3a2822; --accent-line: #6b3f2e;
+  --green: #86c99a; --green-soft: #1e3326; --green-line: #2f5a3c;
+  --amber: #e5b567; --amber-soft: #3a2f1b; --amber-line: #6a5328;
+  --red: #f08a80; --red-soft: #3d2222; --red-line: #6e3434;
+  --blue: #8db4ea; --blue-soft: #1d2a3b; --blue-line: #34507a;
+  --gray: #a9a499; --gray-soft: #33322f;
+  --proposal: #6fd3c4; --proposal-soft: #173330; --proposal-line: #3e9e92;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--font); font-size: 14px; color: var(--ink); background: var(--bg); }
+h1, h2, h3, h4, p { margin: 0; }
+code, pre { font-family: var(--mono); font-size: 12.5px; }
+button { font: inherit; cursor: pointer; color: inherit; }
+/* Shell */
+.app { display: grid; grid-template-columns: 232px 1fr; grid-template-rows: 58px 1fr; min-height: 100vh; }
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; font-size: 18px; letter-spacing: -.5px; }
+.brand-mark { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: var(--code-bg); display: grid; place-items: center; font-size: 18px; }
+.brand b { font-weight: 700; }
+.brand-divider { height: 20px; width: 1px; background: var(--line); margin: 0 4px; }
+.product { font-size: 11px; letter-spacing: 1.2px; color: var(--ink-4); font-weight: 700; }
+.project { border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px; color: var(--ink-2); font-size: 13px; font-weight: 600; display: flex; gap: 8px; align-items: center; white-space: nowrap; background: var(--surface); }
+.project small { color: var(--ink-4); font-weight: 400; }
+.project i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.sidebar { background: var(--bg); border-right: 1px solid var(--line); padding: 18px 12px; }
+.side-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--ink-4); text-transform: uppercase; padding: 0 10px; margin: 0 0 8px; display: flex; justify-content: space-between; }
+.nav { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; color: var(--ink-2); font-size: 13.5px; font-weight: 600; margin: 1px 0; }
+.nav span { width: 18px; text-align: center; color: var(--ink-4); }
+.nav.on { background: var(--soft); color: var(--ink); }
+.nav.on span { color: var(--accent); }
+.nav em { margin-left: auto; font-style: normal; background: var(--accent-soft); color: var(--accent-2); border-radius: 6px; padding: 1px 7px; font-size: 11.5px; }
+.side-divider { height: 1px; background: var(--line-2); margin: 16px 8px; }
+.main { padding: 18px 28px 32px; min-width: 0; }
+.crumbs { font-size: 12.5px; color: var(--ink-4); margin-bottom: 14px; display: flex; gap: 8px; }
+.crumbs b { color: var(--ink-2); font-weight: 600; }
+.page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 18px; }
+.page-head h1 { font-size: 24px; letter-spacing: -.6px; font-weight: 700; }
+.page-head p { color: var(--ink-3); font-size: 13.5px; margin-top: 5px; }
+/* Components */
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin-bottom: 16px; }
+.card h2 { font-size: 19px; letter-spacing: -.3px; line-height: 1.4; }
+.card h3 { font-size: 16px; letter-spacing: -.2px; }
+.card h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--ink-4); margin: 14px 0 6px; }
+.card-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.btn { height: 34px; border-radius: 8px; padding: 0 14px; font-size: 13px; font-weight: 600; border: 1px solid var(--line); background: var(--soft); color: var(--ink-2); white-space: nowrap; }
+.btn.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; box-shadow: 0 2px 8px #c15f3c40; }
+.btn.large { height: 40px; padding: 0 22px; font-size: 14px; }
+.btn.ghost { color: var(--accent-2); border-color: var(--accent-line); background: transparent; }
+.btn.danger { color: var(--red); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.t-green { background: var(--green-soft); color: var(--green); } .t-amber { background: var(--amber-soft); color: var(--amber); }
+.t-red { background: var(--red-soft); color: var(--red); } .t-violet { background: var(--accent-soft); color: var(--accent-2); }
+.t-blue { background: var(--blue-soft); color: var(--blue); } .t-gray { background: var(--gray-soft); color: var(--gray); }
+.pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.callout { border-radius: 8px; padding: 10px 13px; font-size: 13.5px; line-height: 1.5; margin: 12px 0; border: 1px solid transparent; }
+.callout.red { background: var(--red-soft); color: var(--red); border-color: var(--red-line); }
+.callout.amber { background: var(--amber-soft); color: var(--amber); border-color: var(--amber-line); }
+.callout.green { background: var(--green-soft); color: var(--green); border-color: var(--green-line); }
+.callout.violet { background: var(--accent-soft); color: var(--accent-2); border-color: var(--accent-line); }
+.callout.blue { background: var(--blue-soft); color: var(--blue); border-color: var(--blue-line); }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); margin-bottom: 14px; }
+.field small { font-weight: 400; color: var(--ink-3); }
+.input, .select, .textarea { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--field); color: var(--ink); font-weight: 400; font-size: 14px; width: 100%; font-family: var(--font); }
+.select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%), linear-gradient(135deg, var(--ink-3) 50%, transparent 50%); background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 28px; }
+.textarea { min-height: 84px; line-height: 1.5; resize: vertical; }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; padding: 2px; background: var(--field); }
+.segmented span { padding: 5px 11px; border-radius: 6px; font-size: 13px; font-weight: 600; color: var(--ink-3); white-space: nowrap; }
+.segmented span.on { background: var(--soft); color: var(--accent-2); box-shadow: 0 1px 3px #0000004d; }
+.hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
+.muted { color: var(--ink-4); font-size: 12.5px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips code { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.green { background: var(--green); } .dot.amber { background: var(--amber); } .dot.red { background: var(--red); } .dot.violet { background: var(--accent); } .dot.gray { background: var(--ink-4); }
+/* Proposal marker: anything not implemented yet carries this tag (teal, so it never reads as the clay accent). */
+.proposal { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; letter-spacing: .3px; color: var(--proposal); background: var(--proposal-soft); border: 1px dashed var(--proposal-line); border-radius: 6px; padding: 1px 7px; vertical-align: middle; }
+.proposal-box { outline: 2px dashed var(--proposal-line); outline-offset: 4px; border-radius: 12px; }
+/* ==== END NEOMIND SHARED STYLES ==== */
+/* ---- Run detail page (shared by 03/04/05 mockups) ---- */
+.runs-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 20px; align-items: start; }
+.history { padding: 10px; position: sticky; top: 16px; }
+.new-run { width: 100%; border: 1px dashed var(--accent-line); background: var(--soft); color: var(--accent-2); border-radius: 9px; padding: 9px; font-weight: 600; font-size: 13.5px; }
+.history-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--ink-4); text-transform: uppercase; margin: 16px 8px 6px; }
+.run-item { display: flex; gap: 10px; align-items: flex-start; padding: 9px 8px; border-radius: 8px; margin: 1px 0; }
+.run-item .dot { margin-top: 5px; }
+.run-item strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13.5px; font-weight: 600; line-height: 1.35; }
+.run-item small { display: block; color: var(--ink-3); margin-top: 3px; font-size: 12px; }
+.run-item.selected { background: var(--accent-soft); }
+
+.run-header-top { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
+.run-header-text { min-width: 0; }
+.run-header h2 { margin-top: 8px; }
+.meta-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-top: 8px; font-size: 13px; color: var(--ink-3); }
+.run-actions { display: flex; gap: 8px; flex: none; }
+.card p, .card li { line-height: 1.55; }
+
+.stepper { list-style: none; padding: 0; margin: 18px 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.step { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--surface); min-width: 0; }
+.step > div { min-width: 0; }
+.step strong { display: block; font-size: 13.5px; }
+.step small { display: block; font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+.step small.step-agent { color: var(--ink-4); font-size: 11.5px; line-height: 1.4; }
+.step-icon { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none; background: var(--gray-soft); color: var(--gray); }
+.step.done .step-icon { background: var(--green-soft); color: var(--green); }
+.step.live { border-color: var(--accent-line); background: var(--soft); box-shadow: 0 0 0 3px #d977571f; }
+.step.live .step-icon { background: var(--accent); color: #fff; animation: pulse 1.4s ease-in-out infinite; }
+.step.paused { border-color: var(--amber-line); } .step.paused .step-icon { background: var(--amber-soft); color: var(--amber); font-size: 9px; }
+.step.wait strong { color: var(--ink-3); }
+
+.plan-goal { font-size: 15px; font-weight: 600; line-height: 1.5; }
+.plan-approach { color: var(--ink-2); margin-top: 8px; font-size: 14px; }
+.plan-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 24px; }
+.criteria { padding-left: 0; list-style: none; margin: 0; }
+.criteria li { padding-left: 22px; position: relative; margin: 4px 0; font-size: 14px; }
+.criteria li::before { content: '•'; position: absolute; left: 6px; color: var(--accent); }
+
+.card details { margin: 10px 0; }
+.card summary { cursor: pointer; color: var(--accent-2); font-weight: 600; font-size: 13.5px; }
+.logs { margin: 0 !important; }
+.logs + .logs { margin-top: 10px !important; }
+.logs > summary { color: var(--ink-2); }
+
+.verify-row { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--line-2); }
+.verify-row.first { border-top: 0; padding-top: 4px; }
+.verify-row > .badge { margin-top: 2px; min-width: 96px; justify-content: center; }
+.verify-row.superseded { opacity: .6; }
+.verify-body { min-width: 0; flex: 1; }
+.verify-body p { margin-top: 4px; color: var(--ink-2); font-size: 13.5px; }
+.verify-body details { margin: 6px 0 0; }
+.verify-body small { color: var(--ink-4); font-size: 12.5px; }
+.criteria-status { list-style: none; padding: 0; margin: 8px 0 0; }
+.criteria-status li { display: flex; gap: 8px; align-items: baseline; margin: 5px 0; font-size: 13.5px; }
+.criteria-status .badge { min-width: 76px; justify-content: center; }
+.finding { font-size: 13px; background: var(--amber-soft); border-radius: 6px; padding: 6px 9px; margin-top: 6px; line-height: 1.5; }
+
+.copy-btn { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; font-size: 12px; padding: 3px 9px; color: var(--ink-2); }
+.command { display: flex; align-items: center; gap: 10px; background: var(--code-bg); color: var(--ink); border-radius: 8px; padding: 9px 12px; margin-top: 6px; }
+.command code { flex: 1; }
+.command .copy-btn { background: var(--soft); color: var(--ink); border-color: var(--line); }
+
+/* Unified diff (proposal in 04/05) */
+.diff-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-top: 12px; }
+.diff-tab { padding: 7px 12px; font-family: var(--mono); font-size: 12.5px; color: var(--ink-3); border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; margin-bottom: -1px; display: flex; gap: 8px; align-items: center; }
+.diff-tab.on { background: var(--surface); border-color: var(--line); color: var(--ink); font-weight: 600; }
+.add-n { color: var(--green); font-weight: 600; } .del-n { color: var(--red); font-weight: 600; }
+.diff { border: 1px solid var(--line); border-top: 0; border-radius: 0 0 8px 8px; overflow: hidden; font-family: var(--mono); font-size: 12.5px; line-height: 1.65; background: var(--surface); }
+.diff .ln { display: grid; grid-template-columns: 38px 38px 18px 1fr; white-space: pre; }
+.diff .ln span:nth-child(-n+2) { color: var(--ink-4); text-align: right; padding-right: 8px; background: var(--soft); font-size: 11.5px; }
+.diff .ln span:nth-child(3) { text-align: center; color: var(--ink-4); }
+.diff .ln.hunk { background: var(--blue-soft); color: var(--blue); }
+.diff .ln.hunk span { background: transparent !important; color: var(--blue) !important; }
+.diff .ln.add { background: var(--green-soft); } .diff .ln.add span:nth-child(-n+2) { background: var(--green-soft); } .diff .ln.add span:nth-child(3) { color: var(--green); }
+.diff .ln.del { background: var(--red-soft); } .diff .ln.del span:nth-child(-n+2) { background: var(--red-soft); } .diff .ln.del span:nth-child(3) { color: var(--red); }
+
+/* Design notes at the bottom of each mockup */
+.notes { background: transparent; border-style: dashed; }
+.notes h3 { font-size: 14px; color: var(--ink-3); }
+.notes ol { margin: 8px 0 0; padding-left: 20px; color: var(--ink-3); font-size: 13px; }
+.notes li { margin: 4px 0; }
+
+/* ---- Page-specific: 03 run running ---- */
+.budget { display: inline-flex; align-items: center; gap: 8px; padding: 3px 9px 3px 10px; border-radius: 8px; background: var(--soft); border: 1px solid var(--line); color: var(--ink-3); }
+.budget-bar { width: 110px; height: 6px; border-radius: 99px; background: var(--line); overflow: hidden; }
+.budget-bar i { display: block; height: 100%; width: 5%; min-width: 4px; border-radius: 99px; background: var(--accent); }
+.budget b { color: var(--ink-2); font-weight: 600; }
+.stepper.ten { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.step-metric { display: inline-flex; gap: 6px; margin-top: 6px; font-size: 11.5px; color: var(--ink-3); background: var(--soft); border: 1px dashed var(--proposal-line); border-radius: 6px; padding: 1px 7px; white-space: nowrap; }
+.step.live .step-metric { background: var(--soft); color: var(--accent-2); }
+.step-link { display: inline-flex; align-items: center; gap: 4px; margin-top: 7px; font-size: 12px; font-weight: 600; color: var(--proposal); text-decoration: none; border-bottom: 1px dashed var(--proposal-line); line-height: 1.3; }
+.step-legend { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12.5px; color: var(--ink-3); }
+.step-legend .step-metric { margin-top: 0; }
+.plan-approach code { background: var(--soft); border-radius: 4px; padding: 0 4px; font-size: 12px; }
+.split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 4px; }
+.split div { border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; background: var(--soft); font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+.split b { color: var(--ink); }
+.split small { display: block; color: var(--ink-4); font-size: 12px; }
+.typing { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: middle; }
+.typing i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.typing i:nth-child(2) { animation-delay: .2s; } .typing i:nth-child(3) { animation-delay: .4s; }
+
+/* Live activity: one lane per running agent attempt (proposal) */
+.live-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
+.lane { border: 1px solid var(--line); border-radius: 10px; background: var(--bg); display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.lane-head { padding: 12px 14px 10px; background: var(--soft); border-bottom: 1px solid var(--line-2); }
+.lane-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.lane-title strong { font-size: 14.5px; letter-spacing: -.1px; }
+.lane-sub { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 5px; font-size: 12.5px; color: var(--ink-3); }
+.lane-sub .who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.lane-stats { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 12px; color: var(--ink-3); font-family: var(--mono); }
+.lane-stats b { color: var(--ink-2); font-weight: 600; }
+.lane-open { font-family: var(--font); margin-left: auto; color: var(--accent-2); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.lane-tools { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--line-2); }
+.lane-tools .segmented span { padding: 3px 8px; font-size: 12px; }
+.autoscroll { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.switch { width: 26px; height: 15px; border-radius: 99px; background: var(--line); position: relative; flex: none; transition: background .15s; }
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%; background: var(--ink-3); transition: all .15s; }
+.switch.on { background: var(--accent-strong); }
+.switch.on::after { left: 13px; background: #fff; }
+
+.tl { list-style: none; margin: 0; padding: 10px 14px 4px; position: relative; }
+.tl::before { content: ''; position: absolute; left: 24px; top: 18px; bottom: 26px; width: 1px; background: var(--line); }
+.tl > li { display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: 9px; align-items: start; padding: 5px 0; font-size: 13px; color: var(--ink-2); line-height: 1.5; position: relative; }
+.tl time { position: absolute; right: 0; top: 7px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-4); }
+.tl summary, .tl .ev-line { padding-right: 64px; }
+.tl .ev-body { min-width: 0; padding-top: 1px; }
+.tl code { background: var(--soft); border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; font-size: 12px; color: var(--ink); }
+.ev { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--surface); border: 1px solid var(--line); color: var(--ink-3); position: relative; z-index: 1; font-family: var(--mono); }
+.ev.read { color: var(--blue); border-color: var(--blue-line); background: var(--blue-soft); }
+.ev.edit { color: var(--green); border-color: var(--green-line); background: var(--green-soft); }
+.ev.cmd { color: var(--amber); border-color: var(--amber-line); background: var(--amber-soft); }
+.ev.msg { color: var(--accent-2); border-color: var(--accent-line); background: var(--accent-soft); }
+.ev.think { color: var(--ink-3); border-style: dashed; background: var(--bg); }
+.ev.now { background: var(--accent); border-color: var(--accent); }
+.ev.now i { width: 6px; height: 6px; border-radius: 50%; background: var(--bg); animation: pulse 1.2s ease-in-out infinite; }
+.ev-meta { color: var(--ink-4); font-size: 12px; }
+.exit { font-family: var(--mono); font-size: 11px; font-weight: 600; border-radius: 5px; padding: 0 6px; white-space: nowrap; }
+.exit.ok { background: var(--green-soft); color: var(--green); }
+.exit.run { background: var(--accent-soft); color: var(--accent-2); display: inline-flex; align-items: center; gap: 5px; }
+.msg-bubble { margin-top: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 3px 10px 10px 10px; padding: 7px 10px; color: var(--ink); font-size: 13px; line-height: 1.5; }
+.msg-bubble code { font-size: 11.5px; }
+.tl li.composing { color: var(--accent-2); font-style: italic; }
+
+/* Expandable event rows */
+.tl details { margin: 0; }
+.tl summary { list-style: none; cursor: pointer; color: var(--ink-2); font-weight: 400; font-size: 13px; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.tl summary::-webkit-details-marker { display: none; }
+.tl summary::before { content: '\25B8'; color: var(--ink-3); font-size: 11px; width: 9px; flex: none; transition: transform .12s; }
+.tl details[open] > summary::before { transform: rotate(90deg); }
+.tl summary:hover { color: var(--ink); }
+.reason summary em { color: var(--ink-3); flex-basis: 100%; padding-left: 15px; }
+.reason p { margin: 6px 0 0 0; padding-left: 10px; border-left: 2px solid var(--line); color: var(--ink-3); font-style: italic; font-size: 12.5px; line-height: 1.55; }
+
+.peek, .mdiff, .term { margin: 6px 0 2px 0; border-radius: 7px; font-family: var(--mono); font-size: 11.5px; line-height: 1.6; overflow: hidden; }
+.peek { background: var(--code-bg); border: 1px solid var(--line-2); padding: 5px 0; }
+.peek div { display: grid; grid-template-columns: 26px 1fr; white-space: pre; color: var(--ink-2); }
+.peek div span:first-child { color: var(--ink-4); text-align: right; padding-right: 9px; }
+.peek .more { display: block; color: var(--ink-4); padding: 2px 0 0 35px; font-family: var(--font); font-size: 11.5px; }
+.mdiff { border: 1px solid var(--line); background: var(--code-bg); }
+.mdiff-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 9px; background: var(--soft); border-bottom: 1px solid var(--line-2); font-size: 11.5px; color: var(--ink-3); }
+.mdiff-head a { font-family: var(--font); color: var(--accent-2); text-decoration: none; font-weight: 600; }
+.mdiff .ln { display: grid; grid-template-columns: 22px 22px 14px minmax(0, 1fr); white-space: pre; color: var(--ink-2); }
+.mdiff .ln span:nth-child(-n+2) { color: var(--ink-4); text-align: right; padding-right: 5px; font-size: 10.5px; }
+.mdiff .ln span:nth-child(3) { text-align: center; color: var(--ink-4); }
+.mdiff .ln.hunk { background: var(--blue-soft); color: var(--blue); }
+.mdiff .ln.hunk span { color: var(--blue) !important; }
+.mdiff .ln.add { background: var(--green-soft); color: #cfe9d6; } .mdiff .ln.add span:nth-child(3) { color: var(--green); }
+.mdiff .ln.del { background: var(--red-soft); color: #f3c9c4; } .mdiff .ln.del span:nth-child(3) { color: var(--red); }
+.add-n { color: var(--green); font-weight: 600; font-family: var(--mono); font-size: 12px; } .del-n { color: var(--red); font-weight: 600; font-family: var(--mono); font-size: 12px; }
+.term { background: #121110; border: 1px solid var(--line); }
+.term-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 9px; border-bottom: 1px solid var(--line-2); font-family: var(--font); font-size: 11.5px; color: var(--ink-4); }
+.term-head span:first-child { display: inline-flex; align-items: center; gap: 6px; color: var(--accent-2); font-weight: 600; }
+.term pre { margin: 0; padding: 7px 10px 8px; font-size: 11.5px; line-height: 1.6; color: #cfcabe; white-space: pre-wrap; }
+.term .dim { color: var(--ink-4); }
+.cursor { display: inline-block; width: 7px; height: 13px; background: var(--ink-2); vertical-align: -2px; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+.new-pill { align-self: center; margin: auto 0 10px; font-size: 11.5px; color: var(--ink-3); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+.lane-foot { display: flex; align-items: center; gap: 8px; padding: 8px 14px 10px; border-top: 1px solid var(--line-2); font-size: 12px; color: var(--ink-3); line-height: 1.45; background: var(--surface); }
+.lane-foot .ico { flex: none; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 700; background: var(--gray-soft); color: var(--ink-3); }
+.live-foot { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--line-2); font-size: 12.5px; }
+.live-foot .readonly { display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
+.live-foot .readonly i { font-style: normal; flex: none; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--blue-soft); color: var(--blue); border: 1px solid var(--blue-line); }
+.live-foot .readonly b { color: var(--ink); font-weight: 600; }
+.recorded { color: var(--ink-4); white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+.recorded code { font-size: 11px; color: var(--ink-3); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">✳</span><span>neo<b>mind</b></span><span class="brand-divider"></span><span class="product">FLOW STUDIO</span></div>
+    <div class="project"><i></i>claude-e2e1 <small>W:\projects\…\demo\claude-e2e1</small></div>
+  </header>
+
+  <aside class="sidebar">
+    <div class="side-title">Workspace</div>
+    <div class="nav"><span>▧</span>Flow library<em>2</em></div>
+    <div class="nav on"><span>▶</span>Runs</div>
+    <div class="nav"><span>✦</span>Agent profiles</div>
+    <div class="nav"><span>◇</span>Project memory</div>
+    <div class="side-divider"></div>
+    <div class="side-title">Flows <span>＋</span></div>
+    <div class="nav"><span>◆</span>Dev</div>
+    <div class="nav"><span>◆</span>Research</div>
+  </aside>
+
+  <main class="main">
+    <div class="crumbs"><span>claude-e2e1</span>›<b>Runs</b></div>
+    <div class="page-head">
+      <div><h1>Runs</h1><p>Giao việc cho agent, duyệt kế hoạch và theo dõi tới khi có commit.</p></div>
+    </div>
+
+    <div class="runs-layout">
+      <!-- History -->
+      <div class="card history">
+        <button class="new-run">＋ Run mới</button>
+        <div class="history-title">Lịch sử</div>
+        <div class="run-item selected"><span class="dot violet"></span><div><strong>Thêm hàm power(base, exponent) và modulo(a, b) vào calc.js, kèm test</strong><small>Đang chạy · Dev song song · 2 phút</small></div></div>
+        <div class="run-item"><span class="dot green"></span><div><strong>Thêm hàm divide(a, b) vào calc.js, ném Error khi chia cho 0</strong><small>Hoàn tất · Dev · 1 phút 25 giây</small></div></div>
+        <div class="run-item"><span class="dot red"></span><div><strong>Thêm hàm subtract(a, b) vào calc.js, export và thêm assertion trong test.js</strong><small>Cần xử lý · Dev · 1 giây</small></div></div>
+        <div class="run-item"><span class="dot green"></span><div><strong>Thêm hàm subtract(a, b) vào calc.js, export và thêm assertion trong test.js</strong><small>Hoàn tất · Dev · 52 giây</small></div></div>
+      </div>
+
+      <div>
+        <!-- Run header -->
+        <div class="card run-header">
+          <div class="run-header-top">
+            <div class="run-header-text">
+              <span class="badge t-violet"><i class="pulse"></i>Đang chạy</span>
+              <h2>Thêm hàm power(base, exponent) và modulo(a, b) vào calc.js, kèm test</h2>
+              <div class="meta-row">
+                <span>Dev song song v1</span><span>⏱ 2 phút 10 giây</span><span>41k tokens*</span>
+                <span class="budget" title="Thời gian xử lý tối đa của flow Dev song song"><span class="budget-bar"><i></i></span>Đã dùng <b>1 phút 29 giây</b> / 30 phút <span class="proposal">ĐỀ XUẤT</span></span>
+              </div>
+            </div>
+            <div class="run-actions"><button class="btn">Tạm dừng</button><button class="btn danger">Hủy run</button></div>
+          </div>
+          <div class="callout violet">Đang chạy song song 2 bước: Implement A (Claude Code) và Implement B (Codex)</div>
+          <ol class="stepper ten">
+            <li class="step done"><span class="step-icon">✓</span><div><strong>Plan</strong><small>Xong</small><small class="step-agent">Claude Code · Sonnet 5.5</small><span class="step-metric">13 giây · 8k tokens</span></div></li>
+            <li class="step done"><span class="step-icon">✓</span><div><strong>Duyệt</strong><small>Xong</small><small class="step-agent">Bạn duyệt lúc 15:01:58</small><span class="step-metric" title="Không tính vào ngân sách thời gian">chờ 41 giây</span></div></li>
+            <li class="step done"><span class="step-icon">✓</span><div><strong>Chia việc</strong><small>Xong · 2 nhánh</small><small class="step-agent">A: power · B: modulo</small><span class="step-metric">9 giây · 4k tokens</span></div></li>
+            <li class="step live"><span class="step-icon">●</span><div><strong>Implement A</strong><small>Đang chạy</small><small class="step-agent">Claude Code · Sonnet 5.5</small><span class="step-metric">15 giây · 9k tokens</span><a class="step-link" href="#lane-a">Xem trực tiếp ↓</a></div></li>
+            <li class="step live"><span class="step-icon">●</span><div><strong>Implement B</strong><small>Đang chạy</small><small class="step-agent">Codex · GPT-6 Luna</small><span class="step-metric">14 giây · 7k tokens</span><a class="step-link" href="#lane-b">Xem trực tiếp ↓</a></div></li>
+            <li class="step wait"><span class="step-icon">○</span><div><strong>Hợp nhánh</strong><small>Chờ A và B</small></div></li>
+            <li class="step wait"><span class="step-icon">○</span><div><strong>Tích hợp</strong><small>Chờ</small><small class="step-agent">npm test trên bản hợp nhất</small></div></li>
+            <li class="step wait"><span class="step-icon">○</span><div><strong>Vòng sửa</strong><small>Chờ · tối đa 2 lượt</small></div></li>
+            <li class="step wait"><span class="step-icon">○</span><div><strong>Review</strong><small>Chờ</small><small class="step-agent">Codex · GPT-6 Luna</small></div></li>
+            <li class="step wait"><span class="step-icon">○</span><div><strong>Commit</strong><small>Chờ</small><small class="step-agent">commit local</small></div></li>
+          </ol>
+          <p class="step-legend"><span class="step-metric">15 giây · 9k tokens</span> thời gian và tokens của từng bước, cập nhật trực tiếp <span class="proposal">ĐỀ XUẤT</span></p>
+        </div>
+
+        <!-- Live activity (proposal) -->
+        <div class="card proposal-box">
+          <div class="card-title">
+            <h3>Hoạt động trực tiếp <span class="proposal">ĐỀ XUẤT</span></h3>
+            <span class="muted">2 agent đang chạy · mới nhất ở dưới</span>
+          </div>
+          <div class="live-grid">
+
+            <!-- Lane A: Claude Code -->
+            <section class="lane" id="lane-a">
+              <div class="lane-head">
+                <div class="lane-title"><strong>Implement A · power</strong><span class="badge t-violet"><i class="pulse"></i>Trực tiếp</span></div>
+                <div class="lane-sub"><span class="who">Claude Code · Sonnet 5.5 · nhánh <code style="font-size:11.5px">run/a</code></span></div>
+                <div class="lane-stats"><span>⏱ <b>15s</b></span><span><b>9k</b> tokens</span><a class="lane-open" href="#">Mở session đầy đủ ↗</a></div>
+              </div>
+              <div class="lane-tools">
+                <span class="segmented"><span class="on">Tất cả</span><span>Tin nhắn</span><span>Sửa file</span><span>Lệnh</span></span>
+                <span class="autoscroll"><span class="switch on"></span>Tự cuộn</span>
+              </div>
+              <ol class="tl">
+                <li><span class="ev read">≡</span>
+                  <details class="ev-body"><summary>Đọc <code>calc.js</code> <span class="ev-meta">5 dòng</span></summary>
+                    <div class="peek"><div><span>1</span><span>function add(a, b) {</span></div><div><span>2</span><span>  return a + b;</span></div><div><span>3</span><span>}</span></div><div><span>4</span><span> </span></div><div><span>5</span><span>module.exports = { add };</span></div></div>
+                  </details><time>15:02:11</time></li>
+                <li><span class="ev read">≡</span>
+                  <details class="ev-body"><summary>Đọc <code>test.js</code> <span class="ev-meta">9 dòng</span></summary>
+                    <div class="peek"><div><span>1</span><span>const assert = require('assert');</span></div><div><span>2</span><span>const calc = require('./calc');</span></div><div><span>3</span><span>assert.strictEqual(calc.add(2, 3), 5);</span></div><span class="more">… 6 dòng nữa</span></div>
+                  </details><time>15:02:13</time></li>
+                <li><span class="ev msg">“</span>
+                  <div class="ev-body"><div class="ev-line ev-meta">Tin nhắn agent</div>
+                    <div class="msg-bubble">Thêm <code>power</code> dùng <code>Math.pow</code> ngay sau <code>add</code>, export cùng add, rồi thêm 3 assertion vào test.js: số mũ dương, 0 và âm.</div>
+                  </div><time>15:02:16</time></li>
+                <li><span class="ev edit">✎</span>
+                  <details class="ev-body" open><summary>Sửa <code>calc.js</code> <span class="add-n">+5</span> <span class="del-n">−1</span></summary>
+                    <div class="mdiff">
+                      <div class="mdiff-head"><span>calc.js</span><a href="#">Mở diff ↗</a></div>
+                      <div class="ln hunk"><span></span><span></span><span></span><span>@@ -3,3 +3,7 @@</span></div>
+                      <div class="ln"><span>3</span><span>3</span><span></span><span>}</span></div>
+                      <div class="ln"><span>4</span><span>4</span><span></span><span> </span></div>
+                      <div class="ln add"><span></span><span>5</span><span>+</span><span>function power(base, exponent) {</span></div>
+                      <div class="ln add"><span></span><span>6</span><span>+</span><span>  return Math.pow(base, exponent);</span></div>
+                      <div class="ln add"><span></span><span>7</span><span>+</span><span>}</span></div>
+                      <div class="ln add"><span></span><span>8</span><span>+</span><span> </span></div>
+                      <div class="ln del"><span>5</span><span></span><span>−</span><span>module.exports = { add };</span></div>
+                      <div class="ln add"><span></span><span>9</span><span>+</span><span>module.exports = { add, power };</span></div>
+                    </div>
+                  </details><time>15:02:18</time></li>
+                <li><span class="ev edit">✎</span>
+                  <details class="ev-body"><summary>Sửa <code>test.js</code> <span class="add-n">+3</span></summary>
+                    <div class="mdiff">
+                      <div class="ln hunk"><span></span><span></span><span></span><span>@@ -3,0 +4,3 @@</span></div>
+                      <div class="ln add"><span></span><span>4</span><span>+</span><span>assert.strictEqual(calc.power(2, 3), 8);</span></div>
+                      <div class="ln add"><span></span><span>5</span><span>+</span><span>assert.strictEqual(calc.power(5, 0), 1);</span></div>
+                      <div class="ln add"><span></span><span>6</span><span>+</span><span>assert.strictEqual(calc.power(2, -1), 0.5);</span></div>
+                    </div>
+                  </details><time>15:02:21</time></li>
+                <li class="composing"><span class="ev now"><i></i></span><span class="ev-body ev-line">đang soạn tin nhắn<span class="typing"><i></i><i></i><i></i></span></span><time>15:02:22</time></li>
+              </ol>
+              <span class="new-pill">↓ Đang theo sự kiện mới nhất</span>
+              <div class="lane-foot"><span class="ico">i</span>Claude gửi theo từng tin nhắn hoàn chỉnh: trễ vài giây.</div>
+            </section>
+
+            <!-- Lane B: Codex -->
+            <section class="lane" id="lane-b">
+              <div class="lane-head">
+                <div class="lane-title"><strong>Implement B · modulo</strong><span class="badge t-violet"><i class="pulse"></i>Trực tiếp</span></div>
+                <div class="lane-sub"><span class="who">Codex · GPT-6 Luna · nhánh <code style="font-size:11.5px">run/b</code></span></div>
+                <div class="lane-stats"><span>⏱ <b>14s</b></span><span><b>7k</b> tokens</span><a class="lane-open" href="#">Mở session đầy đủ ↗</a></div>
+              </div>
+              <div class="lane-tools">
+                <span class="segmented"><span class="on">Tất cả</span><span>Tin nhắn</span><span>Sửa file</span><span>Lệnh</span></span>
+                <span class="autoscroll"><span class="switch on"></span>Tự cuộn</span>
+              </div>
+              <ol class="tl">
+                <li><span class="ev think">∴</span>
+                  <details class="ev-body reason"><summary>Tóm tắt suy luận <em>Đọc cấu trúc module trước khi sửa</em></summary>
+                    <p>Đọc calc.js và test.js để biết cách export hiện tại, rồi thêm modulo theo cùng kiểu; kiểm tra b = 0 theo kế hoạch.</p>
+                  </details><time>15:02:12</time></li>
+                <li><span class="ev cmd">$</span>
+                  <div class="ev-body"><div class="ev-line" title="Không có output">Chạy <code>git diff --stat</code> <span class="exit ok">exit 0</span></div></div><time>15:02:14</time></li>
+                <li><span class="ev edit">✎</span>
+                  <details class="ev-body"><summary>Sửa <code>calc.js</code> <span class="add-n">+4</span></summary>
+                    <div class="mdiff">
+                      <div class="ln hunk"><span></span><span></span><span></span><span>@@ -3,0 +4,4 @@</span></div>
+                      <div class="ln add"><span></span><span>4</span><span>+</span><span>function modulo(a, b) {</span></div>
+                      <div class="ln add"><span></span><span>5</span><span>+</span><span>  if (b === 0) throw new Error('b = 0');</span></div>
+                      <div class="ln add"><span></span><span>6</span><span>+</span><span>  return a % b;</span></div>
+                      <div class="ln add"><span></span><span>7</span><span>+</span><span>}</span></div>
+                    </div>
+                  </details><time>15:02:19</time></li>
+                <li><span class="ev cmd">$</span>
+                  <div class="ev-body"><div class="ev-line">Chạy <code>npm test</code> <span class="exit run"><i class="pulse"></i>đang chạy · 4s</span></div>
+                    <div class="term">
+                      <div class="term-head"><span>output trực tiếp</span><span>worktree run/b</span></div>
+<pre><span class="dim">$ npm test</span>
+
+&gt; neomind-demo-repo1@0.1.0 test
+&gt; node test.js
+<span class="cursor"></span></pre>
+                    </div>
+                  </div><time>15:02:20</time></li>
+              </ol>
+              <span class="new-pill">↓ Đang theo sự kiện mới nhất</span>
+              <div class="lane-foot"><span class="ico">i</span>Codex gửi từng sự kiện ngay khi xảy ra; output lệnh theo dòng.</div>
+            </section>
+          </div>
+
+          <div class="live-foot">
+            <span class="readonly"><i>i</i><span><b>Chỉ xem:</b> dùng Tạm dừng / Hủy run để dừng agent; không gửi chỉ dẫn giữa lượt.</span></span>
+            <span class="recorded" title="runs/&lt;runId&gt;/transcripts/&lt;attemptId&gt;.jsonl">● Đã ghi bởi NeoMind · lưu cùng run</span>
+          </div>
+        </div>
+
+        <!-- Approved plan (baseline) -->
+        <div class="card">
+          <div class="card-title"><h3>Kế hoạch đã duyệt</h3></div>
+          <p class="plan-goal">calc.js có hàm power(base, exponent) và modulo(a, b), cả hai được export, và test.js có assertion cho từng hàm.</p>
+          <p class="plan-approach">Chia hai nhánh chạy song song trên worktree riêng, rồi hợp nhánh và chạy <code>npm test</code> trên bản hợp nhất. Code và assertion của add giữ nguyên.</p>
+          <h4>Chia việc</h4>
+          <div class="split">
+            <div><b>A · power</b> <small>Claude Code · Sonnet 5.5</small>Thêm <code>power</code> dùng Math.pow, export, assertion cho số mũ dương, 0 và âm.</div>
+            <div><b>B · modulo</b> <small>Codex · GPT-6 Luna</small>Thêm <code>modulo</code> dùng toán tử %, ném Error khi b = 0, kèm assertion.</div>
+          </div>
+          <div class="plan-grid">
+            <div><h4>Tiêu chí hoàn thành</h4>
+              <ul class="criteria">
+                <li>calc.js định nghĩa power(base, exponent) trả về Math.pow(base, exponent)</li>
+                <li>calc.js định nghĩa modulo(a, b), ném Error khi b = 0</li>
+                <li>calc.js export add, power và modulo</li>
+                <li>Hàm add và assertion cũ giữ nguyên</li>
+                <li>npm test thoát 0 và in 'all tests passed'</li>
+              </ul></div>
+            <div><h4>Phạm vi sửa</h4><div class="chips"><code>calc.js</code><code>test.js</code></div>
+              <h4>Checks</h4><div class="chips"><code>npm test</code></div></div>
+          </div>
+        </div>
+
+        <!-- Logs (baseline) -->
+        <div class="card">
+          <details class="logs"><summary>Logs và output (4)</summary></details>
+          <details class="logs"><summary>Chi tiết kỹ thuật</summary></details>
+        </div>
+
+        <div class="card notes">
+          <h3>Ghi chú thiết kế</h3>
+          <ol>
+            <li>Màn đang chạy không có nút primary: người dùng không cần làm gì. "Tạm dừng" và "Hủy run" là secondary.</li>
+            <li>Mỗi bước agent đang chạy có một luồng riêng; hai bước song song hiện cạnh nhau. "Xem trực tiếp" trên thẻ bước cuộn tới luồng đó.</li>
+            <li>Nguồn là transcript chuẩn hóa NeoMind tự ghi cho từng attempt (Claude stream-json, Codex app-server notifications), lưu cùng run nên xem lại được sau khi run xong.</li>
+            <li>Claude chỉ gửi tin nhắn hoàn chỉnh nên luồng của Claude trễ vài giây; Codex gửi từng sự kiện và output lệnh theo dòng.</li>
+            <li>Suy luận chỉ hiện bản tóm tắt runner cung cấp, thu gọn mặc định. Output lệnh và nội dung file đọc được cắt ngắn.</li>
+            <li>Chỉ xem: không có ô nhắn tin cho agent giữa lượt, vì vậy mọi thao tác vẫn nằm trong journal và giới hạn quyền của run.</li>
+            <li>Thời gian chờ người duyệt không tính vào ngân sách 30 phút (giống activeMs hiện tại).</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script>
+/* ==== NEOMIND PROTOTYPE SCRIPT (same in every mockup) ==== */
+/* Clickable prototype: selections, toggles and copy buttons work in place; main actions move between screens. */
+(() => {
+  const screens = {
+    '00-design-system.mockup.html': 'Design system', '01-run-start.mockup.html': 'Run mới', '02-run-approval.mockup.html': 'Chờ duyệt kế hoạch',
+    '03-run-running.mockup.html': 'Đang chạy', '04-run-blocked.mockup.html': 'Cần xử lý', '05-run-completed.mockup.html': 'Hoàn tất',
+    '06-flow-studio.mockup.html': 'Flow studio', '07-profiles.mockup.html': 'Agent profiles', '08-memory.mockup.html': 'Project memory', '09-session-viewer.mockup.html': 'Xem session',
+  };
+  // Text of a clicked control -> screen it leads to.
+  const routes = [
+    [/^(\+|＋)\s*Run mới$/, '01-run-start.mockup.html'], [/Bắt đầu$/, '02-run-approval.mockup.html'], [/^Duyệt và thực hiện$/, '03-run-running.mockup.html'],
+    [/Chạy lại review|Đổi và chạy lại|^Tiếp tục$/, '03-run-running.mockup.html'], [/Tôi đã xem, duyệt|Áp dụng vào branch/, '05-run-completed.mockup.html'],
+    [/Chạy flow$/, '01-run-start.mockup.html'], [/^Runs$/, '01-run-start.mockup.html'], [/^Flow library|^(Dev|Research|Test1?)$/, '06-flow-studio.mockup.html'],
+    [/^Agent profiles$/, '07-profiles.mockup.html'], [/Xem session|Mở session đầy đủ/, '09-session-viewer.mockup.html'], [/^Project memory$/, '08-memory.mockup.html'],
+  ];
+  const historyRoutes = [[/Đang chạy/, '03-run-running.mockup.html'], [/Chờ duyệt/, '02-run-approval.mockup.html'], [/Cần xử lý/, '04-run-blocked.mockup.html'], [/Hoàn tất/, '05-run-completed.mockup.html']];
+  const here = decodeURIComponent(location.pathname.split('/').pop() || '');
+  const canNavigate = /^(file|https?):$/.test(location.protocol) && location.href !== 'about:srcdoc';
+
+  const style = document.createElement('style');
+  style.textContent = `.proto-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;z-index:9999;background:#30302e;color:#f2efe8;border:1px solid #4a4944;border-radius:10px;padding:9px 14px;font:13px 'Segoe UI',system-ui,sans-serif;box-shadow:0 8px 28px #0008;transition:all .18s;pointer-events:none;max-width:70vw}
+.proto-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}.proto-toast b{color:#e8956f}
+.proto-nav{position:fixed;right:16px;bottom:16px;z-index:9998;font:12px 'Segoe UI',system-ui,sans-serif}
+.proto-nav summary{list-style:none;cursor:pointer;background:#30302e;color:#d4d0c6;border:1px solid #4a4944;border-radius:999px;padding:6px 12px;box-shadow:0 6px 18px #0007}
+.proto-nav summary::-webkit-details-marker{display:none}
+.proto-nav div{position:absolute;right:0;bottom:36px;background:#262624;border:1px solid #4a4944;border-radius:10px;padding:6px;min-width:210px;box-shadow:0 10px 30px #0009}
+.proto-nav a{display:block;padding:6px 9px;border-radius:6px;color:#d4d0c6;text-decoration:none}.proto-nav a:hover{background:#2d2c29}.proto-nav a.here{color:#e8956f;font-weight:600}
+[data-proto-click]{cursor:pointer}`;
+  document.head.appendChild(style);
+  const toast = document.createElement('div'); toast.className = 'proto-toast'; document.body.appendChild(toast);
+  let timer;
+  const say = html => { toast.innerHTML = html; toast.classList.add('show'); clearTimeout(timer); timer = setTimeout(() => toast.classList.remove('show'), 1800); };
+  const go = file => {
+    if (!file || file === here) return false;
+    if (canNavigate) { location.href = file; return true; }
+    say(`→ Màn <b>${screens[file]}</b> · mở file <code>${file}</code>`); return true;
+  };
+  // Screen switcher, bottom right.
+  const nav = document.createElement('details'); nav.className = 'proto-nav';
+  nav.innerHTML = `<summary>☰ Màn: ${screens[here] ?? 'mockup'}</summary><div>${Object.entries(screens).map(([file, name]) => `<a href="${file}" data-goto="${file}" class="${file === here ? 'here' : ''}">${file.slice(0, 2)} · ${name}</a>`).join('')}</div>`;
+  document.body.appendChild(nav);
+
+  const label = el => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const selectable = ['on', 'active', 'selected'];
+  // Move the selection class among siblings of the same kind (tabs, chips, cards, list items).
+  function select(el) {
+    for (let node = el; node && node !== document.body; node = node.parentElement) {
+      const parent = node.parentElement; if (!parent) break;
+      const siblings = [...parent.children].filter(child => child.tagName === node.tagName);
+      const cls = selectable.find(name => siblings.some(child => child !== node && child.classList.contains(name)));
+      if (cls && siblings.length > 1) { siblings.forEach(child => child.classList.remove(cls)); node.classList.add(cls); return true; }
+    }
+    return false;
+  }
+  document.addEventListener('click', event => {
+    const target = event.target;
+    if (target.closest('input, textarea, select, summary, label')) return;
+    const link = target.closest('[data-goto]');
+    if (link) { event.preventDefault(); go(link.getAttribute('data-goto')); nav.removeAttribute('open'); return; }
+    if (target.closest('a[href]')) { event.preventDefault(); }
+    const toggle = target.closest('.toggle, .switch');
+    if (toggle) { toggle.classList.toggle('on'); return; }
+    const control = target.closest('a, button, .btn, .nav, .chip, .preset, .tab, .diff-tab, .filter, .tchip, .version, .flow-card, .choice, .run-item, .run-history-item, .pitem, .issue, .node, .segmented > *, [role="tab"], .copy, .copy-btn');
+    if (!control) return;
+    const text = label(control);
+    if (/Xem trực tiếp/.test(text)) { const live = document.querySelector('[class*="live"]'); if (live) { live.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; } }
+    if (/Sao chép|^Chép/.test(text)) { const old = control.innerHTML; control.textContent = 'Đã chép ✓'; setTimeout(() => { control.innerHTML = old; }, 1300); return; }
+    if (control.matches('[disabled]')) { say('Nút đang bị khóa'); return; }
+    const history = control.closest('.run-item, .run-history-item');
+    if (history) { select(history); const route = historyRoutes.find(([pattern]) => pattern.test(label(history))); if (route) go(route[1]); return; }
+    const selected = select(control);
+    const core = text.replace(/^[^\p{L}\p{N}+＋]+/u, '').replace(/\s+\d+$/, '');
+    const route = routes.find(([pattern]) => pattern.test(text) || pattern.test(core));
+    if (route && go(route[1])) return;
+    if (!selected) say(`Bấm <b>${text.slice(0, 60)}</b> · mockup chưa gắn hành động`);
+  }, true);
+})();
+/* ==== END NEOMIND PROTOTYPE SCRIPT ==== */
+</script>
+</body>
+</html>

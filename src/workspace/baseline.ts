@@ -1,3 +1,4 @@
+import { gitConfigEnv } from './git-env.js';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { constants } from 'node:fs';
@@ -19,7 +20,7 @@ export interface WorkspaceBaseline {
 
 function digest(bytes: Buffer | string): string { return createHash('sha256').update(bytes).digest('hex'); }
 function git(workspace: string, args: string[]): Buffer {
-  const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: '0', ...gitConfigEnv };
   for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES']) {
     delete env[name];
   }

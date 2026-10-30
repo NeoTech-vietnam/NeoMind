@@ -1,0 +1,17 @@
+{
+  "theme": "obsidian",
+  "cssTheme": "AnuPpuccin",
+  "textFontFamily": "Bookerly,Aptos Display",
+  "baseFontSize": 14,
+  "baseFontSizeAction": true,
+  "interfaceFontFamily": "Aptos",
+  "monospaceFontFamily": "Consolas,Aptos Mono",
+  "accentColor": "",
+  "enabledCssSnippets": [
+    "extended-colorschemes",
+    "center-images"
+  ],
+  "showViewHeader": true,
+  "showRibbon": true,
+  "nativeMenus": false
+}

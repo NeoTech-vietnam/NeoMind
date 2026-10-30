@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileSymlink } from './helpers/symlink.js';
 import { tmpdir } from 'node:os';
 import { captureBaseline } from '../src/workspace/baseline.js';
 
@@ -40,11 +41,11 @@ test('baseline captures dirty staged and untracked files without changing Git in
   assert.notEqual((await captureBaseline(root)).baselineHash, baseline.baselineHash);
 });
 
-test('baseline records a symlink without reading its outside target', async () => {
+test('baseline records a symlink without reading its outside target', async t => {
   const root = await fixture();
   const outside = await mkdtemp(path.join(tmpdir(), 'neomind-outside-'));
   await writeFile(path.join(outside, 'secret'), 'private');
-  await symlink(path.join(outside, 'secret'), path.join(root, 'link'));
+  if (!await fileSymlink(t, path.join(outside, 'secret'), path.join(root, 'link'))) { t.skip('File symlinks unavailable'); return; }
   const entry = (await captureBaseline(root)).entries.find(e => e.path === 'link');
   assert.equal(entry?.kind, 'symlink');
   assert.notEqual(entry?.contentHash, null);

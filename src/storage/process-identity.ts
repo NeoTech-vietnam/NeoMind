@@ -1,7 +1,15 @@
 import { readFileSync } from 'node:fs';
+import { windowsProcessInfo } from '../platform/windows-helper.js';
 
+/** `startTicks` is /proc start time on Linux and the process creation FILETIME on Windows; `bootId` identifies the boot. */
 export interface ProcessIdentity { pid: number; startTicks: string; bootId: string }
 export function currentProcessIdentity(): ProcessIdentity | undefined {
+  if (process.platform === 'win32') {
+    try {
+      const info = windowsProcessInfo(process.pid);
+      return info?.state === 'alive' && info.bootId && info.start ? { pid: process.pid, startTicks: info.start, bootId: info.bootId } : undefined;
+    } catch { return undefined; }
+  }
   if (process.platform !== 'linux') return undefined;
   try {
     const bootId = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
@@ -18,7 +26,9 @@ function processStart(pid: number): string | undefined {
 }
 /** Unknown is never treated as dead; PID reuse and boot changes do not identify the old process as alive. */
 export function ownerLiveness(identity: ProcessIdentity): 'alive' | 'dead' | 'unknown' {
-  if (process.platform !== 'linux' || !Number.isSafeInteger(identity.pid) || identity.pid <= 0 || !/^\d+$/.test(identity.startTicks) || !identity.bootId) return 'unknown';
+  if (!Number.isSafeInteger(identity.pid) || identity.pid <= 0 || !/^\d+$/.test(identity.startTicks) || !identity.bootId) return 'unknown';
+  if (process.platform === 'win32') return windowsLiveness(identity);
+  if (process.platform !== 'linux') return 'unknown';
   try {
     const bootId = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
     if (!bootId) return 'unknown';
@@ -29,5 +39,16 @@ export function ownerLiveness(identity: ProcessIdentity): 'alive' | 'dead' | 'un
       try { process.kill(identity.pid, 0); return 'unknown'; }
       catch (probe) { return (probe as NodeJS.ErrnoException).code === 'ESRCH' ? 'dead' : 'unknown'; }
     }
+  } catch { return 'unknown'; }
+}
+function windowsLiveness(identity: ProcessIdentity): 'alive' | 'dead' | 'unknown' {
+  try {
+    const info = windowsProcessInfo(identity.pid);
+    if (!info?.bootId) return 'unknown';
+    if (info.bootId !== identity.bootId) return 'dead';
+    if (info.state === 'absent') return 'dead';
+    if (info.state === 'unknown' || !info.start) return 'unknown';
+    // A different creation time is a reused PID; an exited process may still be held open by another handle.
+    return info.start !== identity.startTicks || info.state === 'exited' ? 'dead' : 'alive';
   } catch { return 'unknown'; }
 }

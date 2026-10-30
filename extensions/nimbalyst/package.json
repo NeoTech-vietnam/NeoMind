@@ -1,0 +1,10 @@
+{
+  "name": "neomind-nimbalyst-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "vite build --config vite.panel.config.ts && vite build --config vite.backend.config.ts"
+  }
+}

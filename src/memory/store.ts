@@ -3,6 +3,7 @@ import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readF
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
+import { syncDirectorySync } from '../storage/fs-sync.js';
 
 const idSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/);
 const kindSchema = z.enum(['context', 'decision', 'lesson']);
@@ -108,8 +109,7 @@ export class MemoryStore {
       const fd = openSync(temporary, 'wx', 0o600);
       try { writeFileSync(fd, bytes, 'utf8'); fsyncSync(fd); } finally { closeSync(fd); }
       renameSync(temporary, file); temporary = undefined;
-      const directoryFd = openSync(path.dirname(file), 'r');
-      try { fsyncSync(directoryFd); } finally { closeSync(directoryFd); }
+      syncDirectorySync(path.dirname(file));
       this.db.exec('COMMIT');
       return this.decode(bytes, value.type, value.id);
     } catch (error) {

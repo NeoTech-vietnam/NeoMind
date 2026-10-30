@@ -70,7 +70,7 @@ test('flow library refuses a symlinked flow directory', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'neomind-library-link-'));
   const library = new FlowLibrary(root);
   await library.create('dev', 'Dev');
-  await symlink(path.join(root, 'dev'), path.join(root, 'alias'), 'dir');
+  await symlink(path.join(root, 'dev'), path.join(root, 'alias'), 'junction');
   await assert.rejects(library.metadata('alias'), /Symlink is not allowed/);
   await assert.rejects(library.deletePermanently('alias', 'Dev'), /Symlink is not allowed/);
 });

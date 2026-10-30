@@ -5,46 +5,68 @@ import { compileFlow } from '../domain/compiler.js';
 import { flowJsonSchema, profileJsonSchema } from '../domain/schema.js';
 import { defaultProject, templates } from '../domain/templates.js';
 import { FlowLibrary } from '../storage/flow-library.js';
+import { migrateProjectDir } from '../storage/project-dir.js';
+import { readProject } from '../runtime/project.js';
 import { ProfileLibrary } from '../storage/profile-library.js';
+import { installShutdown } from './shutdown.js';
+import { parseRunCommand, runUsage } from './run-command.js';
 
 async function executableAvailable(name: string): Promise<boolean> {
+  // Windows has no execute bit; a command resolves through PATHEXT (codex.cmd, codex.exe, ...).
+  const extensions = process.platform === 'win32' ? (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean) : [''];
   for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
     if (!dir) continue;
-    try { await access(path.join(dir, name), constants.X_OK); return true; } catch { /* continue */ }
+    for (const extension of extensions) {
+      try { await access(path.join(dir, name + extension), constants.X_OK); return true; } catch { /* continue */ }
+    }
   }
   return false;
 }
 
 async function main(args: string[]): Promise<number> {
-  if (args[0] === 'run' && args[2]) {
+  if (args[0] === 'run') {
+    const command = parseRunCommand(args);
+    if (!command) { console.error(runUsage); return 2; }
     const { RunManager } = await import('../runtime/run-manager.js');
-    const manager = await RunManager.open(await (await import('node:fs/promises')).realpath(args[2]));
+    const manager = await RunManager.open(await (await import('node:fs/promises')).realpath(command.project));
+    // A signal pauses runs owned by this process and confirms their workers stopped before exit.
+    const uninstall = installShutdown(async () => {
+      for (const state of await manager.close()) console.error(`${state.runId}: ${state.phase} (${state.reason}). Tiếp tục: neomind run resume <project> ${state.runId}`);
+    });
+    const settle = async (runId: string) => console.log(JSON.stringify(await manager.settle(runId), null, 2));
     try {
-      if (args[1] === 'list' && args.length === 3) { console.log(JSON.stringify(await manager.list(), null, 2)); return 0; }
-      if (args[1] === 'show' && args[3] && args.length === 4) { console.log(JSON.stringify(await manager.get(args[3]), null, 2)); return 0; }
-      if (args[1] === 'preview' && args[3] && args.length === 4) { console.log(JSON.stringify(await manager.preview(args[3]), null, 2)); return 0; }
-      if (args[1] === 'start' && args[3] && args[4] && args.length === 5) {
-        const preview = await manager.preview(args[3]);
-        console.log(JSON.stringify({ configuration: preview.snapshot.configuration, workspace: 'isolated', dirtyPaths: preview.dirtyPaths }, null, 2));
-        const run = await manager.create(args[3], args[4], undefined, {}, preview.configurationHash);
-        console.log(JSON.stringify(await manager.settle(run.runId), null, 2)); return 0;
+      switch (command.kind) {
+        case 'list': console.log(JSON.stringify(await manager.list(), null, 2)); return 0;
+        case 'show': console.log(JSON.stringify(await manager.get(command.runId), null, 2)); return 0;
+        case 'preview': console.log(JSON.stringify(await manager.preview(command.flowId), null, 2)); return 0;
+        case 'start': {
+          const preview = await manager.preview(command.flowId);
+          console.log(JSON.stringify({ configuration: preview.snapshot.configuration, workspace: 'isolated', dirtyPaths: preview.dirtyPaths }, null, 2));
+          if (preview.dirtyImport.changes.length && !command.importDirty) console.error(`Checkout có ${preview.dirtyImport.changes.length} thay đổi chưa commit; run dùng HEAD. Mang vào run: thêm --import-dirty ${preview.dirtyImport.baselineHash}`);
+          const run = await manager.create(command.flowId, command.task, undefined, {}, preview.configurationHash, {}, command.importDirty);
+          await settle(run.runId); return 0;
+        }
+        case 'approve': await manager.action(command.runId, 'approve', 'cli', command.planHash); await settle(command.runId); return 0;
+        case 'changes': await manager.revisePlan(command.runId, command.feedback, command.planHash); await settle(command.runId); return 0;
+        case 'retry-git': await manager.action(command.runId, 'retry_git', 'cli'); await settle(command.runId); return 0;
+        case 'include-imported': await manager.action(command.runId, 'include_imported', 'cli'); await settle(command.runId); return 0;
+        case 'apply': await manager.action(command.runId, 'apply', 'cli'); console.log(JSON.stringify((await manager.get(command.runId)).checkoutApply ?? {}, null, 2)); return 0;
+        case 'clean': {
+          if (command.runId) { const run = await manager.clean(command.runId, command.force); console.log(JSON.stringify(run.workspaceCleanup ?? {}, null, 2)); return 0; }
+          const results = await manager.cleanFinished(command.force);
+          console.log(JSON.stringify(results, null, 2)); return results.some(item => item.status === 'kept') ? 1 : 0;
+        }
+        case 'extend-time': await manager.extendTime(command.runId, command.seconds); await settle(command.runId); return 0;
+        case 'resume': case 'pause': case 'cancel': await manager.action(command.runId, command.kind, 'cli'); await settle(command.runId); return 0;
       }
-      if (args[1] === 'approve' && args[3] && args[4] === '--plan-hash' && args[5] && args.length === 6) {
-        if (!/^[a-f0-9]{64}$/.test(args[5])) throw new Error('Invalid plan hash');
-        await manager.action(args[3], 'approve', 'cli', args[5]); console.log(JSON.stringify(await manager.settle(args[3]), null, 2)); return 0;
-      }
-      if (['resume', 'pause', 'cancel'].includes(args[1] ?? '') && args[3] && args.length === 4) {
-        await manager.action(args[3], args[1] as 'resume' | 'pause' | 'cancel', 'cli');
-        console.log(JSON.stringify(await manager.settle(args[3]), null, 2)); return 0;
-      }
-      throw new Error('Usage: run list <project> | preview <project> <flow> | start <project> <flow> "task" | show|resume|pause|cancel <project> <run-id> | approve <project> <run-id> --plan-hash HASH');
-    } finally { await manager.close(); }
+    } finally { uninstall(); await manager.close(); }
   }
   if (args[0] === 'editor' && (args.length === 2 || (args.length === 4 && args[2] === '--port'))) {
     const port = args[3] === undefined ? 0 : Number(args[3]);
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid port');
     const { startEditorServer } = await import('../ui-server/server.js');
     const server = await startEditorServer(args[1]!, port);
+    installShutdown(() => server.close());
     console.log(`NeoMind Flow Studio: ${server.url}`);
     return 0;
   }
@@ -94,6 +116,18 @@ async function main(args: string[]): Promise<number> {
   }
   if (args[0] === 'flow' && args[1] === 'delete' && args.length === 6 && args[4] === '--confirm-name') {
     await new FlowLibrary(args[2]!).deletePermanently(args[3]!, args[5]!); console.log(JSON.stringify({ deleted: true })); return 0;
+  }
+  if (args[0] === 'project' && args[1] === 'migrate' && args.length === 3) {
+    // Move a legacy .neomind/ to neomind/, which Obsidian and other tools that hide dot-folders can see.
+    console.log(JSON.stringify(await migrateProjectDir(path.resolve(args[2]!)), null, 2)); return 0;
+  }
+  if (args[0] === 'flow' && args[1] === 'canvas' && (args[2] === 'export' || args[2] === 'import') && (args.length === 5 || args.length === 6)) {
+    // Default board: <library>/<flow>/flow.canvas, opened by Nimbalyst and Obsidian.
+    const library = new FlowLibrary(args[3]!), file = args[5] ? path.resolve(args[5]) : undefined;
+    // The flows directory sits at <project>/neomind/flows; the project config resolves which agent runs each step.
+    if (args[2] === 'export') { console.log(JSON.stringify(await library.exportCanvas(args[4]!, file, await readProject(path.dirname(path.dirname(path.resolve(args[3]!))))), null, 2)); return 0; }
+    const result = await library.importCanvas(args[4]!, file);
+    console.log(JSON.stringify({ saved: true, revision: result.revision, report: result.report }, null, 2)); return 0;
   }
   if (args[0] === 'flow' && args[1] === 'export' && args.length === 5) {
     console.log(JSON.stringify(await new FlowLibrary(args[2]!).readVersion(args[3]!, Number(args[4])), null, 2)); return 0;
@@ -168,7 +202,7 @@ async function main(args: string[]): Promise<number> {
     console.log(JSON.stringify({ simulated: false, executables, auth: 'unknown', inference: 'not_tested', delegationEnforcement: 'unknown' }, null, 2));
     return 0;
   }
-  console.error('Usage: neomind editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | memory configure|project-search|search|get ... | doctor capabilities');
+  console.error('Usage: neomind editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|parallel|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | flow canvas export|import <flows-dir> <flow-id> [file.canvas] | project migrate <project> | memory configure|project-search|search|get ... | doctor capabilities');
   return 2;
 }
 

@@ -23,6 +23,10 @@ export function compileFlow(input: unknown, policyInput: unknown): Compilation {
   const issue = (code: string, message: string, nodeId?: string) => {
     diagnostics.push(nodeId === undefined ? { code, message } : { code, message, nodeId });
   };
+  // A flow reviewed by the user outside the flow has no review gate; the project policy can forbid that exception.
+  const humanReview = flow.definition.review === 'human';
+  if (humanReview && policy.allowHumanReview === false) issue('human_review_denied', 'Project policy requires independent review inside the flow.');
+  const requireReview = policy.requireIndependentReviewForCode && !humanReview;
   const byId = new Map(nodes.map(n => [n.id, n]));
   if (byId.size !== nodes.length) issue('duplicate_node', 'Node IDs must be unique.');
   const groups = new Map(sessionGroups.map(g => [g.id, g]));
@@ -55,6 +59,12 @@ export function compileFlow(input: unknown, policyInput: unknown): Compilation {
       if (!node.permissions.write && node.writeScopes.length > 0) issue('unexpected_write_scope', 'Read-only task cannot declare write scopes.', node.id);
       if (node.permissions.gitCommit) issue('agent_commit_forbidden', 'Only a core-controlled git_commit node can commit.', node.id);
     }
+    if (node.type === 'integration') {
+      const agentFields = [node.profileId, node.profileVersion, node.sessionGroup, node.bindingId];
+      if (agentFields.some(value => value !== undefined) && agentFields.some(value => value === undefined)) issue('incomplete_integration_agent', 'Integration agent needs profile, version, session group and binding together.', node.id);
+      const group = node.sessionGroup ? groups.get(node.sessionGroup) : undefined;
+      if (node.bindingId && (!(node.bindingId in bindings) || !group || group.bindingId !== node.bindingId)) issue('invalid_binding', 'Integration binding and session group must exist and agree.', node.id);
+    }
     if (node.type === 'agent_task' || node.type === 'integration') {
       for (const scope of node.writeScopes) {
         const normalized = scope.replaceAll('\\', '/');
@@ -64,6 +74,8 @@ export function compileFlow(input: unknown, policyInput: unknown): Compilation {
       }
     }
     if (node.type === 'git_commit' && !policy.allowGitCommit) issue('permission_denied', 'Git commit exceeds project policy.', node.id);
+    if (node.type === 'git_commit' && humanReview) issue('human_review_commit', 'A flow reviewed by the user outside the flow cannot commit; the user applies its changes.', node.id);
+    if (node.type === 'approval' && node.mode === 'auto' && policy.allowAutoApproval === false) issue('auto_approval_denied', 'Project policy does not allow automatic plan approval.', node.id);
     if (node.type === 'review_group') {
       const target = byId.get(node.targetNodeId);
       if (!target || !['agent_task', 'integration'].includes(target.type)) issue('invalid_review_target', 'Review target must be an agent task or integration node.', node.id);
@@ -72,13 +84,16 @@ export function compileFlow(input: unknown, policyInput: unknown): Compilation {
       if (new Set(node.reviewers.map(r => r.sessionGroup)).size !== node.reviewers.length) issue('shared_reviewer_session', 'Reviewers must use separate session groups.', node.id);
       for (const reviewer of node.reviewers) {
         if (!groups.has(reviewer.sessionGroup)) issue('missing_session_group', 'Reviewer session group is missing.', node.id);
-        if (target?.type === 'agent_task' && reviewer.sessionGroup === target.sessionGroup) issue('non_independent_review', 'Reviewer cannot share the target agent session.', node.id);
+        if ((target?.type === 'agent_task' || target?.type === 'integration') && reviewer.sessionGroup === target.sessionGroup) issue('non_independent_review', 'Reviewer cannot share the target agent session.', node.id);
       }
     }
     if (node.type === 'repair_scope') {
       if (byId.get(node.targetReviewId)?.type !== 'review_group') issue('invalid_repair_target', 'Repair scope must target a review group.', node.id);
       if (node.maxRounds > limits.maxRepairRounds) issue('repair_limit', 'Repair scope exceeds flow repair budget.', node.id);
-      for (const owner of node.ownerNodeIds) if (byId.get(owner)?.type !== 'agent_task') issue('invalid_repair_owner', `Repair owner ${owner} must be an agent task.`, node.id);
+      for (const owner of node.ownerNodeIds) {
+        const ownerNode = byId.get(owner);
+        if (ownerNode?.type !== 'agent_task' && !(ownerNode?.type === 'integration' && ownerNode.bindingId)) issue('invalid_repair_owner', `Repair owner ${owner} must be an agent task or an integration node with an agent.`, node.id);
+      }
     }
     if (node.type === 'fork' && (outgoing.get(node.id)?.length ?? 0) < 2) issue('invalid_fork', 'Fork needs at least two outgoing branches.', node.id);
     if (node.type === 'join') {
@@ -142,7 +157,7 @@ export function compileFlow(input: unknown, policyInput: unknown): Compilation {
     for (const reviewer of node.reviewers) {
       for (const ancestor of ancestors) {
         const writer = byId.get(ancestor);
-        if (writer?.type === 'agent_task' && writer.permissions.write && writer.sessionGroup === reviewer.sessionGroup) {
+        if (((writer?.type === 'agent_task' && writer.permissions.write) || writer?.type === 'integration') && writer.sessionGroup === reviewer.sessionGroup) {
           issue('non_independent_review', 'Reviewer cannot share a session with an upstream writer.', node.id);
         }
       }
@@ -162,8 +177,8 @@ export function compileFlow(input: unknown, policyInput: unknown): Compilation {
         const writes = (node.type === 'agent_task' && node.permissions.write) || node.type === 'integration';
         if (writes && policy.requireApprovalBeforeWrite && !approved) issue('approval_bypass', 'A path reaches a writer without approval.', current);
         if (writes) { reviewed = false; lastWriter = current; }
-        if (node.type === 'git_commit' && policy.requireIndependentReviewForCode && !reviewed) issue('review_bypass', 'A path reaches commit without independent review after the latest write.', current);
-        if (node.type === 'finish' && lastWriter && policy.requireIndependentReviewForCode && !reviewed) issue('review_bypass', 'A path finishes after a write without independent review.', current);
+        if (node.type === 'git_commit' && requireReview && !reviewed) issue('review_bypass', 'A path reaches commit without independent review after the latest write.', current);
+        if (node.type === 'finish' && lastWriter && requireReview && !reviewed) issue('review_bypass', 'A path finishes after a write without independent review.', current);
         for (const edge of edges.filter(e => e.from === current && byId.has(e.to))) {
           const edgeApproved = approved || (node.type === 'approval' && edge.outcome === 'pass');
           const edgeReviewed = reviewed || (node.type === 'review_group' && node.targetNodeId === lastWriter && edge.outcome === 'pass' && node.reviewers.some(r => r.required));

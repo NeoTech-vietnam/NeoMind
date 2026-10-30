@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileSymlink } from './helpers/symlink.js';
 import { tmpdir } from 'node:os';
 import { materializeRun, validateMaterializedRun } from '../src/domain/materialize.js';
 import { defaultProject, templates } from '../src/domain/templates.js';
@@ -42,13 +43,13 @@ test('materialization pins profile instructions, skill bytes and binding provena
   await assert.rejects(materializeRun(flow, project, profiles('Original skill'), root), /Skill hash mismatch/);
 });
 
-test('materialization rejects missing versions, overprivileged reviewers and symlink escape', async () => {
+test('materialization rejects missing versions, overprivileged reviewers and symlink escape', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'neomind-materialize-safe-'));
   const external = await mkdtemp(path.join(tmpdir(), 'neomind-materialize-outside-'));
   await mkdir(path.join(root, 'skills'));
   await writeFile(path.join(external, 'secret.md'), 'secret');
-  await symlink(path.join(external, 'secret.md'), path.join(root, 'skills/coding.md'));
-  await assert.rejects(materializeRun(templates.dev, project, profiles('secret'), root), /escapes project root/);
+  if (await fileSymlink(t, path.join(external, 'secret.md'), path.join(root, 'skills/coding.md')))
+    await assert.rejects(materializeRun(templates.dev, project, profiles('secret'), root), /escapes project root/);
   const noSkills = profiles('secret');
   noSkills['implementer@1']!.skills = [];
   delete noSkills['verifier@1'];

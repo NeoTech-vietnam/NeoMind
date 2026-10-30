@@ -4,7 +4,9 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { FakeAdapter } from '../src/adapters/fake.js';
-import { CodexReadOnlyAdapter } from '../src/adapters/codex-readonly.js';
+import { CodexTurnEvents } from '../src/adapters/codex-turn-events.js';
+import { CodexRunner } from '../src/runners/codex-runner.js';
+import { fakeRunnerSession, fakeScope } from './helpers/fake-runner.js';
 import { CodexReadOnlyDispatch } from '../src/core/codex-readonly-dispatch.js';
 import { SimulatedRun } from '../src/core/simulated-run.js';
 import { replayRun } from '../src/core/recovery.js';
@@ -14,17 +16,17 @@ import { OwnedJournal } from '../src/storage/owned-journal.js';
 import { materializeRun } from '../src/domain/materialize.js';
 import { RunService } from '../src/core/run-service.js';
 
-async function fixture(startTurn: () => Promise<unknown>) {
+async function fixture(startTurn: () => Promise<string>) {
   const dir = mkdtempSync(path.join(tmpdir(), 'neomind-codex-dispatch-'));
   const coordinator = new WorkspaceCoordinator(path.join(dir, 'db'));
   const lease = coordinator.acquireRun('run', 'host'), journal = new OwnedJournal(path.join(dir, 'events'), coordinator, lease);
   const fixtureRun = await SimulatedRun.create(templates.dev, defaultProject.policy, journal, new FakeAdapter());
   await fixtureRun.completeControl('start');
-  const adapter = new CodexReadOnlyAdapter({ request: async () => startTurn() });
-  return { coordinator, lease, journal, dispatch: new CodexReadOnlyDispatch(journal, adapter) };
+  const { runner, session } = await fakeRunnerSession('thread-1', { startTurn, workspace: dir });
+  return { coordinator, lease, journal, dispatch: new CodexReadOnlyDispatch(journal, runner, session) };
 }
 test('read-only dispatch records intent and matching turn before completion', async () => {
-  const f = await fixture(async () => ({ turn: { id: 'turn-1' } }));
+  const f = await fixture(async () => 'turn-1');
   assert.equal(await f.dispatch.dispatch('plan', 'thread-1', 'inspect', 'low', 'attempt-1', 'request-1', true), 'turn-1');
   const pending = replayRun(await f.journal.read());
   assert.equal(pending.attempts[0]?.runnerTurnId, 'turn-1');
@@ -45,7 +47,7 @@ test('uncertain dispatch is persisted and never retried automatically', async ()
 });
 
 test('only the matching successful turn can supply the plan presented for approval', async () => {
-  const f = await fixture(async () => ({ turn: { id: 'turn-plan' } }));
+  const f = await fixture(async () => 'turn-plan');
   await f.dispatch.dispatch('plan', 'thread-1', 'plan the task', 'low', 'attempt-1', 'request-1', true);
   const plan = { planId: 'p1', version: 1, goal: 'Add subtraction', scope: ['src'], approach: 'Implement subtraction',
     acceptanceCriteria: ['tests pass'], checks: ['make test'], riskChanges: [] };
@@ -71,12 +73,12 @@ test('materialized planning rejects unverified or mismatched bindings before wri
   const snapshot = await materializeRun(templates.dev, project, { 'implementer@1': profile('implementer', true), 'verifier@1': profile('verifier', false) }, dir);
   const service = await RunService.createMaterialized(journal, snapshot);
   await service.completeControl('start');
-  const adapter = new CodexReadOnlyAdapter({ request: async method => method === 'thread/start'
+  const transport = { request: async (method: string) => method === 'thread/start'
     ? { thread: { id: 'thread' }, model: role.model, modelProvider: role.provider, cwd: dir, approvalPolicy: 'never', sandbox: { type: 'readOnly' } }
-    : { turn: { id: 'turn' } } });
-  const dispatcher = new CodexReadOnlyDispatch(journal, adapter);
-  await assert.rejects(service.dispatchReadOnly(dispatcher, 'plan', 'thread', 'plan', 'low', 'a', 'r'), /not been verified/);
-  await adapter.startVerifiedThread(dir, role.model, role.provider);
+    : method === 'mcpServerStatus/list' ? { data: [], nextCursor: null } : { turn: { id: 'turn' } } };
+  const runner = new CodexRunner({ scope: { ...fakeScope(), transport }, events: new CodexTurnEvents(), fault: () => undefined });
+  await assert.rejects(service.dispatchReadOnly(new CodexReadOnlyDispatch(journal, runner), 'plan', 'thread', 'plan', 'low', 'a', 'r'), /not been verified/);
+  const dispatcher = new CodexReadOnlyDispatch(journal, runner, await runner.openSession({ workspace: dir, binding: role, access: { kind: 'read' } }));
   await assert.rejects(service.dispatchReadOnly(dispatcher, 'plan', 'thread', 'plan', 'high', 'a', 'r'), /Reasoning/);
   assert.equal(replayRun(await journal.read()).attempts.length, 0);
   assert.equal(await service.dispatchReadOnly(dispatcher, 'plan', 'thread', 'plan', 'low', 'a', 'r'), 'turn');

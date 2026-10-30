@@ -1,0 +1,23 @@
+{
+  "minimal-advanced@@hide-markdown": false,
+  "blue-topaz-theme@@color-scheme-options": "color-scheme-options-avocado-topaz",
+  "anuppuccin-theme-settings@@anuppuccin-light-theme-accents": "ctp-accent-light-mauve",
+  "anuppuccin-theme-settings@@anuppuccin-accent-toggle": true,
+  "minimal-advanced@@mobile-toolbar-off": false,
+  "minimal-advanced@@cursor": "default",
+  "anuppuccin-theme-settings-extended@@anp-theme-ext-light": true,
+  "primary-theme@@zero-tab-anim": true,
+  "primary-theme@@zero-popup-blur": false,
+  "primary-theme@@zero-popup-popdown": false,
+  "minimal-advanced@@animations": "default",
+  "anuppuccin-theme-settings-extended@@catppuccin-theme-extended": "ctp-solarized-light",
+  "anuppuccin-theme-settings-extended@@anp-theme-ext-amoled": true,
+  "anuppuccin-theme-settings@@anp-color-transition-toggle": false,
+  "anuppuccin-theme-settings@@anp-button-metadata-toggle": false,
+  "anuppuccin-theme-settings@@anp-print": false,
+  "anuppuccin-theme-settings@@anuppuccin-theme-light": "ctp-latte",
+  "anuppuccin-theme-settings@@anuppuccin-theme-dark": "ctp-mocha",
+  "anuppuccin-theme-settings@@anuppuccin-theme-accents": "ctp-accent-red",
+  "obsidian-prism-theme@@color-schemes-lt": "pt-color-scheme-latte-lt",
+  "obsidian-prism-theme@@color-scheme-style-lt": "pt-color-scheme-style-two-tone-and-border-lt"
+}

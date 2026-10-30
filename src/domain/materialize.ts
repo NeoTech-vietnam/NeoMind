@@ -63,6 +63,9 @@ export async function materializeRun(
   for (const node of compiled.flow.definition.nodes) {
     if (node.type === 'agent_task') {
       await loadProfile(node.id, node.profileId, node.profileVersion, node.instructionsOverride, node.skillsOverride, node.permissions, false);
+    } else if (node.type === 'integration' && node.profileId && node.profileVersion) {
+      await loadProfile(node.id, node.profileId, node.profileVersion, node.instructionsOverride, node.skillsOverride,
+        { read: true, write: true, checks: true, gitCommit: false }, false);
     } else if (node.type === 'review_group') {
       for (const reviewer of node.reviewers) {
         await loadProfile(`${node.id}/${reviewer.id}`, reviewer.profileId, reviewer.profileVersion,
@@ -99,6 +102,7 @@ export function validateMaterializedRun(input: unknown): MaterializedRun {
   const expected = new Map<string, { profileId: string; version: number; reviewer: boolean; requested?: Profile['requestedPermissions'] }>();
   for (const node of flow.definition.nodes) {
     if (node.type === 'agent_task') expected.set(node.id, { profileId: node.profileId, version: node.profileVersion, reviewer: false, requested: node.permissions });
+    if (node.type === 'integration' && node.profileId && node.profileVersion && node.bindingId) expected.set(node.id, { profileId: node.profileId, version: node.profileVersion, reviewer: false, requested: { read: true, write: true, checks: true, gitCommit: false } });
     if (node.type === 'review_group') for (const reviewer of node.reviewers) expected.set(`${node.id}/${reviewer.id}`, { profileId: reviewer.profileId, version: reviewer.profileVersion, reviewer: true });
   }
   if (Object.keys(snapshot.configuration.bindings).length !== expected.size || Object.keys(snapshot.profilesByStep).length !== expected.size) throw new Error('Materialized step coverage mismatch');

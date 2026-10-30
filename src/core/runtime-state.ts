@@ -5,6 +5,8 @@ export const runtimeContextSchema = z.strictObject({
   sourceHead: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/), initialBaselineHash: z.string().min(1),
   lease: z.strictObject({ workspace: z.string().min(1), runId: z.string().min(1), hostId: z.string().min(1), fence: z.number().int().positive() }),
   memory: z.strictObject({ root: z.string().min(1), text: z.string().max(40000) }).optional(),
+  /** The user's uncommitted changes copied in before the run: input to the run, never part of its commit by default. */
+  imported: z.strictObject({ sourceBaselineHash: z.string().min(1), tree: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/), paths: z.array(z.string().min(1)).min(1) }).optional(),
 });
 export const runtimeStateSchema = z.strictObject({
   phase: z.enum(['running', 'waiting_approval', 'paused', 'blocked', 'completed', 'cancelled', 'recovering', 'stopping']),

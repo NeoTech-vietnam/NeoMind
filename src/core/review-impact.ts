@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { isProjectMetadataPath } from '../storage/project-dir.js';
 export interface ScopedReviewer { id: string; required: boolean; scopes: string[] }
 export interface ImpactSelection { reviewerIds: string[]; reason: 'scoped' | 'unknown-impact' }
 function normalize(value: string): string | undefined {
@@ -9,6 +10,23 @@ function normalize(value: string): string | undefined {
 }
 function overlaps(a: string, b: string): boolean {
   return a === '.' || b === '.' || a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+}
+/** Version of the rule below; impact receipts record it so a later rule change cannot silently reinterpret them. */
+export const IMPACT_RULE_VERSION = 1;
+const sharedFiles = new Set(['package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'bun.lockb',
+  'tsconfig.json', 'jsconfig.json', 'babel.config.js', '.babelrc', 'makefile', 'cmakelists.txt', 'dockerfile', 'docker-compose.yml', 'pyproject.toml',
+  'setup.py', 'setup.cfg', 'requirements.txt', 'pipfile', 'pipfile.lock', 'poetry.lock', 'go.mod', 'go.sum', 'cargo.toml', 'cargo.lock', 'gemfile',
+  'gemfile.lock', 'pom.xml', 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts', '.gitmodules', '.gitattributes']);
+/**
+ * Changes that can affect code outside their own directory (dependencies, build and tool configuration, CI, NeoMind
+ * metadata). Any of these makes scoped impact unknown, so every required reviewer runs again.
+ */
+export function sharedImpactPaths(changed: string[]): string[] {
+  return changed.filter(file => {
+    const name = path.posix.basename(file).toLowerCase();
+    return sharedFiles.has(name) || /^tsconfig\..+\.json$/.test(name) || /\.config\.(?:[cm]?[jt]s|json)$/.test(name) || /^requirements.*\.txt$/.test(name) ||
+      file.startsWith('.github/') || isProjectMetadataPath(file);
+  });
 }
 /** Caller must establish affected paths, including dependencies. Unverified impact reruns every required reviewer. */
 export function selectReviewersForChanges(reviewers: ScopedReviewer[], changedPaths: string[] | null,
