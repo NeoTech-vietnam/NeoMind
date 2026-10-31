@@ -2098,12 +2098,14 @@ class Controller {
           next: 'Read all current declared text outputs, assess every criterion independently and save your honest verdict. No executable test is claimed.' };
       throw new Error('Choose a check title from the assigned plan.');
     }
-    assertControlledCheckInputAuthority(contract.plan, selected);
+    const orderedInputs = run.process_contract === 'workforce/v1';
+    if (orderedInputs) assertControlledCheckInputAuthority(contract.plan, selected);
+    else assertControlledCheckInputs(this.root, contract.plan, selected);
     let observedScope: ControlledCheckerScope | undefined;
     for (const check of selected) {
-      // An earlier frozen command may create this command's inputs. Check them
-      // now, retaining fresh baselines and actionable concurrent-deletion errors.
-      assertControlledCheckInputs(this.root, contract.plan, [check]);
+      // WorkForce permits ordered build inputs. Historical contracts retain
+      // their whole-group availability check before any command executes.
+      assertControlledCheckInputs(this.root, contract.plan, orderedInputs ? [check] : selected);
       run = readState(this.root, id);
       const baseline = fingerprints(this.root, check.baseline_paths);
       const prior = latestControlledChecks(run.checks, attemptId).find(item => item.title === check.title);
