@@ -24,6 +24,7 @@ import { openCodeVersion, openCodeIntegrity, openCodeProtocolHash } from '../dis
 import { requestProjection } from '../dist/workforce-requests.js';
 import { researchFixture } from './cornell-research-fixture.mjs';
 import { localOpenAIProvider } from './helpers/local-openai-provider.mjs';
+import { probeWorkForceConnection } from '../dist/workforce-connection.js';
 
 // Deterministic engine boundary only: no model/API inference. All request IPC,
 // signed native receipts, bound MCP operations, file writes, subprocess checks
@@ -687,15 +688,26 @@ test('unreachable provider checks persist bounded backoff without inference and 
 });
 
 test('canonical OpenCode HTTP 503 with upstream usage 429 signs a bound failure, waits and completes the same review after actual healthy proof', { timeout: 150000 }, async t => {
-  let healthy = false;
+  let healthy = false, staleRejected = false, duplicateProof = false;
+  const routeNonces = new Map();
   const secret = 'PRIVATE_PROVIDER_ERROR_CANARY';
   const provider = await localOpenAIProvider((_index, body) => {
     if (!healthy) return { statusCode: 503, headers: { 'retry-after-ms': '1' },
       body: { error: { type: 'upstream_error', message: `[429] The usage limit has been reached. ${secret}` } } };
     if (body.tools.some(tool => tool.function?.name === 'wf_capability_ping')) {
-      if (body.messages.at(-1).role === 'tool') return { text: 'connected' };
       const nonce = /nonce ([a-f0-9-]{36})/.exec(JSON.stringify(body.messages)); assert.ok(nonce);
-      return { toolCalls: [{ name: 'wf_capability_ping', arguments: { nonce: nonce[1] } }] };
+      const ping = value => ({ name: 'wf_capability_ping', arguments: { nonce: value } });
+      if (body.messages.at(-1).role === 'tool') {
+        const calls = body.messages.flatMap(message => message.tool_calls ?? []);
+        if (!duplicateProof && JSON.parse(calls.at(-1).function.arguments).nonce !== nonce[1]) {
+          assert.match(JSON.stringify(body.messages.at(-1)), /stale/i);
+          staleRejected = true; return { toolCalls: [ping(nonce[1])] };
+        }
+        return { text: 'connected' };
+      }
+      if (duplicateProof) return { toolCalls: [ping(nonce[1]), ping(nonce[1])] };
+      routeNonces.set(body.model, nonce[1]);
+      return { toolCalls: [ping(routeNonces.values().next().value)] };
     }
     const called = body.messages.flatMap(message => message.tool_calls ?? []).map(call => call.function.name);
     if (called.includes('wf_assignment_report')) return { text: 'Independent review completed.' };
@@ -740,6 +752,15 @@ test('canonical OpenCode HTTP 503 with upstream usage 429 signs a bound failure,
   assert.equal(reviewer.inference_completed, true); assert.equal(reviewer.opencode.provider_failure, undefined);
   assert.deepEqual(readFileSync(join(root, 'products/canonical-provider.json')), product);
   assert.equal(readFileSync(safePath(root, native.receipt_path), 'utf8'), originalReceipt, 'Prior failed native evidence is immutable.');
+  const proofPath = safePath(root, '.workforce/setup/model-capabilities.json'), proofBytes = readFileSync(proofPath);
+  const proof = JSON.parse(proofBytes.toString('utf8'));
+  assert.equal(routeNonces.size, 2); assert.equal(new Set(routeNonces.values()).size, 2);
+  assert.equal(new Set(proof.models.map(model => model.session_id)).size, 2, 'Each alias has its own actual SDK session.');
+  assert.equal(staleRejected, true, 'A nonce from the other proof session cannot authorize this route.');
+  duplicateProof = true;
+  await assert.rejects(() => probeWorkForceConnection(root, undefined, { not_before: new Date().toISOString() }), /did not complete its bound tool-call check/);
+  assert.deepEqual(readFileSync(proofPath), proofBytes, 'Duplicate current nonce calls cannot replace the prior complete proof with partial evidence.');
+  assert.equal(controlledStatus(root, started.workflow_id).status, 'completed');
   assert.deepEqual(provider.failures, []); assert.deepEqual(errors, []);
 });
 

@@ -6,16 +6,26 @@ import { atomicWrite, safePath, hash } from './storage.js';
 import { canonicalJson, routingConfigurationHashes, type NativeRole } from './routing.js';
 import { createRuntimeInfo } from './runtime-info.js';
 import { configuredOpenCodeEndpoint, createOpenCodeGateway, openCodeBinary, openCodeBootstrap, openCodeConfiguration,
-  startOpenCodeEngine, opencodeProviderId, opencodeRuntimeVersion } from './opencode-engine.js';
+  startOpenCodeEngine, opencodeProviderId, opencodeRuntimeVersion, type OpenCodeEndpoint } from './opencode-engine.js';
 import { readHost } from './vscode-wire.js';
 
 const proofPath = '.workforce/setup/model-capabilities.json';
+/** Share preparation only within one private probe and identical credentials. */
+export function groupWorkForceConnectionEndpoints(endpoints: readonly OpenCodeEndpoint[]): OpenCodeEndpoint[][] {
+  const groups: OpenCodeEndpoint[][] = [];
+  for (const endpoint of endpoints) {
+    const group = groups.find(([first]) => first!.provider === endpoint.provider && first!.baseURL === endpoint.baseURL && first!.apiKey === endpoint.apiKey);
+    if (group) group.push(endpoint); else groups.push([endpoint]);
+  }
+  return groups;
+}
 function configuration(root: string) {
   const runtime = createRuntimeInfo(root), binary = openCodeBinary(), bootstrap = openCodeBootstrap();
   const endpoints = (['manager', 'requirements', 'architect', 'developer', 'reviewer', 'verifier'] as NativeRole[]).map(role => configuredOpenCodeEndpoint(root, role));
   return { key: hash(canonicalJson({ build: runtime.build_fingerprint, configuration: routingConfigurationHashes(root),
     binary: binary.sha256, bootstrap: bootstrap.lock_sha256, platform: process.platform, arch: process.arch })),
-    endpoints: [...new Map(endpoints.map(endpoint => [hash(`${endpoint.provider}\0${endpoint.model}\0${endpoint.baseURL}`), endpoint])).values()] };
+    endpoints: [...new Map(endpoints.map(endpoint => [hash(canonicalJson({ provider: endpoint.provider, model: endpoint.model,
+      baseURL: endpoint.baseURL, apiKey: endpoint.apiKey ?? null })), endpoint])).values()] };
 }
 export function workForceConnectionProof(root: string): { valid: boolean; checked_at?: string; models?: string[] } {
   try {
@@ -47,39 +57,49 @@ export function workForceConnectionProofSatisfies(proof: ReturnType<typeof workF
 export async function probeWorkForceConnection(root: string, signal?: AbortSignal, options: WorkForceConnectionProbeOptions = {}) {
   const cached = workForceConnectionProof(root); if (workForceConnectionProofSatisfies(cached, options)) return cached;
   const bound = configuration(root), owner = readHost(root), observed = [];
-  for (const endpoint of bound.endpoints) {
+  for (const group of groupWorkForceConnectionEndpoints(bound.endpoints)) {
     const deadline = AbortSignal.timeout(120000), stop = signal ? AbortSignal.any([signal, deadline]) : deadline;
-    const nonce = randomUUID(); let calls = 0;
+    let current: { nonce: string; calls: number } | undefined;
     const active = () => { stop.throwIfAborted(); const current = readHost(root);
       if (current.instance !== owner.instance || current.pid !== owner.pid) throw new Error('WorkForce connection owner changed.'); };
     const gateway = await createOpenCodeGateway(() => {
       const server = new McpServer({ name: 'workforce-connection-check', version: '1' });
-      server.registerTool('capability_ping', { description: 'Verify this connection by echoing its nonce once.', inputSchema: { nonce: z.literal(nonce) } }, () => {
-        active(); calls++; if (calls > 1) throw new Error('Connection check already recorded.');
+      server.registerTool('capability_ping', { description: 'Verify this connection by echoing its current session nonce once.', inputSchema: { nonce: z.uuid() } }, ({ nonce }) => {
+        active();
+        if (!current || nonce !== current.nonce) throw new Error('Connection check nonce is stale.');
+        current.calls++;
+        if (current.calls > 1) throw new Error('Connection check already recorded.');
         return { content: [{ type: 'text', text: JSON.stringify({ connected: true, nonce }) }] };
       });
       return server;
     }, active);
     let engine;
     try {
-      engine = await startOpenCodeEngine(root, randomUUID(), openCodeConfiguration(endpoint, gateway, ['capability_ping']), stop);
-      const session = await engine.client.session.create({ directory: engine.directory, agent: 'workforce', title: 'WorkForce connection check',
-        permission: [{ permission: '*', pattern: '*', action: 'deny' }, { permission: 'wf_capability_ping', pattern: '*', action: 'allow' }] });
-      if (!session.data?.id) throw new Error('Connection check has no engine session.');
-      const sessionID = session.data.id;
+      const config = openCodeConfiguration(group[0]!, gateway, ['capability_ping']);
+      for (const endpoint of group.slice(1)) Object.assign(config.provider![opencodeProviderId]!.models!,
+        openCodeConfiguration(endpoint, gateway, ['capability_ping']).provider![opencodeProviderId]!.models);
+      engine = await startOpenCodeEngine(root, randomUUID(), config, stop);
       const listed = await engine.client.tool.ids({ directory: engine.directory });
       const tools = { ...Object.fromEntries((listed.data ?? []).map(name => [name, false])), wf_capability_ping: true };
-      const response = await engine.client.session.prompt({ sessionID, directory: engine.directory, agent: 'workforce',
-        model: { providerID: opencodeProviderId, modelID: endpoint.model },
-        tools,
-        parts: [{ type: 'text', text: `Call wf_capability_ping exactly once with nonce ${nonce}. Then reply connected. Do not call any other tools.` }] }, { signal: stop });
-      active();
-      if (calls !== 1 || response.data?.info.error || response.data?.info.modelID !== endpoint.model ||
-          response.data.info.providerID !== opencodeProviderId || response.data.info.sessionID !== sessionID)
-        throw new Error('Configured model did not complete its bound tool-call check.');
-      observed.push({ model: endpoint.model, provider: opencodeProviderId, session_id: sessionID,
-        message_id: response.data.info.id, tool_calls: calls });
+      for (const endpoint of group) {
+        active(); current = { nonce: randomUUID(), calls: 0 };
+        const session = await engine.client.session.create({ directory: engine.directory, agent: 'workforce', title: 'WorkForce connection check',
+          permission: [{ permission: '*', pattern: '*', action: 'deny' }, { permission: 'wf_capability_ping', pattern: '*', action: 'allow' }] });
+        if (!session.data?.id) throw new Error('Connection check has no engine session.');
+        const sessionID = session.data.id, messageID = `msg_${randomUUID().replaceAll('-', '')}`;
+        const response = await engine.client.session.prompt({ sessionID, messageID, directory: engine.directory, agent: 'workforce',
+          model: { providerID: opencodeProviderId, modelID: endpoint.model }, tools,
+          parts: [{ type: 'text', text: `Call wf_capability_ping exactly once with nonce ${current.nonce}. Then reply connected. Do not call any other tools.` }] }, { signal: stop });
+        active();
+        if (current.calls !== 1 || response.data?.info.error || response.data?.info.modelID !== endpoint.model ||
+            response.data.info.providerID !== opencodeProviderId || response.data.info.sessionID !== sessionID || response.data.info.parentID !== messageID)
+          throw new Error('Configured model did not complete its bound tool-call check.');
+        observed.push({ model: endpoint.model, provider: opencodeProviderId, session_id: sessionID,
+          message_id: response.data.info.id, tool_calls: current.calls });
+        current = undefined;
+      }
     } finally { try { await engine?.close(); } finally { await gateway.close(); } }
+    active();
   }
   if (configuration(root).key !== bound.key) throw new Error('WorkForce configuration changed during the connection check.');
   atomicWrite(safePath(root, proofPath), JSON.stringify({ schema_version: 1, key: bound.key, engine_version: opencodeRuntimeVersion,
