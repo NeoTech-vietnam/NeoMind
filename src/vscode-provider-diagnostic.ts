@@ -51,7 +51,8 @@ export function vscodeProviderDiagnostic(error: unknown): { code: VSCodeProvider
   else if (token(['tool_calling_not_supported', 'tool_calling_unsupported', 'tools_not_supported', 'unsupported_tools'])) code = 'TOOL_CALLING_UNSUPPORTED';
   else if (token(['invalid_api_key', 'authentication_error', 'unauthorized', 'authentication_required']) || statuses.has(401) || /\b(?:HTTP|status(?: code)?)\s*[:=]?\s*401\b/i.test(text)) code = 'AUTHENTICATION_REQUIRED';
   else if (token(['permission_denied', 'authorization_error', 'forbidden', 'access_denied']) || statuses.has(403) || /\b(?:HTTP|status(?: code)?)\s*[:=]?\s*403\b/i.test(text)) code = 'AUTHORIZATION_DENIED';
-  else if (token(['rate_limit_exceeded', 'rate_limit_error', 'too_many_requests']) || statuses.has(429) || /\b(?:HTTP|status(?: code)?)\s*[:=]?\s*429\b/i.test(text)) code = 'RATE_LIMITED';
+  else if (token(['rate_limit_exceeded', 'rate_limit_error', 'too_many_requests', 'usage_limit_reached', 'insufficient_quota']) ||
+      /\busage limit has been reached\b/i.test(text) || statuses.has(429) || /\b(?:HTTP|status(?: code)?)\s*[:=]?\s*429\b/i.test(text)) code = 'RATE_LIMITED';
   else if (token(['service_unavailable', 'overloaded_error', 'server_overloaded', 'upstream connection lost']) || [502, 503, 504].some(status => statuses.has(status)) || /\b(?:HTTP|status(?: code)?)\s*[:=]?\s*(?:502|503|504)\b/i.test(text)) code = 'PROVIDER_UNAVAILABLE';
   return code ? { code, message: diagnostics[code] } : undefined;
 }

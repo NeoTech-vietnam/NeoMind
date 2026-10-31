@@ -51,6 +51,7 @@ import { runDurableCommand, readDurableCommandResult, type DurableCommandRef } f
 import { workforceTraceability } from './workforce-traceability.js';
 import { workforceStageHandoff } from './workforce-stage-result.js';
 import { workforceProviderStallDecision, type ProviderStallHistory } from './workforce-stalls.js';
+import { boundOpenCodeProviderFailure, transientOpenCodeProviderFailure } from './opencode-provider-diagnostic.js';
 import { assertControlledPayloadCurrent, ControlledPayloadError, type ControlledPayloadSource } from './controlled-payload.js';
 import { persistControlledCornellNote, ControlledCornellWriteError } from './controlled-cornell-write.js';
 import { CornellFormatProfileError, resolveControlledCornellFormatProfile } from './cornell-format-profile.js';
@@ -1640,7 +1641,7 @@ class Controller {
           const kind = receipt.state === 'completed' || observationLoop || deliveryProtocol || controlSetup ? 'protocol' : 'environment';
           const message = receipt.state === 'completed' ? 'Session ended without its required typed result. Saved work is retained; inspect current artifacts then save the missing compact result.'
             : receipt.error ?? 'Model session did not complete.';
-          const hardFailure = !observationLoop && !controlSetup && /OPENCODE_STORAGE_UNAVAILABLE|OPENCODE_PROVIDER_UNAVAILABLE|OPENCODE_SESSION_ERROR|backend-owned controlled assignment|CONTROLLED_TOOL_LOOP|MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED|CONTEXT_LIMIT_EXCEEDED|TOOL_CALLING_UNSUPPORTED|NoPermissions|NotFound|access denied|permission|policy|configuration changed|cancelled|canceled/i.test(message);
+          const hardFailure = !!boundOpenCodeProviderFailure(receipt) || !observationLoop && !controlSetup && /OPENCODE_STORAGE_UNAVAILABLE|OPENCODE_PROVIDER_UNAVAILABLE|OPENCODE_SESSION_ERROR|backend-owned controlled assignment|CONTROLLED_TOOL_LOOP|MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED|CONTEXT_LIMIT_EXCEEDED|TOOL_CALLING_UNSUPPORTED|NoPermissions|NotFound|access denied|permission|policy|configuration changed|cancelled|canceled/i.test(message);
           if (!hardFailure) {
             if (this.repair(run, kind, message)) continue;
             // repair already persisted the authoritative exhausted-budget or
@@ -2436,15 +2437,19 @@ class Controller {
   private captureIncidentCondition(run: ControlledSnapshot, message: string): void {
     const storage = openCodeStorage(this.root);
     const attempt = run.attempts.at(-1), receipt = attempt?.invocation_id ? readInvocation(this.root, attempt.invocation_id) : undefined;
-    const nativeFailure = !!attempt && !!receipt && receipt.issuer === 'workforce-opencode' &&
+    const contract = run.contract_hash ? readContract(this.root, run) : undefined;
+    const nativeFailure = !!attempt && !!receipt && receipt.issuer === 'workforce-opencode' && receipt.execution_mode === 'opencode-local' &&
       ['blocked', 'interrupted'].includes(receipt.state) && receipt.inference_completed === false &&
-      receipt.workflow_id === run.workflow_id && receipt.request_id === attempt.request_id && receipt.role === attempt.role;
+      receipt.workflow_id === run.workflow_id && receipt.request_id === attempt.request_id && receipt.role === attempt.role &&
+      receipt.task_id === (attempt.stage === 'planning' ? null : contract?.task_id ?? null) &&
+      receipt.controlled_execution?.epoch_id === run.epoch_id && receipt.controlled_execution.stage === attempt.stage;
     const actualStall = nativeFailure && receipt?.error?.startsWith('OPENCODE_PROVIDER_STALLED:') === true;
+    const providerObservation = nativeFailure && receipt ? boundOpenCodeProviderFailure(receipt) : undefined;
     const providerFailure = nativeFailure && run.blocker?.kind === 'environment' &&
-      /^(?:OPENCODE_PROVIDER_STALLED:|OPENCODE_PROVIDER_UNAVAILABLE:|OpenCodeProviderError|MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED)/.test(receipt?.error ?? '');
+      (receipt?.opencode?.provider_failure !== undefined ? !!providerObservation && transientOpenCodeProviderFailure(providerObservation)
+        : /^(?:OPENCODE_PROVIDER_STALLED:|OPENCODE_PROVIDER_UNAVAILABLE:|MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED)/.test(receipt?.error ?? ''));
     if (providerFailure && actualStall && attempt && receipt) {
       const phase = attempt.stage === 'diagnosis' ? run.provider_stall_diagnosis?.phase ?? attempt.stage : attempt.stage;
-      const contract = run.contract_hash ? readContract(this.root, run) : undefined;
       const products = contract ? fingerprints(this.root, contract.plan.outputs) : {};
       const checks = run.checks.filter(check => check.passed && !check.negative &&
         same(check.baseline, fingerprints(this.root, Object.keys(check.baseline))))

@@ -13,6 +13,8 @@ test('provider diagnostics classify bounded structured and escaped error metadat
     [new Error(`HTTP 403: ${secret}`), 'AUTHORIZATION_DENIED'],
     [{ cause: { code: 'rate_limit_exceeded' }, message: secret }, 'RATE_LIMITED'],
     [{ statusCode: 429, message: secret }, 'RATE_LIMITED'],
+    [{ name: 'APIError', data: { statusCode: 503, isRetryable: true,
+      message: `[429] The usage limit has been reached. ${secret}` } }, 'RATE_LIMITED'],
     [{ error: { code: 'context_length_exceeded', message: secret } }, 'CONTEXT_LIMIT_EXCEEDED'],
     [{ code: 'tool_calling_not_supported', message: secret }, 'TOOL_CALLING_UNSUPPORTED'],
     [new Error(`HTTP 503: ${secret}`), 'PROVIDER_UNAVAILABLE'],

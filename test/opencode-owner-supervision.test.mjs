@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -48,7 +48,6 @@ const health=await engine.client.global.health();writeFileSync(${JSON.stringify(
   assert.equal(existsSync(join(actual.directory, 'data/opencode/opencode.db')), true);
   assert.equal(existsSync(join(actual.directory, 'config/opencode/node_modules')), false);
   assert.equal(JSON.parse(readFileSync(join(actual.directory, 'bootstrap-cleanup.json'), 'utf8')).cleaned, true);
-  const readyProof = JSON.parse(readFileSync(join(storage, `opencode-${invocation}`, 'supervision/ready.json'), 'utf8'));
   if (process.platform === 'linux') {
     // An ephemeral TCP port may already belong to the next concurrent engine.
     // Check the owned process creation itself; an address alone is not identity.
@@ -59,7 +58,17 @@ const health=await engine.client.global.health();writeFileSync(${JSON.stringify(
       assert.ok(current !== actual.ref.engine.created_at || ['Z', 'X'].includes(fields[0]), 'The original engine creation must have stopped.');
     } catch (error) { if (error.code !== 'ENOENT' && error.code !== 'ESRCH') throw error; }
   } else {
-    await assert.rejects(fetch(`${readyProof.payload.url}/global/health`, { signal: AbortSignal.timeout(1000) }));
+    const observed = spawnSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+      ['-NoProfile', '-NonInteractive', '-Command',
+        "$ErrorActionPreference='Stop'; try { $p=[System.Diagnostics.Process]::GetProcessById([int]$env:WORKFORCE_OBSERVED_ENGINE_PID) } " +
+        "catch [System.ArgumentException] { [Console]::WriteLine('absent'); exit 0 }; " +
+        "[Console]::WriteLine('win32:'+$p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString())"],
+      { env: { ...process.env, WORKFORCE_OBSERVED_ENGINE_PID: String(actual.ref.engine.pid) },
+        encoding: 'utf8', windowsHide: true, timeout: 10000 });
+    assert.equal(observed.status, 0, 'The independent OS process observation must complete.');
+    const creation = observed.stdout.trim();
+    assert.match(creation, /^(?:absent|win32:\d+)$/);
+    assert.notEqual(creation, actual.ref.engine.created_at, 'The original engine creation must have stopped; a recycled PID or TCP port is another process.');
   }
   assert.equal((await reconcileOpenCodeOwner(root, { ...actual.ref, engine: { ...actual.ref.engine, created_at: 'another-process-creation' } })).state, 'uncertain');
   proof.payload.engine.pid++; writeFileSync(path, JSON.stringify(proof));
@@ -89,11 +98,11 @@ test('actual guardian kills adversarial owned child and grandchild processes bef
   const server = `const{spawn}=require('node:child_process');spawn(process.execPath,['-e',${JSON.stringify(nested)}],{stdio:'inherit'});require('node:http').createServer((q,s)=>s.end('fixture')).listen(0,'127.0.0.1',function(){console.log('opencode server listening on http://127.0.0.1:'+this.address().port)});`;
   // A trusted host process fixture exercises the actual same OS guardian with
   // Node source children. It is not a model/provider execution or pin proof.
-  const script = `import{runOpenCodeOwnerSupervisor,openCodeStorage}from${JSON.stringify(moduleURL)};import{secureHostPrivateDirectory}from${JSON.stringify(new URL('../dist/vscode-wire.js', import.meta.url).href)};
+  const script = `import{runOpenCodeOwnerSupervisor,openCodeStorage,openCodeWindowsGuardian}from${JSON.stringify(moduleURL)};import{secureHostPrivateDirectory}from${JSON.stringify(new URL('../dist/vscode-wire.js', import.meta.url).href)};
 import{commandEnvironment}from${JSON.stringify(new URL('../dist/command-runner.js', import.meta.url).href)};import{createHash,createHmac,randomBytes}from'node:crypto';import{writeFileSync,readFileSync,mkdirSync}from'node:fs';import{dirname,join}from'node:path';import{spawn,spawnSync}from'node:child_process';
 const root=${JSON.stringify(root)},invocation=${JSON.stringify(invocation)},base=openCodeStorage(root).path,directory=join(base,'opencode-'+invocation),path=join(directory,'supervision');for(const p of[dirname(base),base,directory,path])secureHostPrivateDirectory(p);mkdirSync(join(directory,'config/opencode'),{recursive:true});mkdirSync(join(directory,'tmp'));writeFileSync(join(directory,'package.json'),JSON.stringify({type:'commonjs'}));writeFileSync(join(directory,'serve'),${JSON.stringify(server)});
 const hash=v=>createHash('sha256').update(v).digest('hex');let birth;if(process.platform==='win32'){const r=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command','[System.Diagnostics.Process]::GetProcessById('+process.pid+').StartTime.ToUniversalTime().ToFileTimeUtc().ToString()'],{encoding:'utf8',windowsHide:true});birth='win32:'+r.stdout.trim();}else{const s=readFileSync('/proc/'+process.pid+'/stat','utf8');birth='linux:'+readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim()+':'+s.slice(s.lastIndexOf(')')+2).split(' ')[19];}
-const key=randomBytes(32),instance=randomBytes(32).toString('hex'),spec={schema_version:1,root,invocation_id:invocation,instance,owner:{pid:process.pid,created_at:birth},binary:{path:process.execPath,sha256:hash(readFileSync(process.execPath))},directory,config_directory:join(directory,'config/opencode'),env:commandEnvironment({TEMP:join(directory,'tmp'),TMP:join(directory,'tmp'),TMPDIR:join(directory,'tmp'),WF_HEARTBEAT:${JSON.stringify(heartbeat)},WF_GRANDCHILD:${JSON.stringify(grandchild)}}),module_sha256:hash(readFileSync(new URL(${JSON.stringify(moduleURL)})))};
+const guardian=openCodeWindowsGuardian(),key=randomBytes(32),instance=randomBytes(32).toString('hex'),spec={schema_version:1,root,invocation_id:invocation,instance,owner:{pid:process.pid,created_at:birth},binary:{path:process.execPath,sha256:hash(readFileSync(process.execPath))},...(guardian?{guardian}:{}),directory,config_directory:join(directory,'config/opencode'),env:commandEnvironment({TEMP:join(directory,'tmp'),TMP:join(directory,'tmp'),TMPDIR:join(directory,'tmp'),WF_HEARTBEAT:${JSON.stringify(heartbeat)},WF_GRANDCHILD:${JSON.stringify(grandchild)}}),module_sha256:hash(readFileSync(new URL(${JSON.stringify(moduleURL)})))};
 const bytes=JSON.stringify(spec)+String.fromCharCode(10),ref={schema_version:1,invocation_id:invocation,instance,owner:spec.owner,spec_sha256:hash(bytes),spec_hmac:createHmac('sha256',key).update('workforce-engine-spec-v1'+String.fromCharCode(0)).update(bytes).digest('hex')};writeFileSync(join(path,'key.bin'),key,{mode:0o600});writeFileSync(join(path,'spec.json'),bytes,{mode:0o600});writeFileSync(${JSON.stringify(prepared)},JSON.stringify(ref));
 const main='import{runOpenCodeOwnerSupervisor}from'+JSON.stringify(${JSON.stringify(moduleURL)})+';await runOpenCodeOwnerSupervisor(process.argv[1],JSON.parse(process.argv[2]));';
 const watcher=spawn(process.execPath,['--input-type=module','-e',main,root,JSON.stringify(ref)],{cwd:directory,detached:true,windowsHide:true,env:commandEnvironment({TEMP:join(directory,'tmp'),TMP:join(directory,'tmp'),TMPDIR:join(directory,'tmp')}),stdio:['ignore','ignore','ignore','ipc']});watcher.on('message',m=>{if(m.type==='waiting')watcher.send({type:'admit',instance});if(m.type==='ready')writeFileSync(${JSON.stringify(ready)},JSON.stringify(m));});await new Promise(()=>{});`;

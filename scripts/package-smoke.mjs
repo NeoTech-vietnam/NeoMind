@@ -68,6 +68,11 @@ try {
   const host = await import(pathToFileURL(join(installed, 'dist/workforce-host.js')).href);
   assert.equal(typeof host.enableWorkForceHost, 'function');
   const engine = await import(pathToFileURL(join(installed, 'dist/opencode-engine.js')).href), binary = engine.openCodeBinary();
+  if (process.platform === 'win32') {
+    const guardian = engine.openCodeWindowsGuardian();
+    assert.equal(await fileHash(guardian.path), guardian.sha256, 'The installed Windows helper is precompiled and pinned.');
+    if (portable) assert.equal(JSON.parse(readFileSync(join(installed, 'distribution-manifest.json'), 'utf8')).windows_guardian.sha256, guardian.sha256);
+  }
   const binaryChild = relative(dependencyRoot, binary.path);
   assert.ok(!isAbsolute(binaryChild) && binaryChild !== '..' && !binaryChild.startsWith('../') && !binaryChild.startsWith('..\\'), 'The engine binary belongs to the tested install, not the source checkout.');
   assert.equal(run(binary.path, ['--version'], project).trim(), '1.19.4'); assert.equal(await fileHash(binary.path), binary.sha256);

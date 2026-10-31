@@ -31,9 +31,11 @@ function safeExport(value, expectedPrompt) {
     else for (const [key, item] of Object.entries(node)) if (!/token|api.?key|authorization|password|secret/i.test(key)) visit(item);
   }
   visit(request.response);
-  const mode = fields(request.modeInfo, ['id', 'name', 'kind', 'modeId', 'uri']);
+  const mode = fields(request.modeInfo, ['kind', 'isBuiltin', 'telemetryModeId', 'permissionLevel']);
+  const modeInstructions = fields(request.modeInfo?.modeInstructions, ['name', 'isBuiltin']);
+  if (Object.keys(modeInstructions).length) mode.modeInstructions = modeInstructions;
   return { matches_issued_prompt: true, user_request_count: requests.length, prompt_sha256: sha(expectedPrompt), export_sha256: sha(JSON.stringify(value)),
-    model_id: request.modelId ?? null, mode, workforce_profile_observed: /WF\.PM|workforce-pm(?:\.agent\.md)?/i.test(JSON.stringify(mode)),
+    model_id: request.modelId ?? null, mode, workforce_profile_observed: mode.isBuiltin === false && modeInstructions.isBuiltin !== true && /^WF\.PM$/i.test(modeInstructions.name ?? ''),
     agent: fields(request.agent, ['id', 'name', 'extensionId']),
     agent_host: fields(request.agentHostMetadata, ['sessionType', 'providerId', 'sessionId']),
     response_kinds: (request.response ?? []).map(item => item?.kind).filter(item => typeof item === 'string'),

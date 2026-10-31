@@ -105,10 +105,15 @@ for (const [label, args] of [
   ['semantic MCP application failures', { path: 'products/current.txt', max_chars: 128, start_line: 2, start_char: 2 }],
   ['schema validation failures before a successful MCP handler', { path: 'products/current.txt', max_chars: 0 }],
 ]) test(`actual OpenCode NativeSession cuts off two unchanged ${label} without spending provider quota`, { timeout: 150000 }, async t => {
-  const { root, cleanup } = fixture(t), traces = [];
+  const { root, cleanup } = fixture(t), traces = [], providerObservations = [];
   let provider, unregister;
   t.after(async () => { await shutdownNative(root); unregister?.(); await provider?.close(); cleanup(); });
-  provider = await localOpenAIProvider(index => index < 6 ? call('project_read', args) : { text: 'Fixture limit: the missing circuit must not be disguised as successful completion.' }, 8);
+  provider = await localOpenAIProvider((index, body) => {
+    providerObservations.push({ index, observed_at: Date.now(), stream: body.stream,
+      tools: body.tools?.length ?? 0, last_role: body.messages?.at(-1)?.role,
+      tool_results: body.messages?.filter(message => message.role === 'tool').length ?? 0 });
+    return index < 6 ? call('project_read', args) : { text: 'Fixture limit: the missing circuit must not be disguised as successful completion.' };
+  }, 8);
   const catalog = join(root, 'fixture-models.json'); writeFileSync(catalog, JSON.stringify([{ name: 'fixture', vendor: 'customendpoint',
     models: [{ id: 'worker-models', url: provider.baseURL, apiKey: 'local-fixture-only' }, { id: 'top-models', url: provider.baseURL, apiKey: 'local-fixture-only' }] }]));
   writeFileSync(safePath(root, '.workforce/routing.json'), JSON.stringify({ ...ensureRoutingPolicy(root), language_models_file: catalog }));
@@ -117,14 +122,15 @@ for (const [label, args] of [
   const requestId = randomUUID(), binding = { workflow_id: workflow.meta.id, task_id: task.meta.id, role: 'developer', stage: 'implementation', process_contract: 'workforce/v1',
     implementation_paths: ['products'], verification_paths: [], read_paths: ['products'], execution_steps: [], procedure_bound: false, cornell_bound: false };
   unregister = registerControlledContext(root, requestId, { epoch_id: randomUUID(), binding, bindInvocation(id) { binding.invocation_id = id; },
-    callbacks: { assertActive() {}, trace(event) { traces.push(event); }, saveReport() { throw new Error('No professional report is expected from this deliberately invalid call stream.'); } } });
+    callbacks: { assertActive() {}, trace(event) { traces.push({ ...event, observed_at: Date.now() }); }, saveReport() { throw new Error('No professional report is expected from this deliberately invalid call stream.'); } } });
   let receipt = await startNative(root, { role: 'developer', workflow_id: workflow.meta.id, task_id: task.meta.id, request_id: requestId,
     prompt: 'Run only the local offline scripted tool-call protocol fixture. No external model or product acceptance is involved.' });
   const deadline = Date.now() + 60000;
   while (invocationIsActive(receipt) && Date.now() < deadline) receipt = await waitNative(root, receipt.id, 500);
   t.diagnostic(JSON.stringify({ provider: 'loopback scripted OpenAI protocol only', case: label, request_count: provider.requests.length,
-    terminal_state: receipt.state, error: receipt.error, tool_observations: traces.filter(event => event.event === 'engine-tool').map(event =>
-      ({ tool: event.tool, status: event.status, repeated_failures: event.repeated_failures, halt: event.halt })),
+    terminal_state: receipt.state, error: receipt.error, provider_observations: providerObservations,
+    tool_observations: traces.filter(event => event.event === 'engine-tool').map(event =>
+      ({ tool: event.tool, status: event.status, repeated_failures: event.repeated_failures, halt: event.halt, observed_at: event.observed_at })),
     native_session_observed: typeof receipt.native_thread_id === 'string',
     control_failures: traces.filter(event => event.event === 'engine-failure').map(event => ({
       operation: event.control_operation, error_name: event.error_name, transport_causes: event.transport_causes,

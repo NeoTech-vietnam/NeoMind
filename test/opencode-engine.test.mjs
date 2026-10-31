@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync, readFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -13,6 +13,7 @@ import { ensureRoutingPolicy } from '../dist/routing.js';
 import { createOpenCodeGateway, openCodeConfiguration, openCodeEndpoint, openCodeError, startOpenCodeEngine,
   opencodeRuntimeVersion, opencodeProtocol, opencodeRuntimeIntegrity } from '../dist/opencode-engine.js';
 import { openCodeStorage, openCodeStorageFailure, openCodeMinimumFreeBytes } from '../dist/opencode-engine.js';
+import { openCodeWindowsGuardian, validateOpenCodeWindowsGuardian } from '../dist/opencode-engine.js';
 import { OpenCodeSession, openCodeAttestation, openCodeSystemText } from '../dist/opencode-session.js';
 import { registerControlledContext } from '../dist/controlled-context.js';
 import { secureHostPrivateDirectory } from '../dist/vscode-wire.js';
@@ -183,6 +184,18 @@ test('dependency seeding yields to cancellation before any watchdog or engine ad
   assert.equal(existsSync(join(directory, 'config/opencode/node_modules')), false, 'Partial dependency copies are cleaned without launching an engine.');
 });
 
+test('Windows guardian preflight binds the shipped source, assembly and frozen manifest', { skip: process.platform !== 'win32' }, t => {
+  const actual = openCodeWindowsGuardian(), root = mkdtempSync(join(tmpdir(), 'wf-guardian-integrity-'));
+  t.after(() => { assert.equal(dirname(root), tmpdir()); rmSync(root, { recursive: true, force: true }); });
+  for (const name of ['windows-guardian.cs', 'windows-guardian.dll', 'windows-guardian.manifest.json']) copyFileSync(join(dirname(actual.path), name), join(root, name));
+  assert.equal(validateOpenCodeWindowsGuardian(root, actual.manifest_sha256).sha256, actual.sha256);
+  writeFileSync(join(root, 'windows-guardian.dll'), 'changed assembly');
+  assert.throws(() => validateOpenCodeWindowsGuardian(root, actual.manifest_sha256), /OPENCODE_GUARDIAN_UNAVAILABLE/);
+  const metadata = JSON.parse(readFileSync(join(root, 'windows-guardian.manifest.json'), 'utf8'));
+  metadata.assembly_sha256 = createHash('sha256').update('changed assembly').digest('hex'); writeFileSync(join(root, 'windows-guardian.manifest.json'), JSON.stringify(metadata));
+  assert.throws(() => validateOpenCodeWindowsGuardian(root, actual.manifest_sha256), /OPENCODE_GUARDIAN_UNAVAILABLE/);
+});
+
 test('pinned real local engine starts with its bound gateway and stops on cancellation without calling a model', { timeout: 45000 }, async t => {
   const { root } = project(t, [], true), a = await gateway(t, 'engine-bound');
   const signal = new AbortController();
@@ -195,7 +208,7 @@ test('pinned real local engine starts with its bound gateway and stops on cancel
   assert.ok(startup.every(observation => Object.keys(observation).sort().join(',') === 'elapsed_ms,stage' &&
     Number.isInteger(observation.elapsed_ms) && observation.elapsed_ms >= 0), 'Startup diagnostics contain only bounded stage names and timing.');
   if (process.platform === 'win32') {
-    const expected = ['guardian-spawned', 'guardian-compile-started', 'guardian-compile-completed',
+    const expected = ['guardian-spawned', 'guardian-load-started', 'guardian-load-completed',
       'engine-create-started', 'engine-create-completed', 'engine-identity-observed'];
     const actual = startup.map(observation => observation.stage);
     for (let index = 0; index < expected.length; index++) {

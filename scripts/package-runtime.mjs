@@ -103,10 +103,13 @@ export async function buildRuntime({ outputDirectory = join(repository, 'artifac
     if (cliVersion !== pkg.version) throw new Error('Bundled CLI does not match the release version.');
     const info = await import(pathToFileURL(join(root, 'dist/index.js')).href);
     if (typeof info.requestStatus !== 'function' || typeof info.requestSubmit !== 'function') throw new Error('Bundled request facade cannot be loaded.');
+    const guardian = (await import(pathToFileURL(join(root, 'dist/opencode-engine.js')).href)).openCodeWindowsGuardian();
     const distribution = { schema_version: 1, package: pkg.name, version: pkg.version, ...target,
       build_fingerprint: info.createRuntimeInfo(root).build_fingerprint,
       source_build_fingerprint: info.getRuntimeBuildFingerprint(repository),
       node: pkg.engines.node, engine: { version: '1.19.4', binary: `node_modules/${target.binaryPackage}/bin/${target.binaryName}`, sha256: await fileHash(binary) },
+      ...(guardian ? { windows_guardian: { path: 'resources/opencode-bootstrap/windows-guardian.dll', sha256: guardian.sha256,
+        source_sha256: guardian.source_sha256, manifest_sha256: guardian.manifest_sha256 } } : {}),
       dependencies, bootstrap: { path: 'resources/opencode-bootstrap', lock_sha256: await fileHash(join(bootstrap, 'package-lock.json')),
         dependencies: lockedDependencyInventory(bootstrap, JSON.parse(readFileSync(join(bootstrap, 'package-lock.json'), 'utf8'))) },
       limitations: ['Node.js is a prerequisite; no Node executable is bundled.', 'Linux core packaging is not Linux VS Code desktop acceptance.', 'No model inference is run by the packaging check.'] };

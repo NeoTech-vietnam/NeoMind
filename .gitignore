@@ -1,4 +1,6 @@
 node_modules/
+resources/opencode-bootstrap/windows-guardian.dll
+resources/opencode-bootstrap/windows-guardian.manifest.json
 **/__pycache__/
 dist/
 artifacts/

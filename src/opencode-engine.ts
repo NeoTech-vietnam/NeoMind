@@ -177,7 +177,7 @@ export interface OpenCodeSupervisionRef {
   schema_version: 1; invocation_id: string; instance: string; spec_sha256: string; spec_hmac: string;
   owner: { pid: number; created_at: string }; engine?: OpenCodeProcessIdentity;
 }
-const guardianStartupStages = ['guardian-compile-started', 'guardian-compile-completed',
+const guardianStartupStages = ['guardian-load-started', 'guardian-load-completed',
   'engine-create-started', 'engine-create-completed'] as const;
 const engineStartupStages = ['owner-verified', 'watchdog-spawned', 'watchdog-waiting', 'admitted',
   'guardian-spawned', ...guardianStartupStages, 'engine-identity-observed', 'server-listening', 'authenticated-ready'] as const;
@@ -234,8 +234,34 @@ export function openCodeBootstrap(): { path: string; lock_sha256: string } {
     if (manifest.dependencies?.['@opencode-ai/plugin'] !== openCodeVersion ||
         lock.packages?.['node_modules/@opencode-ai/plugin']?.version !== openCodeVersion || installed.version !== openCodeVersion ||
         lstatSync(path).isSymbolicLink() || lstatSync(join(path, 'node_modules')).isSymbolicLink()) throw new Error('pin');
+    openCodeWindowsGuardian();
     return { path, lock_sha256: hash(lockBytes) };
-  } catch { throw new Error('Pinned WorkForce engine bootstrap is missing or invalid. Complete engine:bootstrap during setup or use the portable GitHub runtime before accepting requests.'); }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('OPENCODE_GUARDIAN_UNAVAILABLE:')) throw error;
+    throw new Error('Pinned WorkForce engine bootstrap is missing or invalid. Complete engine:bootstrap during setup or use the portable GitHub runtime before accepting requests.');
+  }
+}
+
+export interface OpenCodeWindowsGuardian { path: string; sha256: string; source_sha256: string; manifest_sha256: string }
+const guardianResourceRoot = fileURLToPath(new URL('../resources/opencode-bootstrap/', import.meta.url));
+// The approved runtime binds the helper manifest present at module load.
+const loadedGuardianManifestHash = (() => {
+  try { return hash(readFileSync(join(guardianResourceRoot, 'windows-guardian.manifest.json'))); } catch { return undefined; }
+})();
+export function validateOpenCodeWindowsGuardian(root: string, expectedManifestHash: string): OpenCodeWindowsGuardian {
+  try {
+    if (!/^[a-f0-9]{64}$/.test(expectedManifestHash) || lstatSync(root).isSymbolicLink()) throw new Error();
+    const paths = ['windows-guardian.cs', 'windows-guardian.dll', 'windows-guardian.manifest.json'].map(name => join(root, name));
+    for (const path of paths) { const info = lstatSync(path); if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024) throw new Error(); }
+    const [source, assembly, manifest] = paths.map(path => readFileSync(path));
+    const value = JSON.parse(manifest!.toString('utf8'));
+    if (hash(manifest!) !== expectedManifestHash || value.schema_version !== 1 || value.assembly !== 'windows-guardian.dll' ||
+        value.source_sha256 !== hash(source!) || value.assembly_sha256 !== hash(assembly!)) throw new Error();
+    return { path: paths[1]!, sha256: value.assembly_sha256, source_sha256: value.source_sha256, manifest_sha256: expectedManifestHash };
+  } catch { throw new Error('OPENCODE_GUARDIAN_UNAVAILABLE: the pinned Windows helper is missing or invalid. Complete engine:bootstrap during setup and reload, or reinstall the portable runtime before accepting requests.'); }
+}
+export function openCodeWindowsGuardian(): OpenCodeWindowsGuardian | undefined {
+  return process.platform === 'win32' ? validateOpenCodeWindowsGuardian(guardianResourceRoot, loadedGuardianManifestHash ?? '') : undefined;
 }
 
 const engineMac = (key: Buffer, domain: string, bytes: string | Buffer) => createHmac('sha256', key).update(`${domain}\0`).update(bytes).digest('hex');
@@ -277,7 +303,8 @@ function ownerBirth(pid: number): string | undefined {
 }
 interface EngineSupervisionSpec {
   schema_version: 1; root: string; invocation_id: string; instance: string; owner: OpenCodeSupervisionRef['owner'];
-  binary: { path: string; sha256: string }; directory: string; config_directory: string; env: NodeJS.ProcessEnv; module_sha256: string;
+  binary: { path: string; sha256: string }; guardian?: OpenCodeWindowsGuardian;
+  directory: string; config_directory: string; env: NodeJS.ProcessEnv; module_sha256: string;
 }
 function supervisionDirectory(root: string, invocation: string): string {
   if (!/^[a-f0-9-]{36}$/i.test(invocation)) throw new Error('Invalid engine supervision invocation.');
@@ -333,70 +360,10 @@ export async function reconcileOpenCodeOwner(root: string, ref: OpenCodeSupervis
 // stop; closing the guardian's input or killing the guardian closes that job.
 const windowsEngineJob = String.raw`
 $ErrorActionPreference='Stop'
-$source=@'
-using System; using System.Runtime.InteropServices; using System.Text; using System.Threading.Tasks;
-public static class WorkForceEngineJob {
- [StructLayout(LayoutKind.Sequential)] struct IO { public ulong a,b,c,d,e,f; }
- [StructLayout(LayoutKind.Sequential)] struct BASIC { public long a,b; public uint flags; public UIntPtr min,max; public uint active; public UIntPtr affinity; public uint priority,scheduling; }
- [StructLayout(LayoutKind.Sequential)] struct EXT { public BASIC basic; public IO io; public UIntPtr a,b,c,d; }
- [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] struct START { public int cb; public string reserved,desktop,title; public uint x,y,xs,ys,xc,yc,fill,flags; public short show,reserved2; public IntPtr bytes,input,output,error; }
- [StructLayout(LayoutKind.Sequential)] struct PROCESS { public IntPtr process,thread; public uint pid,tid; }
- [StructLayout(LayoutKind.Sequential)] struct FT { public uint low,high; }
- [StructLayout(LayoutKind.Sequential)] struct SA { public int length; public IntPtr descriptor; [MarshalAs(UnmanagedType.Bool)] public bool inherit; }
- [StructLayout(LayoutKind.Sequential)] struct ACCOUNT { public long a,b,c,d; public uint faults,total,active,terminated; }
- [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr a,string b);
- [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetInformationJobObject(IntPtr a,int b,ref EXT c,uint d);
- [DllImport("kernel32.dll",SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr a,IntPtr b);
- [DllImport("kernel32.dll",SetLastError=true)] static extern bool TerminateJobObject(IntPtr a,uint b);
- [DllImport("kernel32.dll",SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr a,int b,out ACCOUNT c,uint d,IntPtr e);
- [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcess(string app,StringBuilder cmd,IntPtr pa,IntPtr ta,bool inherit,uint flags,IntPtr env,string cwd,ref START start,out PROCESS info);
- [DllImport("kernel32.dll")] static extern uint ResumeThread(IntPtr h);
- [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr h,uint ms);
- [DllImport("kernel32.dll")] static extern bool GetExitCodeProcess(IntPtr h,out uint code);
- [DllImport("kernel32.dll")] static extern bool GetProcessTimes(IntPtr h,out FT a,out FT b,out FT c,out FT d);
- [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
- [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr h,uint code);
- [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int id);
- [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
- [DllImport("kernel32.dll",SetLastError=true)] static extern bool DuplicateHandle(IntPtr a,IntPtr b,IntPtr c,out IntPtr d,uint access,bool inherit,uint flags);
- [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateFile(string a,uint b,uint c,ref SA d,uint e,uint f,IntPtr g);
- static void Need(bool value) { if(!value) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()); }
- public static void Run() {
-  string binary=Environment.GetEnvironmentVariable("WORKFORCE_ENGINE_BINARY"), cwd=Environment.GetEnvironmentVariable("WORKFORCE_ENGINE_DIRECTORY"), nonce=Environment.GetEnvironmentVariable("WORKFORCE_ENGINE_CONTROL");
-  Environment.SetEnvironmentVariable("WORKFORCE_ENGINE_BINARY",null); Environment.SetEnvironmentVariable("WORKFORCE_ENGINE_DIRECTORY",null); Environment.SetEnvironmentVariable("WORKFORCE_ENGINE_CONTROL",null);
-  IntPtr job=IntPtr.Zero, output=IntPtr.Zero, error=IntPtr.Zero, input=IntPtr.Zero; PROCESS p=new PROCESS();
-  try {
-   job=CreateJobObject(IntPtr.Zero,null); Need(job!=IntPtr.Zero); EXT limits=new EXT(); limits.basic.flags=0x2000;
-   Need(SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(EXT))));
-   Need(DuplicateHandle(GetCurrentProcess(),GetStdHandle(-11),GetCurrentProcess(),out output,0,true,2));
-   Need(DuplicateHandle(GetCurrentProcess(),GetStdHandle(-12),GetCurrentProcess(),out error,0,true,2));
-   SA sa=new SA();sa.length=Marshal.SizeOf(typeof(SA));sa.inherit=true; input=CreateFile("NUL",0x80000000,3,ref sa,3,0,IntPtr.Zero); Need(input!=new IntPtr(-1));
-   START s=new START();s.cb=Marshal.SizeOf(typeof(START));s.flags=0x100;s.input=input;s.output=output;s.error=error;
-   Console.WriteLine("WORKFORCE_ENGINE_STAGE "+nonce+" engine-create-started"); Console.Out.Flush();
-   Need(CreateProcess(binary,new StringBuilder("\""+binary+"\" serve --hostname=127.0.0.1 --port=0"),IntPtr.Zero,IntPtr.Zero,true,4,IntPtr.Zero,cwd,ref s,out p));
-   Console.WriteLine("WORKFORCE_ENGINE_STAGE "+nonce+" engine-create-completed"); Console.Out.Flush();
-   Need(AssignProcessToJobObject(job,p.process)); FT birth,unused1,unused2,unused3; Need(GetProcessTimes(p.process,out birth,out unused1,out unused2,out unused3));
-   Console.WriteLine("WORKFORCE_ENGINE_IDENTITY "+nonce+" "+p.pid+" "+(((ulong)birth.high<<32)|birth.low)); Console.Out.Flush();
-   Need(ResumeThread(p.thread)!=0xffffffff); CloseHandle(p.thread);p.thread=IntPtr.Zero;
-   Task<int> owner=Task.Run(()=>Console.OpenStandardInput().ReadByte());
-   while(WaitForSingleObject(p.process,100)==258 && !owner.IsCompleted) {}
-   if(owner.IsCompleted) Need(TerminateJobObject(job,130));
-   Need(WaitForSingleObject(p.process,5000)==0); uint code; Need(GetExitCodeProcess(p.process,out code));
-   Need(TerminateJobObject(job,130)); ACCOUNT accounting; int waited=0;
-   do { Need(QueryInformationJobObject(job,1,out accounting,(uint)Marshal.SizeOf(typeof(ACCOUNT)),IntPtr.Zero));if(accounting.active==0)break;System.Threading.Thread.Sleep(20);waited+=20; } while(waited<5000);
-   Need(accounting.active==0); CloseHandle(job);job=IntPtr.Zero;
-   Console.WriteLine("WORKFORCE_ENGINE_EXIT "+nonce+" "+code);Console.Out.Flush();
-  } finally {
-   if(job!=IntPtr.Zero)CloseHandle(job); if(p.process!=IntPtr.Zero){if(WaitForSingleObject(p.process,0)==258)TerminateProcess(p.process,130);CloseHandle(p.process);}if(p.thread!=IntPtr.Zero)CloseHandle(p.thread);
-   if(input!=IntPtr.Zero&&input!=new IntPtr(-1))CloseHandle(input);if(output!=IntPtr.Zero)CloseHandle(output);if(error!=IntPtr.Zero)CloseHandle(error);
-  }
- }
-}
-'@
 $workforceStageNonce=$env:WORKFORCE_ENGINE_CONTROL
-[Console]::WriteLine('WORKFORCE_ENGINE_STAGE '+$workforceStageNonce+' guardian-compile-started'); [Console]::Out.Flush()
-Add-Type -TypeDefinition $source
-[Console]::WriteLine('WORKFORCE_ENGINE_STAGE '+$workforceStageNonce+' guardian-compile-completed'); [Console]::Out.Flush()
+[Console]::WriteLine('WORKFORCE_ENGINE_STAGE '+$workforceStageNonce+' guardian-load-started'); [Console]::Out.Flush()
+Add-Type -Path $env:WORKFORCE_ENGINE_GUARDIAN
+[Console]::WriteLine('WORKFORCE_ENGINE_STAGE '+$workforceStageNonce+' guardian-load-completed'); [Console]::Out.Flush()
 [WorkForceEngineJob]::Run()
 `;
 
@@ -436,6 +403,8 @@ export async function runOpenCodeOwnerSupervisor(root: string, ref: OpenCodeSupe
   const proof = engineProof(root, ref), { spec, path, key } = proof;
   if (hash(readFileSync(fileURLToPath(import.meta.url))) !== spec.module_sha256 || hash(readFileSync(spec.binary.path)) !== spec.binary.sha256)
     throw new Error('Pinned engine supervisor executable changed before launch.');
+  if (process.platform === 'win32' && JSON.stringify(spec.guardian) !== JSON.stringify(openCodeWindowsGuardian()))
+    throw new Error('Pinned Windows guardian changed before launch.');
   const requestStop = () => {
     stop = true; admissionReady?.();
     if (!child) return;
@@ -470,7 +439,8 @@ export async function runOpenCodeOwnerSupervisor(root: string, ref: OpenCodeSupe
   const nonce = randomBytes(32).toString('hex');
   if (process.platform === 'win32') {
     child = spawn(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', windowsEngineJob], {
-      cwd: spec.directory, windowsHide: true, shell: false, env: { ...spec.env, WORKFORCE_ENGINE_BINARY: spec.binary.path, WORKFORCE_ENGINE_DIRECTORY: spec.directory, WORKFORCE_ENGINE_CONTROL: nonce }, stdio: ['pipe', 'pipe', 'pipe'] });
+      cwd: spec.directory, windowsHide: true, shell: false, env: { ...spec.env, WORKFORCE_ENGINE_BINARY: spec.binary.path, WORKFORCE_ENGINE_DIRECTORY: spec.directory, WORKFORCE_ENGINE_CONTROL: nonce,
+        WORKFORCE_ENGINE_GUARDIAN: spec.guardian!.path }, stdio: ['pipe', 'pipe', 'pipe'] });
   } else {
     child = spawn(spec.binary.path, ['serve', '--hostname=127.0.0.1', '--port=0'], { cwd: spec.directory, windowsHide: true, shell: false,
       detached: true, env: spec.env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -538,8 +508,9 @@ async function startSupervisedEngine(root: string, invocationId: string, directo
   const path = join(directory, 'supervision'); secureHostPrivateDirectory(path);
   if (existsSync(join(path, 'spec.json'))) throw new Error('This invocation already owns engine supervision history; reconcile it before creating a new invocation.');
   const instance = randomBytes(32).toString('hex'), key = randomBytes(32);
+  const guardian = openCodeWindowsGuardian();
   const spec: EngineSupervisionSpec = { schema_version: 1, root: realpathSync.native(root), invocation_id: invocationId,
-    instance, owner: { pid: process.pid, created_at: created }, binary, directory, config_directory: configDirectory, env,
+    instance, owner: { pid: process.pid, created_at: created }, binary, ...(guardian ? { guardian } : {}), directory, config_directory: configDirectory, env,
     module_sha256: hash(readFileSync(fileURLToPath(import.meta.url))) };
   const bytes = JSON.stringify(spec) + '\n', ref: OpenCodeSupervisionRef = { schema_version: 1, invocation_id: invocationId, instance,
     owner: { ...spec.owner }, spec_sha256: hash(bytes), spec_hmac: engineMac(key, 'workforce-engine-spec-v1', bytes) };

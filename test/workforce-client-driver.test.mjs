@@ -27,7 +27,7 @@ function fixture(t, { authorized = false, trusted = true, runtimeMismatch = fals
     lm: { selectChatModels: async () => [{ id: 'top-models', vendor: 'customendpoint', name: 'top-models' }] },
     commands: { getCommands: async () => ['workforce.pm.openLocal', 'workbench.action.chat.open', 'workbench.action.chat.newLocalChat', 'workbench.action.chat.export'],
       executeCommand: async (name, input) => { calls.push([name, input]); if (name === 'workforce.pm.openLocal') return localResult;
-        if (name === 'workbench.action.chat.export') writeFileSync(input.fsPath, JSON.stringify({ requests: [{ message: { text: prompt }, modelId: 'actual-export-id-fixture', modeInfo: { name: 'WF.PM' }, response: [{ kind: 'toolInvocationSerialized', toolId: 'mcp_workforce_request_submit', arguments: { apiKey: 'SECRET' } }] }] }));
+        if (name === 'workbench.action.chat.export') writeFileSync(input.fsPath, JSON.stringify({ requests: [{ message: { text: prompt }, modelId: 'actual-export-id-fixture', modeInfo: { kind: 'agent', isBuiltin: false, modeInstructions: { name: 'WF.PM', isBuiltin: false } }, response: [{ kind: 'toolInvocationSerialized', toolId: 'mcp_workforce_request_submit', arguments: { apiKey: 'SECRET' } }] }] }));
         return { type: 'confirmation', kind: 'toolInvocation', toolId: 'workforce/request_submit' }; } },
   };
   const runtime = { createRuntimeInfo: () => ({ package_version: 'synthetic', runtime_root: root, build_fingerprint: 'fixture' }), requestSetupStatus: () => ({ ready: true }), requestStatus: () => ({ requests: [] }) };
@@ -86,6 +86,7 @@ test('native chat dispatch is exact and once-only even across repeated requests'
   const input = app.calls.find(([name]) => name === 'workbench.action.chat.open')[1];
   assert.equal(input.query, prompt); assert.equal(input.mode, 'WF.PM'); assert.equal(input.blockOnResponse, true); assert.equal(input.isPartialQuery, false);
   assert.deepEqual(input.modelSelector, { id: 'top-models', vendor: 'customendpoint' });
+  assert.equal(app.driver.report().chat.workforce_profile_observed, true);
   assert.equal(JSON.stringify(app.driver.report()).includes('SECRET'), false);
 });
 
@@ -96,9 +97,22 @@ test('untrusted workspaces and a failed Local profile opening cannot fall back t
 });
 
 test('safe native exports expose actual tool/model identifiers without arguments or foreign chat contents', () => {
-  const own = safeExport({ requests: [{ message: { text: prompt }, modelId: 'observed-id', modeInfo: { name: 'WF.PM' },
+  const own = safeExport({ requests: [{ message: { text: prompt }, modelId: 'observed-id', modeInfo: { kind: 'agent', isBuiltin: false,
+    modeInstructions: { name: 'WF.PM', isBuiltin: false, content: 'SECRET_INSTRUCTIONS', uri: 'file:///SECRET_PATH', metadata: { secret: 'SECRET_METADATA' } },
+    telemetryModeId: 'custom', permissionLevel: 'autopilot' },
     response: [{ kind: 'toolInvocationSerialized', toolId: 'mcp_workforce_request_submit', invocationMessage: 'SECRET', parameters: { apiKey: 'SECRET' } }] }] }, prompt);
   assert.equal(own.matches_issued_prompt, true); assert.equal(own.observed_workforce_call, true); assert.equal(own.model_id, 'observed-id'); assert.equal(JSON.stringify(own).includes('SECRET'), false);
-  const foreign = safeExport({ requests: [{ message: { text: 'Private unrelated conversation' } }] }, prompt);
+  assert.equal(own.workforce_profile_observed, true);
+  assert.deepEqual(own.mode, { kind: 'agent', isBuiltin: false, telemetryModeId: 'custom', permissionLevel: 'autopilot', modeInstructions: { name: 'WF.PM', isBuiltin: false } });
+  for (const modeInfo of [
+    { kind: 'agent', isBuiltin: true },
+    { kind: 'agent', isBuiltin: false, name: 'WF.PM' },
+    { kind: 'agent', isBuiltin: false, name: 'WF.PM', modeInstructions: { name: 'Different Agent', isBuiltin: false } },
+    { kind: 'agent', isBuiltin: false, modeInstructions: { name: 'WF.PM impersonator', isBuiltin: false } },
+    { kind: 'agent', isBuiltin: false, modeInstructions: { name: 'WF.PM', isBuiltin: true } },
+    { kind: 'agent', isBuiltin: true, modeInstructions: { name: 'WF.PM', isBuiltin: true } }
+  ]) assert.equal(safeExport({ requests: [{ message: { text: prompt }, modeInfo }] }, prompt).workforce_profile_observed, false);
+  const foreign = safeExport({ requests: [{ message: { text: 'Private unrelated conversation' }, modeInfo: { kind: 'agent', isBuiltin: false, modeInstructions: { name: 'WF.PM', content: 'SECRET_FOREIGN_INSTRUCTIONS' } } }] }, prompt);
   assert.equal(foreign.matches_issued_prompt, false); assert.equal(JSON.stringify(foreign).includes('Private unrelated'), false);
+  assert.equal(JSON.stringify(foreign).includes('WF.PM'), false); assert.equal(JSON.stringify(foreign).includes('SECRET'), false);
 });

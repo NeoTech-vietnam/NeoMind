@@ -6,6 +6,7 @@ import { hash } from './storage.js';
 import { closeWorkForceCapabilities } from './workforce-plugin-gateway.js';
 import { OpenCodeToolFailureGuard, type OpenCodeToolObservation } from './opencode-tool-observation.js';
 import { OpenCodeTurnObserver, OpenCodeTurnError, safeOpenCodeTransportError, type OpenCodeTurnIdentity, type OpenCodeTurnOptions } from './opencode-turn.js';
+import { canonicalOpenCodeProviderFailure } from './opencode-provider-diagnostic.js';
 import { createOpenCodeGateway, openCodeConfiguration, openCodeEndpoint, openCodeError, openCodeBinary, opencodeProtocol,
   opencodeProviderId, opencodeRuntimeVersion, opencodeRuntimeIntegrity, openCodeStorageFailure, startOpenCodeEngine, type OpenCodeEngine, type OpenCodeGateway } from './opencode-engine.js';
 
@@ -16,6 +17,9 @@ class OpenCodeControlSetupError extends Error {
     super('The local engine control connection failed before any model prompt was submitted. Its owned engine was closed; preserve the exact assignment for bounded backend session reconciliation.');
     this.name = 'OPENCODE_CONTROL_SETUP_FAILED';
   }
+}
+class OpenCodeProviderFailureError extends Error {
+  constructor(message: string) { super(message); this.name = 'OpenCodeProviderError'; }
 }
 function setupTransportFailure(operation: string, error: unknown): boolean {
   return ['session-create', 'mcp-status', 'tool-list', 'event-subscribe'].includes(operation) &&
@@ -165,19 +169,19 @@ export class OpenCodeSession {
       if (this.stopped) return;
       operation = 'result-validation';
       this.assertCurrent();
-      if (response.data?.info.error) {
-        const failure = response.data.info.error;
-        const details = failure.data as { statusCode?: number; isRetryable?: boolean };
-        await ownedContext(this.root, this.receipt.request_id)?.callbacks.trace?.({ event: 'engine-failure', engine: 'opencode',
-          owner: 'runtime', error_name: failure.name,
-          ...(Number.isInteger(details.statusCode) ? { status_code: details.statusCode } : {}),
-          ...(typeof details.isRetryable === 'boolean' ? { retryable: details.isRetryable } : {}) });
-        throw Object.assign(new Error('OpenCode provider did not complete the requested inference.'), { name: 'OpenCodeProviderError' });
-      }
-      if (!response.data || response.data.info.error || response.data.info.providerID !== opencodeProviderId ||
+      if (!response.data || response.data.info.providerID !== opencodeProviderId ||
           response.data.info.modelID !== endpoint.model || response.data.info.sessionID !== sessionID ||
           response.data.info.parentID !== this.messageId)
         throw new Error('OpenCode response identity or inference result did not validate.');
+      if (response.data?.info.error) {
+        const failure = canonicalOpenCodeProviderFailure(response.data.info.error, { session_id: sessionID,
+          user_message_id: this.messageId!, assistant_message_id: response.data.info.id });
+        this.update({ opencode: { ...readInvocation(this.root, this.receipt.id).opencode!,
+          response_message_id: response.data.info.id, provider_failure: failure.observation } });
+        await ownedContext(this.root, this.receipt.request_id)?.callbacks.trace?.({ event: 'engine-failure', engine: 'opencode',
+          owner: 'runtime', error_name: 'OpenCodeProviderError', ...failure.observation });
+        throw new OpenCodeProviderFailureError(failure.message);
+      }
       if (!this.gateway!.calls.size) throw new Error('OpenCode did not demonstrate invocation-bound tool execution.');
       if (!this.resultSaved) throw new OpenCodeTurnError('MCP_DELIVERY_PROTOCOL', 'The completed model turn did not persist its required bound professional result.');
       const text = response.data.parts.filter(part => part.type === 'text').map(part => part.text).join('\n');
@@ -199,7 +203,8 @@ export class OpenCodeSession {
           }
           await this.complete('blocked', String(new OpenCodeControlSetupError()));
         }
-        else await this.complete('blocked', this.engine?.failure?.message ?? (error instanceof OpenCodeTurnError ? `${error.code}: ${error.message}` : openCodeError(error)));
+        else await this.complete('blocked', this.engine?.failure?.message ?? (error instanceof OpenCodeProviderFailureError ? error.message
+          : error instanceof OpenCodeTurnError ? `${error.code}: ${error.message}` : openCodeError(error)));
       }
     }
   }

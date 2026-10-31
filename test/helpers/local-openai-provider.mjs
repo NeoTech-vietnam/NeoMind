@@ -11,7 +11,12 @@ export async function localOpenAIProvider(responseFor, maximum = 20) {
       for await (const chunk of request) { bytes += chunk.length; if (bytes > 8 * 1024 * 1024) throw new Error('Fixture request limit.'); chunks.push(chunk); }
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8')); requests.push(body);
       if (requests.length > maximum) { response.writeHead(429, { 'content-type': 'application/json' }); response.end(JSON.stringify({ error: { message: 'Fixture request circuit exceeded.', type: 'fixture_limit' } })); return; }
-      const output = await responseFor(requests.length - 1, body), tools = output.toolCalls?.map((call, index) => ({
+      const output = await responseFor(requests.length - 1, body);
+      if (output.statusCode) {
+        response.writeHead(output.statusCode, { 'content-type': 'application/json', ...output.headers });
+        response.end(JSON.stringify(output.body)); return;
+      }
+      const tools = output.toolCalls?.map((call, index) => ({
         index, id: `call_fixture_${requests.length}_${index}`, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.arguments) },
       }));
       const metadata = { id: `chatcmpl_fixture_${requests.length}`, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: body.model };

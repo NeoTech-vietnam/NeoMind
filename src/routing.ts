@@ -9,6 +9,7 @@ import { listUpstreams } from './upstreams.js';
 import { onlyAddedRequiredNeoMindMcp } from './codex-required-compatibility.js';
 import { isControlledExecutionReceipt, openCodeVersion } from './execution-attestation.js';
 import type { OpenCodeSupervisionRef } from './opencode-engine.js';
+import type { OpenCodeProviderFailure } from './opencode-provider-diagnostic.js';
 import {
   atomicWrite,
   getRecord,
@@ -92,7 +93,7 @@ export interface NativeReceipt {
   host_instance?: string;
   identity_provenance?: 'local-vscode-extension-host' | 'local-opencode';
   opencode?: { version: string; binary_sha256: string; gateway_instance: string; protocol?: string; response_message_id?: string;
-    supervision?: OpenCodeSupervisionRef; interruption_proof_sha256?: string };
+    supervision?: OpenCodeSupervisionRef; interruption_proof_sha256?: string; provider_failure?: OpenCodeProviderFailure };
   effort_support?: 'unavailable';
   id: string;
   receipt_path: string;

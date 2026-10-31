@@ -39,6 +39,7 @@ let requestQuestion = false;
 let failFirstProduct = false;
 let failStorageOnce = false;
 let failProviderOnce = false;
+let canonicalReviewProviderFailure = false;
 let failDesignStalls = false;
 let forgeDependencyProse = false;
 let qualityBeforeStall = false;
@@ -64,9 +65,13 @@ function parsed(value) { return JSON.parse(value.content[0].text); }
 async function deterministicEngine(t) {
   const prior = { open: OpenCodeSession.prototype.open, run: OpenCodeSession.prototype.run, close: OpenCodeSession.prototype.close };
   const supervisedFaultSessions = new WeakSet();
+  const canonicalReviewSessions = new WeakSet();
   OpenCodeSession.prototype.open = async function () {
     const context = ownedContext(this.root, this.receipt.request_id);
     assert.ok(context, 'backend owns every invocation');
+    if (canonicalReviewProviderFailure && context.binding.stage === 'review') {
+      canonicalReviewSessions.add(this); return prior.open.call(this);
+    }
     if (failAfterSavedStage === context.binding.stage && !counts.get(`${this.receipt.workflow_id}:${context.binding.stage}`)) {
       // The failing stage uses the real pinned engine and shutdown guardian,
       // without inference. Its report tool is deterministic but its native
@@ -80,7 +85,7 @@ async function deterministicEngine(t) {
       confirmed_reasoning_effort: null, native_sandbox: null,
       opencode: { version: openCodeVersion, binary_sha256: 'b'.repeat(64), gateway_instance: 'a'.repeat(64) } });
   };
-  OpenCodeSession.prototype.close = async function () { if (supervisedFaultSessions.has(this)) await prior.close.call(this); };
+  OpenCodeSession.prototype.close = async function () { if (supervisedFaultSessions.has(this) || canonicalReviewSessions.has(this)) await prior.close.call(this); };
   OpenCodeSession.prototype.run = async function () {
     try {
       const context = ownedContext(this.root, this.receipt.request_id), binding = { ...context.binding, invocation_id: this.receipt.id };
@@ -89,6 +94,7 @@ async function deterministicEngine(t) {
       const key = `${this.receipt.workflow_id}:${binding.stage}`, count = (counts.get(key) ?? 0) + 1; counts.set(key, count);
       observations.push({ name, stage: binding.stage, role: binding.role, model: this.receipt.requested_model, request: this.receipt.request_id, invocation: this.receipt.id,
         process_contract: binding.process_contract, review_purpose: binding.review_purpose, prompt: this.receipt.input_text });
+      if (canonicalReviewSessions.has(this)) return prior.run.call(this);
       if (failStorageOnce && binding.stage === 'planning' && count === 1) {
         await this.complete('blocked', 'OPENCODE_STORAGE_UNAVAILABLE: fixture observed an unavailable engine journal.'); return;
       }
@@ -222,6 +228,7 @@ async function fixture(t, names, options = {}) {
   atomicWrite(safePath(root, 'requirements.md'), 'Supported labels: Alpha or Beta; user chooses one.\n');
   observations.length = 0; errors.length = 0; counts.clear(); fixtureProductWrites.clear(); legacyReportEvidence.clear(); requestQuestion = options.questions ?? (options.question ? 1 : 0); failFirstProduct = !!options.repair; failStorageOnce = !!options.storage; failProviderOnce = !!options.provider; failDesignStalls = !!options.stalls; forgeDependencyProse = !!options.forgeDependencyProse; qualityBeforeStall = !!options.qualityBeforeStall; failAfterSavedStage = options.failAfterSavedStage; pendingTestHandoff = !!options.pendingTestHandoff; legacyProtocolHandoff = !!options.legacyProtocolHandoff; repeatLegacyProtocolHandoff = !!options.repeatLegacyProtocolHandoff; mutateScopeAfterRead = !!options.mutateScope;
   await deterministicEngine(t);
+  canonicalReviewProviderFailure = !!options.canonicalReviewProviderFailure;
   const api = { workspace: { isTrusted: true, workspaceFolders: [{ uri: { scheme: 'file', fsPath: root } }] } };
   const clock = { value: Date.now() }; fixtureClocks.set(root, clock);
   const bridge = await enableWorkForceHost(api, root), owner = await startControlledHost(root, options.clock ? { condition_clock: () => clock.value, condition_poll_ms: 10 } : {});
@@ -677,6 +684,77 @@ test('unreachable provider checks persist bounded backoff without inference and 
   const before = controlledStatus(root, started.workflow_id).revision;
   clock.value += 600000; await delay(50);
   assert.equal(controlledStatus(root, started.workflow_id).revision, before);
+});
+
+test('canonical OpenCode HTTP 503 with upstream usage 429 signs a bound failure, waits and completes the same review after actual healthy proof', { timeout: 150000 }, async t => {
+  let healthy = false;
+  const secret = 'PRIVATE_PROVIDER_ERROR_CANARY';
+  const provider = await localOpenAIProvider((_index, body) => {
+    if (!healthy) return { statusCode: 503, headers: { 'retry-after-ms': '1' },
+      body: { error: { type: 'upstream_error', message: `[429] The usage limit has been reached. ${secret}` } } };
+    if (body.tools.some(tool => tool.function?.name === 'wf_capability_ping')) {
+      if (body.messages.at(-1).role === 'tool') return { text: 'connected' };
+      const nonce = /nonce ([a-f0-9-]{36})/.exec(JSON.stringify(body.messages)); assert.ok(nonce);
+      return { toolCalls: [{ name: 'wf_capability_ping', arguments: { nonce: nonce[1] } }] };
+    }
+    const called = body.messages.flatMap(message => message.tool_calls ?? []).map(call => call.function.name);
+    if (called.includes('wf_assignment_report')) return { text: 'Independent review completed.' };
+    if (called.includes('wf_project_read')) return { toolCalls: [{ name: 'wf_assignment_report',
+      arguments: { summary: 'Independently read the current JSON and confirmed expected value 42.', findings: [], verdict: 'pass' } }] };
+    return { toolCalls: [{ name: 'wf_project_read', arguments: { path: 'products/canonical-provider.json' } }] };
+  }, 30);
+  t.after(() => provider.close());
+  const root = await fixture(t, ['canonical-provider'], { canonicalReviewProviderFailure: true, clock: true });
+  atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([{ name: 'fixture', vendor: 'fixture', models: [
+    { id: 'top-models', url: provider.baseURL }, { id: 'worker-models', url: provider.baseURL }] }]));
+  const started = await startControlledWorkflow(root, { requirement: 'Case: canonical-provider\nCreate the requested JSON and use the existing independent checker.' });
+  const waiting = await wait(root, started.workflow_id, 'waiting');
+  assert.equal(waiting.phase, 'review'); assert.equal(waiting.dependency_wait.code, 'provider');
+  const failed = waiting.attempts.at(-1), native = readInvocation(root, failed.invocation_id);
+  const originalReceipt = readFileSync(safePath(root, native.receipt_path), 'utf8');
+  assert.equal(native.inference_completed, false); assert.equal(native.state, 'blocked');
+  assert.deepEqual(native.opencode.provider_failure, { schema_version: 1, code: 'RATE_LIMITED', status_code: 503, retryable: true,
+    session_id: native.native_thread_id, user_message_id: native.native_turn_id, assistant_message_id: native.opencode.response_message_id });
+  assert.match(native.error, /^RATE_LIMITED:/); assert.equal(originalReceipt.includes(secret), false);
+  try {
+    const forged = JSON.parse(originalReceipt); forged.opencode.provider_failure.status_code = 400;
+    atomicWrite(safePath(root, native.receipt_path), JSON.stringify(forged));
+    assert.throws(() => readInvocation(root, native.id), /signature/i, 'Provider metadata is covered by the native signature.');
+  } finally { atomicWrite(safePath(root, native.receipt_path), originalReceipt); }
+  assert.equal(waiting.attempts.filter(attempt => attempt.stage === 'diagnosis').length, 0);
+  assert.equal(waiting.pending_question, undefined);
+  const product = readFileSync(join(root, 'products/canonical-provider.json'));
+  healthy = true; fixtureClocks.get(root).value = Date.parse(waiting.dependency_wait.next_condition_check_at) + 1;
+  const completed = await wait(root, started.workflow_id);
+  assert.equal(completed.attempts.filter(attempt => attempt.stage === 'review').length, 2);
+  assert.equal(completed.attempts.filter(attempt => attempt.stage === 'implementation').length, 1);
+  assert.equal(completed.checks.length, 1); assert.equal(completed.checks[0].passed, true);
+  assert.ok(completed.runtime_observations.some(observation => observation.kind === 'provider-capability-restored'));
+  const reviewer = readInvocation(root, completed.attempts.filter(attempt => attempt.stage === 'review').at(-1).invocation_id);
+  assert.equal(reviewer.inference_completed, true); assert.equal(reviewer.opencode.provider_failure, undefined);
+  assert.deepEqual(readFileSync(join(root, 'products/canonical-provider.json')), product);
+  assert.equal(readFileSync(safePath(root, native.receipt_path), 'utf8'), originalReceipt, 'Prior failed native evidence is immutable.');
+  assert.deepEqual(provider.failures, []); assert.deepEqual(errors, []);
+});
+
+test('canonical OpenCode invalid-schema HTTP 400 remains a retained technical incident without healthy-provider polling', { timeout: 90000 }, async t => {
+  const provider = await localOpenAIProvider(() => ({ statusCode: 400,
+    body: { error: { type: 'invalid_request_error', message: 'Invalid tool JSON schema PRIVATE_INVALID_SCHEMA' } } }), 4);
+  t.after(() => provider.close());
+  const root = await fixture(t, ['canonical-schema'], { canonicalReviewProviderFailure: true, clock: true });
+  atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([{ name: 'fixture', vendor: 'fixture', models: [
+    { id: 'top-models', url: provider.baseURL }, { id: 'worker-models', url: provider.baseURL }] }]));
+  const started = await startControlledWorkflow(root, { requirement: 'Case: canonical-schema\nCreate the requested JSON and use the existing independent checker.' });
+  const stopped = await wait(root, started.workflow_id, 'blocked');
+  const native = readInvocation(root, stopped.attempts.at(-1).invocation_id);
+  assert.equal(stopped.phase, 'review'); assert.equal(stopped.dependency_wait, undefined); assert.equal(stopped.pending_question, undefined);
+  assert.equal(native.opencode.provider_failure.code, 'PROVIDER_REQUEST_REJECTED');
+  assert.equal(native.opencode.provider_failure.status_code, 400); assert.equal(native.opencode.provider_failure.retryable, false);
+  assert.match(native.error, /^PROVIDER_REQUEST_REJECTED:/); assert.equal(JSON.stringify(native).includes('PRIVATE_INVALID_SCHEMA'), false);
+  const attempts = stopped.attempts.length, requests = provider.requests.length;
+  fixtureClocks.get(root).value += 3600000; await delay(100);
+  assert.equal(controlledStatus(root, started.workflow_id).attempts.length, attempts); assert.equal(provider.requests.length, requests);
+  assert.deepEqual(provider.failures, []); assert.deepEqual(errors, []);
 });
 
 test('concurrent dependency waits share one actual local nonce proof and pausing one consumer preserves the other', { timeout: 120000 }, async t => {

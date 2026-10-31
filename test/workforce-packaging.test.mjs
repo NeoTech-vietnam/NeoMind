@@ -7,6 +7,8 @@ import { distributionTarget, lockedDependencyInventory, archiveRuntime, packedAr
 import { spawnSync } from 'node:child_process';
 import { writeReleaseIndex } from '../scripts/package-release.mjs';
 import { parse as parseYaml } from 'yaml';
+import { bootstrapWindowsGuardian } from '../scripts/bootstrap-engine.mjs';
+import { statSync } from 'node:fs';
 
 test('exact WorkForce branch push packages candidates after the same native CI regression without publishing', () => {
   const ci = parseYaml(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
@@ -104,6 +106,14 @@ test('engine bootstrap is exact, private and integrity locked without private ex
   assert.equal(lock.packages['node_modules/@opencode-ai/plugin'].version, '1.19.4');
   assert.ok(Object.entries(lock.packages).filter(([path]) => path).every(([, entry]) => typeof entry.integrity === 'string'));
   assert.doesNotMatch(JSON.stringify({ pkg, lock }), /apiKey|Authorization|Bearer |baseURL|127\.0\.0\.1/);
+});
+
+test('setup reuses the verified precompiled Windows guardian without recompiling per invocation', { skip: process.platform !== 'win32' }, () => {
+  const path = new URL('../resources/opencode-bootstrap/windows-guardian.dll', import.meta.url);
+  const before = statSync(path).mtimeMs;
+  const first = bootstrapWindowsGuardian(), second = bootstrapWindowsGuardian();
+  assert.deepEqual(first, second); assert.equal(statSync(path).mtimeMs, before);
+  assert.match(first.assembly_sha256, /^[a-f0-9]{64}$/); assert.match(first.source_sha256, /^[a-f0-9]{64}$/);
 });
 
 test('candidate indexing requires both native assets when requested and never claims publication or client acceptance', async t => {
