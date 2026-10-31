@@ -184,6 +184,24 @@ test('dependency seeding yields to cancellation before any watchdog or engine ad
   assert.equal(existsSync(join(directory, 'config/opencode/node_modules')), false, 'Partial dependency copies are cleaned without launching an engine.');
 });
 
+test('cancelling an in-flight dependency worker joins its writer before deleting the private partial copy', { timeout: 45000 }, async t => {
+  const { root } = project(t, [], true), invocation = randomUUID(), parent = openCodeStorage(root).path;
+  const directory = join(parent, `opencode-${invocation}`), dependencies = join(directory, 'config/opencode/node_modules');
+  t.after(() => { assert.equal(dirname(directory), parent); rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
+  const controller = new AbortController(), stages = []; let copyObserved = false;
+  const timer = setInterval(() => { if (existsSync(dependencies)) { copyObserved = true; controller.abort(); } }, 10);
+  t.after(() => clearInterval(timer));
+  await assert.rejects(startOpenCodeEngine(root, invocation, {}, controller.signal,
+    { onStartupStage(observation) { stages.push(observation.stage); } }), { name: 'AbortError' });
+  clearInterval(timer);
+  assert.equal(copyObserved, true, 'Cancellation occurred after the real worker began writing dependencies.');
+  assert.deepEqual(stages, []);
+  assert.equal(existsSync(dependencies), false);
+  await new Promise(done => setTimeout(done, 100));
+  assert.equal(existsSync(dependencies), false, 'A terminated writer cannot recreate paths after its cleanup completed.');
+  assert.equal(existsSync(join(directory, 'supervision/spec.json')), false);
+});
+
 test('Windows guardian preflight binds the shipped source, assembly and frozen manifest', { skip: process.platform !== 'win32' }, t => {
   const actual = openCodeWindowsGuardian(), root = mkdtempSync(join(tmpdir(), 'wf-guardian-integrity-'));
   t.after(() => { assert.equal(dirname(root), tmpdir()); rmSync(root, { recursive: true, force: true }); });
