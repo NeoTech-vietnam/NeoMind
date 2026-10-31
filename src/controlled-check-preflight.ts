@@ -9,10 +9,9 @@ const key = (value: string) => process.platform === 'win32' ? value.toLowerCase(
 const covers = (path: string, scopes: readonly string[]) => scopes.some(scope =>
   key(path) === key(scope) || key(path).startsWith(`${key(scope)}/`));
 
-/** Check the complete selected positive/negative group before capturing inputs
- * or executing a command. This admits no paths, creates no semantic fixtures,
- * and changes neither the immutable commands nor either role's write scope. */
-export function assertControlledCheckInputs(root: string, plan: Scope,
+/** Check the complete ordered group before any command may have side effects.
+ * Future inputs may be produced by an earlier command; authority is fixed now. */
+export function assertControlledCheckInputAuthority(plan: Scope,
   checks: readonly { baseline_paths: readonly string[] }[]): void {
   const paths = [...new Set(checks.flatMap(check => [...check.baseline_paths]))];
   // Resolve authority for every path before probing any filesystem state. A
@@ -23,6 +22,14 @@ export function assertControlledCheckInputs(root: string, plan: Scope,
     if (!controlledPublicReferencePath(path) && !(plan.input_paths?.includes(path) && controlledSkillInputPath(path)))
       throw new ControlledToolError('PRIVATE_PATH', 'Private runtime, client configuration and credentials cannot be used as check inputs.');
   }
+}
+
+/** Inspect current inputs immediately before their consuming command. This
+ * neither creates missing fixtures nor widens either role's frozen scope. */
+export function assertControlledCheckInputs(root: string, plan: Scope,
+  checks: readonly { baseline_paths: readonly string[] }[]): void {
+  assertControlledCheckInputAuthority(plan, checks);
+  const paths = [...new Set(checks.flatMap(check => [...check.baseline_paths]))];
   const missing: { path: string; owner: InputOwner }[] = [];
   for (const path of paths) {
     let absolute: string;

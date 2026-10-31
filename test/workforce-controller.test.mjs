@@ -329,6 +329,26 @@ test('PM exposes one substantive result operation and preserves old signed plann
   assert.doesNotMatch(current, /then one assignment_report/);
 });
 
+test('ordered existing check commands can produce then consume a fresh artifact in one check_run', { timeout: 90000 }, async t => {
+  const name = 'ordered-artifact', root = await fixture(t, [name]), artifact = 'build/derived.json';
+  atomicWrite(safePath(root, 'checks/build-derived.mjs'),
+    "import{mkdirSync,readFileSync,writeFileSync}from'node:fs';import assert from'node:assert/strict';const value=JSON.parse(readFileSync(process.argv[2],'utf8'));assert.equal(value.value,42);mkdirSync('build',{recursive:true});writeFileSync(process.argv[3],JSON.stringify(value));console.log('fresh artifact built');\n");
+  const candidate = fixturePlans.get(name);
+  candidate.allowed_paths.push(artifact);
+  candidate.checks = [{ title: 'Build fresh artifact', command: [process.execPath, 'checks/build-derived.mjs', candidate.outputs[0], artifact], baseline_paths: [] },
+    { title: 'Consume fresh artifact', command: [process.execPath, `checks/${name}.mjs`, artifact], baseline_paths: [artifact] }];
+  candidate.verification_levels[0].checks = candidate.checks.map(check => check.title);
+  const started = await startControlledWorkflow(root, { requirement: 'Case: ordered-artifact\nCreate the expected JSON product and run the existing ordered build/consume checks.' });
+  const run = await wait(root, started.workflow_id);
+  assert.equal(run.status, 'completed'); assert.deepEqual(errors, []);
+  const checks = run.checks.filter(check => !check.negative);
+  assert.deepEqual(checks.map(check => check.title), candidate.checks.map(check => check.title));
+  assert.ok(checks.every(check => check.passed && check.durable_job));
+  assert.equal(checks[0].baseline[artifact], undefined, 'A producer command does not depend on its future output.');
+  assert.equal(checks[1].baseline[artifact], hash(readFileSync(safePath(root, artifact))), 'The consuming evidence binds the actual freshly produced bytes.');
+  assert.equal(requestProjection(root, run).accepted, true);
+});
+
 test('stale signed worker capacity is reconciled from actual owner exit before a new request dispatches', { timeout: 120000 }, async t => {
   const root = await fixture(t, ['capacity'], { maxWorkers: 1 });
   const previous = createRecord(root, { type: 'knowledge', title: 'A previous process owner', data: { kind: 'manager-workflow' } });

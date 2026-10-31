@@ -2,14 +2,14 @@
 import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, linkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, linkSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 import { createControlledMcpServer, ControlledToolError } from '../dist/controlled-tools.js';
-import { assertControlledCheckInputs } from '../dist/controlled-check-preflight.js';
+import { assertControlledCheckInputAuthority, assertControlledCheckInputs } from '../dist/controlled-check-preflight.js';
 
 const checker = 'checks/check.cjs', product = 'source/value.json', missing = 'checks/invalid-bundle';
 const plan = { allowed_paths: ['source'], verification_paths: ['checks'], preservation_paths: ['inputs'], input_paths: [] };
@@ -25,6 +25,15 @@ function fixture(t) {
   return { root, write };
 }
 const selected = () => [{ baseline_paths: [checker, product] }, { baseline_paths: [checker, missing] }];
+
+test('ordered-group authority admits owned future inputs but rejects any later unauthorized input before execution', t => {
+  const { root } = fixture(t);
+  assert.equal(assertControlledCheckInputAuthority(plan, selected()), undefined);
+  assert.equal(existsSync(join(root, missing)), false, 'Authority validation never creates a future build input.');
+  for (const [path, code] of [['elsewhere/PRIVATE_CANARY', 'SCOPE_DENIED'], ['checks/.env.PRIVATE_CANARY', 'PRIVATE_PATH']])
+    assert.throws(() => assertControlledCheckInputAuthority(plan, [...selected(), { baseline_paths: [path] }]),
+      error => error.code === code && !error.message.includes('PRIVATE_CANARY'));
+});
 
 test('whole-group preflight identifies a missing negative fixture and its Verifier owner', t => {
   const { root } = fixture(t);

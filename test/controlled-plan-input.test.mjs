@@ -356,6 +356,35 @@ test('declared current negative-control requirements remain explicit and cannot 
   assert.equal(controlledPlanSchema.safeParse(wrongExit).success, false);
 });
 
+test('new WorkForce compiler checks infer source inputs without requiring their own future -o artifact', t => {
+  const root = fixture(t);
+  for (const compiler of ['C:/toolchain/bin/gcc.exe', '/usr/bin/g++', '/usr/bin/clang-20', '/usr/bin/clang++']) {
+    const source = { ...plan(), request_kind: 'software', outputs: ['src/value.mjs'], documentation_paths: [],
+      checks: [{ title: 'Compile independent oracle', command: [compiler, '-std=c11', 'checks/oracle.c', '-o', 'checks/future.exe'], baseline_paths: [] }] };
+    const normalized = normalizeControlledPlanInput(root, source);
+    assert.ok(normalized.checks[0].baseline_paths.includes('checks/oracle.c'));
+    assert.equal(normalized.checks[0].baseline_paths.includes('checks/future.exe'), false);
+    assert.deepEqual(normalized.checks[0].command, source.checks[0].command);
+  }
+  const explicit = { ...plan(), request_kind: 'software', checks: [{ title: 'Preserve explicit baseline',
+    command: ['gcc', 'checks/oracle.c', '-o', 'checks/future.exe'], baseline_paths: ['checks/future.exe'] }] };
+  assert.ok(normalizeControlledPlanInput(root, explicit).checks[0].baseline_paths.includes('checks/future.exe'),
+    'Inference never erases an explicit baseline or repairs a frozen authorization by guessing.');
+  const ordinary = { ...explicit, checks: [{ title: 'Ordinary script argument',
+    command: ['node', 'checks/check.mjs', '-o', 'checks/required.json'], baseline_paths: [] }] };
+  assert.ok(normalizeControlledPlanInput(root, ordinary).checks[0].baseline_paths.includes('checks/required.json'),
+    'An arbitrary script flag cannot grant compiler output semantics or remove its input admission.');
+});
+
+test('compiler output inference leaves legacy plans and committed baseline membership unchanged', t => {
+  const root = fixture(t), legacy = { ...plan(), checks: [{ title: 'Legacy compiler',
+    command: ['gcc', 'checks/oracle.c', '-o', 'checks/future.exe'], baseline_paths: [] }] };
+  assert.ok(normalizeControlledPlanInput(root, legacy).checks[0].baseline_paths.includes('checks/future.exe'));
+  const committed = [{ command: legacy.checks[0].command, baseline_paths: ['checks/future.exe', 'src/value.mjs'] }];
+  const normalized = normalizeControlledPlanInput(root, { ...legacy, request_kind: 'software' }, committed);
+  assert.deepEqual(normalized.checks[0].baseline_paths, committed[0].baseline_paths);
+});
+
 function candidate() {
   return { title: 'Reusable exercise generator', description: 'Generate future requested exercise artifacts without replacing its own tooling.',
     script: 'src/value.mjs', verification_script: 'checks/check.mjs',

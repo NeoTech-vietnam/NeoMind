@@ -41,7 +41,7 @@ import { controlledPlanConflicts, type ControlledPlanConflict } from './controll
 import { controlledPlanningRecovery } from './controlled-recovery-context.js';
 import { controlledRegistrationEvidence } from './controlled-registration-evidence.js';
 import { assertControlledReadBaseline } from './controlled-read-baselines.js';
-import { assertControlledCheckInputs } from './controlled-check-preflight.js';
+import { assertControlledCheckInputAuthority, assertControlledCheckInputs } from './controlled-check-preflight.js';
 import { ControlledOperationDrain } from './controlled-operation-drain.js';
 import { invokeWorkForceCapability } from './workforce-plugin-gateway.js';
 import { openCodeStorage, probeOpenCodeStorage, configuredOpenCodeEndpoint } from './opencode-engine.js';
@@ -2098,12 +2098,12 @@ class Controller {
           next: 'Read all current declared text outputs, assess every criterion independently and save your honest verdict. No executable test is claimed.' };
       throw new Error('Choose a check title from the assigned plan.');
     }
-    assertControlledCheckInputs(this.root, contract.plan, selected);
+    assertControlledCheckInputAuthority(contract.plan, selected);
     let observedScope: ControlledCheckerScope | undefined;
     for (const check of selected) {
-      // Recheck presence after an awaited command as well: a concurrent outside
-      // deletion must retain actionable ownership instead of generic capture errors.
-      assertControlledCheckInputs(this.root, contract.plan, selected);
+      // An earlier frozen command may create this command's inputs. Check them
+      // now, retaining fresh baselines and actionable concurrent-deletion errors.
+      assertControlledCheckInputs(this.root, contract.plan, [check]);
       run = readState(this.root, id);
       const baseline = fingerprints(this.root, check.baseline_paths);
       const prior = latestControlledChecks(run.checks, attemptId).find(item => item.title === check.title);

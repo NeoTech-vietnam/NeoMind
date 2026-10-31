@@ -65,8 +65,15 @@ export function normalizeControlledPlanInput(root: string, input: ControlledPlan
     if (controlledPublicReferencePath(path)) return [];
     throw new Error('input_paths cannot approve private configuration, credentials or hidden directories. Use only exact allowed skill assets/scripts; ordinary public source paths are already readable.');
   }));
+  const checkerInputs = (command: string[]) => {
+    const compiler = 'request_kind' in plan && !committedChecks.some(saved => JSON.stringify(saved.command) === JSON.stringify(command)) &&
+      /^(?:[a-z0-9_]+-)*(?:gcc|g\+\+|clang|clang\+\+)(?:-\d+(?:\.\d+)*)?$/i.test(command[0]!.replaceAll('\\', '/').split('/').at(-1)!.replace(/\.exe$/i, ''));
+    // GCC/Clang -o names a generated artifact, not an inferred checker input.
+    // Explicit and historically committed baseline membership is retained.
+    return command.slice(1).filter((path, index) => !(compiler && command[index] === '-o') && covers(path, plan.verification_paths)).map(checked);
+  };
   const verifierReferences = new Set(plan.checks.flatMap(check => [check.command, ...(check.negative_controls ?? []).map(negative => negative.command)])
-    .flatMap(command => command.slice(1).filter(path => covers(path, plan.verification_paths)).map(path => key(checked(path)))));
+    .flatMap(command => checkerInputs(command).map(key)));
   const verifierOutputs = new Set<string>();
   plan.outputs = plan.outputs.filter(path => {
     checked(path);
@@ -132,7 +139,6 @@ export function normalizeControlledPlanInput(root: string, input: ControlledPlan
       throw new Error('execution_steps output_paths must name declared producer outputs.');
   }
   for (const specialist of plan.specialists ?? []) controlledConsultationRole(specialist.role);
-  const checkerInputs = (command: string[]) => command.slice(1).filter(path => covers(path, plan.verification_paths)).map(checked);
   const outputs = plan.outputs.map(checked);
   for (const check of plan.checks) {
     const committed = committedChecks.find(saved => JSON.stringify(saved.command) === JSON.stringify(check.command));
