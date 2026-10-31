@@ -688,7 +688,8 @@ test('unreachable provider checks persist bounded backoff without inference and 
 });
 
 test('canonical OpenCode HTTP 503 with upstream usage 429 signs a bound failure, waits and completes the same review after actual healthy proof', { timeout: 150000 }, async t => {
-  let healthy = false, staleRejected = false, duplicateProof = false;
+  const began = Date.now(), remaining = () => Math.max(1, began + 140000 - Date.now());
+  let healthy = false, staleRejected = false;
   const routeNonces = new Map();
   const secret = 'PRIVATE_PROVIDER_ERROR_CANARY';
   const provider = await localOpenAIProvider((_index, body) => {
@@ -699,13 +700,12 @@ test('canonical OpenCode HTTP 503 with upstream usage 429 signs a bound failure,
       const ping = value => ({ name: 'wf_capability_ping', arguments: { nonce: value } });
       if (body.messages.at(-1).role === 'tool') {
         const calls = body.messages.flatMap(message => message.tool_calls ?? []);
-        if (!duplicateProof && JSON.parse(calls.at(-1).function.arguments).nonce !== nonce[1]) {
+        if (JSON.parse(calls.at(-1).function.arguments).nonce !== nonce[1]) {
           assert.match(JSON.stringify(body.messages.at(-1)), /stale/i);
           staleRejected = true; return { toolCalls: [ping(nonce[1])] };
         }
         return { text: 'connected' };
       }
-      if (duplicateProof) return { toolCalls: [ping(nonce[1]), ping(nonce[1])] };
       routeNonces.set(body.model, nonce[1]);
       return { toolCalls: [ping(routeNonces.values().next().value)] };
     }
@@ -720,12 +720,12 @@ test('canonical OpenCode HTTP 503 with upstream usage 429 signs a bound failure,
   atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([{ name: 'fixture', vendor: 'fixture', models: [
     { id: 'top-models', url: provider.baseURL }, { id: 'worker-models', url: provider.baseURL }] }]));
   const started = await startControlledWorkflow(root, { requirement: 'Case: canonical-provider\nCreate the requested JSON and use the existing independent checker.' });
-  const waiting = await wait(root, started.workflow_id, 'waiting');
+  const waiting = await wait(root, started.workflow_id, 'waiting', remaining());
   assert.equal(waiting.phase, 'review'); assert.equal(waiting.dependency_wait.code, 'provider');
   assert.deepEqual(waiting.provider_stalls?.flatMap(checkpoint => checkpoint.attempts.map(attempt => attempt.action)), ['retry-provider'],
     'A canonical transient failure enters the same task-bound recovery ledger as a stalled provider stream.');
   const failed = waiting.attempts.at(-1);
-  await waitNative(root, failed.invocation_id, 10000);
+  await waitNative(root, failed.invocation_id, Math.min(60000, remaining()));
   await reconcileWorkForceInvocations(root, started.workflow_id);
   const native = readInvocation(root, failed.invocation_id);
   const originalReceipt = readFileSync(safePath(root, native.receipt_path), 'utf8');
@@ -743,7 +743,7 @@ test('canonical OpenCode HTTP 503 with upstream usage 429 signs a bound failure,
   assert.equal(waiting.pending_question, undefined);
   const product = readFileSync(join(root, 'products/canonical-provider.json'));
   healthy = true; fixtureClocks.get(root).value = Date.parse(waiting.dependency_wait.next_condition_check_at) + 1;
-  const completed = await wait(root, started.workflow_id);
+  const completed = await wait(root, started.workflow_id, 'completed', remaining());
   assert.equal(completed.attempts.filter(attempt => attempt.stage === 'review').length, 2);
   assert.equal(completed.attempts.filter(attempt => attempt.stage === 'implementation').length, 1);
   assert.equal(completed.checks.length, 1); assert.equal(completed.checks[0].passed, true);
@@ -757,14 +757,36 @@ test('canonical OpenCode HTTP 503 with upstream usage 429 signs a bound failure,
   assert.equal(routeNonces.size, 2); assert.equal(new Set(routeNonces.values()).size, 2);
   assert.equal(new Set(proof.models.map(model => model.session_id)).size, 2, 'Each alias has its own actual SDK session.');
   assert.equal(staleRejected, true, 'A nonce from the other proof session cannot authorize this route.');
-  duplicateProof = true;
-  await assert.rejects(() => probeWorkForceConnection(root, undefined, { not_before: new Date().toISOString() }), /did not complete its bound tool-call check/);
-  assert.deepEqual(readFileSync(proofPath), proofBytes, 'Duplicate current nonce calls cannot replace the prior complete proof with partial evidence.');
   assert.equal(controlledStatus(root, started.workflow_id).status, 'completed');
+  t.diagnostic(JSON.stringify({ accepted: true, elapsed_ms: Date.now() - began,
+    review_invocations: completed.attempts.filter(attempt => attempt.stage === 'review').length,
+    implementation_invocations: completed.attempts.filter(attempt => attempt.stage === 'implementation').length,
+    independent_checks: completed.checks.length, stale_nonce_refused: staleRejected }));
+  assert.deepEqual(provider.failures, []); assert.deepEqual(errors, []);
+});
+
+test('a real connection probe with duplicate current nonce calls cannot replace its previous complete proof', { timeout: 90000 }, async t => {
+  let duplicate = false;
+  const provider = await localOpenAIProvider((_index, body) => {
+    if (body.messages.at(-1).role === 'tool') return { text: 'connected' };
+    const nonce = /nonce ([a-f0-9-]{36})/.exec(JSON.stringify(body.messages)); assert.ok(nonce);
+    const ping = { name: 'wf_capability_ping', arguments: { nonce: nonce[1] } };
+    return { toolCalls: duplicate ? [ping, ping] : [ping] };
+  }, 10);
+  t.after(() => provider.close());
+  const root = await fixture(t, ['duplicate-proof']);
+  atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([{ name: 'fixture', vendor: 'fixture', models: [
+    { id: 'top-models', url: provider.baseURL }, { id: 'worker-models', url: provider.baseURL }] }]));
+  assert.equal((await probeWorkForceConnection(root)).valid, true);
+  const path = safePath(root, '.workforce/setup/model-capabilities.json'), before = readFileSync(path);
+  duplicate = true;
+  await assert.rejects(() => probeWorkForceConnection(root, undefined, { not_before: new Date().toISOString() }), /did not complete its bound tool-call check/);
+  assert.deepEqual(readFileSync(path), before, 'Duplicate current nonce calls cannot replace the prior complete proof with partial evidence.');
   assert.deepEqual(provider.failures, []); assert.deepEqual(errors, []);
 });
 
 test('repeated canonical OpenCode HTTP 503 cannot spend healthy proof nonces indefinitely on an unchanged review', { timeout: 150000 }, async t => {
+  const began = Date.now(), remaining = () => Math.max(1, began + 140000 - Date.now());
   let healthCalls = 0, taskCalls = 0;
   const provider = await localOpenAIProvider((_index, body) => {
     if (body.tools.some(tool => tool.function?.name === 'wf_capability_ping')) {
@@ -782,10 +804,10 @@ test('repeated canonical OpenCode HTTP 503 cannot spend healthy proof nonces ind
   atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([{ name: 'fixture', vendor: 'fixture', models: [
     { id: 'top-models', url: provider.baseURL }, { id: 'worker-models', url: provider.baseURL }] }]));
   const started = await startControlledWorkflow(root, { requirement: 'Case: canonical-recurring\nCreate the requested JSON and use the existing independent checker.' });
-  const waiting = await wait(root, started.workflow_id, 'waiting');
+  const waiting = await wait(root, started.workflow_id, 'waiting', remaining());
   const product = readFileSync(join(root, 'products/canonical-recurring.json'));
   fixtureClocks.get(root).value = Date.parse(waiting.dependency_wait.next_condition_check_at) + 1;
-  const stopped = await wait(root, started.workflow_id, 'blocked');
+  const stopped = await wait(root, started.workflow_id, 'blocked', remaining());
   assert.equal(healthCalls, 4, 'Exactly one actual capability proof across both configured routes.');
   assert.ok(taskCalls >= 2 && taskCalls <= 12, 'Pinned OpenCode retries are bounded within two failed review sessions.');
   assert.deepEqual(stopped.provider_stalls.flatMap(checkpoint => checkpoint.attempts.map(attempt => attempt.action)), ['retry-provider', 'diagnose']);
