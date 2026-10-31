@@ -2,12 +2,13 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statfsSync, rmSync, writeFileSync, unlinkSync, openSync, readSync, closeSync, fstatSync, fsyncSync, renameSync } from 'node:fs';
-import { cp, lstat, realpath, rm } from 'node:fs/promises';
+import { lstat, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { userInfo } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
+import { Worker } from 'node:worker_threads';
 import { createOpencodeClient, type Config } from '@opencode-ai/sdk/v2/client';
 import { Agent, fetch as fixedFetch } from 'undici';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -25,6 +26,40 @@ export const opencodeRuntimeIntegrity = openCodeIntegrity;
 export const opencodeProviderId = 'workforce-router';
 export type OpenCodeClient = ReturnType<typeof createOpencodeClient>;
 export interface OpenCodeEndpoint { model: string; provider: string; baseURL: string; apiKey?: string }
+
+// Capture the reviewed resource at load, just as the runtime fingerprint does;
+// a later disk replacement cannot change an already running owner's worker.
+const bootstrapSeedSource = (() => {
+  try { return readFileSync(new URL('../resources/opencode-bootstrap/seed.cjs', import.meta.url), 'utf8'); }
+  catch { return undefined; }
+})();
+async function seedBootstrap(source: string, destination: string, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  if (!bootstrapSeedSource) throw new Error('OPENCODE_BOOTSTRAP_UNAVAILABLE: reinstall the runtime; its reviewed dependency-copy helper is missing.');
+  const worker = new Worker(bootstrapSeedSource, { eval: true, execArgv: [], workerData: { source, destination } });
+  let outcome: { copied: boolean; code?: string } | undefined;
+  const cancel = () => { void worker.terminate(); };
+  try {
+    await new Promise<void>((fulfill, reject) => {
+      worker.once('message', value => { outcome = value; });
+      worker.once('error', () => { outcome = { copied: false }; });
+      worker.once('exit', code => {
+        if (signal?.aborted) reject(signal.reason);
+        else if (code === 0 && outcome?.copied === true) fulfill();
+        else reject(new Error(outcome?.code === 'BOOTSTRAP_LINK_OUTSIDE'
+          ? 'WorkForce bootstrap links must stay inside its reviewed dependency tree.'
+          : 'OPENCODE_BOOTSTRAP_COPY_FAILED: private dependency preparation did not complete. No engine was admitted.'));
+      });
+      signal?.addEventListener('abort', cancel, { once: true });
+      if (signal?.aborted) cancel();
+    });
+    signal?.throwIfAborted();
+  } finally {
+    signal?.removeEventListener('abort', cancel);
+    // The caller may clean up a partial copy only after its sole writer exits.
+    await worker.terminate();
+  }
+}
 
 /** Secrets stay in this process and the explicitly owned engine environment. */
 export function openCodeEndpoint(root: string, receipt: NativeReceipt): OpenCodeEndpoint {
@@ -227,6 +262,7 @@ export function probeOpenCodeStorage(root: string): { ready: boolean; free_bytes
 export function openCodeBootstrap(): { path: string; lock_sha256: string } {
   const path = fileURLToPath(new URL('../resources/opencode-bootstrap/', import.meta.url));
   try {
+    if (!bootstrapSeedSource) throw new Error('OPENCODE_BOOTSTRAP_UNAVAILABLE: reinstall the runtime; its reviewed dependency-copy helper is missing.');
     const manifest = JSON.parse(readFileSync(join(path, 'package.json'), 'utf8'));
     const lockBytes = readFileSync(join(path, 'package-lock.json'));
     const lock = JSON.parse(lockBytes.toString('utf8'));
@@ -237,7 +273,7 @@ export function openCodeBootstrap(): { path: string; lock_sha256: string } {
     openCodeWindowsGuardian();
     return { path, lock_sha256: hash(lockBytes) };
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith('OPENCODE_GUARDIAN_UNAVAILABLE:')) throw error;
+    if (error instanceof Error && /^(?:OPENCODE_GUARDIAN_UNAVAILABLE|OPENCODE_BOOTSTRAP_UNAVAILABLE):/.test(error.message)) throw error;
     throw new Error('Pinned WorkForce engine bootstrap is missing or invalid. Complete engine:bootstrap during setup or use the portable GitHub runtime before accepting requests.');
   }
 }
@@ -629,25 +665,9 @@ export async function startOpenCodeEngine(root: string, invocationId: string, co
   // Exclusive reservation: a duplicate call must never copy into or clean up
   // the dependency tree already owned by the first preparation/engine.
   mkdirSync(configDirectory, { mode: 0o700 });
-  // Keep each engine's mutable dependency tree private. Thousands of synchronous
-  // file copies otherwise block the editor's MCP, cancellation and model events.
+  // A worker keeps the faster synchronous traversal off the editor event loop.
   try {
-    for (const entry of ['package.json', 'package-lock.json', 'node_modules']) {
-      signal?.throwIfAborted();
-      await cp(join(bootstrap.path, entry), join(configDirectory, entry), {
-        recursive: true, dereference: true, errorOnExist: true, force: false,
-        filter: async source => {
-          signal?.throwIfAborted();
-          if ((await lstat(source)).isSymbolicLink()) {
-            const target = relative(bootstrap.path, await realpath(source));
-            if (target === '..' || target.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) || isAbsolute(target))
-              throw new Error('WorkForce bootstrap links must stay inside its reviewed dependency tree.');
-          }
-          return true;
-        },
-      });
-    }
-    signal?.throwIfAborted();
+    await seedBootstrap(bootstrap.path, configDirectory, signal);
   } catch (error) {
     const dependencies = join(configDirectory, 'node_modules');
     if (configDirectory === join(directory, 'config/opencode') && dirname(dependencies) === configDirectory) {

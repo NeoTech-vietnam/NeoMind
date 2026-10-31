@@ -82,6 +82,8 @@ export async function buildRuntime({ outputDirectory = join(repository, 'artifac
     copyFileSync(join(repository, 'package-lock.json'), join(root, 'package-lock.json'));
     execute(process.execPath, [npm, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--cache', cache], root);
     const bootstrap = join(root, 'resources/opencode-bootstrap');
+    const seed = lstatSync(join(bootstrap, 'seed.cjs'));
+    if (!seed.isFile() || seed.isSymbolicLink()) throw new Error('The runtime must ship its reviewed dependency-copy worker.');
     bootstrapEngine(bootstrap);
     // npm can install multiple libc/CPU variants for the same OS. The runtime
     // resolver uses exactly this asset's pinned binary; do not ship unused copies.

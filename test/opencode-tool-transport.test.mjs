@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { initialize, createRecord, safePath } from '../dist/storage.js';
@@ -111,6 +111,7 @@ for (const [label, args] of [
   provider = await localOpenAIProvider((index, body) => {
     providerObservations.push({ index, observed_at: Date.now(), stream: body.stream,
       tools: body.tools?.length ?? 0, last_role: body.messages?.at(-1)?.role,
+      messages_sha256: createHash('sha256').update(JSON.stringify(body.messages)).digest('hex'),
       tool_results: body.messages?.filter(message => message.role === 'tool').length ?? 0 });
     return index < 6 ? call('project_read', args) : { text: 'Fixture limit: the missing circuit must not be disguised as successful completion.' };
   }, 8);
@@ -131,6 +132,8 @@ for (const [label, args] of [
     terminal_state: receipt.state, error: receipt.error, provider_observations: providerObservations,
     tool_observations: traces.filter(event => event.event === 'engine-tool').map(event =>
       ({ tool: event.tool, status: event.status, repeated_failures: event.repeated_failures, halt: event.halt, observed_at: event.observed_at })),
+    backend_failures: traces.filter(event => event.event === 'tool-result' && event.status === 'failed').map(event =>
+      ({ tool: event.tool, code: event.code, observed_at: event.observed_at })),
     native_session_observed: typeof receipt.native_thread_id === 'string',
     control_failures: traces.filter(event => event.event === 'engine-failure').map(event => ({
       operation: event.control_operation, error_name: event.error_name, transport_causes: event.transport_causes,

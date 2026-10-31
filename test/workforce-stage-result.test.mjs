@@ -16,7 +16,7 @@ async function fixture(t, stage = 'implementation') {
   initialize(root, { execution_engine: 'opencode' }); mkdirSync(join(root, 'src'));
   writeFileSync(join(root, 'src/temperature.mjs'), 'export const convert = c => c * 9 / 5 - 32;\n');
   const binding = { workflow_id: 'WF-STAGE', task_id: 'WF-TASK', invocation_id: 'actual-http-gateway-fixture',
-    role: stage === 'implementation' ? 'developer' : stage === 'diagnosis' ? 'manager' : stage === 'verification' ? 'verifier' : 'reviewer',
+    role: stage === 'implementation' ? 'developer' : ['planning', 'diagnosis'].includes(stage) ? 'manager' : stage === 'requirements' ? 'requirements' : stage === 'verification' ? 'verifier' : 'reviewer',
     stage, process_contract: 'workforce/v1', implementation_paths: ['src/temperature.mjs'], verification_paths: ['checks'],
     read_paths: ['.'], check_titles: ['Existing project tests'], execution_steps: [], procedure_bound: false, cornell_bound: false };
   const reports = [], gateway = await createOpenCodeGateway(() => createControlledMcpServer(root, binding, {
@@ -58,6 +58,29 @@ test('typed WF product defects remain real repair findings and cannot target ano
     product_findings: [{ path: 'src/temperature.mjs', issue: 'The offset still subtracts32 rather than adding32.' }] });
   assert.notEqual(result.isError, true); assert.equal(reports[0].outcome, 'failed'); assert.equal(reports[0].failure_kind, 'implementation');
   assert.match(reports[0].findings[0], /src\/temperature.mjs/);
+});
+
+test('actual HTTP planning and requirements tools preserve project-derived deliverables and explicit user scope', async t => {
+  const planning = await fixture(t, 'planning');
+  const planTool = planning.tools.find(tool => tool.name === 'workflow_plan');
+  assert.ok(planTool, 'The actual PM tool catalog contains its semantic plan operation.');
+  for (const text of [planTool.description, controlledInstructions(planning.binding)]) {
+    assert.match(text, /read root project guidance/i);
+    assert.match(text, /representative sibling deliverables/i);
+    assert.match(text, /map each requested outcome to its deliverables and checks/i);
+    assert.match(text, /explicit user narrowing overrides project defaults/i);
+    assert.match(text, /requesting documentation does not exclude the accompanying implementation/i);
+  }
+  const requirements = await fixture(t, 'requirements');
+  const reportTool = requirements.tools.find(tool => tool.name === 'assignment_report');
+  for (const text of [reportTool.description, controlledInstructions(requirements.binding)]) {
+    assert.match(text, /compare the original request and project conventions against the frozen plan/i);
+    assert.match(text, /scope omissions/i);
+    assert.match(text, /source paths/i);
+    assert.match(text, /frozen authorization remains unchanged/i);
+  }
+  assert.equal(requirements.tools.some(tool => tool.name === 'workflow_plan' || tool.name === 'task_file_write'), false,
+    'Detecting a mismatch cannot grant the read-only requirements actor authority to replace the plan or product.');
 });
 
 for (const stage of ['review', 'verification', 'diagnosis']) test(`WF ${stage} requires its professional decision without exposing outcome`, async t => {

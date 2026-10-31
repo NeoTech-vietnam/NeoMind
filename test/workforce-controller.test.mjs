@@ -19,7 +19,7 @@ import { startControlledHost, startControlledWorkflow, controlledStatus, answerC
   validateControlledPlan, workforceRecoveryDecision, controlControlledWorkflow } from '../dist/controlled-workflow.js';
 import { workforcePrescribedChecksComplete, currentWorkForceCompilerFailure } from '../dist/controlled-workflow.js';
 import { verifyControlledTask } from '../dist/controlled-acceptance.js';
-import { shutdownNative, waitNative } from '../dist/native.js';
+import { shutdownNative, waitNative, reconcileWorkForceInvocations } from '../dist/native.js';
 import { openCodeVersion, openCodeIntegrity, openCodeProtocolHash } from '../dist/execution-attestation.js';
 import { requestProjection } from '../dist/workforce-requests.js';
 import { researchFixture } from './cornell-research-fixture.mjs';
@@ -199,7 +199,7 @@ async function deterministicEngine(t) {
           await report({ verdict: pass ? 'pass' : 'fail', ...(pass ? {} : { failure_kind: 'implementation' }) });
         } else if (forgeDependencyProse && binding.stage === 'requirements') await report({
           summary: 'OPENCODE_PROVIDER_STALLED: OPENCODE_STORAGE_UNAVAILABLE: the professional report claims a technical outage without a failed native invocation.' });
-        else if (binding.stage === 'diagnosis') await report(failDesignStalls
+        else if (binding.stage === 'diagnosis') await report(failDesignStalls || canonicalReviewProviderFailure
           ? { failure_kind: 'unknown', findings: ['The same task stalled despite a fresh healthy connection proof; no safe product repair was established.'] }
           : legacyProtocolHandoff ? { failure_kind: 'protocol', summary: 'The old producer used a workflow outcome for a future Tester obligation. Product bytes are ready; a fresh scoped content handoff resolves the stage contract mismatch.', findings: ['Rebind the original product role under the corrected stage-result interface; preserve its existing code and historical blocked report.'] }
           : { failure_kind: 'implementation', findings: ['Correct the existing JSON output; preserve the independent checker.'] });
@@ -710,9 +710,15 @@ test('canonical OpenCode HTTP 503 with upstream usage 429 signs a bound failure,
   const started = await startControlledWorkflow(root, { requirement: 'Case: canonical-provider\nCreate the requested JSON and use the existing independent checker.' });
   const waiting = await wait(root, started.workflow_id, 'waiting');
   assert.equal(waiting.phase, 'review'); assert.equal(waiting.dependency_wait.code, 'provider');
-  const failed = waiting.attempts.at(-1), native = readInvocation(root, failed.invocation_id);
+  assert.deepEqual(waiting.provider_stalls?.flatMap(checkpoint => checkpoint.attempts.map(attempt => attempt.action)), ['retry-provider'],
+    'A canonical transient failure enters the same task-bound recovery ledger as a stalled provider stream.');
+  const failed = waiting.attempts.at(-1);
+  await waitNative(root, failed.invocation_id, 10000);
+  await reconcileWorkForceInvocations(root, started.workflow_id);
+  const native = readInvocation(root, failed.invocation_id);
   const originalReceipt = readFileSync(safePath(root, native.receipt_path), 'utf8');
-  assert.equal(native.inference_completed, false); assert.equal(native.state, 'blocked');
+  assert.equal(native.inference_completed, false); assert.equal(native.state, 'interrupted');
+  assert.match(native.opencode.interruption_proof_sha256, /^[a-f0-9]{64}$/);
   assert.deepEqual(native.opencode.provider_failure, { schema_version: 1, code: 'RATE_LIMITED', status_code: 503, retryable: true,
     session_id: native.native_thread_id, user_message_id: native.native_turn_id, assistant_message_id: native.opencode.response_message_id });
   assert.match(native.error, /^RATE_LIMITED:/); assert.equal(originalReceipt.includes(secret), false);
@@ -734,6 +740,43 @@ test('canonical OpenCode HTTP 503 with upstream usage 429 signs a bound failure,
   assert.equal(reviewer.inference_completed, true); assert.equal(reviewer.opencode.provider_failure, undefined);
   assert.deepEqual(readFileSync(join(root, 'products/canonical-provider.json')), product);
   assert.equal(readFileSync(safePath(root, native.receipt_path), 'utf8'), originalReceipt, 'Prior failed native evidence is immutable.');
+  assert.deepEqual(provider.failures, []); assert.deepEqual(errors, []);
+});
+
+test('repeated canonical OpenCode HTTP 503 cannot spend healthy proof nonces indefinitely on an unchanged review', { timeout: 150000 }, async t => {
+  let healthCalls = 0, taskCalls = 0;
+  const provider = await localOpenAIProvider((_index, body) => {
+    if (body.tools.some(tool => tool.function?.name === 'wf_capability_ping')) {
+      healthCalls++;
+      if (body.messages.at(-1).role === 'tool') return { text: 'connected' };
+      const nonce = /nonce ([a-f0-9-]{36})/.exec(JSON.stringify(body.messages)); assert.ok(nonce);
+      return { toolCalls: [{ name: 'wf_capability_ping', arguments: { nonce: nonce[1] } }] };
+    }
+    taskCalls++;
+    return { statusCode: 503, headers: { 'retry-after-ms': '1' },
+      body: { error: { type: 'upstream_error', message: '[429] The usage limit has been reached.' } } };
+  }, 20);
+  t.after(() => provider.close());
+  const root = await fixture(t, ['canonical-recurring'], { canonicalReviewProviderFailure: true, clock: true });
+  atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([{ name: 'fixture', vendor: 'fixture', models: [
+    { id: 'top-models', url: provider.baseURL }, { id: 'worker-models', url: provider.baseURL }] }]));
+  const started = await startControlledWorkflow(root, { requirement: 'Case: canonical-recurring\nCreate the requested JSON and use the existing independent checker.' });
+  const waiting = await wait(root, started.workflow_id, 'waiting');
+  const product = readFileSync(join(root, 'products/canonical-recurring.json'));
+  fixtureClocks.get(root).value = Date.parse(waiting.dependency_wait.next_condition_check_at) + 1;
+  const stopped = await wait(root, started.workflow_id, 'blocked');
+  assert.equal(healthCalls, 4, 'Exactly one actual capability proof across both configured routes.');
+  assert.ok(taskCalls >= 2 && taskCalls <= 12, 'Pinned OpenCode retries are bounded within two failed review sessions.');
+  assert.deepEqual(stopped.provider_stalls.flatMap(checkpoint => checkpoint.attempts.map(attempt => attempt.action)), ['retry-provider', 'diagnose']);
+  assert.equal(stopped.attempts.filter(attempt => attempt.stage === 'review').length, 2);
+  assert.equal(stopped.attempts.filter(attempt => attempt.stage === 'diagnosis').length, 1);
+  assert.equal(stopped.attempts.filter(attempt => attempt.stage === 'implementation').length, 1);
+  assert.equal(stopped.pending_question, undefined); assert.equal(stopped.dependency_wait, undefined);
+  assert.deepEqual(readFileSync(join(root, 'products/canonical-recurring.json')), product);
+  const attempts = stopped.attempts.length, requests = provider.requests.length;
+  fixtureClocks.get(root).value += 3600000; await delay(100);
+  assert.equal(controlledStatus(root, started.workflow_id).attempts.length, attempts);
+  assert.equal(provider.requests.length, requests);
   assert.deepEqual(provider.failures, []); assert.deepEqual(errors, []);
 });
 

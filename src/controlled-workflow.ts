@@ -18,7 +18,7 @@ import { prepareWork, type WorkPreparation } from './procedure-reuse.js';
 import { runCommand } from './command-runner.js';
 import { readNativeSoftwareContract } from './native-software.js';
 import type { ControlledBinding, ControlledCallbacks, ControlledPlan, ControlledReport, ControlledContentAssessment, WorkForceQuestion, WorkForceRequestKind, WorkForceVerificationLevel } from './controlled-tools.js';
-import { ControlledToolError, controlledReviewInstructions, controlledPublicReferencePath, controlledSkillInputPath, controlledToolNames, workforcePlanSchema } from './controlled-tools.js';
+import { ControlledToolError, controlledReviewInstructions, controlledPublicReferencePath, controlledSkillInputPath, controlledToolNames, workforcePlanSchema, workforceScopeInstructions } from './controlled-tools.js';
 import { controlledRuntimeContextGuide, controlledToolchain } from './controlled-runtime-context.js';
 import { controlledExecutionSchema, controlledExecutionDeclarationSchema, ControlledExecutionError,
   prepareControlledExecution, runControlledExecution, rollbackControlledExecutionOutputs, type ControlledExecutionInput } from './controlled-execution.js';
@@ -1766,8 +1766,8 @@ class Controller {
       run.context?.length ? `User attachments resolved by the backend, read through project tools:\n${JSON.stringify(run.context)}` : '',
       `WorkForce contract workforce/v1. Your stage: ${stage}; your role: ${binding?.role}. Backend owns payload identity, state and stage transitions.`,
       binding ? workforceStageHandoff(binding, controlledToolNames(binding)) : '',
-      stage === 'planning' ? 'Inspect the project and reusable tools, then save one short workflow_plan as your single professional result. The backend saves its planning receipt; finish after it returns. Reuse existing tests/compiler/validator commands directly. A new custom checker needs independent negative controls; an established project command does not need a wrapper or artificial negative case. Expected outcomes/oracle assumptions are fixed before implementation. Do not request hidden legacy specialists.' : '',
-      stage === 'requirements' ? 'Confirm measurable scope, expected outcomes, verification strategy and the minimum useful product. Requirements findings must be concrete and refer to the actual request.' : '',
+      stage === 'planning' ? workforceScopeInstructions(stage) + ' Inspect reusable tools, then save one short workflow_plan as your single professional result. The backend saves its planning receipt; finish after it returns. Reuse existing tests/compiler/validator commands directly. A new custom checker needs independent negative controls; an established project command does not need a wrapper or artificial negative case. Expected outcomes/oracle assumptions are fixed before implementation. Do not request hidden legacy specialists.' : '',
+      stage === 'requirements' ? workforceScopeInstructions(stage) + ' Confirm measurable scope, expected outcomes, verification strategy and the minimum useful product. Requirements findings must be concrete and refer to the actual request.' : '',
       stage === 'design' ? 'Give only design decisions needed by this change: interfaces, module responsibilities, relevant risks and criterion-to-check mapping. Explain nonapplicable design layers briefly.' : '',
       contract ? `Frozen professional plan:\n${JSON.stringify(contract.plan)}` : '',
       stage === 'review' ? reviewPurpose === 'design' ? controlledReviewInstructions('design') : 'Independent product review precedes WF.Tester. Inspect current artifacts/spec/design and project standards; missing future test receipts are expected. Save one pass/fail report with every actionable finding and actual cause.' : '',
@@ -2448,7 +2448,9 @@ class Controller {
     const providerFailure = nativeFailure && run.blocker?.kind === 'environment' &&
       (receipt?.opencode?.provider_failure !== undefined ? !!providerObservation && transientOpenCodeProviderFailure(providerObservation)
         : /^(?:OPENCODE_PROVIDER_STALLED:|OPENCODE_PROVIDER_UNAVAILABLE:|MODEL_NOT_SUPPORTED|MODEL_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTHORIZATION_DENIED)/.test(receipt?.error ?? ''));
-    if (providerFailure && actualStall && attempt && receipt) {
+    // A healthy transport nonce cannot renew the same failed task indefinitely.
+    // Canonical transient HTTP failures share the task-bound stall history.
+    if (providerFailure && (actualStall || providerObservation) && attempt && receipt) {
       const phase = attempt.stage === 'diagnosis' ? run.provider_stall_diagnosis?.phase ?? attempt.stage : attempt.stage;
       const products = contract ? fingerprints(this.root, contract.plan.outputs) : {};
       const checks = run.checks.filter(check => check.passed && !check.negative &&
@@ -2469,14 +2471,14 @@ class Controller {
           (run.workforce_recovery ??= { strategies: [], strong_implementation: false, no_progress: 0, resolved_checks: [] }).strong_implementation = true;
           if (!decision.replayed) run.model_escalations = [...(run.model_escalations ?? []), { source_attempt_id: attempt.id,
             from_alias: receipt.requested_model, to_alias: strong, checkpoint,
-            rationale: 'The worker stream stopped making meaningful progress. Continue the same product checkpoint through the configured strong route.', at: now() }];
+            rationale: 'The worker provider did not complete this task. Continue the same product checkpoint through the configured strong route.', at: now() }];
           run.phase = 'implementation'; run.status = 'queued';
           run.blocker = { kind: 'environment', owner: 'runtime', code: 'WORKFORCE_STRONG_ROUTE_PENDING',
             message: 'The runtime selected the configured strong route for this retained task; no completed work or provider restoration is inferred.' };
         } else if (decision.action === 'diagnose' && attempt.stage !== 'diagnosis') {
           run.provider_stall_diagnosis = { checkpoint, phase }; run.phase = 'diagnosis'; run.status = 'queued';
           run.blocker = { kind: 'unknown', owner: 'runtime', code: 'WORKFORCE_DIAGNOSIS_PENDING',
-            message: `The same frozen task stalled again despite a fresh actual provider capability result. A strong diagnosis must examine its retained context and effects. ${message}`.slice(0, 4000) };
+            message: `The same frozen task failed again despite a fresh actual provider capability result. A strong diagnosis must examine its retained context and effects. ${message}`.slice(0, 4000) };
         } else {
           run.status = 'blocked'; run.blocker = { kind: 'unknown', owner: 'runtime', code: 'WORKFORCE_OPERATIONAL_INCIDENT',
             message: 'The unchanged task still cannot complete after provider recovery and strong diagnosis. Existing products and all failure evidence are retained; repeating health nonces is not task progress.',

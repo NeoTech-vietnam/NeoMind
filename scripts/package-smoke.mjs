@@ -80,6 +80,7 @@ try {
   assert.equal(sdk.version, '1.19.4');
   if (portable) {
     assert.equal(JSON.parse(readFileSync(join(installed, 'resources/opencode-bootstrap/node_modules/@opencode-ai/plugin/package.json'), 'utf8')).version, '1.19.4');
+    assert.equal(resolve(engine.openCodeBootstrap().path), resolve(installed, 'resources/opencode-bootstrap'), 'Portable setup validates its shipped dependency-copy worker.');
   }
   const extension = JSON.parse(readFileSync(join(installed, 'extensions/vscode-model-bridge/package.json'), 'utf8'));
   assert.equal(`${extension.publisher}.${extension.name}`, 'workforce.workforce-model-bridge'); assert.equal(extension.version, '0.12.0');
