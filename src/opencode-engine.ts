@@ -398,7 +398,7 @@ const windowsEngineJob = String.raw`
 $ErrorActionPreference='Stop'
 $workforceStageNonce=$env:WORKFORCE_ENGINE_CONTROL
 [Console]::WriteLine('WORKFORCE_ENGINE_STAGE '+$workforceStageNonce+' guardian-load-started'); [Console]::Out.Flush()
-Add-Type -Path $env:WORKFORCE_ENGINE_GUARDIAN
+[void][System.Reflection.Assembly]::LoadFrom($env:WORKFORCE_ENGINE_GUARDIAN)
 [Console]::WriteLine('WORKFORCE_ENGINE_STAGE '+$workforceStageNonce+' guardian-load-completed'); [Console]::Out.Flush()
 [WorkForceEngineJob]::Run()
 `;
