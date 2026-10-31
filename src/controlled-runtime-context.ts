@@ -33,7 +33,7 @@ export function controlledRuntimeGuide(start = 1, maximum = 64000, processContra
 const names = { node: ['node'], python: ['python3', 'python'], c11: ['gcc', 'clang'], cpp17: ['g++', 'clang++'] } as const;
 type Program = keyof typeof names;
 interface RejectedCandidate { path: string; code: string; reason: string }
-function legalProgram(program: Program, path: string): boolean {
+export function legalProgram(program: Program, path: string): boolean {
   const name = basename(path).replace(/\.exe$/i, '').toLowerCase();
   if (program === 'node') return /^node(?:js)?$/.test(name);
   if (program === 'python') return /^python(?:3(?:\.\d+)*)?$/.test(name);

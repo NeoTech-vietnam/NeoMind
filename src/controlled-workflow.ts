@@ -48,6 +48,7 @@ import { openCodeStorage, probeOpenCodeStorage, configuredOpenCodeEndpoint } fro
 import { createRuntimeInfo } from './runtime-info.js';
 import { workForceConnectionProof, workForceConnectionProofSatisfies, probeWorkForceConnection } from './workforce-connection.js';
 import { runDurableCommand, readDurableCommandResult, type DurableCommandRef } from './durable-command.js';
+import { controlledCheckEnvironment } from './controlled-check-environment.js';
 import { workforceTraceability } from './workforce-traceability.js';
 import { workforceStageHandoff } from './workforce-stage-result.js';
 import { workforceProviderStallDecision, type ProviderStallHistory } from './workforce-stalls.js';
@@ -2131,7 +2132,8 @@ class Controller {
         ...(pilotRoot ? { pilot_root: pilotRoot, pilot_nonce: pilotNonce } : {}) });
       save(this.root, run, 'check-start', check.title);
       const deadline = Date.now() + (check.timeout_ms ?? 60000);
-      const commandInput = { command, cwd: this.root, signal, timeout_ms: check.timeout_ms ?? 60000,
+      const environment = run.process_contract === 'workforce/v1' ? controlledCheckEnvironment(this.root, check.command, contract.plan.checks) : undefined;
+      const commandInput = { command, cwd: this.root, signal, timeout_ms: check.timeout_ms ?? 60000, ...(environment ? { env: environment } : {}),
         onStart: (pid: number) => { const current = readState(this.root, id), intent = current.check_intents!.find(item => item.id === checkId)!;
           intent.state = 'running'; intent.pid = pid; save(this.root, current); } };
       const executeCommand = () => run.process_contract === 'workforce/v1' ? runDurableCommand(this.root, { ...commandInput,
