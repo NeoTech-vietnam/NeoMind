@@ -6,10 +6,11 @@ import type { ControlledContract, ControlledSnapshot } from './controlled-workfl
 import { latestControlledChecks } from './controlled-current-checks.js';
 import { captureControlledCheckerScope, projectControlledCheckerScope } from './controlled-checker-scope.js';
 import { controlledVerificationPurpose, evidenceReportPaths, evidenceDocumentationProfessionalContext } from './controlled-report-phase.js';
+import { controlledArtifactChanges, type ControlledArtifactPage } from './controlled-artifact-changes.js';
 
 /** Current backend facts, not an agent verdict or a new historical baseline. */
 export function controlledReviewContext(root: string, supplied: ControlledSnapshot, expected?: ControlledContract,
-  purpose: ControlledReviewPurpose = 'final-product', maxFiles = 64) {
+  purpose: ControlledReviewPurpose = 'final-product', maxFiles = 64, artifactPage: ControlledArtifactPage = {}) {
   const unavailable = (reason: string) => ({ kind: 'workflow' as const, available: false, reason });
   if (!expected) return unavailable('NO_FROZEN_CONTRACT');
   if (!Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > 128)
@@ -59,6 +60,7 @@ export function controlledReviewContext(root: string, supplied: ControlledSnapsh
     workflow_id: run.workflow_id, task_id: contract.task_id, epoch_id: run.epoch_id,
     contract_hash: run.contract_hash, review_purpose: purpose,
     state: { workflow_status: run.status, stage: run.phase, revision: run.revision },
+    artifact_changes: controlledArtifactChanges(root, run, contract, artifactPage),
     preservation: {
       baseline_source: 'original-immutable-plan' as const,
       baseline_captured_at: run.events.find(event => event.kind === 'plan-saved')?.at ?? null,

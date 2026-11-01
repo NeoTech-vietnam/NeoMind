@@ -63,6 +63,13 @@ function plan(name) {
     checks: [{ title: `Check ${name}`, command: [process.execPath, `checks/${name}.mjs`, `products/${name}.json`], baseline_paths: [] }], risk: 'low' };
 }
 function parsed(value) { return JSON.parse(value.content[0].text); }
+function missingReadmeNavigation(workflow, current) {
+  const before = workflow.artifact_changes?.files?.find(file => file.path === 'README.md')?.original_text;
+  // This boundary deliberately has no fixture-side historical knowledge. The
+  // old backend's absent before-image reproduces its unsafe current-text pass.
+  return typeof before === 'string'
+    ? before.split('\n').filter(line => /^- \[[^\]]+\]\([^)]+\)$/.test(line) && !current.includes(line)) : [];
+}
 async function deterministicEngine(t) {
   const prior = { open: OpenCodeSession.prototype.open, run: OpenCodeSession.prototype.run, close: OpenCodeSession.prototype.close };
   const supervisedFaultSessions = new WeakSet();
@@ -93,8 +100,13 @@ async function deterministicEngine(t) {
       const name = /Case: ([a-z-]+)/.exec(this.receipt.input_text)?.[1];
       assert.ok(name, 'original user request survives the intake');
       const key = `${this.receipt.workflow_id}:${binding.stage}`, count = (counts.get(key) ?? 0) + 1; counts.set(key, count);
-      observations.push({ name, stage: binding.stage, role: binding.role, model: this.receipt.requested_model, request: this.receipt.request_id, invocation: this.receipt.id,
-        process_contract: binding.process_contract, review_purpose: binding.review_purpose, prompt: this.receipt.input_text });
+      const observation = { name, stage: binding.stage, role: binding.role, model: this.receipt.requested_model, request: this.receipt.request_id, invocation: this.receipt.id,
+        process_contract: binding.process_contract, review_purpose: binding.review_purpose, prompt: this.receipt.input_text };
+      if (name === 'readme-preservation' && binding.stage === 'review') {
+        observation.initial_workflow_evidence = binding.initial_workflow_evidence;
+        observation.initial_change_coverage = binding.initial_change_coverage;
+      }
+      observations.push(observation);
       if (canonicalReviewSessions.has(this)) return prior.run.call(this);
       if (failStorageOnce && binding.stage === 'planning' && count === 1) {
         await this.complete('blocked', 'OPENCODE_STORAGE_UNAVAILABLE: fixture observed an unavailable engine journal.'); return;
@@ -133,8 +145,25 @@ async function deterministicEngine(t) {
             assert.equal(saved.planning_result.saved, true);
           }
         } else if (binding.stage === 'implementation') {
-          const selectedPlan = fixturePlans.get(name), output = selectedPlan.outputs[0]; await call('project_read', { path: output });
-          if (pendingTestHandoff) {
+          const selectedPlan = fixturePlans.get(name), output = selectedPlan.outputs[0], currentProduct = await call('project_read', { path: output });
+          if (name === 'readme-preservation') {
+            if (failAfterSavedStage === 'implementation') {
+              if (count === 1) {
+                fixtureProductWrites.set(name, (fixtureProductWrites.get(name) ?? 0) + 1);
+                await call('task_file_write', { path: output, content: currentProduct.text + '- [New note](docs/new-note.md)\n' });
+              }
+              await report({ artifacts: [output] });
+            } else {
+              let content = '# Project\n\n## Navigation\n\n';
+              if (count > 1) {
+                const workflow = await call('check_evidence', { kind: 'workflow' });
+                content = workflow.artifact_changes?.files?.find(file => file.path === output)?.original_text;
+                assert.equal(typeof content, 'string', 'FnD repairs from the actual retained before-image');
+              }
+              await call('task_file_write', { path: output, content: content + '- [New note](docs/new-note.md)\n' });
+              await report({ artifacts: [output] });
+            }
+          } else if (pendingTestHandoff) {
             assert.ok(!listed.tools.some(tool => ['task_run', 'check_run'].includes(tool.name)));
             const description = listed.tools.find(tool => tool.name === 'assignment_report').description;
             assert.match(description, /WF\.Tester/); assert.match(description, /Existing temperature tests/);
@@ -179,16 +208,33 @@ async function deterministicEngine(t) {
           }
         } else if (binding.stage === 'review') {
           const selectedPlan = fixturePlans.get(name), product = await call('project_read', { path: selectedPlan.outputs[0] });
-          if (binding.assessment_outputs?.length) for (const path of binding.assessment_outputs) await call('project_read', { path });
-          const pass = binding.review_purpose === 'design' || product.exists && (selectedPlan.request_kind === 'document'
-            ? selectedPlan.cornell_output_dir ? /Cartesian product/i.test(product.text) : /Celsius \* 9 \/ 5 \+ 32/.test(product.text) && /Practice question/.test(product.text)
-            : pendingTestHandoff ? /return celsius \* 9 \/ 5 \+ 32;/.test(product.text) : JSON.parse(product.text).value === 42);
-          await report({ verdict: pass ? 'pass' : 'fail', ...(pass ? {} : { failure_kind: 'implementation', findings: ['The independently expected result is 42; current output is 13.'] }) });
+          if (name === 'readme-preservation') {
+            // Reviewer sees exactly the public workflow evidence and current
+            // README, never the test's original or unrelated private files.
+            const workflow = await call('check_evidence', { kind: 'workflow' });
+            observation.artifact_changes = workflow.artifact_changes;
+            const missing = missingReadmeNavigation(workflow, product.text);
+            const pass = product.text.includes('- [New note](docs/new-note.md)') && !missing.length;
+            await report({ verdict: pass ? 'pass' : 'fail', summary: missing.length
+              ? 'The README adds the requested link but deletes existing navigation. Restore the retained original navigation and keep the new link.'
+              : 'The current README adds the requested link; no navigation deletion is visible in supplied historical evidence.',
+              ...(pass ? {} : { failure_kind: 'implementation', findings: missing.map(line => `Restore deleted README navigation: ${line}`) }) });
+          } else {
+            if (binding.assessment_outputs?.length) for (const path of binding.assessment_outputs) await call('project_read', { path });
+            const pass = binding.review_purpose === 'design' || product.exists && (selectedPlan.request_kind === 'document'
+              ? selectedPlan.cornell_output_dir ? /Cartesian product/i.test(product.text) : /Celsius \* 9 \/ 5 \+ 32/.test(product.text) && /Practice question/.test(product.text)
+              : pendingTestHandoff ? /return celsius \* 9 \/ 5 \+ 32;/.test(product.text) : JSON.parse(product.text).value === 42);
+            await report({ verdict: pass ? 'pass' : 'fail', ...(pass ? {} : { failure_kind: 'implementation', findings: ['The independently expected result is 42; current output is 13.'] }) });
+          }
         } else if (binding.stage === 'verification') {
           const selectedPlan = fixturePlans.get(name);
           if (selectedPlan.request_kind === 'document') {
             const text = await call('project_read', { path: selectedPlan.outputs[0] });
-            if (selectedPlan.cornell_output_dir) {
+            if (name === 'readme-preservation') {
+              const workflow = await call('check_evidence', { kind: 'workflow' });
+              assert.deepEqual(missingReadmeNavigation(workflow, text.text), []);
+              assert.match(text.text, /\[New note\]\(docs\/new-note\.md\)/);
+            } else if (selectedPlan.cornell_output_dir) {
               for (const path of binding.assessment_outputs) await call('project_read', { path });
               assert.match(text.text, /Cartesian product/i);
             } else { assert.match(text.text, /At 0 degrees Celsius, the result is 32/); assert.match(text.text, /100 degrees Celsius\?/); }
@@ -249,6 +295,18 @@ function temperatureCase(root, name) {
     checks: [{ title: 'Existing temperature tests', command: ['npm', 'test'], baseline_paths: ['package.json', 'test/temperature.test.mjs', 'src/temperature.mjs'] }] });
   for (const level of candidate.verification_levels) if (level.method === 'execution') level.checks = ['Existing temperature tests'];
   return { packageBytes, testBytes };
+}
+function readmeCase(root, name) {
+  const original = '# Project\n\n## Navigation\n\n- [Guides](docs/guides.md)\n- [Examples](docs/examples.md)\n- [Reference](docs/reference.md)\n';
+  atomicWrite(safePath(root, 'README.md'), original);
+  for (const topic of ['guides', 'examples', 'reference', 'new-note'])
+    atomicWrite(safePath(root, `docs/${topic}.md`), `# ${topic}\n\nExisting project note.\n`);
+  const candidate = fixturePlans.get(name);
+  Object.assign(candidate, { request_kind: 'document', title: 'Add one README navigation link', outputs: ['README.md'],
+    allowed_paths: ['README.md'], checks: [], acceptance_criteria: ['Add one valid link to docs/new-note.md while preserving all existing README navigation and content.'] });
+  candidate.verification_levels = ['unit', 'integration', 'system', 'acceptance'].map(level => ({ level, applicable: level === 'acceptance',
+    method: 'inspection', rationale: level === 'acceptance' ? 'Independent roles compare the README to its retained original and inspect the new link.' : 'Only Markdown navigation changes.', checks: [] }));
+  return original;
 }
 async function wait(root, id, expected = 'completed', timeout = 60000, failureContext = () => ({})) {
   const deadline = Date.now() + timeout;
@@ -493,6 +551,84 @@ test('a note-only request completes independent full-content assessment without 
   assert.equal(run.attempts.filter(item => item.role === 'reviewer' || item.role === 'verifier').length, 2);
   for (const attempt of run.attempts.filter(item => ['review', 'verification'].includes(item.stage))) assert.ok(attempt.bound_hashes['docs/temperature.md']);
   assert.match(readFileSync(join(root, 'docs/temperature.md'), 'utf8'), /Practice question/); assert.deepEqual(errors, []);
+});
+
+test('README preservation evidence exposes deleted navigation, drives FnD repair and accepts only the preserved artifact', { timeout: 90000 }, async t => {
+  const name = 'readme-preservation', root = await fixture(t, [name]);
+  const original = readmeCase(root, name);
+  const started = await startControlledWorkflow(root, { requirement: 'Case: readme-preservation\nAdd one valid README link to docs/new-note.md and preserve all existing README navigation and content.' });
+  const run = await wait(root, started.workflow_id);
+  assert.equal(requestProjection(root, run).accepted, true);
+  t.diagnostic(JSON.stringify({ accepted: true, product_attempts: run.attempts.filter(item => item.stage === 'implementation').length,
+    reviewer_verdicts: run.attempts.filter(item => item.stage === 'review').map(item => item.report.verdict),
+    tester_verdicts: run.attempts.filter(item => item.stage === 'verification').map(item => item.report.verdict) }));
+  assert.equal(readFileSync(join(root, 'README.md'), 'utf8'), original + '- [New note](docs/new-note.md)\n',
+    'Canonical acceptance must preserve the old navigation, even when the new link is valid.');
+  const firstEvidence = observations.find(item => item.name === name && item.stage === 'review').artifact_changes;
+  assert.equal(firstEvidence.available, true);
+  const firstChange = firstEvidence.files.find(file => file.path === 'README.md');
+  assert.equal(firstChange.before_sha256, hash(original));
+  assert.equal(firstChange.current_sha256, hash('# Project\n\n## Navigation\n\n- [New note](docs/new-note.md)\n'));
+  assert.equal(firstChange.original_text, original);
+  assert.equal(firstChange.history_authenticated, true);
+  const firstReviewer = observations.find(item => item.name === name && item.stage === 'review');
+  const promptEvidence = /Current backend workflow evidence[^\n]*\n([^\n]+)/.exec(firstReviewer.prompt);
+  assert.ok(promptEvidence, 'Original-read coverage is earned by actual evidence in the WorkForce native prompt.');
+  const prompted = JSON.parse(promptEvidence[1]);
+  assert.deepEqual(prompted, firstReviewer.initial_workflow_evidence, 'The prompt serializes the exact backend projection used to seed coverage.');
+  assert.deepEqual(prompted.artifact_changes, firstEvidence);
+  const initialCoverage = firstReviewer.initial_change_coverage['README.md'];
+  assert.equal(initialCoverage.before_sha256, firstChange.before_sha256);
+  assert.equal(initialCoverage.current_sha256, firstChange.current_sha256);
+  assert.equal(initialCoverage.evidence_sha256, firstChange.evidence_sha256);
+  assert.equal(initialCoverage.total, original.length); assert.deepEqual(initialCoverage.ranges, [[0, original.length]]);
+  for (const line of ['[Guides](docs/guides.md)', '[Examples](docs/examples.md)', '[Reference](docs/reference.md)'])
+    assert.ok(firstChange.diff.includes(`-- ${line}`), `The actual diff exposes deleted ${line}`);
+  const reviews = run.attempts.filter(item => item.stage === 'review');
+  assert.deepEqual(reviews.map(item => item.report.verdict), ['fail', 'pass']);
+  assert.notEqual(reviews[0].invocation_id, reviews[1].invocation_id, 'The repaired README receives a fresh independent Reviewer invocation.');
+  assert.equal(reviews[0].bound_hashes['README.md'], firstChange.current_sha256);
+  assert.equal(reviews[1].bound_hashes['README.md'], hash(readFileSync(join(root, 'README.md'))));
+  assert.deepEqual(reviews[0].report.findings, ['Restore deleted README navigation: - [Guides](docs/guides.md)',
+    'Restore deleted README navigation: - [Examples](docs/examples.md)', 'Restore deleted README navigation: - [Reference](docs/reference.md)']);
+  assert.equal(run.attempts.filter(item => item.stage === 'implementation').length, 2);
+  const tester = run.attempts.find(item => item.stage === 'verification');
+  assert.equal(tester.report.verdict, 'pass');
+  assert.equal(tester.bound_hashes['README.md'], hash(readFileSync(join(root, 'README.md'))));
+  assert.equal(run.checks.length, 0, 'Markdown inspection does not manufacture executable check evidence.');
+  assert.deepEqual(errors, []);
+});
+
+test('README before-image survives a completed write followed by native interruption and report-only FnD recovery', { timeout: 150000 }, async t => {
+  const provider = await localOpenAIProvider((_index, body) => {
+    if (body.messages.at(-1).role === 'tool') return { text: 'connected' };
+    const nonce = /nonce ([a-f0-9-]{36})/.exec(JSON.stringify(body.messages)); assert.ok(nonce);
+    return { toolCalls: [{ name: 'wf_capability_ping', arguments: { nonce: nonce[1] } }] };
+  }, 8);
+  t.after(() => provider.close());
+  const name = 'readme-preservation', root = await fixture(t, [name], { failAfterSavedStage: 'implementation', clock: true });
+  const original = readmeCase(root, name), expected = original + '- [New note](docs/new-note.md)\n';
+  atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([{ name: 'fixture', vendor: 'fixture', models: [
+    { id: 'top-models', url: provider.baseURL }, { id: 'worker-models', url: provider.baseURL }] }]));
+  const started = await startControlledWorkflow(root, { requirement: 'Case: readme-preservation\nAdd one valid README link to docs/new-note.md and preserve all existing README navigation and content.' });
+  const stopped = await wait(root, started.workflow_id, 'waiting'), retained = stopped.attempts.at(-1);
+  const native = await waitNative(root, retained.invocation_id, 10000);
+  assert.equal(retained.stage, 'implementation'); assert.equal(retained.state, 'interrupted');
+  assert.equal(native.inference_completed, false); assert.match(native.error, /^OPENCODE_PROVIDER_UNAVAILABLE:/);
+  assert.equal(retained.report.outcome, 'completed');
+  assert.equal(readFileSync(join(root, 'README.md'), 'utf8'), expected);
+  const reportBefore = JSON.stringify(getRecord(root, retained.report_id));
+  fixtureClocks.get(root).value = Date.parse(stopped.dependency_wait.next_condition_check_at) + 1;
+  const completed = await wait(root, started.workflow_id, 'completed', 110000);
+  assert.equal(requestProjection(root, completed).accepted, true);
+  assert.equal(completed.attempts.filter(item => item.stage === 'implementation').length, 2);
+  assert.equal(fixtureProductWrites.get(name), 1, 'The fresh FnD reports the retained product without replaying its completed write.');
+  const firstChange = observations.find(item => item.name === name && item.stage === 'review').artifact_changes.files.find(file => file.path === 'README.md');
+  assert.equal(firstChange.original_text, original); assert.equal(firstChange.before_sha256, hash(original));
+  assert.equal(firstChange.current_sha256, hash(expected)); assert.equal(firstChange.history_authenticated, true);
+  assert.equal(readFileSync(join(root, 'README.md'), 'utf8'), expected);
+  assert.equal(JSON.stringify(getRecord(root, retained.report_id)), reportBefore);
+  assert.equal(provider.requests.length, 4); assert.deepEqual(provider.failures, []); assert.deepEqual(errors, []);
 });
 
 test('a Cornell-only document completes from actual compiler output and independent current-text proof without fake positive commands', { timeout: 90000 }, async t => {
@@ -901,6 +1037,11 @@ test('fresh healthy model nonces do not rearm the same stalled task indefinitely
   const started = await startControlledWorkflow(root, { requirement: 'Case: stall-loop\nCreate the requested result and use the existing independent checker.' });
   const waiting = await wait(root, started.workflow_id, 'waiting');
   assert.equal(waiting.workforce_recovery.no_progress, 1, 'A real preceding session-rebind attempt is part of the engineering recovery ledger.');
+  assert.deepEqual(waiting.provider_stalls[0].attempts.map(attempt => attempt.action), ['retry-provider']);
+  assert.match(waiting.blocker.message, /^OPENCODE_PROVIDER_STALLED:/,
+    'The first authenticated provider stall retains its cause while provider recovery is still available.');
+  assert.doesNotMatch(waiting.blocker.message, /No untried recovery strategy|exhausted/i,
+    'A provider dependency wait must not claim that engineering recovery strategies have been exhausted.');
   const qualityLedger = structuredClone(waiting.workforce_recovery.strategies);
   fixtureClocks.get(root).value = Date.parse(waiting.dependency_wait.next_condition_check_at) + 1;
   const stopped = await wait(root, started.workflow_id, 'blocked', 60000, () => ({

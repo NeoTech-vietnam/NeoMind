@@ -19,6 +19,8 @@ import { controlledOperationDiagnostic, type ControlledDiagnosticPhase } from '.
 import { controlledFileWriteProof } from './controlled-file-write-proof.js';
 import { ControlledEvidenceScanTimeout } from './controlled-evidence-error.js';
 import { workforceStageResultSchema, workforceStageReport, workforceStageHandoff } from './workforce-stage-result.js';
+import { artifactChangeReadCoverage, mergeArtifactChangeReadCoverage, completeArtifactChangeReads,
+  type ControlledArtifactPage, type ControlledArtifactChangeReads, type ControlledArtifactChangeCoverageMap } from './controlled-artifact-changes.js';
 
 export type ControlledStage = 'planning' | 'requirements' | 'design' | 'implementation' | 'verification' | 'review' | 'diagnosis' | 'synthesis';
 export type ControlledReviewPurpose = 'checker-readiness' | 'final-product' | 'design';
@@ -33,6 +35,11 @@ export interface ControlledBinding {
   planning_result?: 'backend';
   /** Exact text outputs that an independent content assessment must actually read. */
   assessment_outputs?: string[];
+  /** Original existing-output content supplied by the backend, never model-authored proof. */
+  change_assessment_outputs?: string[];
+  initial_change_coverage?: ControlledArtifactChangeCoverageMap;
+  /** The exact bounded backend projection serialized into this worker's prompt. */
+  initial_workflow_evidence?: unknown;
   /** Saved workflow metadata supplied by its owning backend, never by a worker. */
   plan_defaults?: ControlledPlanRequestDefaults;
   /** Backend-owned opt-in from the original request or committed legacy contract. */
@@ -123,6 +130,7 @@ export const controlledReportSchema = z.strictObject({
 export type ControlledReport = z.infer<typeof controlledReportSchema>;
 export interface ControlledContentAssessment {
   mode: 'complete-current-text'; invocation_id: string; artifact_hashes: Record<string, string>;
+  artifact_changes?: ControlledArtifactChangeReads;
 }
 export interface ControlledCallbacks {
   /** Check authoritative invocation, epoch and current policy; writers recheck synchronously at commit. */
@@ -138,7 +146,7 @@ export interface ControlledCallbacks {
   runtimeContext?(query: ControlledRuntimeQuery): unknown | Promise<unknown>;
   runTask?(input: ControlledExecutionInput, source?: ControlledPayloadSource): unknown | Promise<unknown>;
   compileResearch?(input: Record<string, unknown>, source?: ControlledPayloadSource): unknown | Promise<unknown>;
-  readEvidence?(title?: string, kind?: 'execution' | 'registration' | 'workflow' | 'cornell-input'): unknown | Promise<unknown>;
+  readEvidence?(title?: string, kind?: 'execution' | 'registration' | 'workflow' | 'cornell-input', page?: ControlledArtifactPage): unknown | Promise<unknown>;
   trace?(event: Record<string, unknown>): void | Promise<void>;
 }
 export const workforceQuestionSchema = z.strictObject({ question: text, missing: text, why_cannot_infer: text,
@@ -154,6 +162,7 @@ interface ToolState {
   schema_version: 1; binding_hash: string;
   reads: Record<string, string | null>;
   read_coverage?: Record<string, { sha256: string; total: number; ranges: [number, number][] }>;
+  change_read_coverage?: ControlledArtifactChangeCoverageMap;
   writes: { operation: string; path: string; previous_hash: string | null; sha256: string; completed: boolean }[];
 }
 const key = (path: string) => process.platform === 'win32' ? path.toLowerCase() : path;
@@ -256,8 +265,8 @@ function workforceInstructions(binding: ControlledBinding): string {
     requirements: 'WF.SWSD: ' + workforceScopeInstructions('requirements') + ' State scope, measurable acceptance criteria, expected outcomes, verification strategy and minimum useful deliverable. Identify actual contradictions or missing business input; do not invent setup preconditions or edit protocol. Save one compact assignment_report; report a concrete failure only when the assigned requirements cannot be satisfied.',
     design: 'WF.P-RES: inspect project conventions and the frozen plan. State the applicable architecture/interface/module decisions, risks, and how each criterion will be checked. Keep trivial changes short and mark nonapplicable design layers with reasons. Do not create files solely for paperwork. Save one compact assignment_report.',
     implementation: 'WF.FnD: implement the actual requested outputs using scoped task_file_write and only producer operations actually assigned below. Read current files before editing; backend checks their saved hashes. Complete useful product outputs before reporting. Do not create independent checker files or claim final acceptance. Save one content result; report concrete unresolved product defects with their assigned paths in product_findings.',
-    review: binding.review_purpose === 'design' ? controlledReviewInstructions('design') : 'WF.Reviewer: independently inspect current product/specification/design against every criterion and project standards. This review precedes independent test execution, so absence of future test evidence is expected. Do not edit implementation or invent requirements. Save one completed assignment_report with verdict pass/fail and all actionable findings, classifying product defects as implementation and checker defects as checker.',
-    verification: 'WF.Tester: independently inspect outputs and review findings; author only assigned checker files when needed. Run the frozen existing project tests/compiler/check commands through check_run. ' + workforceCheckPipelineInstructions + ' New/changed custom checker logic requires negative controls; existing project commands do not need invented failing fixtures. Collect all observed findings in one result and classify implementation vs checker/environment faults accurately. Save one completed assignment_report with verdict pass/fail. Do not edit product files.',
+    review: binding.review_purpose === 'design' ? controlledReviewInstructions('design') : 'WF.Reviewer: independently inspect current product/specification/design against every criterion and project standards. Use backend artifact_changes original_text and diff to judge edits to existing outputs; unknown preservation is not a passing criterion. If original text is paged, continue check_evidence with kind workflow, the public output path and next_start_char. Do not try private snapshot paths or ask the user to reconstruct backend history. This review precedes independent test execution, so absence of future test evidence is expected. Do not edit implementation or invent requirements. Save one completed assignment_report with verdict pass/fail and all actionable findings, classifying product defects as implementation and checker defects as checker.',
+    verification: 'WF.Tester: independently inspect outputs and review findings, including backend artifact_changes originals for edited existing text; a link-count check alone cannot establish preservation of unrelated original content. Author only assigned checker files when needed. Run the frozen existing project tests/compiler/check commands through check_run. ' + workforceCheckPipelineInstructions + ' New/changed custom checker logic requires negative controls; existing project commands do not need invented failing fixtures. Collect all observed findings in one result and classify implementation vs checker/environment faults accurately. Save one completed assignment_report with verdict pass/fail. Do not edit product files.',
     diagnosis: 'WF.PM: diagnose the saved technical findings and actual execution evidence without changing files. Select one specific recovery direction and report failure_kind implementation/checker/protocol/environment/unknown. Never request that the user supply internal IDs, raise retry limits or change prompts.',
     synthesis: 'WF.PM: derive only requested final knowledge from actual artifacts and independent evidence. Save one compact report; do not manufacture extra documentation.',
   };
@@ -364,7 +373,8 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
   function loadState(): ToolState {
     const path = safePath(root, statePath);
     const state: ToolState = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8'))
-      : { schema_version: 1, binding_hash: bindingHash, reads: {}, writes: [] };
+      : { schema_version: 1, binding_hash: bindingHash, reads: {}, writes: [],
+        ...(binding.initial_change_coverage ? { change_read_coverage: structuredClone(binding.initial_change_coverage) } : {}) };
     if (state.schema_version !== 1 || state.binding_hash !== bindingHash || !state.reads || !Array.isArray(state.writes))
       throw new ControlledToolError('STATE_UNCERTAIN', 'The saved tool journal differs from this bound invocation; runtime reconciliation is required.');
     return state;
@@ -633,10 +643,21 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         return callbacks.invokeCapability(input);
       });
   if (['implementation', 'verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage))
-    register('check_evidence', 'Read actual bound independent-check and producer-execution evidence (default execution kind). Omit title for all assigned evidence, or select an exact frozen check or producer execution_steps title. Entries identify their distinct provenance; a successful producer operation is not independent verification. Use kind workflow for original preservation and report lifecycle, or kind registration for the bound manifest. No private registry access or caller-provided identities.',
-      z.strictObject({ title: text.max(256).optional().describe('Exact assigned check or producer operation title. Omit to inspect all bound execution evidence; unknown selectors return available canonical titles.'), kind: (binding.process_contract === 'workforce/v1' ? z.enum(['execution', 'registration', 'workflow', 'cornell-input']) : z.enum(['execution', 'registration', 'workflow'])).default('execution') }), true, args => {
+    register('check_evidence', 'Read actual bound independent-check and producer-execution evidence (default execution kind). Omit title for all assigned evidence, or select an exact frozen check or producer execution_steps title. Use kind workflow for original preservation, existing-output before text/diff and report lifecycle. If original text is truncated, select that public output path and its next_start_char to read further pages. New files have no original-content obligation. Use kind registration for the bound manifest. No private registry access or caller-provided identities.',
+      z.strictObject({ title: text.max(256).optional().describe('Exact assigned check or producer operation title. Omit to inspect all bound execution evidence; unknown selectors return available canonical titles.'), kind: (binding.process_contract === 'workforce/v1' ? z.enum(['execution', 'registration', 'workflow', 'cornell-input']) : z.enum(['execution', 'registration', 'workflow'])).default('execution'),
+        path: z.string().min(1).max(1024).optional(), start_char: z.number().int().min(0).max(2 * 1024 * 1024).optional(),
+        max_chars: z.number().int().min(128).max(64000).optional() }), true, async args => {
         if (!callbacks.readEvidence) throw new ControlledToolError('NO_CHECK_EVIDENCE', 'No bound check evidence is available in this session.');
-        return callbacks.readEvidence(args.title, args.kind);
+        if (args.kind !== 'workflow' && [args.path, args.start_char, args.max_chars].some(value => value !== undefined))
+          throw new ControlledToolError('INVALID_PAYLOAD', 'Original-content page options belong to kind workflow.');
+        const result = await callbacks.readEvidence(args.title, args.kind,
+          { ...(args.path ? { path: args.path } : {}), ...(args.start_char !== undefined ? { start_char: args.start_char } : {}),
+            ...(args.max_chars !== undefined ? { max_chars: args.max_chars } : {}) });
+        if (args.kind === 'workflow' && result && typeof result === 'object' && 'artifact_changes' in result) {
+          const observed = artifactChangeReadCoverage(result.artifact_changes);
+          locked(state => { state.change_read_coverage = mergeArtifactChangeReadCoverage(state.change_read_coverage ?? {}, observed); saveState(state); });
+        }
+        return result;
       });
   if (binding.stage === 'implementation') {
     if (binding.execution_steps === undefined || binding.execution_steps.length) {
@@ -710,8 +731,14 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
           return coverage?.sha256 !== digest || coverage.ranges.length !== 1 || coverage.ranges[0]![0] !== 0 || coverage.ranges[0]![1] !== coverage.total;
         });
         if (unread.length) throw new ControlledToolError('READ_REQUIRED', `Read the complete current text of these assigned outputs before a passing content assessment: ${JSON.stringify(unread)}.`);
+        const changes = completeArtifactChangeReads(state.change_read_coverage ?? {});
+        const missingOriginals = (binding.change_assessment_outputs ?? []).filter(path => !changes[path] ||
+          changes[path]!.current_sha256 !== state.read_coverage![key(path)]?.sha256);
+        if (missingOriginals.length) throw new ControlledToolError('READ_REQUIRED',
+          `Original content is not fully observed for these edited outputs: ${JSON.stringify(missingOriginals)}. Read check_evidence({kind:"workflow"}) and any returned original-text pages; unavailable evidence cannot support a preservation pass. Report an actionable finding instead of claiming a criterion you cannot establish.`);
         return { mode: 'complete-current-text' as const, invocation_id: binding.invocation_id!,
-          artifact_hashes: Object.fromEntries(binding.assessment_outputs!.map(path => [path, state.read_coverage![key(path)]!.sha256])) };
+          artifact_hashes: Object.fromEntries(binding.assessment_outputs!.map(path => [path, state.read_coverage![key(path)]!.sha256])),
+          ...(binding.change_assessment_outputs?.length ? { artifact_changes: Object.fromEntries(binding.change_assessment_outputs.map(path => [path, changes[path]!])) } : {}) };
       }) : undefined;
       return callbacks.saveReport(report, source, assessment);
   };
