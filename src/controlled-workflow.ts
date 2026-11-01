@@ -1249,9 +1249,16 @@ class Controller {
         ] : [])],
         read_paths: ['.'], protected_paths: contract ? this.protectedPaths(contract) : [],
         check_titles: contract ? controlledChecksForPhase(run, contract).map(check => check.title) : [] };
+      const editedAssessmentPaths = () => {
+        const edited = contract ? controlledTextChangeAssessmentPaths(this.root, contract) : [];
+        // Reviewer owns semantic source-change assessment. Tester keeps its
+        // declared document/Cornell content duties and independent executions;
+        // running an established software test does not require reading all source.
+        return stage === 'review' ? edited : edited.filter(path => binding.assessment_outputs?.includes(path));
+      };
       if (workforce && contract?.producer_baselines &&
           (stage === 'verification' || stage === 'review' && attempt.purpose !== 'design-review' && attempt.purpose !== 'check-review')) {
-        const edited = controlledTextChangeAssessmentPaths(this.root, contract);
+        const edited = editedAssessmentPaths();
         binding.change_assessment_outputs = edited;
         binding.assessment_outputs = [...new Set([...(binding.assessment_outputs ?? []), ...edited])];
         // Compute once: only the exact projection supplied in the actual worker
@@ -1364,7 +1371,7 @@ class Controller {
           assertActive(); const current = readState(this.root, id), active = current.attempts.at(-1)!;
           if (workforce && contract?.producer_baselines && report.outcome === 'completed' && report.verdict === 'pass' &&
               (stage === 'verification' || stage === 'review' && active.purpose !== 'design-review' && active.purpose !== 'check-review') &&
-              !same(controlledTextChangeAssessmentPaths(this.root, contract).sort(), [...(binding.change_assessment_outputs ?? [])].sort()))
+              !same(editedAssessmentPaths().sort(), [...(binding.change_assessment_outputs ?? [])].sort()))
             throw new ControlledToolError('INPUT_CHANGED', 'An existing output changed after this assessment was dispatched. Preserve the current edit; the backend needs a fresh assessment of its original/current content instead of extending a stale passing result.');
           if (report.outcome === 'completed' && report.verdict === 'pass' && binding.assessment_outputs?.length) {
             if (!assessment || assessment.mode !== 'complete-current-text' || assessment.invocation_id !== active.invocation_id ||

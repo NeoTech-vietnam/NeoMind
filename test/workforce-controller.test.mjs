@@ -101,7 +101,8 @@ async function deterministicEngine(t) {
       assert.ok(name, 'original user request survives the intake');
       const key = `${this.receipt.workflow_id}:${binding.stage}`, count = (counts.get(key) ?? 0) + 1; counts.set(key, count);
       const observation = { name, stage: binding.stage, role: binding.role, model: this.receipt.requested_model, request: this.receipt.request_id, invocation: this.receipt.id,
-        process_contract: binding.process_contract, review_purpose: binding.review_purpose, prompt: this.receipt.input_text };
+        process_contract: binding.process_contract, review_purpose: binding.review_purpose, prompt: this.receipt.input_text,
+        assessment_outputs: binding.assessment_outputs, change_assessment_outputs: binding.change_assessment_outputs };
       if (name === 'readme-preservation' && binding.stage === 'review') {
         observation.initial_workflow_evidence = binding.initial_workflow_evidence;
         observation.initial_change_coverage = binding.initial_change_coverage;
@@ -336,6 +337,23 @@ test('content-only product handoff with pending npm test proceeds to independent
   assert.deepEqual(run.attempts.map(attempt => attempt.stage), ['planning', 'requirements', 'design', 'implementation', 'review', 'verification']);
   const producer = run.attempts.find(attempt => attempt.stage === 'implementation');
   assert.equal(producer.report.outcome, 'completed'); assert.match(producer.report.limitations[0], /scheduled for WF\.Tester/);
+  const reviewer = run.attempts.find(attempt => attempt.stage === 'review'), verifier = run.attempts.find(attempt => attempt.stage === 'verification');
+  assert.deepEqual(observations.find(item => item.name === 'scheduled-tests' && item.stage === 'review').change_assessment_outputs, ['src/temperature.mjs']);
+  assert.equal(reviewer.content_assessment.artifact_changes['src/temperature.mjs'].before_sha256,
+    hash('export function celsiusToFahrenheit(celsius) { return celsius * 9 / 5 - 32; }\n'));
+  assert.equal(reviewer.content_assessment.artifact_changes['src/temperature.mjs'].current_sha256,
+    hash(readFileSync(join(root, 'src/temperature.mjs'))));
+  const testerBinding = observations.find(item => item.name === 'scheduled-tests' && item.stage === 'verification');
+  assert.deepEqual(testerBinding.assessment_outputs, []);
+  assert.deepEqual(testerBinding.change_assessment_outputs, []);
+  assert.equal(verifier.content_assessment, undefined, 'Software execution evidence does not invent a second source-reading contract.');
+  for (const stage of ['review', 'verification']) {
+    const actual = observations.find(item => item.name === 'scheduled-tests' && item.stage === stage);
+    const evidence = JSON.parse(actual.prompt.split('Current backend workflow evidence (original editable-output text, changes and current lifecycle):\n')[1].split('\n')[0]);
+    assert.equal(evidence.artifact_changes.files.find(file => file.path === 'src/temperature.mjs').before_sha256,
+      reviewer.content_assessment.artifact_changes['src/temperature.mjs'].before_sha256,
+      'Both independent roles receive before evidence without imposing the same work contract.');
+  }
   assert.equal(run.repairs, 0); assert.equal(run.checks.length, 1); assert.equal(run.checks[0].passed, true);
   assert.deepEqual(run.checks[0].command, ['npm', 'test']);
   const log = JSON.parse(readFileSync(safePath(root, run.checks[0].log_path), 'utf8'));
