@@ -645,14 +645,16 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
   if (['implementation', 'verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage))
     register('check_evidence', 'Read actual bound independent-check and producer-execution evidence (default execution kind). Omit title for all assigned evidence, or select an exact frozen check or producer execution_steps title. Use kind workflow for original preservation, existing-output before text/diff and report lifecycle. If original text is truncated, select that public output path and its next_start_char to read further pages. New files have no original-content obligation. Use kind registration for the bound manifest. No private registry access or caller-provided identities.',
       z.strictObject({ title: text.max(256).optional().describe('Exact assigned check or producer operation title. Omit to inspect all bound execution evidence; unknown selectors return available canonical titles.'), kind: (binding.process_contract === 'workforce/v1' ? z.enum(['execution', 'registration', 'workflow', 'cornell-input']) : z.enum(['execution', 'registration', 'workflow'])).default('execution'),
-        path: z.string().min(1).max(1024).optional(), start_char: z.number().int().min(0).max(2 * 1024 * 1024).optional(),
-        max_chars: z.number().int().min(128).max(64000).optional() }), true, async args => {
+        path: z.string().min(1).max(1024).optional().describe('Public output path for kind workflow only; ignored for other bound evidence kinds.'),
+        start_char: z.number().int().min(0).max(2 * 1024 * 1024).optional().describe('Original-text cursor for kind workflow only; ignored for other evidence kinds.'),
+        max_chars: z.number().int().min(128).max(64000).optional().describe('Original-text page size for kind workflow only; ignored for other evidence kinds.') }), true, async args => {
         if (!callbacks.readEvidence) throw new ControlledToolError('NO_CHECK_EVIDENCE', 'No bound check evidence is available in this session.');
-        if (args.kind !== 'workflow' && [args.path, args.start_char, args.max_chars].some(value => value !== undefined))
-          throw new ControlledToolError('INVALID_PAYLOAD', 'Original-content page options belong to kind workflow.');
+        // This read selector grants no caller-chosen identity or filesystem authority.
+        // Providers may populate optional shared fields for another kind; retain the
+        // captured request, but forward page selectors only to the workflow reader.
         const result = await callbacks.readEvidence(args.title, args.kind,
-          { ...(args.path ? { path: args.path } : {}), ...(args.start_char !== undefined ? { start_char: args.start_char } : {}),
-            ...(args.max_chars !== undefined ? { max_chars: args.max_chars } : {}) });
+          args.kind === 'workflow' ? { ...(args.path ? { path: args.path } : {}), ...(args.start_char !== undefined ? { start_char: args.start_char } : {}),
+            ...(args.max_chars !== undefined ? { max_chars: args.max_chars } : {}) } : undefined);
         if (args.kind === 'workflow' && result && typeof result === 'object' && 'artifact_changes' in result) {
           const observed = artifactChangeReadCoverage(result.artifact_changes);
           locked(state => { state.change_read_coverage = mergeArtifactChangeReadCoverage(state.change_read_coverage ?? {}, observed); saveState(state); });

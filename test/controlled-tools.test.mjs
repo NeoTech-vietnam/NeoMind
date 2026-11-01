@@ -121,6 +121,46 @@ test('final synthesis can read bound execution evidence and compile notes withou
   assert.deepEqual(observed, ['Independent check']);
 });
 
+test('actual WorkForce Cornell input request tolerates irrelevant page fields without a delivery-protocol retry', async t => {
+  const observed = [], evidence = { source: 'backend-bound-cornell-input', requirement: 'Create the requested learning note.' };
+  const c = await connect(t, project(t), binding('implementation', { process_contract: 'workforce/v1' }), {
+    readEvidence(title, kind, page) { observed.push({ title, kind, page }); return evidence; },
+  });
+  // Captured request from WF-R0008 / NM-415CCC81-KNW-0043. The selector
+  // reads bound semantic input; unrelated workflow page fields grant no path access.
+  const payload = {
+    title: 'Cornell input', kind: 'cornell-input', path: 'cornell', start_char: 0, max_chars: 128,
+  }, result = await c.call('check_evidence', payload);
+  assert.equal(result.isError, undefined, JSON.stringify(decode(result)));
+  assert.deepEqual(decode(result), evidence);
+  assert.deepEqual(observed, [{ title: 'Cornell input', kind: 'cornell-input', page: undefined }]);
+  assert.deepEqual(c.events.find(event => event.event === 'tool-request').model_input.semantic, payload,
+    'The captured model request remains observable even when inert page fields are not forwarded.');
+  assert.equal(c.events.some(event => event.status === 'failed'), false);
+});
+
+test('bound evidence kinds ignore unrelated page options while workflow paging and schema validation remain intact', async t => {
+  const observed = [], c = await connect(t, project(t), binding('implementation', { process_contract: 'workforce/v1' }), {
+    readEvidence(title, kind, page) { observed.push({ title, kind, page }); return { source: 'assigned-evidence', kind }; },
+  });
+  for (const kind of ['execution', 'registration', 'cornell-input']) {
+    const payload = { title: 'Assigned evidence', kind, path: '.workforce/private-no-access', start_char: 40, max_chars: 2000 };
+    const response = await c.call('check_evidence', payload);
+    assert.equal(response.isError, undefined, JSON.stringify(decode(response)));
+    assert.deepEqual(observed.at(-1), { title: payload.title, kind, page: undefined },
+      'Inert caller paths never reach another bound reader or grant access to private bytes.');
+  }
+  const page = { path: 'docs/report.md', start_char: 128, max_chars: 2000 };
+  assert.equal((await c.call('check_evidence', { kind: 'workflow', ...page })).isError, undefined);
+  assert.deepEqual(observed.at(-1), { title: undefined, kind: 'workflow', page });
+  const validCount = observed.length;
+  for (const payload of [{ kind: 'workflow', max_chars: 0 }, { kind: 'unknown' },
+    { kind: 'cornell-input', workflow_id: 'forged-authority' }]) {
+    assert.equal((await c.call('check_evidence', payload)).isError, true);
+  }
+  assert.equal(observed.length, validCount, 'Invalid schema and invented authority never reach the bound reader.');
+});
+
 test('controlled Cornell sources advertise only semantic citations and strip only cached provenance fields', async t => {
   const { root, input } = researchFixture(t), captured = [], c = await connect(t, root, binding('synthesis'), {
     compileResearch(value) { captured.push(value); return { saved: true }; },

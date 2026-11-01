@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { initialize, createRecord, safePath } from '../dist/storage.js';
+import { initialize, createRecord, getRecord, safePath } from '../dist/storage.js';
 import { createControlledMcpServer } from '../dist/controlled-tools.js';
 import { createOpenCodeGateway, openCodeConfiguration, startOpenCodeEngine, openCodeStorage } from '../dist/opencode-engine.js';
 import { localOpenAIProvider } from './helpers/local-openai-provider.mjs';
@@ -99,6 +99,78 @@ test('real OpenCode transports compatible default/null cursor reads and scoped w
   assert.ok(firstSchema.required.includes('path'));
   assert.ok(events.some(event => event.type === 'message.part.updated' || event.type?.startsWith('session.next.tool.')), 'Actual emitted tool events were observed.');
   await engine.close(); await gateway.close();
+});
+
+test('actual OpenCode NativeSession accepts captured Cornell evidence page fields and saves one bound final report', { timeout: 150000 }, async t => {
+  const { root, cleanup } = fixture(t), traces = [], reports = [], evidenceReads = [];
+  let provider, unregister;
+  t.after(async () => { await shutdownNative(root); unregister?.(); await provider?.close(); cleanup(); });
+  const workflow = createRecord(root, { type: 'knowledge', title: 'Offline Cornell evidence transport fixture', data: { kind: 'manager-workflow' } });
+  const task = createRecord(root, { type: 'task', title: 'Read assigned Cornell input and save the bounded result', owner: 'developer', data: { workflow_id: workflow.meta.id } });
+  const evidence = createRecord(root, { type: 'knowledge', title: 'Assigned Cornell semantic input', owner: 'developer',
+    data: { kind: 'fixture-cornell-input', requirement: 'Explain this local fixture without claiming product acceptance.' } });
+  // Exact live WF-R0008 request. These non-workflow selectors grant no path access.
+  const captured = { title: 'Cornell input', kind: 'cornell-input', path: 'cornell', start_char: 0, max_chars: 128 };
+  provider = await localOpenAIProvider((index, body) => {
+    assert.equal(body.model, 'worker-models');
+    const tools = body.tools.map(item => item.function.name);
+    assert.ok(tools.includes('wf_check_evidence') && tools.includes('wf_assignment_report'));
+    assert.equal(tools.some(name => /assignment_(claim|open|bootstrap|recover|progress)|record_(create|update)/.test(name)), false);
+    if (index === 0) return call('check_evidence', captured);
+    if (index === 1) {
+      const result = body.messages.filter(message => message.role === 'tool').at(-1);
+      assert.ok(result, 'Actual engine must deliver the gateway result back over its model protocol.');
+      assert.match(JSON.stringify(result.content), /fixture-cornell-input/);
+      assert.doesNotMatch(JSON.stringify(result.content), /INVALID_PAYLOAD|AUTH_REQUIRED|Original-content page options/);
+      return call('assignment_report', { summary: 'Read the backend-assigned Cornell input through the real local transport.', artifacts: [], product_findings: [] });
+    }
+    return { text: 'Offline transport fixture complete; no product acceptance is claimed.' };
+  }, 4);
+  const catalog = join(root, 'fixture-models.json'); writeFileSync(catalog, JSON.stringify([{ name: 'fixture', vendor: 'customendpoint',
+    models: [{ id: 'worker-models', url: provider.baseURL, apiKey: 'local-fixture-only' }, { id: 'top-models', url: provider.baseURL, apiKey: 'local-fixture-only' }] }]));
+  writeFileSync(safePath(root, '.workforce/routing.json'), JSON.stringify({ ...ensureRoutingPolicy(root), language_models_file: catalog }));
+  const requestId = randomUUID(), binding = { workflow_id: workflow.meta.id, task_id: task.meta.id, role: 'developer', stage: 'implementation', process_contract: 'workforce/v1',
+    implementation_paths: ['products'], verification_paths: [], read_paths: ['products'], execution_steps: [], procedure_bound: false, cornell_bound: false };
+  unregister = registerControlledContext(root, requestId, { epoch_id: randomUUID(), binding, bindInvocation(id) { binding.invocation_id = id; },
+    callbacks: { assertActive() {}, trace(event) { traces.push(event); },
+      readEvidence(title, kind, page) {
+        evidenceReads.push({ title, kind, page });
+        assert.equal(kind, 'cornell-input'); assert.equal(page, undefined);
+        return getRecord(root, evidence.meta.id).meta.data;
+      },
+      saveReport(report) {
+        reports.push(createRecord(root, { type: 'knowledge', title: 'Actual offline transport stage result', owner: 'developer',
+          data: { kind: 'fixture-stage-report', workflow_id: workflow.meta.id, task_id: task.meta.id,
+            invocation_id: binding.invocation_id, ...report } }));
+        return { saved: true, report_id: reports.at(-1).meta.id };
+      } } });
+  let receipt = await startNative(root, { role: 'developer', workflow_id: workflow.meta.id, task_id: task.meta.id, request_id: requestId,
+    prompt: 'Use only the supplied local scripted protocol peer; read the assigned input and report once. No external model or product acceptance is involved.' });
+  const deadline = Date.now() + 90000;
+  while (invocationIsActive(receipt) && Date.now() < deadline) receipt = await waitNative(root, receipt.id, 500);
+  const signed = readInvocation(root, receipt.id);
+  const failed = traces.filter(event => event.event === 'tool-result' && event.status === 'failed');
+  t.diagnostic(JSON.stringify({ provider: 'loopback scripted OpenAI protocol only', request_count: provider.requests.length,
+    terminal_state: signed.state, inference_completed: signed.inference_completed, error: signed.error,
+    evidence_reads: evidenceReads.length, saved_reports: reports.length,
+    gateway_errors: failed.map(event => ({ tool: event.tool, code: event.code })),
+    paid_model_calls: 0, product_acceptance_claimed: false }));
+  assert.deepEqual(provider.failures, []); assert.equal(provider.requests.length, 3);
+  assert.equal(signed.issuer, 'workforce-opencode'); assert.equal(signed.state, 'completed');
+  assert.equal(signed.inference_completed, true); assert.equal(signed.error, null);
+  assert.equal(signed.workflow_id, workflow.meta.id); assert.equal(signed.task_id, task.meta.id);
+  assert.equal(signed.id, binding.invocation_id); assert.equal(signed.request_id, requestId);
+  assert.equal(signed.requested_model, 'worker-models'); assert.equal(signed.confirmed_model, 'worker-models');
+  assert.deepEqual(evidenceReads, [{ title: captured.title, kind: captured.kind, page: undefined }]);
+  assert.equal(reports.length, 1); assert.equal(getRecord(root, reports[0].meta.id).meta.data.invocation_id, signed.id);
+  assert.equal(reports[0].meta.data.outcome, 'completed'); assert.deepEqual(failed, []);
+  const evidenceRequests = traces.filter(event => event.event === 'tool-request' && event.tool === 'check_evidence');
+  const reportRequests = traces.filter(event => event.event === 'tool-request' && event.tool === 'assignment_report');
+  assert.equal(evidenceRequests.length, 1); assert.equal(reportRequests.length, 1);
+  assert.deepEqual(evidenceRequests[0].model_input.semantic, captured, 'The actual model payload stays visible while inert page fields are ignored.');
+  for (const event of [...evidenceRequests, ...reportRequests]) assert.deepEqual(event.backend_binding,
+    { workflow_id: workflow.meta.id, task_id: task.meta.id, invocation_id: signed.id });
+  assert.equal(existsSync(join(root, captured.path)), false, 'An irrelevant caller path is not created or read as Cornell evidence.');
 });
 
 for (const [label, args] of [

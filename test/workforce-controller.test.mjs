@@ -108,6 +108,13 @@ async function deterministicEngine(t) {
         observation.initial_change_coverage = binding.initial_change_coverage;
       }
       observations.push(observation);
+      if (name === 'ingress-upgrade' && binding.stage === 'implementation' && count === 1) {
+        observation.historical_receipts = controlledStatus(this.root, binding.workflow_id).attempts
+          .filter(item => item.invocation_id && item.stage !== 'implementation')
+          .map(item => ({ id: item.invocation_id, bytes: readFileSync(safePath(this.root, `.neomind/native/receipts/${item.invocation_id}.json`)) }));
+        const path = safePath(this.root, '.codex/config.toml'), before = readFileSync(path, 'utf8');
+        atomicWrite(path, before.replace('/previous/', '/updated/'));
+      }
       if (canonicalReviewSessions.has(this)) return prior.run.call(this);
       if (failStorageOnce && binding.stage === 'planning' && count === 1) {
         await this.complete('blocked', 'OPENCODE_STORAGE_UNAVAILABLE: fixture observed an unavailable engine journal.'); return;
@@ -362,6 +369,31 @@ test('content-only product handoff with pending npm test proceeds to independent
   assert.equal(readFileSync(join(root, 'test/temperature.test.mjs'), 'utf8'), testBytes);
   const contract = JSON.parse(readFileSync(safePath(root, `.neomind/controlled/workflows/${hash(run.workflow_id)}.${run.epoch_id}.contract.json`), 'utf8'));
   assert.equal(verifyControlledTask(root, getRecord(root, contract.task_id), 'accepted').ok, true);
+  assert.deepEqual(errors, []);
+});
+
+test('a Codex ingress runtime-path upgrade preserves completed WorkForce stages through actual independent checking', { timeout: 90000 }, async t => {
+  const name = 'ingress-upgrade', root = await fixture(t, [name]);
+  const before = '[mcp_servers.workforce]\ncommand = "node"\nargs = ["D:/tools/workforce/previous/dist/cli.js", "mcp"]\n';
+  atomicWrite(safePath(root, '.codex/config.toml'), before);
+  const started = await startControlledWorkflow(root, { requirement: 'Case: ingress-upgrade\nCreate the requested JSON result using the existing independent checker.' });
+  const run = await wait(root, started.workflow_id, 'completed', 60000);
+  assert.deepEqual(run.attempts.map(item => item.stage), ['planning', 'requirements', 'design', 'implementation', 'review', 'verification'],
+    'An ingress-only change cannot replay completed stages or start another workflow epoch.');
+  const observed = observations.find(item => item.name === name && item.stage === 'implementation');
+  assert.equal(observed.historical_receipts.length, 3, 'PM, SWSD and design completed before the ingress-only upgrade.');
+  for (const historical of observed.historical_receipts) {
+    assert.deepEqual(readFileSync(safePath(root, `.neomind/native/receipts/${historical.id}.json`)), historical.bytes);
+    const receipt = readInvocation(root, historical.id);
+    assert.equal(receipt.issuer, 'workforce-opencode');
+    assert.equal(receipt.controlled_execution.epoch_id, run.epoch_id);
+    assert.equal(receipt.configuration_hashes['.codex/config.toml'], hash(before));
+    assert.deepEqual(routingProblems(root, receipt.role, receipt.id, { workflow_id: run.workflow_id }), []);
+  }
+  assert.equal(readFileSync(safePath(root, '.codex/config.toml'), 'utf8'), before.replace('/previous/', '/updated/'));
+  assert.equal(JSON.parse(readFileSync(join(root, 'products/ingress-upgrade.json'), 'utf8')).value, 42);
+  assert.equal(run.checks.length, 1); assert.equal(run.checks[0].passed, true);
+  assert.equal(requestProjection(root, run).accepted, true);
   assert.deepEqual(errors, []);
 });
 

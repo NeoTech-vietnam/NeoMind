@@ -277,9 +277,14 @@ export function invocationConfigurationHashes(root: string, receipt: NativeRecei
     if (canonicalJson(oldBase) === canonicalJson(currentBase)) hashes['.neomind/routing.json'] = receipt.configuration_hashes['.neomind/routing.json']!;
   }
   const codex = '.codex/config.toml', oldHash = receipt.configuration_hashes[codex];
-  if (receipt.issuer === 'neomind-vscode-lm' && receipt.execution_mode === 'vscode-extension-host' &&
-      receipt.identity_provenance === 'local-vscode-extension-host' && receipt.controlled_execution &&
-      oldHash !== hashes[codex] && /^[a-f0-9]{64}$/.test(oldHash ?? '')) {
+  const ownedOpenCode = (value: NativeReceipt) => value.issuer === 'workforce-opencode' &&
+    isControlledExecutionReceipt(value) && value.controlled_execution?.schema_version === 1 &&
+    value.controlled_execution.process_contract === 'workforce/v1';
+  const opencode = ownedOpenCode(receipt), vscode = receipt.issuer === 'neomind-vscode-lm' &&
+    receipt.execution_mode === 'vscode-extension-host' && receipt.identity_provenance === 'local-vscode-extension-host' &&
+    !!receipt.controlled_execution;
+  if ((opencode || vscode) && oldHash !== hashes[codex] &&
+      (/^[a-f0-9]{64}$/.test(oldHash ?? '') || opencode && oldHash === 'absent')) {
     try {
       // Callers holding an in-memory owner receipt do not supply verification
       // authority. Authenticate its current signed stable binding from disk.
@@ -289,9 +294,14 @@ export function invocationConfigurationHashes(root: string, receipt: NativeRecei
           updated_at: _updated, inference_completed: _completed, ...binding } = value;
         return binding;
       };
-      if (signed.issuer === 'neomind-vscode-lm' && signed.controlled_execution && canonicalJson(stable(signed)) === canonicalJson(stable(receipt)) &&
-          onlyAddedRequiredNeoMindMcp(readFileSync(safePath(root, codex)), signed.configuration_hashes[codex]!)) hashes[codex] = oldHash!;
-    } catch { /* An unverifiable receipt or any other file change retains the current hash. */ }
+      // Owned OpenCode runs in a private directory/home with project config
+      // disabled. Its endpoint, tools and permissions come from the frozen
+      // routing/catalog and bound gateway, not this client-ingress TOML file.
+      // Keep the historical observation without rewriting its signed receipt.
+      if (canonicalJson(stable(signed)) === canonicalJson(stable(receipt)) &&
+          (opencode && ownedOpenCode(signed) || vscode && signed.issuer === 'neomind-vscode-lm' && signed.controlled_execution &&
+            onlyAddedRequiredNeoMindMcp(readFileSync(safePath(root, codex)), signed.configuration_hashes[codex]!))) hashes[codex] = oldHash!;
+    } catch { /* Unverifiable or mismatched stable bindings retain current hashes. */ }
   }
   return hashes;
 }
