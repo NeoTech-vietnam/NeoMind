@@ -7,6 +7,7 @@ import { closeWorkForceCapabilities } from './workforce-plugin-gateway.js';
 import { OpenCodeToolFailureGuard, type OpenCodeToolObservation } from './opencode-tool-observation.js';
 import { OpenCodeTurnObserver, OpenCodeTurnError, safeOpenCodeTransportError, type OpenCodeTurnIdentity, type OpenCodeTurnOptions } from './opencode-turn.js';
 import { canonicalOpenCodeProviderFailure } from './opencode-provider-diagnostic.js';
+import { createOpenCodeProviderStream } from './opencode-provider-stream.js';
 import { createOpenCodeGateway, openCodeConfiguration, openCodeEndpoint, openCodeError, openCodeBinary, opencodeProtocol,
   opencodeProviderId, opencodeRuntimeVersion, opencodeRuntimeIntegrity, openCodeStorageFailure, startOpenCodeEngine, type OpenCodeEngine, type OpenCodeGateway } from './opencode-engine.js';
 
@@ -36,6 +37,7 @@ export function openCodeSystemText(instructions: string, tools: readonly string[
 export class OpenCodeSession {
   private engine?: OpenCodeEngine;
   private gateway?: OpenCodeGateway;
+  private providerStream?: Awaited<ReturnType<typeof createOpenCodeProviderStream>>;
   private controller = new AbortController();
   private sessionId?: string;
   private messageId?: string;
@@ -75,10 +77,20 @@ export class OpenCodeSession {
     };
     this.gateway = await createOpenCodeGateway(() => createControlledMcpServer(this.root, binding, callbacks),
       () => this.assertCurrent());
-    let operation = 'engine-start';
+    let operation = 'provider-stream';
     try {
+      this.providerStream = await createOpenCodeProviderStream(endpoint, {
+        signal: this.controller.signal,
+        onProgress: observation => { if (!this.stopped) this.turn?.noteProviderProgress(observation); },
+        onObservation: observation => {
+          try {
+            void Promise.resolve(context.callbacks.trace?.({ ...observation, engine: 'opencode', owner: 'runtime' })).catch(() => {});
+          } catch { /* Bounded transport diagnostics cannot alter owned inference. */ }
+        },
+      });
+      operation = 'engine-start';
       this.engine = await startOpenCodeEngine(this.root, this.receipt.id,
-        openCodeConfiguration(endpoint, this.gateway, this.tools), this.controller.signal, { onPrepared: supervision => {
+        openCodeConfiguration(this.providerStream.endpoint, this.gateway, this.tools), this.controller.signal, { onPrepared: supervision => {
           this.update({ host_instance: supervision.instance,
             opencode: { version: opencodeRuntimeVersion, binary_sha256: openCodeBinary().sha256,
               gateway_instance: supervision.instance, supervision } });
@@ -259,6 +271,7 @@ export class OpenCodeSession {
       if (this.engine && this.sessionId) await this.engine.client.session.abort({ sessionID: this.sessionId,
         directory: this.engine.directory }, { signal: AbortSignal.timeout(5000) }).catch(() => {});
       this.controller.abort();
+      await this.providerStream?.close();
       await closeWorkForceCapabilities(this.root, this.receipt.id);
       await this.gateway?.close();
       await this.engine?.close();

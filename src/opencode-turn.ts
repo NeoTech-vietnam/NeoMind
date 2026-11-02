@@ -2,6 +2,7 @@ import type { AssistantMessage, Part } from '@opencode-ai/sdk/v2/client';
 import type { OpenCodeClient } from './opencode-engine.js';
 import { canonicalJson } from './routing.js';
 import { hash } from './storage.js';
+import type { OpenCodeProviderProgress } from './opencode-provider-stream.js';
 
 export interface OpenCodeTurnIdentity { sessionID: string; messageID: string; directory: string; modelID: string; providerID: string }
 export interface OpenCodeTurnResult { info: AssistantMessage; parts: Part[] }
@@ -27,6 +28,7 @@ const pause = (milliseconds: number, signal: AbortSignal) => new Promise<void>((
 export class OpenCodeTurnObserver {
   private progress = new Map<string, string>();
   private runningTools = new Set<string>();
+  private providerSequences = new Map<string, number>();
   private lastProgress: number;
   private lastReadable: number;
   private admitted = false;
@@ -71,6 +73,15 @@ export class OpenCodeTurnObserver {
     if (['message.part.delta', 'session.next.text.delta', 'session.next.reasoning.delta', 'session.next.tool.input.delta'].includes(String(value.type)) &&
         typeof properties.delta === 'string' && properties.delta.length) this.lastProgress = this.clock();
   }
+  /** Only the invocation-owned provider relay calls this; SDK pending tool
+   * parts in the pinned ordinary engine do not retain streamed arguments. */
+  noteProviderProgress(value: OpenCodeProviderProgress): void {
+    if (!record(value) || typeof value.request_id !== 'string' || !value.request_id.length || value.request_id.length > 128 ||
+        !['text', 'reasoning', 'tool-arguments'].includes(value.kind) || !Number.isSafeInteger(value.bytes) || value.bytes <= 0 ||
+        !Number.isSafeInteger(value.sequence) || value.sequence <= (this.providerSequences.get(value.request_id) ?? 0)) return;
+    this.providerSequences.set(value.request_id, value.sequence);
+    this.lastProgress = this.clock();
+  }
   private async status(): Promise<'idle' | 'busy' | 'retry'> {
     try {
       const response = await this.client.session.status({ directory: this.identity.directory }, { signal: this.signal() });
@@ -92,7 +103,7 @@ export class OpenCodeTurnObserver {
       if (status === 'idle') {
         await this.options.onObservation?.({ event: 'model-progress-stalled', engine: 'opencode', owner: 'runtime',
           admission_observed: this.admitted, model_idle_ms: this.idle, abort_acknowledged: true, session_idle_observed: true });
-        throw new OpenCodeTurnError('OPENCODE_PROVIDER_STALLED', 'OPENCODE_PROVIDER_STALLED: no meaningful model text, reasoning or tool arguments arrived within the owned progress deadline. The engine acknowledged cancellation and returned idle; actual artifacts and messages remain.');
+        throw new OpenCodeTurnError('OPENCODE_PROVIDER_STALLED', 'No meaningful model text, reasoning or tool arguments arrived within the owned progress deadline. The engine acknowledged cancellation and returned idle; actual artifacts and messages remain.');
       }
       await pause(Math.min(this.poll, 250), this.options.signal);
     }

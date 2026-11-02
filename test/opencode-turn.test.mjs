@@ -79,6 +79,32 @@ test('a partial tool name with empty arguments is not model progress and require
   assert.ok(state.observations.some(value => value.event === 'model-progress-stalled' && value.abort_acknowledged && value.session_idle_observed));
 });
 
+test('owned provider argument progress survives pending SDK parts until the actual terminal assistant', { timeout: 3000 }, async t => {
+  const pending = assistant({ time: { created: 1 } }, [tool('fragmented', 'pending')]);
+  const { observer, state } = fixture(t, { messages(state) {
+    if (state.reads > 5) return [user, assistant()];
+    observer.noteProviderProgress({ request_id: 'owned-http-request', sequence: state.reads, kind: 'tool-arguments', bytes: 6 });
+    return [user, pending];
+  } }, { model_idle_ms: 10000 });
+  const result = await observer.wait();
+  assert.equal(result.info.id, 'owned-result'); assert.equal(state.reads, 6);
+  assert.equal(state.aborts, 0); assert.equal(state.submissions, 0);
+});
+
+test('duplicate provider observations, empty bytes and nonsemantic metadata cannot extend the idle deadline', { timeout: 3000 }, async t => {
+  const pending = assistant({ time: { created: 1 } }, [tool('partial', 'pending')]);
+  const { observer, state } = fixture(t, { messages() {
+    observer.noteProviderProgress({ request_id: 'owned-http-request', sequence: 1, kind: 'tool-arguments', bytes: 6 });
+    observer.noteProviderProgress({ request_id: 'another-owned-request', sequence: 1, kind: 'text', bytes: 1 });
+    for (const changed of [{ sequence: 0 }, { sequence: -1 }, { bytes: 0 }, { bytes: -1 },
+      { sequence: Number.NaN }, { request_id: '' }, { kind: 'heartbeat' }])
+      observer.noteProviderProgress({ request_id: 'owned-http-request', sequence: 100, kind: 'tool-arguments', bytes: 6, ...changed });
+    return [user, pending];
+  }, status: state => ({ [identity.sessionID]: { type: state.aborts ? 'idle' : 'busy' } }) }, { model_idle_ms: 10000 });
+  await assert.rejects(observer.wait(), error => error.code === 'OPENCODE_PROVIDER_STALLED' && !error.message.startsWith('OPENCODE_PROVIDER_STALLED:'));
+  assert.equal(state.reads, 3); assert.equal(state.aborts, 1); assert.equal(state.submissions, 0);
+});
+
 test('a missing stalled-abort reply stays delivery-unknown rather than claiming provider cancellation', { timeout: 3000 }, async t => {
   const { observer, state } = fixture(t, { messages: () => [user, assistant({ time: { created: 1 } }, [tool('partial', 'pending')])],
     abort() { throw new Error('Fixture abort reply lost.'); } }, { model_idle_ms: 10000 });

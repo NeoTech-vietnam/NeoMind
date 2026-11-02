@@ -39,10 +39,11 @@ function project(t, provider) {
   t.after(async () => { await shutdownNative(root); release(); await provider.close(); rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
   return { root, workflow, task, requestId, traces, reports, diagnostic: value => t.diagnostic(value) };
 }
-function observerPolicy(t, idle = 10000) {
+function observerPolicy(t, idle = 10000, now) {
   const previous = OpenCodeSession.prototype.createTurnObserver;
   OpenCodeSession.prototype.createTurnObserver = function (client, identity, options) {
-    return new OpenCodeTurnObserver(client, identity, { ...options, model_idle_ms: idle, poll_ms: 25, http_timeout_ms: 1000 });
+    return new OpenCodeTurnObserver(client, identity, { ...options, model_idle_ms: idle, poll_ms: 25, http_timeout_ms: 1000,
+      ...(now ? { now } : {}) });
   };
   t.after(() => { OpenCodeSession.prototype.createTurnObserver = previous; });
 }
@@ -88,6 +89,9 @@ for (const lost of [false, true]) test(`real async native turn ${lost ? 'reconci
     t.after(() => { OpenCodeSession.prototype.observeEvents = previous; });
   }
   const receipt = await run(fixture);
+  if (receipt.state !== 'completed') t.diagnostic(JSON.stringify({ provider_requests: provider.requests.length,
+    reports: fixture.reports.length, admissions: { submissions, injected },
+    transport: fixture.traces.filter(event => /^provider-/.test(event.event ?? '')) }));
   assert.equal(receipt.state, 'completed', receipt.error); assert.equal(receipt.inference_completed, true);
   assert.equal(submissions, 1); assert.equal(synchronous, 0); assert.equal(provider.requests.length, 4);
   assert.equal(fixture.reports.length, 1); assert.equal(readFileSync(join(fixture.root, 'products/current.txt'), 'utf8'), 'verified 42\n');
@@ -120,11 +124,12 @@ test('three semantically identical successful reads stop redundant model observa
   assert.equal(fixture.reports.length, 0);
 });
 
-async function stalledProvider() {
+async function stalledProvider(onStart = () => {}) {
   const responses = new Set(), requests = [];
   const server = createServer(async (request, response) => {
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8')); requests.push(body); responses.add(response);
+    onStart();
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
     response.write(`data: ${JSON.stringify({ id: 'chatcmpl_stalled', object: 'chat.completion.chunk', created: 1, model: body.model,
       choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'call_partial', type: 'function', function: { name: 'wf_project_read', arguments: '' } }] }, finish_reason: null }] })}\n\n`);
@@ -136,12 +141,81 @@ async function stalledProvider() {
     close: async () => { for (const response of responses) response.destroy(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); } };
 }
 test('partial tool name and SSE heartbeats cannot create completion or defeat the owned model-progress deadline', { timeout: 90000 }, async t => {
-  observerPolicy(t, 5000);
-  const provider = await stalledProvider(), fixture = project(t, provider), receipt = await run(fixture);
+  let providerAt;
+  observerPolicy(t, 5000, () => providerAt === undefined ? 0 : performance.now() - providerAt);
+  const provider = await stalledProvider(() => { providerAt ??= performance.now(); }), fixture = project(t, provider), receipt = await run(fixture);
   assert.equal(receipt.state, 'blocked'); assert.equal(receipt.inference_completed, false);
   assert.match(receipt.error, /^OPENCODE_PROVIDER_STALLED:/);
   assert.equal(provider.requests.length, 1); assert.equal(fixture.reports.length, 0);
   assert.ok(fixture.traces.some(event => event.event === 'model-progress-stalled' && event.abort_acknowledged === true && event.session_idle_observed === true));
+  assert.equal(readFileSync(join(fixture.root, 'products/current.txt'), 'utf8'), 'original\n');
+});
+
+test('real compatible tool-argument deltas remain meaningful progress before a completed tool call', { timeout: 90000 }, async t => {
+  const requests = [], responses = new Set(), wire = { argument_chunks: 0, argument_bytes: 0, finished: false };
+  let firstArgumentAt;
+  const idle = 1500, previousObserver = OpenCodeSession.prototype.createTurnObserver;
+  // Freeze only this test clock through engine/provider preparation. The idle
+  // assertion begins once actual argument bytes leave the loopback peer.
+  OpenCodeSession.prototype.createTurnObserver = function (client, identity, options) {
+    return new OpenCodeTurnObserver(client, identity, { ...options, model_idle_ms: idle, poll_ms: 25,
+      http_timeout_ms: 1000, now: () => firstArgumentAt === undefined ? 0 : performance.now() - firstArgumentAt });
+  };
+  t.after(() => { OpenCodeSession.prototype.createTurnObserver = previousObserver; });
+  const observed = { argument_delta_events: 0, pending_tool_updates: 0, pending_raw_chars: 0 }, priorEvents = OpenCodeSession.prototype.observeEvents;
+  OpenCodeSession.prototype.observeEvents = function (stream) {
+    async function* watch() {
+      for await (const event of stream) {
+        if (event?.type === 'session.next.tool.input.delta') observed.argument_delta_events++;
+        const part = event?.type === 'message.part.updated' ? event.properties?.part : undefined;
+        if (part?.type === 'tool' && part.state?.status === 'pending') {
+          observed.pending_tool_updates++;
+          observed.pending_raw_chars = Math.max(observed.pending_raw_chars, part.state.raw?.length ?? 0);
+        }
+        yield event;
+      }
+    }
+    return priorEvents.call(this, watch());
+  };
+  t.after(() => { OpenCodeSession.prototype.observeEvents = priorEvents; });
+  const server = createServer(async (request, response) => {
+    const chunks = []; for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8')); requests.push(body); responses.add(response);
+    response.once('close', () => responses.delete(response));
+    response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+    const metadata = { id: `chatcmpl_fragment_${requests.length}`, object: 'chat.completion.chunk', created: 1, model: body.model };
+    const emit = (delta, finish_reason = null) => response.write(`data: ${JSON.stringify({ ...metadata, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
+    if (requests.length === 1) {
+      const input = JSON.stringify({ path: 'products/current.txt', max_chars: 64000, start_line: 1, start_char: 0 });
+      const fragments = input.match(/.{1,6}/g);
+      for (let index = 0; index < fragments.length && !response.destroyed; index++) {
+        const text = fragments[index]; firstArgumentAt ??= performance.now();
+        emit({ ...(index === 0 ? { role: 'assistant' } : {}), tool_calls: [{ index: 0,
+          ...(index === 0 ? { id: 'call_fragmented_read', type: 'function' } : {}),
+          function: { ...(index === 0 ? { name: 'wf_project_read' } : {}), arguments: text } }] });
+        wire.argument_chunks++; wire.argument_bytes += Buffer.byteLength(text);
+        await delay(250);
+      }
+      if (response.destroyed) return;
+      wire.finished = true; emit({}, 'tool_calls');
+    } else if (requests.length === 2) {
+      emit({ role: 'assistant', tool_calls: [{ index: 0, id: 'call_fragmented_report', type: 'function',
+        function: { name: 'wf_assignment_report', arguments: JSON.stringify({ summary: 'Read the scoped fixture through fragmented arguments.', product_findings: [] }) } }] });
+      emit({}, 'tool_calls');
+    } else { emit({ role: 'assistant', content: 'Fixture complete.' }); emit({}, 'stop'); }
+    response.end('data: [DONE]\n\n');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const provider = { baseURL: `http://127.0.0.1:${server.address().port}/v1`, requests,
+    close: async () => { for (const response of responses) response.destroy(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); } };
+  const fixture = project(t, provider), receipt = await run(fixture);
+  t.diagnostic(JSON.stringify({ protocol_peer: 'loopback only', idle_ms: idle, wire, observed,
+    request_count: requests.length, saved_reports: fixture.reports.length, receipt_state: receipt.state }));
+  assert.ok(wire.argument_chunks >= 5 && wire.argument_bytes > 0, 'Actual argument deltas were sent repeatedly before classification.');
+  assert.equal(receipt.state, 'completed', receipt.error);
+  assert.equal(receipt.inference_completed, true); assert.equal(wire.finished, true);
+  assert.equal(fixture.reports.length, 1); assert.equal(requests.length, 3);
+  assert.equal(fixture.traces.some(event => event.event === 'model-progress-stalled'), false);
   assert.equal(readFileSync(join(fixture.root, 'products/current.txt'), 'utf8'), 'original\n');
 });
 
