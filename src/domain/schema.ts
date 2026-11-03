@@ -93,15 +93,22 @@ export const projectPolicySchema = z.strictObject({
   requireApprovalBeforeWrite: z.boolean(), requireIndependentReviewForCode: z.boolean(),
   allowGitCommit: z.boolean(), maxConcurrency: z.number().int().min(1),
   maxRepairRounds: z.number().int().min(0),
-  // Flow exceptions a project can forbid; omitted means allowed.
+  // Exceptions require explicit opt-in when the corresponding project gate is required.
   allowAutoApproval: z.boolean().optional(), allowHumanReview: z.boolean().optional(),
   // Keep a run's worktrees after it delivered (commit or applied changes) instead of removing them; omitted means remove.
   keepRunWorktrees: z.boolean().optional(),
 });
 
+export const memorySelectionSchema = z.strictObject({
+  scopes: z.array(z.string().min(1)).optional(), tags: z.array(z.string().min(1)).optional(),
+  requireTaskMatch: z.boolean().optional(), maxRecords: z.number().int().min(0).max(30).optional(),
+  maxBodyBytes: z.number().int().min(0).max(16000).optional(),
+});
+
 export const projectSchema = z.strictObject({
   schemaVersion: z.literal(1), projectId: id, policyVersion: z.number().int().min(1),
   policy: projectPolicySchema,
+  memorySelection: memorySelectionSchema.optional(),
   roleDefaults: z.record(id, z.strictObject({ runner: z.string().min(1), provider: z.string().min(1),
     model: z.string().min(1), reasoning: z.string().min(1) })),
 });

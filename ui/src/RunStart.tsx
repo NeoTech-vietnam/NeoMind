@@ -4,6 +4,7 @@ import { modelLabel, reasoningLabel, runnerLabel, useRunners } from './runners';
 import { bindingLabel, type BindingValues, type Preview, type Run } from './runTypes';
 
 type Limits = { activeTimeSeconds?: number; maxConcurrency?: number };
+type MemoryPreview = { root: string | null; selectionPolicy?: Record<string, unknown>; records: { id: string; type: string; scope: string; revision: string; selectionReason: string }[] };
 const templateFlows = [{ flowId: 'dev', name: 'Dev' }, { flowId: 'parallel', name: 'Dev song song' }, { flowId: 'fast', name: 'Fast' }, { flowId: 'research', name: 'Research' }];
 
 /**
@@ -16,8 +17,18 @@ export function RunStart({ initialFlow, flows, started }: { initialFlow?: string
   const [overrides, setOverrides] = useState<Record<string, Partial<BindingValues>>>({}), [limits, setLimits] = useState<Limits>({});
   const [preview, setPreview] = useState<Preview | null>(null), [loading, setLoading] = useState(false), [previewError, setPreviewError] = useState('');
   const [importDirty, setImportDirty] = useState(false), [starting, setStarting] = useState(false), [error, setError] = useState('');
+  const [memoryPreview, setMemoryPreview] = useState<MemoryPreview | null>(null);
+  const [memoryError, setMemoryError] = useState('');
   const request = useRef(0);
   useEffect(() => { if (initialFlow) chooseFlow(initialFlow); }, [initialFlow]);
+  useEffect(() => {
+    if (!task.trim()) { setMemoryPreview(null); setMemoryError(''); return; }
+    let current = true; setMemoryPreview(null); setMemoryError('');
+    const timer = setTimeout(() => { void api<MemoryPreview>('/api/memory/preview', 'POST', { task })
+      .then(value => { if (current) { setMemoryPreview(value); setMemoryError(''); } })
+      .catch(e => { if (current) { setMemoryPreview(null); setMemoryError(e instanceof Error ? e.message : String(e)); } }); }, 350);
+    return () => { current = false; clearTimeout(timer); };
+  }, [task]);
   // Re-preview after each configuration change; only the newest answer is kept.
   useEffect(() => {
     const id = ++request.current; setLoading(true);
@@ -49,7 +60,7 @@ export function RunStart({ initialFlow, flows, started }: { initialFlow?: string
   }
 
   return <div className="run-card start-card">
-    <div className="card-title"><h2>Run mới</h2><p>Mô tả việc cần làm, chọn agent cho từng bước rồi bắt đầu. Agent sẽ lập kế hoạch và chờ bạn duyệt trước khi sửa file.</p></div>
+    <div className="card-title"><h2>Run mới</h2><p>Mô tả việc cần làm, chọn flow và kiểm tra cấu hình trước khi bắt đầu.</p></div>
     <div className="start-grid">
       <label className="form-field">Flow<select aria-label="Flow" value={flowId} onChange={e => chooseFlow(e.target.value)}>{choices.map(flow => <option key={flow.flowId} value={flow.flowId}>{flow.name}</option>)}</select>
         {definition?.description && <small>{definition.description}</small>}
@@ -81,6 +92,14 @@ export function RunStart({ initialFlow, flows, started }: { initialFlow?: string
       {usesClaude && <p className="hint">Claude Code chạy bằng tài khoản Claude đang đăng nhập và chỉ được đọc, ghi file trong phạm vi được duyệt (không có shell). Checks vẫn chạy qua Codex.</p>}
     </section>
 
+    <section className="start-section"><div className="section-head"><h3>Memory dự kiến</h3></div>
+      <p className="hint">Bản xem trước theo yêu cầu hiện tại; NeoMind ghim nội dung và revision thực tế khi bắt đầu run.</p>
+      {memoryError && <div className="callout tone-red" role="alert">Không đọc được memory: {memoryError}</div>}
+      {task.trim() && !memoryPreview && !memoryError && <p className="hint">Đang chọn memory…</p>}
+      {memoryPreview && (memoryPreview.root ? (memoryPreview.records.length ? <ul>{memoryPreview.records.map(record => <li key={`${record.type}/${record.id}`}><strong>{record.type} · {record.id}</strong> · {record.scope} · {record.selectionReason} <code>{record.revision.slice(0, 12)}</code></li>)}</ul> : <p className="hint">Không có bản ghi được chọn.</p>) : <p className="hint">Project chưa cấu hình memory.</p>)}
+      {memoryPreview?.selectionPolicy && <details><summary>Policy chọn memory</summary><pre>{JSON.stringify(memoryPreview.selectionPolicy, null, 2)}</pre></details>}
+    </section>
+
     {preview && <section className="start-section">
       <div className="section-head"><h3>Giới hạn và mã nguồn</h3></div>
       <div className="limits-row">
@@ -89,7 +108,7 @@ export function RunStart({ initialFlow, flows, started }: { initialFlow?: string
         <div className="fact"><span>Vòng sửa tối đa</span><strong>{definition!.definition.limits.maxRepairRounds}</strong></div>
         <div className="fact"><span>Bắt đầu từ commit</span><code>{preview.sourceHead.slice(0, 10)}</code></div>
       </div>
-      <p className="hint">Run làm việc trong worktree riêng; checkout của bạn không bị sửa. Kết quả là một commit local sau khi checks và review đạt (Git hooks không chạy).</p>
+      <p className="hint">Run làm việc trong worktree riêng; checkout của bạn chỉ thay đổi khi bạn chọn áp dụng kết quả. Bước commit của flow dùng commit local và không chạy Git hooks.</p>
       {preview.dirtyImport.changes.length > 0 && <div className="callout tone-amber">
         <strong>Checkout có {preview.dirtyImport.changes.length} thay đổi chưa commit.</strong>
         {canImport ? <label className="check-line"><input type="checkbox" checked={importDirty} onChange={e => setImportDirty(e.target.checked)} /> Mang các thay đổi này vào run (commit của run chỉ chứa phần run làm)</label>

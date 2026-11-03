@@ -15,11 +15,11 @@ const diagnosticCodes = (flow: unknown) => {
   return result.ok ? [] : result.diagnostics.map(d => d.code);
 };
 
-test('all built-in templates round-trip and compile under the default policy', () => {
+test('all built-in templates round-trip and compile with their explicit policy exceptions', () => {
   for (const template of Object.values(templates)) {
     const roundTrip: unknown = JSON.parse(JSON.stringify(template));
     assert.deepEqual(flowSchema.parse(roundTrip), template);
-    const result = compileFlow(roundTrip, defaultProject.policy);
+    const result = compileFlow(roundTrip, { ...defaultProject.policy, allowAutoApproval: true, allowHumanReview: true });
     assert.equal(result.ok, true, result.ok ? '' : JSON.stringify(result.diagnostics));
   }
 });

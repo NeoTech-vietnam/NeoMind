@@ -71,6 +71,25 @@ test('lesson proposal stays out of approved memory until trusted user promotion'
   store.close();
 });
 
+test('a rejected proposal remains outside shared memory and cannot be promoted', async () => {
+  const { LessonProposals } = await import('../src/memory/proposals.js');
+  const { hashJson } = await import('../src/domain/resolve.js');
+  const dir = mkdtempSync(path.join(tmpdir(), 'neomind-rejected-')), root = path.join(dir, 'memory'), artifacts = path.join(dir, 'artifacts');
+  mkdirSync(root); mkdirSync(artifacts);
+  const store = new MemoryStore(root, path.join(dir, 'coordination.sqlite')), proposals = new LessonProposals(artifacts);
+  try {
+    proposals.create({ proposalId: 'lesson-2', runId: 'run-1', createdAt: new Date().toISOString(), record: { ...record, id: 'rejected', type: 'lesson' } });
+    const hash = hashJson(proposals.read('lesson-2'));
+    assert.throws(() => proposals.reject('lesson-2', 'a'.repeat(64), { confirmedByUser: true }), /changed since/);
+    proposals.approve('lesson-2', 'approval-2', 'user', null, { projectWrite: true, confirmedByUser: true }, hash);
+    proposals.reject('lesson-2', hash, { confirmedByUser: true });
+    assert.ok(proposals.rejection('lesson-2'));
+    assert.throws(() => proposals.approve('lesson-2', 'approval-3', 'user', null, { projectWrite: true, confirmedByUser: true }), /rejected/);
+    assert.throws(() => proposals.promote('approval-2', store, { projectWrite: true }), /rejected/);
+    assert.equal(store.search({ types: ['lesson'] }).length, 0);
+  } finally { store.close(); }
+});
+
 test('CLI reads approved memory and filters lexical search', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'neomind-memory-cli-')), root = path.join(dir, 'memory'); mkdirSync(root);
   const db = path.join(dir, 'coordination.sqlite'), store = new MemoryStore(root, db);

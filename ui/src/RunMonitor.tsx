@@ -2,6 +2,7 @@ import { Fragment, useState } from 'react';
 import { api } from './api';
 import { artifactLabel, formatDuration, formatTokens, phaseInfo, statusInfo, verdictInfo } from './format';
 import { RunLessons } from './RunLessons';
+import { RunGraph } from './RunGraph';
 import { AgentSessions, latestAttempt, LiveActivity, SessionDrawer, useTranscripts, type SessionTarget } from './RunActivity';
 import { modelLabel, reasoningLabel, runnerLabel } from './runners';
 import { bindingLabel, effectiveBindings, type BindingValues, type Run } from './runTypes';
@@ -80,6 +81,8 @@ export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }
       })}</ol>
     </div>
 
+    <RunGraph run={run} hasSession={nodeId => !!latestAttempt(listing, nodeId)} openSession={nodeId => { const attempt = latestAttempt(listing, nodeId); if (attempt) setSession(attempt); }} />
+
     <LiveActivity run={run} flow={flow} listing={listing} active={phase === 'running'} open={setSession} />
 
     {delivery.length > 0 && <div className="run-card delivery-card">
@@ -139,6 +142,11 @@ export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }
     </div>}
 
     <AgentSessions flow={flow} listing={listing} active={phase === 'running'} open={setSession} />
+
+    {run.runtimeContext?.memory && <div className="run-card"><details><summary>Memory đã ghim cho run</summary><p className="hint">Nội dung và revision dưới đây là snapshot khi run bắt đầu, được đưa vào context agent.</p><p><code>{run.runtimeContext.memory.root}</code></p>
+      {!!run.runtimeContext.memory.selectionPolicy && <details><summary>Policy chọn memory khi run bắt đầu</summary><pre>{JSON.stringify(run.runtimeContext.memory.selectionPolicy, null, 2)}</pre></details>}
+      {run.runtimeContext.memory.records?.map(record => <div key={`${record.type}/${record.id}`}><strong>{record.type} · {record.id}</strong><p className="hint">{record.scope} · {record.selectionReason}</p><p className="hint">Revision: <code>{record.revision}</code> · Nguồn: {record.sources.join(', ')}</p></div>)}
+      <pre className="memory-snapshot">{run.runtimeContext.memory.text || 'Không có bản ghi được chọn.'}</pre></details></div>}
 
     {phase === 'completed' && <RunLessons runId={run.runId} />}
 

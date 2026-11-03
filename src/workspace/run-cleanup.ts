@@ -1,7 +1,9 @@
 import { gitConfigEnv } from './git-env.js';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { lstat, readdir, readlink, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
@@ -26,6 +28,29 @@ export async function registeredWorktrees(repo: string): Promise<Set<string>> {
 
 export async function refExists(repo: string, ref: string): Promise<boolean> {
   return git(repo, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`).then(() => true, () => false);
+}
+
+/** Git force-removal also deletes ignored files; treat them as unsaved unless explicitly discarded. */
+export async function ignoredPaths(workspace: string): Promise<string[]> {
+  const output = await git(workspace, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z');
+  return output.split('\0').filter(Boolean).sort();
+}
+
+/** Hash ignored entries without following symlinks, so a resumed forced cleanup cannot discard changed data. */
+export async function ignoredFingerprint(workspace: string): Promise<string> {
+  const hash = createHash('sha256'), root = path.resolve(workspace);
+  async function visit(relative: string): Promise<void> {
+    const absolute = path.resolve(root, relative), inside = path.relative(root, absolute);
+    if (!inside || inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) throw new Error('Ignored path escapes workspace');
+    const info = await lstat(absolute);
+    hash.update(JSON.stringify([relative, info.mode, info.isFile() ? 'file' : info.isDirectory() ? 'directory' : info.isSymbolicLink() ? 'symlink' : 'special']));
+    if (info.isSymbolicLink()) hash.update(JSON.stringify(await readlink(absolute)));
+    else if (info.isDirectory()) for (const child of (await readdir(absolute)).sort()) await visit(path.join(relative, child));
+    else if (info.isFile()) { const content = createHash('sha256'); for await (const chunk of createReadStream(absolute)) content.update(chunk as Buffer); hash.update(content.digest()); }
+    else throw new Error(`Không dọn file đặc biệt bị ignore: ${relative}`);
+  }
+  for (const entry of await ignoredPaths(workspace)) await visit(entry);
+  return hash.digest('hex');
 }
 
 /** Write each ref to its commit (idempotent: an existing ref is moved to the same commit). */

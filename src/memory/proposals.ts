@@ -13,6 +13,7 @@ const proposalSchema = z.strictObject({ proposalId: id, runId: id, createdAt: z.
     tags: z.array(z.string().min(1)), body: z.string().min(1) }) });
 const approvalSchema = z.strictObject({ approvalId: id, proposalId: id, proposalHash: z.string().regex(/^[a-f0-9]{64}$/),
   expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable(), actor: z.string().min(1), approvedAt: z.iso.datetime() });
+const rejectionSchema = z.strictObject({ proposalId: id, proposalHash: z.string().regex(/^[a-f0-9]{64}$/), actor: z.string().min(1), rejectedAt: z.iso.datetime() });
 export type LessonProposal = z.infer<typeof proposalSchema>;
 export type LessonApproval = z.infer<typeof approvalSchema>;
 
@@ -23,7 +24,7 @@ export class LessonProposals {
     this.root = realpathSync.native(runArtifactRoot);
     if (!lstatSync(this.root).isDirectory()) throw new Error('Run artifact root is not a directory');
   }
-  private path(itemId: string, kind: 'proposal' | 'approval'): string {
+  private path(itemId: string, kind: 'proposal' | 'approval' | 'rejection'): string {
     const file = path.join(this.root, `${id.parse(itemId)}.${kind}.json`);
     if (existsSync(file) && lstatSync(file).isSymbolicLink()) throw new Error('Artifact cannot be a symlink');
     return file;
@@ -43,10 +44,25 @@ export class LessonProposals {
     if (proposal.proposalId !== proposalId) throw new Error('Proposal identity mismatch');
     return proposal;
   }
+  rejection(proposalId: string) {
+    try {
+      const value = rejectionSchema.parse(JSON.parse(readFileSync(this.path(proposalId, 'rejection'), 'utf8')) as unknown);
+      if (value.proposalId !== proposalId || value.proposalHash !== hashJson(this.read(proposalId))) throw new Error('Rejection does not match proposal');
+      return value;
+    } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
+  }
+  reject(proposalId: string, expectedProposalHash: string, authorization: { confirmedByUser: boolean }) {
+    if (!authorization.confirmedByUser) throw new Error('User confirmation required');
+    const proposal = this.read(proposalId), proposalHash = hashJson(proposal);
+    if (proposalHash !== expectedProposalHash) throw new Error('Proposal changed since it was displayed');
+    const receipt = rejectionSchema.parse({ proposalId, proposalHash, actor: 'local-user', rejectedAt: new Date().toISOString() });
+    this.persist(this.path(proposalId, 'rejection'), receipt); return receipt;
+  }
   /** The caller must only provide confirmation after a trusted user action. */
   approve(proposalId: string, approvalId: string, actor: string, expectedRevision: string | null,
     authorization: { projectWrite: boolean; confirmedByUser: boolean }, expectedProposalHash?: string): LessonApproval {
     if (!authorization.projectWrite || !authorization.confirmedByUser) throw new Error('User confirmation and project memory write permission required');
+    if (this.rejection(proposalId)) throw new Error('Proposal was rejected');
     const proposal = this.read(proposalId);
     if (expectedProposalHash !== undefined && hashJson(proposal) !== expectedProposalHash) throw new Error('Proposal changed since it was displayed');
     const approval = approvalSchema.parse({ approvalId, proposalId, proposalHash: hash(proposal), expectedRevision, actor,
@@ -59,6 +75,7 @@ export class LessonProposals {
     const approval = approvalSchema.parse(JSON.parse(readFileSync(this.path(approvalId, 'approval'), 'utf8')) as unknown);
     if (approval.approvalId !== approvalId) throw new Error('Approval identity mismatch');
     const proposal = this.read(approval.proposalId);
+    if (this.rejection(approval.proposalId)) throw new Error('Proposal was rejected');
     if (hash(proposal) !== approval.proposalHash) throw new Error('Approved proposal changed');
     return store.promoteLesson({ proposalId: proposal.proposalId, approvalId, record: proposal.record }, approval.expectedRevision,
       { projectWrite: true, confirmedByUser: true });

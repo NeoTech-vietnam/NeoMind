@@ -90,7 +90,7 @@ export interface RecoveryReport {
   /** A flow without a commit hands its changes to the user: the patch applied (or being applied) to the checkout. */
   checkoutApply?: { tree: string; paths: string[]; patchHash: string; applied: boolean };
   /** Removal of a finished run's worktrees: refs written first to keep its commits, files knowingly discarded, and whether it finished. */
-  workspaceCleanup?: { workspaces: string[]; refs: { ref: string; commit: string }[]; discarded: string[]; cleaned: boolean };
+  workspaceCleanup?: { workspaces: string[]; refs: { ref: string; commit: string }[]; discarded: string[]; baselines?: Record<string, string> | undefined; ignoredBaselines?: Record<string, string> | undefined; cleaned: boolean };
   /** Per review group, the reviewer outputs of the round the latest repair replaced. */
   priorReviewerOutputs: Record<string, RecoveryReport['reviewerOutputs']>;
   requiresUserContinue: true;
@@ -116,7 +116,7 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
     const snapshot = validateMaterializedRun(initial.snapshot);
     if (hashJson(snapshot.configuration.flow) !== hashJson(flow) || hashJson(snapshot.policy) !== hashJson(initial.policy)) throw new Error('Run snapshot does not match flow or policy');
   }
-  const scheduler = new GraphScheduler(initial.flow, initial.policy);
+  const scheduler = new GraphScheduler(initial.flow, initial.policy, { legacyExceptions: true });
   const attempts = new Map<string, RecoveredAttempt>();
   const repairRounds: RecoveryReport['repairRounds'] = [];
   const continuationBaselines: string[] = [];
@@ -507,7 +507,7 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
       }
       case 'workspace_cleanup_intent': {
         const payload = z.strictObject({ workspaces: z.array(z.string().min(1)).min(1), refs: z.array(z.strictObject({ ref: z.string().startsWith('refs/neomind/'), commit: gitObject })),
-          discarded: z.array(z.string().min(1)) }).parse(event.payload);
+          discarded: z.array(z.string().min(1)), baselines: z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/)).optional(), ignoredBaselines: z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/)).optional() }).parse(event.payload);
         // Only a run that has stopped for good, with nothing in flight, gives up its worktrees.
         if (!runtimeState || !['completed', 'cancelled'].includes(runtimeState.phase) || workspaceCleanup || [...attempts.values()].some(item => item.status === 'unresolved')
           || [...commits.values()].some(item => !item.confirmed) || (checkoutApply && !checkoutApply.applied)) throw new Error('Only a finished run with nothing in flight cleans its workspaces, once');

@@ -2,6 +2,19 @@
 
 Cập nhật: **29/10/2026**. Branch: `hieu/adaptive-agent-flow`. Baseline trước đợt này: `d19c998`. **V1 chưa hoàn tất.** Đọc [bàn giao hiện tại](session-handoff-2026-10-29.md) để tiếp tục; [design-v1](design-v1.md) là phạm vi mục tiêu.
 
+
+## Cập nhật 03/11/2026 — workflow, memory và Flow Studio
+
+- Memory selection có cấu hình tùy chọn trong project theo scope và nhánh con, tất cả tag, lexical task match, số record và ngân sách bytes; preview và run dùng chung policy, run lưu policy vào snapshot. Xem ví dụ trong plan. Có UI chỉnh policy với kiểm tra revision project; chưa tự suy ra path từ task.
+
+- Bổ sung sau cập nhật ban đầu: canvas run từ snapshot; lọc lịch sử theo flow/trạng thái/ngày và báo mất kết nối; so sánh draft/version; palette theo nhóm, copy/paste một bước và keyboard undo/redo. Memory preview trước run và snapshot metadata (revision, nguồn, lý do), hàng đợi lesson cùng thao tác từ chối ghi receipt. Xem [plan](next-plan-workflow-memory-studio.md) để biết phần còn thiếu.
+- Chưa có browser acceptance cho UI mới; P1–P4 chưa hoàn tất. Chưa bật shared workspace, current checkout, nhiều integration hoặc workflow graph tổng quát.
+
+- Bắt đầu [kế hoạch ưu tiên mới](next-plan-workflow-memory-studio.md). Compiler yêu cầu opt-in tường minh `allowAutoApproval` / `allowHumanReview` khi project có gate tương ứng; Fast vẫn dùng được sau khi project cho phép. Snapshot và journal của run cũ được đọc theo quy tắc đã lưu; validate/publish và run mới dùng quy tắc mới.
+- Cleanup kiểm tra branch worktree so với ref đã lưu, ghi baseline và đối chiếu lại trước khi dọn, gồm sau recovery. Intent cũ không có baseline không tự dọn worktree còn tồn tại; giữ lại để kiểm tra. Intent mới còn ghim hash nội dung file ignored để phát hiện thay đổi trước khi tiếp tục dọn bắt buộc. Có regression cho thay đổi sau intent và thay đổi nhánh sau ref. Việc kiểm tra baseline không khóa chỉnh sửa từ công cụ ngoài trong khoảng giữa đối chiếu và lệnh Git.
+- Flow Studio: node thể hiện approval tự động hay người duyệt, binding kế thừa/ghim và reviewer target; có tìm bước. Memory lọc loại/phạm vi/tag trong tập kết quả tìm kiếm hiện tại. Đây là lát UI đầu tiên, P1–P4 chưa hoàn tất; chưa có browser acceptance cho thay đổi mới.
+- Linux: bộ kiểm tra 190 test, 179 pass, 11 skip, 0 fail; UI build thành công. Các skip là test Windows/Claude scope. Chưa chạy inference thật hoặc kiểm thử Windows trong đợt này.
+
 ## Đã hoàn thành trong đợt hiện tại
 
 - Codex app-server transport và dispatch thật cho plan, write, check, review; orchestrator nối flow mặc định tới commit local trong detached worktree. Cấu hình/model/reasoning/profile/skill và memory được ghim theo run; preview ràng buộc snapshot và source HEAD.

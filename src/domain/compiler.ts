@@ -7,7 +7,7 @@ export type Compilation =
   | { ok: false; diagnostics: Diagnostic[] };
 
 /** Validate a persisted graph before it can be published or dispatched. */
-export function compileFlow(input: unknown, policyInput: unknown): Compilation {
+export function compileFlow(input: unknown, policyInput: unknown, options: { legacyExceptions?: boolean } = {}): Compilation {
   const parsed = flowSchema.safeParse(input);
   const parsedPolicy = projectPolicySchema.safeParse(policyInput);
   if (!parsed.success || !parsedPolicy.success) {
@@ -25,7 +25,7 @@ export function compileFlow(input: unknown, policyInput: unknown): Compilation {
   };
   // A flow reviewed by the user outside the flow has no review gate; the project policy can forbid that exception.
   const humanReview = flow.definition.review === 'human';
-  if (humanReview && policy.allowHumanReview === false) issue('human_review_denied', 'Project policy requires independent review inside the flow.');
+  if (humanReview && (policy.allowHumanReview === false || (!options.legacyExceptions && policy.requireIndependentReviewForCode && policy.allowHumanReview !== true))) issue('human_review_denied', 'Project policy requires independent review; explicitly allow human review to use this flow.');
   const requireReview = policy.requireIndependentReviewForCode && !humanReview;
   const byId = new Map(nodes.map(n => [n.id, n]));
   if (byId.size !== nodes.length) issue('duplicate_node', 'Node IDs must be unique.');
@@ -75,7 +75,7 @@ export function compileFlow(input: unknown, policyInput: unknown): Compilation {
     }
     if (node.type === 'git_commit' && !policy.allowGitCommit) issue('permission_denied', 'Git commit exceeds project policy.', node.id);
     if (node.type === 'git_commit' && humanReview) issue('human_review_commit', 'A flow reviewed by the user outside the flow cannot commit; the user applies its changes.', node.id);
-    if (node.type === 'approval' && node.mode === 'auto' && policy.allowAutoApproval === false) issue('auto_approval_denied', 'Project policy does not allow automatic plan approval.', node.id);
+    if (node.type === 'approval' && node.mode === 'auto' && (policy.allowAutoApproval === false || (!options.legacyExceptions && policy.requireApprovalBeforeWrite && policy.allowAutoApproval !== true))) issue('auto_approval_denied', 'Project policy requires user approval; explicitly allow automatic approval to use this flow.', node.id);
     if (node.type === 'review_group') {
       const target = byId.get(node.targetNodeId);
       if (!target || !['agent_task', 'integration'].includes(target.type)) issue('invalid_review_target', 'Review target must be an agent task or integration node.', node.id);

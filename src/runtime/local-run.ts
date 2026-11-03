@@ -21,7 +21,7 @@ import { captureBaseline } from '../workspace/baseline.js';
 import { createDetachedWorktree } from '../workspace/worktree.js';
 import { buildReviewTree, reviewDiff } from '../workspace/review-tree.js';
 import { applyToCheckout, runChanges } from '../workspace/checkout-apply.js';
-import { preserveRefs, refExists, removeWorktrees } from '../workspace/run-cleanup.js';
+import { ignoredFingerprint, ignoredPaths, preserveRefs, refExists, removeWorktrees } from '../workspace/run-cleanup.js';
 import { admitIsolatedWorkspaceWrite } from '../workspace/write-admission.js';
 import { readProject, standaloneDiagnostics } from './project.js';
 import { verifyRuntimeCapabilities } from './capabilities.js';
@@ -74,7 +74,7 @@ export class LocalRun {
   get runId() { return this.durable.journal.runId; }
   get busy() { return !!this.operation; }
   private get snapshot() { const snapshot = this.durable.service.snapshot; if (!snapshot) throw new Error('Real runtime requires a materialized snapshot'); return snapshot; }
-  static async create(input: { projectRoot: string; stateRoot: string; task: string; snapshot: MaterializedRun; coordinator: WorkspaceCoordinator; workerFactory?: WorkerFactory; capabilityCheck?: typeof verifyRuntimeCapabilities; runners?: RunnerRegistry; memory?: { root: string; text: string }; expectedSourceHead?: string;
+  static async create(input: { projectRoot: string; stateRoot: string; task: string; snapshot: MaterializedRun; coordinator: WorkspaceCoordinator; workerFactory?: WorkerFactory; capabilityCheck?: typeof verifyRuntimeCapabilities; runners?: RunnerRegistry; memory?: NonNullable<RuntimeContext['memory']>; expectedSourceHead?: string;
     /** Baseline hash of the checkout, confirmed by the user, whose uncommitted changes are copied into the run worktree. */
     importDirty?: string }) {
     if (!input.task.trim()) throw new Error('Task is required');
@@ -628,10 +628,14 @@ export class LocalRun {
       // A commit leaves out the imported changes, which are still the user's own uncommitted work in the checkout.
       const imported = new Set(commit ? this.context.imported?.paths ?? [] : []);
       for (const file of (await runChanges(this.context.workspace, base)).paths) if (!imported.has(file)) unsaved.add(file);
+      for (const file of await ignoredPaths(this.context.workspace)) unsaved.add(file);
     }
     for (const branch of report.branchWorkspaces) {
-      if (!existsSync(branch.workspace) || await refExists(this.context.projectRoot, `refs/neomind/${this.runId}/${branch.nodeId}`)) continue;
-      for (const file of (await runChanges(branch.workspace, branch.baseCommit)).paths) unsaved.add(`${branch.nodeId}: ${file}`);
+      if (!existsSync(branch.workspace)) continue;
+      const ref = `refs/neomind/${this.runId}/${branch.nodeId}`;
+      const base = await refExists(this.context.projectRoot, ref) ? ref : branch.baseCommit;
+      for (const file of (await runChanges(branch.workspace, base)).paths) unsaved.add(`${branch.nodeId}: ${file}`);
+      for (const file of await ignoredPaths(branch.workspace)) unsaved.add(`${branch.nodeId}: ${file}`);
     }
     return [...unsaved];
   }
@@ -652,13 +656,26 @@ export class LocalRun {
     if (!report.workspaceCleanup) {
       const workspaces = [this.context.workspace, ...report.branchWorkspaces.map(item => item.workspace)];
       if (workspaces.some(workspace => writer(workspace)?.quarantined)) throw new Error('Worktree của run đang bị cách ly vì worker chưa xác nhận dừng; không dọn');
+      const baselines: Record<string, string> = {};
+      for (const workspace of workspaces) if (existsSync(workspace)) baselines[workspace] = (await captureBaseline(workspace)).baselineHash;
       const unsaved = await this.unsavedChanges(report);
       if (unsaved.length && !force) throw new Error(`Run còn thay đổi chưa áp dụng hoặc chưa commit: ${unsaved.slice(0, 10).join(', ')}${unsaved.length > 10 ? ` và ${unsaved.length - 10} file khác` : ''}. Dọn sẽ bỏ các thay đổi này.`);
       const refs = report.commits.filter(item => item.confirmed && item.commit).map(item => ({ ref: `refs/neomind/${this.runId}/delivery/${item.nodeId}`, commit: item.commit! }));
-      await this.durable.service.recordWorkspaceCleanup('intent', { workspaces, refs, discarded: unsaved });
+      const ignoredBaselines: Record<string, string> = {};
+      for (const workspace of workspaces) if (existsSync(workspace)) ignoredBaselines[workspace] = await ignoredFingerprint(workspace);
+      for (const workspace of workspaces) if (existsSync(workspace) && (!baselines[workspace] || (await captureBaseline(workspace)).baselineHash !== baselines[workspace])) throw new Error(`Worktree đã đổi trong lúc kiểm tra dọn dẹp: ${workspace}`);
+      await this.durable.service.recordWorkspaceCleanup('intent', { workspaces, refs, discarded: unsaved, baselines, ignoredBaselines });
       report = await this.durable.service.report();
     }
     const plan = report.workspaceCleanup!, leases = plan.workspaces.map(writer).filter(item => item?.runId === this.runId && !item.quarantined);
+    for (const workspace of plan.workspaces) {
+      if (!existsSync(workspace)) continue;
+      if (!plan.baselines?.[workspace] || (await captureBaseline(workspace)).baselineHash !== plan.baselines[workspace]) throw new Error(`Worktree đã đổi hoặc thiếu baseline dọn dẹp: ${workspace}. Giữ lại để kiểm tra.`);
+      const ignored = await ignoredPaths(workspace);
+      if (plan.ignoredBaselines?.[workspace] ? (await ignoredFingerprint(workspace)) !== plan.ignoredBaselines[workspace] : ignored.length > 0) throw new Error(`File bị ignore đã đổi hoặc thiếu baseline dọn dẹp: ${workspace}. Giữ lại để kiểm tra.`);
+    }
+    const currentUnsaved = await this.unsavedChanges(report);
+    if (currentUnsaved.some(file => !plan.discarded.includes(file))) throw new Error('Worktree có thay đổi mới sau khi xác nhận dọn; giữ lại để kiểm tra.');
     await preserveRefs(this.context.projectRoot, plan.refs);
     await removeWorktrees(this.context.projectRoot, plan.workspaces, path.dirname(this.context.workspace));
     for (const lease of leases) this.coordinator.release(lease!, true);

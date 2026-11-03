@@ -5,6 +5,7 @@ import { Background, Controls, Handle, MarkerType, Position, ReactFlow, applyNod
   type Connection, type Edge, type Node, type NodeChange, type NodeProps, type NodeTypes, type ReactFlowInstance } from '@xyflow/react';
 import type { Binding, Flow, FlowNode } from '../../src/domain/schema';
 import { RunPanel } from './RunPanel';
+import { FlowVersions } from './FlowVersions';
 import { ProfilePanel } from './ProfilePanel';
 import { MemoryPanel } from './MemoryPanel';
 import { modelLabel, reasoningLabel, runnerLabel, useRunners, type RunnerModels } from './runners';
@@ -12,7 +13,7 @@ import { modelLabel, reasoningLabel, runnerLabel, useRunners, type RunnerModels 
 type FlowMeta = { flowId: string; name: string; archived: boolean };
 type Bootstrap = { projectName: string; projectRoot: string; flows: FlowMeta[]; templates: string[]; runtimeAvailable: boolean };
 type Diagnostic = { code: string; message: string; nodeId?: string };
-type GraphNode = Node<{ label: string; kind: FlowNode['type']; detail: string; agent?: string }, 'studio'>;
+type GraphNode = Node<{ label: string; kind: FlowNode['type']; detail: string; agent?: string; problems?: string[] }, 'studio'>;
 type Kind = FlowNode['type'];
 
 const kindInfo: Record<Kind, { label: string; icon: string; tone: string }> = {
@@ -24,14 +25,18 @@ const kindInfo: Record<Kind, { label: string; icon: string; tone: string }> = {
   git_commit: { label: 'Commit local', icon: '⌘', tone: 'mint' },
 };
 const palette: Kind[] = ['agent_task', 'approval', 'fork', 'join', 'condition', 'integration', 'review_group', 'repair_scope', 'git_commit', 'finish'];
+const paletteGroups: { label: string; kinds: Kind[] }[] = [
+  { label: 'Agent', kinds: ['agent_task', 'integration'] }, { label: 'Duyệt & review', kinds: ['approval', 'review_group', 'repair_scope'] },
+  { label: 'Điều khiển', kinds: ['fork', 'join', 'condition', 'finish'] }, { label: 'Git', kinds: ['git_commit'] },
+];
 const outcomes = ['completed', 'pass', 'needs_changes', 'blocked', 'true', 'false'] as const;
 
 function StudioNode({ data, selected }: NodeProps<GraphNode>) {
   const info = kindInfo[data.kind];
-  return <div className={`graph-card tone-${info.tone} ${selected ? 'graph-card-selected' : ''}`}>
+  return <div className={`graph-card tone-${info.tone} ${selected ? 'graph-card-selected' : ''} ${data.problems?.length ? 'graph-card-error' : ''}`}>
     {data.kind !== 'start' && <Handle type="target" position={Position.Left} />}
     <div className="graph-head"><span className="graph-icon">{info.icon}</span><span className="graph-kind">{info.label}</span></div>
-    <strong>{data.label}</strong><div className="graph-detail">{data.detail}</div>{data.agent && <span className="graph-runner">{data.agent}</span>}
+    <strong>{data.label}</strong><div className="graph-detail">{data.detail}</div>{data.agent && <span className="graph-runner">{data.agent}</span>}{!!data.problems?.length && <div className="graph-error">{data.problems.length} lỗi cấu hình</div>}
     {data.kind !== 'finish' && <Handle type="source" position={Position.Right} />}
   </div>;
 }
@@ -40,8 +45,8 @@ const nodeTypes: NodeTypes = { studio: StudioNode };
 function detailFor(node: FlowNode): string {
   switch (node.type) {
     case 'agent_task': return node.permissions.write ? 'Được sửa file' : 'Chỉ đọc';
-    case 'approval': return 'Chờ người dùng duyệt';
-    case 'review_group': return `${node.reviewers.length} reviewer · ${node.reviewers.filter(r => r.required).length} bắt buộc`;
+    case 'approval': return node.mode === 'auto' ? 'NeoMind tự duyệt' : 'Chờ người dùng duyệt';
+    case 'review_group': return `${node.reviewers.length} reviewer · ${node.reviewers.filter(r => r.required).length} bắt buộc · ${node.targetNodeId}`;
     case 'repair_scope': return `Tối đa ${node.maxRounds} vòng`;
     case 'fork': return 'Thực hiện song song';
     case 'join': return `${node.requiredBranches.length} nhánh bắt buộc`;
@@ -52,12 +57,14 @@ function detailFor(node: FlowNode): string {
     case 'finish': return 'Bàn giao kết quả';
   }
 }
-/** Pinned runner/model of a step's binding, shown on its canvas card. */
+/** Show pinned values and inherited settings without claiming to resolve project defaults. */
 function agentFor(node: FlowNode, flow: Flow): { agent?: string } {
   const bindingId = node.type === 'agent_task' ? node.bindingId : node.type === 'integration' ? node.bindingId : undefined;
   const binding = bindingId ? flow.definition.bindings[bindingId] : undefined;
-  if (!binding || binding.runner.mode !== 'pinned') return {};
-  return { agent: [runnerLabel(binding.runner.value), ...(binding.model.mode === 'pinned' ? [modelLabel(binding.model.value)] : [])].join(' · ') };
+  if (!binding) return {};
+  return { agent: [binding.runner.mode === 'pinned' ? runnerLabel(binding.runner.value) : 'Runner kế thừa',
+    binding.model.mode === 'pinned' ? modelLabel(binding.model.value) : 'Model kế thừa',
+    binding.reasoning.mode === 'pinned' ? reasoningLabel(binding.reasoning.value) : 'Suy luận kế thừa'].join(' · ') };
 }
 function slug(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 70);
@@ -137,6 +144,8 @@ export default function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [flow, setFlow] = useState<Flow | null>(null), revision = useRef<string | undefined>(undefined);
   const [selected, setSelected] = useState<string | null>(null);
+  const copiedNode = useRef<FlowNode | null>(null);
+  const [paletteQuery, setPaletteQuery] = useState('');
   const [selectedEdge, setSelectedEdge] = useState<number | null>(null);
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphInstance, setGraphInstance] = useState<ReactFlowInstance<GraphNode, Edge> | null>(null);
@@ -154,8 +163,8 @@ export default function App() {
     if (!flow) { setGraphNodes([]); return; }
     setGraphNodes(flow.definition.nodes.map((node, index) => ({ id: node.id, type: 'studio',
       position: flow.layout[node.id] ?? { x: 80 + (index % 4) * 255, y: 110 + Math.floor(index / 4) * 165 },
-      data: { label: node.label, kind: node.type, detail: detailFor(node), ...agentFor(node, flow) } })));
-  }, [flow]);
+      data: { label: node.label, kind: node.type, detail: detailFor(node), ...agentFor(node, flow), problems: diagnostics.filter(item => item.nodeId === node.id).map(item => item.message) } })));
+  }, [flow, diagnostics]);
   const edges = useMemo<Edge[]>(() => (flow?.definition.edges ?? []).map((edge, index) => ({
     id: `edge-${index}`, source: edge.from, target: edge.to, label: edge.outcome === 'completed' ? '' : edge.outcome,
     type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed }, style: { stroke: '#7d7a72', strokeWidth: 1.6 },
@@ -240,7 +249,10 @@ export default function App() {
   function addNode(kind: Kind, position?: { x: number; y: number }) { if (!flow) return; let index = 1; while (flow.definition.nodes.some(node => node.id === `${kind}-${index}`)) index++;
     const node = makeNode(kind, `${kind}-${index}`, flow); mutate(next => { next.definition.nodes.push(node); next.layout[node.id] = position ?? { x: 120 + (next.definition.nodes.length % 4) * 180, y: 350 }; }); setSelected(node.id); setSelectedEdge(null); }
   function removeNode() { if (!flow || !active) return; const count = flow.definition.edges.filter(e => e.from === active.id || e.to === active.id).length;
-    if (!window.confirm(`Xóa bước “${active.label}” và ${count} kết nối?`)) return;
+    const references = flow.definition.nodes.filter(node => (node.type === 'review_group' && node.targetNodeId === active.id)
+      || (node.type === 'repair_scope' && (node.targetReviewId === active.id || node.ownerNodeIds.includes(active.id)))
+      || (node.type === 'join' && node.requiredBranches.includes(active.id))).map(node => node.label);
+    if (!window.confirm(`Xóa bước “${active.label}” và ${count} kết nối?${references.length ? `\nCác bước còn tham chiếu cần chỉnh lại: ${references.join(', ')}.` : ''}`)) return;
     mutate(next => { next.definition.nodes = next.definition.nodes.filter(n => n.id !== active.id); next.definition.edges = next.definition.edges.filter(e => e.from !== active.id && e.to !== active.id); delete next.layout[active.id]; }); setSelected(null); }
   function undo() { if (!flow || !past.length) return; const previous = past[past.length - 1]!; setPast(past.slice(0, -1)); setFuture([structuredClone(flow), ...future]); setFlow(previous); setDirty(true); setDiagnostics([]); }
   function redo() { if (!flow || !future.length) return; setPast([...past, structuredClone(flow)]); setFlow(future[0]!); setFuture(future.slice(1)); setDirty(true); setDiagnostics([]); }
@@ -251,6 +263,28 @@ export default function App() {
     mutate(next => { next.definition.edges.push({ from: connection.source!, to: connection.target!, outcome }); }); }
   function changeBinding(bindingId: string, fn: (target: Binding) => void) { mutate(next => { const target = next.definition.bindings[bindingId]; if (target) fn(target); }); }
   const binding = active?.type === 'agent_task' ? flow?.definition.bindings[active.bindingId] : undefined;
+  useEffect(() => {
+    if (view !== 'flows' || !flow) return;
+    function keyboard(event: KeyboardEvent) {
+      const target = event.composedPath()[0] as HTMLElement | undefined;
+      if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
+      if (window.getSelection()?.toString()) return;
+      const mod = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();
+      if (mod && key === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo(); }
+      else if (mod && key === 'y') { event.preventDefault(); redo(); }
+      else if (mod && key === 'c' && active && active.type !== 'start') { event.preventDefault(); copiedNode.current = structuredClone(active); }
+      else if (mod && key === 'v' && copiedNode.current) {
+        event.preventDefault(); const source = copiedNode.current;
+        let index = 1; while (flow!.definition.nodes.some(node => node.id === `${source.type}-${index}`)) index++;
+        const copy = { ...structuredClone(source), id: `${source.type}-${index}`, label: `${source.label} copy` } as FlowNode;
+        const position = flow!.layout[source.id] ?? { x: 120, y: 350 };
+        mutate(next => { next.definition.nodes.push(copy); next.layout[copy.id] = { x: position.x + 36, y: position.y + 36 }; });
+        setSelected(copy.id); setSelectedEdge(null);
+      } else if ((key === 'delete' || key === 'backspace') && active && active.type !== 'start') { event.preventDefault(); removeNode(); }
+    }
+    window.addEventListener('keydown', keyboard);
+    return () => window.removeEventListener('keydown', keyboard);
+  }, [view, flow, active, past, future]);
 
   return <div className="app-shell"><TextDialogHost />
     <header className="topbar"><div className="brand"><span className="brand-mark">✳</span><span>neo<span className="brand-bold">mind</span></span><span className="brand-divider" /><span className="product-label">FLOW STUDIO</span></div>
@@ -274,15 +308,19 @@ export default function App() {
             <button className="secondary-btn" disabled={busy} onClick={() => void action(async () => { await saveDraft(); setMessage('Đã lưu bản nháp.'); })}>Lưu nháp</button>
             <button className="secondary-btn" disabled={busy} onClick={() => void action(async () => { const valid = await validate(flow); setMessage(valid ? 'Flow hợp lệ.' : 'Flow còn điểm cần chỉnh.'); })}>Kiểm tra</button>
             <button className="primary-btn" disabled={busy} onClick={() => void action(async () => { const expectedRevision = await saveDraft(); if (!await validate(flow)) return; const saved = await api<{ version: { version: number } }>(`/api/flows/${encodeURIComponent(flow.flowId)}/publish`, 'POST', { expectedRevision }); setMessage(`Đã lưu phiên bản ${saved.version.version}.`); })}>Lưu phiên bản <span>↗</span></button></div></div>
+        <FlowVersions flow={flow} />
         <div className="workspace"><div className="workspace-top"><div className="tab-active">Flow canvas</div><div className="tab-muted">{flow.definition.nodes.length} bước <span>·</span> {flow.definition.edges.length} kết nối</div><div className="workspace-top-right"><button className="ghost-btn" disabled={!boot?.runtimeAvailable} onClick={() => setView('runs')} title="Chạy phiên bản đã lưu">▶ &nbsp; Chạy flow</button></div></div>
-          <div className="workspace-body"><div className="palette" aria-label="Thêm bước">{palette.map(kind => <button key={kind} title={`Thêm ${kindInfo[kind].label} (bấm hoặc kéo vào canvas)`} aria-label={`Thêm ${kindInfo[kind].label}`} draggable onDragStart={event => { event.dataTransfer.setData('application/neomind-node', kind); event.dataTransfer.effectAllowed = 'copy'; }} onClick={() => addNode(kind)}><span className={`palette-icon tone-${kindInfo[kind].tone}`}>{kindInfo[kind].icon}</span><span className="palette-label">{kindInfo[kind].label}</span></button>)}</div>
+          <div className="workspace-body"><div className="palette" aria-label="Thêm bước"><input className="palette-search" aria-label="Tìm bước" placeholder="Tìm" value={paletteQuery} onChange={e => setPaletteQuery(e.target.value)} />{paletteGroups.map(group => {
+            const kinds = group.kinds.filter(kind => `${kindInfo[kind].label} ${kind} ${group.label}`.toLocaleLowerCase().includes(paletteQuery.trim().toLocaleLowerCase()));
+            return kinds.length ? <div key={group.label} className="palette-group"><span className="palette-group-title">{group.label}</span>{kinds.map(kind => <button key={kind} title={`Thêm ${kindInfo[kind].label} (bấm hoặc kéo vào canvas)`} aria-label={`Thêm ${kindInfo[kind].label}`} draggable onDragStart={event => { event.dataTransfer.setData('application/neomind-node', kind); event.dataTransfer.effectAllowed = 'copy'; }} onClick={() => addNode(kind)}><span className={`palette-icon tone-${kindInfo[kind].tone}`}>{kindInfo[kind].icon}</span><span className="palette-label">{kindInfo[kind].label}</span></button>)}</div> : null;
+          })}</div>
             <div className="canvas" onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }} onDrop={event => { event.preventDefault(); const kind = event.dataTransfer.getData('application/neomind-node') as Kind; if (palette.includes(kind) && graphInstance) addNode(kind, graphInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY })); }}><ReactFlow<GraphNode, Edge> nodes={graphNodes} edges={edges} nodeTypes={nodeTypes} onInit={setGraphInstance} onNodesChange={onNodesChange} onConnect={connect} onNodeClick={(_, node) => { setSelected(node.id); setSelectedEdge(null); }}
               onEdgeClick={(_, edge) => { setSelectedEdge(Number(edge.id.replace('edge-', ''))); setSelected(null); }} onPaneClick={() => { setSelected(null); setSelectedEdge(null); }}
-              onNodeDragStop={(_, node) => mutate(next => { next.layout[node.id] = node.position; })} colorMode="dark" deleteKeyCode={null} fitView fitViewOptions={{ padding: 0.08, maxZoom: 1 }} minZoom={0.25} maxZoom={1.8}>
+              onNodeDragStop={(_, node, dragged) => mutate(next => { for (const item of dragged.length ? dragged : [node]) next.layout[item.id] = item.position; })} colorMode="dark" deleteKeyCode={null} fitView fitViewOptions={{ padding: 0.08, maxZoom: 1 }} minZoom={0.25} maxZoom={1.8}>
               <Background color="#3b3a36" gap={23} size={1.1} /><Controls showInteractive={false} /></ReactFlow>
-              <div className="canvas-caption">Kéo thẻ để sắp xếp · Kéo từ chấm bên phải sang thẻ khác để nối</div></div>
+              <div className="canvas-caption">Kéo thẻ để sắp xếp · Kéo chấm để nối · Ctrl/Cmd + C/V sao chép bước · Ctrl/Cmd + Z hoàn tác</div></div>
             <aside className="inspector"><div className="inspector-head"><div><span className="panel-heading">THUỘC TÍNH</span><h3>{active ? 'Chi tiết bước' : selectedEdge !== null ? 'Kết nối' : 'Tổng quan flow'}</h3></div>{active && <span className={`inspector-icon tone-${kindInfo[active.type].tone}`}>{kindInfo[active.type].icon}</span>}</div>
-              {active ? <div className="inspector-scroll"><Field label="Tên bước"><input value={active.label} onChange={e => updateNode(node => { node.label = e.target.value; })} /></Field><div className="type-pill">{kindInfo[active.type].icon} &nbsp; {kindInfo[active.type].label}</div>
+              {active ? <div className="inspector-scroll">{diagnostics.filter(item => item.nodeId === active.id).map((item, index) => <div className="callout tone-red" role="alert" key={`${item.code}-${index}`}>{item.message}</div>)}<Field label="Tên bước"><input value={active.label} onChange={e => updateNode(node => { node.label = e.target.value; })} /></Field><div className="type-pill">{kindInfo[active.type].icon} &nbsp; {kindInfo[active.type].label}</div>
                 {active.type === 'agent_task' && <>
                   <Field label="Mục tiêu"><textarea rows={3} value={active.goal} onChange={e => updateNode(node => { if (node.type === 'agent_task') node.goal = e.target.value; })} /></Field>
                   <div className="section-rule" /><div className="inspector-section">Agent</div>
@@ -302,7 +340,7 @@ export default function App() {
                     {binding && <JsonSetting label="Model thay thế (JSON)" value={binding.fallback} apply={value => { const fallback = fallbackValues(value); mutate(next => { const target = next.definition.bindings[active.bindingId]; if (target) target.fallback = fallback; }); }} />}
                   </details>
                 </>}
-                {active.type === 'approval' && <><Field label="Ai duyệt kế hoạch" hint={active.mode === 'auto' ? 'Agent sửa file ngay sau khi lập kế hoạch. Project có thể cấm (allowAutoApproval: false).' : undefined}><select value={active.mode ?? 'user'} onChange={e => updateNode(node => { if (node.type === 'approval') { if (e.target.value === 'auto') node.mode = 'auto'; else delete node.mode; } })}><option value="user">Bạn duyệt</option><option value="auto">NeoMind tự duyệt</option></select></Field>
+                {active.type === 'approval' && <><Field label="Ai duyệt kế hoạch" hint={active.mode === 'auto' ? 'Agent sửa file ngay sau khi lập kế hoạch. Project cần cho phép (allowAutoApproval: true) khi yêu cầu người dùng duyệt.' : undefined}><select value={active.mode ?? 'user'} onChange={e => updateNode(node => { if (node.type === 'approval') { if (e.target.value === 'auto') node.mode = 'auto'; else delete node.mode; } })}><option value="user">Bạn duyệt</option><option value="auto">NeoMind tự duyệt</option></select></Field>
                   <Field label="Nội dung cần duyệt"><textarea rows={3} value={active.purpose} onChange={e => updateNode(node => { if (node.type === 'approval') node.purpose = e.target.value; })} /></Field></>}
                 {active.type === 'review_group' && <><div className="section-rule" /><div className="inspector-section">Review</div>
                   <Field label="Kiểm tra output của"><select value={active.targetNodeId} onChange={e => updateNode(node => { if (node.type === 'review_group') node.targetNodeId = e.target.value; })}>{flow.definition.nodes.filter(n => n.type === 'agent_task' || n.type === 'integration').map(n => <option key={n.id} value={n.id}>{n.label} · {n.id}</option>)}</select></Field>

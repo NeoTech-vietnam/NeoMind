@@ -52,7 +52,7 @@ Mặc định standalone dùng `gpt-6-luna` reasoning `low`; có thể chọn `g
 | **Dev song song** | Plan chia 2 gói → bạn duyệt → 2 agent code song song → ghép (agent tích hợp xử lý xung đột) → review → commit | Commit |
 | **Research** | Agent chỉ đọc, viết báo cáo có nguồn → agent review nguồn | Báo cáo, không sửa file |
 
-Fast dùng hai ngoại lệ do flow khai báo: bước duyệt tự động (`mode: "auto"`) và review do người (`review: "human"`). Project có thể cấm bằng `"allowAutoApproval": false` hoặc `"allowHumanReview": false` trong policy của `neomind/project.json`; khi đó Fast không qua kiểm tra flow. Preview ghi rõ các ngoại lệ trước khi chạy.
+Fast dùng hai ngoại lệ do flow khai báo: bước duyệt tự động (`mode: "auto"`) và review do người (`review: "human"`). Khi policy yêu cầu duyệt trước sửa hoặc review độc lập, project phải chủ động đặt `"allowAutoApproval": true` và `"allowHumanReview": true` trong `policy` của `neomind/project.json` để cho phép các ngoại lệ tương ứng. Trường bị bỏ trống không nới gate bắt buộc; Fast sẽ báo lỗi validation cho tới khi policy được cập nhật. Preview ghi rõ các ngoại lệ trước khi chạy.
 
 ## Sửa flow bằng canvas (Nimbalyst, Obsidian)
 

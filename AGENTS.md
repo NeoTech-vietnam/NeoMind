@@ -12,7 +12,7 @@ Công cụ cấu hình và chạy *agent flow* trên một Git repo: lập kế 
 
 ## Đọc theo thứ tự
 
-1. [Bàn giao mới nhất](docs/adaptive-agent-flow/session-handoff-2026-10-30.md): trạng thái, việc đang dở, bài học.
+1. [Bàn giao mới nhất](docs/adaptive-agent-flow/session-handoff-2026-11-03.md): trạng thái, việc đang dở, bài học.
 2. [Trạng thái triển khai](docs/adaptive-agent-flow/implementation-status.md) và [acceptance matrix](docs/adaptive-agent-flow/acceptance-matrix.md).
 3. [README](README.md): cách dùng; [START-HERE-WINDOWS](START-HERE-WINDOWS.md): chi tiết Windows.
 4. Thiết kế khi cần: [design-v1](docs/adaptive-agent-flow/design-v1.md), [quyết định v1](docs/adaptive-agent-flow/v1-design-decisions.md), [extension Nimbalyst](docs/adaptive-agent-flow/nimbalyst-extension.md), [Claude Code runner](docs/adaptive-agent-flow/claude-code-runner.md), [transcript session](docs/adaptive-agent-flow/session-transcripts.md).

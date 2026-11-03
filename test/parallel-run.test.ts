@@ -17,7 +17,7 @@ import type { WorkerFactory } from '../src/runtime/worker.js';
 type Mode = 'separate' | 'repair' | 'conflict' | 'stubborn' | 'no-packets' | 'branch-fails';
 
 /** Deterministic runner: branch writers edit their worktree, the integration agent resolves conflicts, the reviewer cites sources. */
-async function fixture(mode: Mode) {
+async function fixture(mode: Mode, keepRunWorktrees = false) {
   const root = await mkdtemp(path.join(tmpdir(), 'neomind-parallel-')), project = path.join(root, 'repo'), state = path.join(root, 'state');
   await mkdir(project); await mkdir(path.join(state, 'runs'), { recursive: true }); await mkdir(path.join(state, 'workspaces'));
   const git = (...args: string[]) => execFileSync('git', ['-C', project, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -27,7 +27,7 @@ async function fixture(mode: Mode) {
   await writeFile(path.join(project, 'shared.txt'), 'header\nvalue = base\nfooter\n');
   git('add', '.'); git('commit', '-qm', 'baseline');
   const role = { runner: 'codex', provider: 'openai', model: 'gpt-6-luna', reasoning: 'low' };
-  const config = { ...structuredClone(defaultProject), roleDefaults: { implementer: role, verifier: role } };
+  const config = { ...structuredClone(defaultProject), policy: { ...defaultProject.policy, keepRunWorktrees }, roleDefaults: { implementer: role, verifier: role } };
   await mkdir(path.join(project, '.neomind')); await writeFile(path.join(project, '.neomind/project.json'), JSON.stringify(config));
   const snapshot = await materializeRun(templates.parallel, config, { 'implementer@1': builtinProfile('implementer'), 'verifier@1': builtinProfile('verifier') }, project);
   const coordinator = new WorkspaceCoordinator(path.join(state, 'coordination.sqlite'));
@@ -176,4 +176,17 @@ test('preview refuses parallel shapes the executor cannot run yet', () => {
   assert.match(reasons, /cần profile, binding và session group/);
   assert.match(reasons, /repair cần do bước tích hợp đảm nhiệm/);
   assert.deepEqual(standaloneDiagnostics(templates.parallel), []);
+});
+
+
+test('cleanup preserves a branch edit made after its internal ref was recorded', async () => {
+  const f = await fixture('separate', true);
+  try {
+    const report = await f.approve();
+    assert.equal(report.runtimeState.phase, 'completed', report.runtimeState.reason);
+    const branch = report.branchWorkspaces[0]!;
+    await writeFile(path.join(branch.workspace, 'later.txt'), 'keep this edit\n');
+    await assert.rejects(f.run.cleanWorkspaces(), /Run còn thay đổi chưa áp dụng hoặc chưa commit/);
+    assert.equal(await readFile(path.join(branch.workspace, 'later.txt'), 'utf8'), 'keep this edit\n');
+  } finally { await f.run.close(); f.coordinator.close(); }
 });

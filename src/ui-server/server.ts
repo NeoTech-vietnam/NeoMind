@@ -1,3 +1,4 @@
+import { readMemorySelection, writeMemorySelection } from '../runtime/project-memory-policy.js';
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { readFile, realpath, stat } from 'node:fs/promises';
@@ -63,6 +64,16 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
     if (url.pathname === '/api/runners' && method === 'GET') { return reply(200, { runners: runnerModels }); }
     if (url.pathname === '/api/runtime/models' && method === 'GET') { return reply(200, { models: await (await runs()).models() }); }
     if (url.pathname === '/api/memory' && method === 'GET') { return reply(200, (await runs()).readMemory(url.searchParams.get('q') ?? undefined)); }
+    if (url.pathname === '/api/memory/selection' && method === 'GET') return reply(200, await readMemorySelection(projectRoot));
+    if (url.pathname === '/api/memory/selection' && method === 'PUT') {
+      const input = z.strictObject({ selection: z.json(), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/) }).parse(payload);
+      return reply(200, await writeMemorySelection(projectRoot, input.selection, input.expectedRevision));
+    }
+    if (url.pathname === '/api/memory/lesson-queue' && method === 'GET') { return reply(200, await (await runs()).lessonQueue()); }
+    if (url.pathname === '/api/memory/preview' && method === 'POST') {
+      const input = z.strictObject({ task: z.string().min(1).max(10000) }).parse(payload);
+      return reply(200, await (await runs()).previewMemory(input.task));
+    }
     if (url.pathname === '/api/memory/configure' && method === 'POST') {
       const input = z.strictObject({ root: z.string().min(1).optional(), initializeDefault: z.boolean(), expectedPrevious: z.string().nullable() }).parse(payload);
       return reply(200, await (await runs()).configureMemory({ initializeDefault: input.initializeDefault, expectedPrevious: input.expectedPrevious, ...(input.root ? { root: input.root } : {}) }));
@@ -122,12 +133,16 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       const { force } = z.strictObject({ force: z.boolean().default(false) }).parse(payload);
       return reply(200, cleanMatch[1] ? await (await runs()).clean(cleanMatch[1], force) : { results: await (await runs()).cleanFinished(force) });
     }
-    const lessonMatch = /^\/api\/runs\/([a-z0-9-]+)\/lessons(?:\/(approve))?$/.exec(url.pathname);
+    const lessonMatch = /^\/api\/runs\/([a-z0-9-]+)\/lessons(?:\/(approve|reject))?$/.exec(url.pathname);
     if (lessonMatch) {
       if (!lessonMatch[2] && method === 'GET') { return reply(200, await (await runs()).lessons(lessonMatch[1]!)); }
       if (lessonMatch[2] === 'approve' && method === 'POST') {
         const input = z.strictObject({ proposalId: z.string().min(1), proposalHash: z.string().regex(/^[a-f0-9]{64}$/), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable(), memoryRoot: z.string().min(1) }).parse(payload);
         return reply(200, await (await runs()).approveLesson(lessonMatch[1]!, input));
+      }
+      if (lessonMatch[2] === 'reject' && method === 'POST') {
+        const input = z.strictObject({ proposalId: z.string().min(1), proposalHash: z.string().regex(/^[a-f0-9]{64}$/) }).parse(payload);
+        return reply(200, await (await runs()).rejectLesson(lessonMatch[1]!, input));
       }
       return reply(405, { error: 'Method not allowed' });
     }
@@ -154,9 +169,15 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       const draft = { ...structuredClone(templates[input.template]), flowId: input.id, name: input.name, version: 1 };
       return reply(201, { metadata, draft, revision: await library.saveDraft(input.id, draft) });
     }
-    const match = /^\/api\/flows\/([^/]+)\/(draft|validate|publish|archive|restore|rename|delete|clone|canvas-export|canvas-import)$/.exec(url.pathname);
+    const match = /^\/api\/flows\/([^/]+)\/(draft|validate|publish|archive|restore|rename|delete|clone|canvas-export|canvas-import|versions)$/.exec(url.pathname);
     if (match) {
       const id = decodeURIComponent(match[1]!), action = match[2]!;
+      if (action === 'versions' && method === 'GET') {
+        const selected = url.searchParams.get('version');
+        if (selected === null) return reply(200, { versions: await library.versions(id) });
+        const version = z.coerce.number().int().positive().parse(selected);
+        return reply(200, { version: await library.readVersion(id, version) });
+      }
       if (action === 'draft' && method === 'GET') { return reply(200, await library.readDraftWithRevision(id)); }
       if (action === 'draft' && method === 'PUT') {
         const input = z.strictObject({ draft: z.json(), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional() }).parse(payload);

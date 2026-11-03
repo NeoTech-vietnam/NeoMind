@@ -494,3 +494,25 @@ input, select, textarea { background-color: var(--field); color: var(--ink); }
 .text-dialog label { display: block; font-size: 13.5px; color: var(--ink-2); line-height: 1.5; }
 .text-dialog input { display: block; width: 100%; margin-top: 10px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--field); color: var(--ink); }
 .text-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
+.palette-search { width: 100%; min-width: 0; padding: 5px; font-size: 12px; }
+
+.run-graph-layout { display: flex; min-height: 320px; gap: 16px; }
+.run-graph-canvas { flex: 1; min-width: 0; height: 360px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.run-graph-node { white-space: pre-line; width: 180px; border-radius: 9px; padding: 9px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); }
+.run-graph-node.tone-green { border-color: var(--green); }
+.run-graph-node.tone-amber { border-color: var(--amber); }
+.run-graph-node.tone-red { border-color: var(--red); }
+.run-graph-node.tone-blue { border-color: var(--blue); }
+.run-graph-detail { width: 230px; min-width: 0; overflow: auto; max-height: 360px; }
+.run-graph-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 850px) { .run-graph-layout { flex-direction: column; } .run-graph-canvas { flex: none; width: 100%; } .run-graph-detail { width: 100%; } }
+.memory-snapshot { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; }
+.palette-group { display: flex; flex-direction: column; align-items: stretch; border-top: 1px solid var(--line-2); padding-top: 5px; }
+.palette-group-title { font-size: 10px; color: var(--ink-4); text-align: center; }
+.graph-card-error { border-color: var(--red); }
+.graph-error { color: var(--red); font-size: 11px; margin-top: 5px; }
+.run-graph-node.tone-violet { border-color: var(--accent); }
+.flow-versions { padding: 8px 12px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-2); }
+.flow-versions label { display: block; margin-top: 8px; }
+.flow-versions p { margin: 6px 0; font-size: 12px; }

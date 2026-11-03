@@ -114,7 +114,7 @@ export class RunService {
   recordCheckoutApply(stage: 'applied', payload: { patchHash: string }): Promise<void>;
   recordCheckoutApply(stage: 'intent' | 'applied', payload: unknown) { return this.serialize(() => this.append(stage === 'intent' ? 'checkout_apply_intent' : 'checkout_applied', payload)); }
   /** Journal removing a finished run's worktrees: the plan (refs to keep, files discarded) before touching them, the receipt after. */
-  recordWorkspaceCleanup(stage: 'intent', payload: { workspaces: string[]; refs: { ref: string; commit: string }[]; discarded: string[] }): Promise<void>;
+  recordWorkspaceCleanup(stage: 'intent', payload: { workspaces: string[]; refs: { ref: string; commit: string }[]; discarded: string[]; baselines?: Record<string, string>; ignoredBaselines?: Record<string, string> }): Promise<void>;
   recordWorkspaceCleanup(stage: 'cleaned'): Promise<void>;
   recordWorkspaceCleanup(stage: 'intent' | 'cleaned', payload: unknown = {}) { return this.serialize(() => this.append(stage === 'intent' ? 'workspace_cleanup_intent' : 'workspace_cleaned', payload)); }
   includeImportedInCommit(nodeId: string) { return this.serialize(() => this.append('commit_scope_selected', { nodeId, includeImported: true })); }
