@@ -178,13 +178,16 @@ export function requestStatus(root: string, id?: string) {
     return requestProjection(root, run); }
   return { requests: (controlledStatus(root) as ControlledSnapshot[]).map(run => requestProjection(root, run)) };
 }
-export async function requestControl(root: string, input: { request_id?: string; workflow_id?: string; action: 'pause' | 'resume' | 'cancel'; answer?: string; question_id?: string }) {
+export async function requestControl(root: string, input: { request_id?: string; workflow_id?: string; action: 'pause' | 'resume' | 'cancel'; answer?: string | null; question_id?: string | null }) {
   const id = input.workflow_id ?? input.request_id; if (!id) throw new Error('Select the saved request to control.');
   const run = requestRun(root, id);
-  if (input.answer !== undefined) {
+  // Strict client adapters can materialize every optional field. Empty defaults
+  // are control requests, not answers to a backend-issued product question.
+  const answer = input.answer?.trim();
+  if (answer) {
     if (input.action !== 'resume') throw new Error('An answer continues the pending request; use action resume.');
     if (!input.question_id) throw new Error('Answer the issued question using its question_id from request_status.');
-    return requestProjection(root, await answerControlledWorkflow(root, run.workflow_id, input.answer, input.question_id));
+    return requestProjection(root, await answerControlledWorkflow(root, run.workflow_id, answer, input.question_id));
   }
   return requestProjection(root, await controlControlledWorkflow(root, { workflow_id: run.workflow_id, action: input.action }));
 }
@@ -228,6 +231,8 @@ export function createWorkForceMcpServer(root: string): McpServer {
   server.registerTool('request_status', { description: 'Read saved request status and delivered artifacts. Does not run the request again.',
     inputSchema: { request_id: z.string().optional() } }, input => result(requestStatus(root, input.request_id)));
   server.registerTool('request_control', { description: 'Pause, resume or cancel the selected saved request.',
-    inputSchema: { request_id: z.string(), action: z.enum(['pause', 'resume', 'cancel']), answer: z.string().optional(), question_id: z.uuid().optional() } }, async input => result(await requestControl(root, input)));
+    inputSchema: { request_id: z.string(), action: z.enum(['pause', 'resume', 'cancel']),
+      answer: z.string().nullish().describe('A substantive user answer to a pending product question. Empty, whitespace or null defaults mean ordinary control.'),
+      question_id: z.union([z.uuid(), z.literal('')]).nullish().describe('The issued question ID for a substantive answer. Ignored for ordinary control.') } }, async input => result(await requestControl(root, input)));
   return server;
 }

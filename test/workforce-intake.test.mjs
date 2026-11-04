@@ -94,6 +94,75 @@ test('ordinary requirement and resolved context cross one intake, with a compact
   assert.equal(paused.dependency_wait, undefined); assert.match(paused.current_action, /Paused/);
 });
 
+test('Copilot empty optional answer fields keep saved request controls on the control path', async t => {
+  const root = project(t), requestId = randomUUID(), seen = [];
+  const parent = createRecord(root, { type: 'knowledge', title: 'Workflow: Saved LeetCode request',
+    data: { kind: 'manager-workflow', request_id: requestId, execution_mode: 'neomind-controlled' } });
+  const run = { schema_version: 1, workflow_id: parent.meta.id, epoch_id: randomUUID(), request_id: requestId,
+    process_contract: 'workforce/v1', transport: 'opencode', status: 'paused', phase: 'implementation', revision: 1,
+    title: parent.meta.title, requirement: 'Create a new LeetCode exercise with a Cornell note.',
+    owner_pid: process.pid, updated_at: new Date().toISOString(), attempts: [], checks: [], events: [], repairs: 0, active_invocations: [] };
+  atomicWrite(safePath(root, `.workforce/controlled/workflows/${hash(parent.meta.id)}.json`), JSON.stringify(run));
+  const host = await serveHost(root, async (operation, input) => {
+    seen.push({ operation, input });
+    assert.equal(operation, 'controlled-control', 'Empty client defaults must not become a business-question answer.');
+    assert.deepEqual(Object.keys(input).sort(), ['action', 'workflow_id']);
+    assert.equal(input.workflow_id, parent.meta.id);
+    return { ...run, status: input.action === 'resume' ? 'queued' : input.action === 'cancel' ? 'cancelled' : 'paused' };
+  });
+  t.after(() => host.close());
+  const client = await connection(t, root);
+  const inputs = [
+    // Exact optional defaults observed in the actual Copilot Local call.
+    { action: 'resume', answer: '', question_id: '00000000-0000-0000-0000-000000000000' },
+    { action: 'pause', answer: '', question_id: '00000000-0000-0000-0000-000000000000' },
+    { action: 'cancel', answer: ' \t ', question_id: '00000000-0000-0000-0000-000000000000' },
+    { action: 'resume', answer: '', question_id: '' },
+    { action: 'resume', answer: null, question_id: null },
+    { action: 'resume' },
+  ];
+  for (const input of inputs) {
+    const response = await client.callTool({ name: 'request_control', arguments: { request_id: requestId, ...input } });
+    assert.ok(!response.isError, JSON.stringify(response.content));
+    const value = JSON.parse(response.content[0].text);
+    assert.equal(value.workflow_id, parent.meta.id);
+    assert.equal(value.status, input.action === 'resume' ? 'queued' : input.action === 'cancel' ? 'cancelled' : 'paused');
+  }
+  assert.equal(seen.length, inputs.length);
+});
+
+test('substantive product answers retain their issued question identity at the MCP boundary', async t => {
+  const root = project(t), requestId = randomUUID(), questionId = randomUUID(), seen = [];
+  const parent = createRecord(root, { type: 'knowledge', title: 'Workflow: A product choice',
+    data: { kind: 'manager-workflow', request_id: requestId, execution_mode: 'neomind-controlled' } });
+  const run = { schema_version: 1, workflow_id: parent.meta.id, epoch_id: randomUUID(), request_id: requestId,
+    process_contract: 'workforce/v1', transport: 'opencode', status: 'needs_input', phase: 'planning', revision: 1,
+    title: parent.meta.title, requirement: 'Use the user-selected product label.', owner_pid: process.pid,
+    updated_at: new Date().toISOString(), attempts: [], checks: [], events: [], repairs: 0, active_invocations: [],
+    pending_question: { id: questionId, question: 'Which label?', missing: 'The product label.',
+      why_cannot_infer: 'Two labels are supported.', criterion: 'Use the selected label.' } };
+  atomicWrite(safePath(root, `.workforce/controlled/workflows/${hash(parent.meta.id)}.json`), JSON.stringify(run));
+  const host = await serveHost(root, async (operation, input) => {
+    seen.push({ operation, input });
+    assert.equal(operation, 'controlled-answer');
+    assert.deepEqual(input, { workflow_id: parent.meta.id, question_id: questionId, answer: 'Use Alpha.' });
+    return { ...run, status: 'queued', pending_question: undefined };
+  });
+  t.after(() => host.close());
+  const client = await connection(t, root);
+  const call = args => client.callTool({ name: 'request_control', arguments: { request_id: requestId, ...args } });
+  for (const input of [{ action: 'pause', answer: 'Use Alpha.', question_id: questionId },
+    { action: 'resume', answer: 'Use Alpha.', question_id: '' },
+    { action: 'resume', answer: 'Use Alpha.', question_id: null }]) {
+    assert.equal((await call(input)).isError, true);
+  }
+  assert.equal(seen.length, 0, 'Invalid business answers do not cross the bridge.');
+  const response = await call({ action: 'resume', answer: '  Use Alpha.  ', question_id: questionId });
+  assert.ok(!response.isError, JSON.stringify(response.content));
+  assert.equal(JSON.parse(response.content[0].text).status, 'queued');
+  assert.equal(seen.length, 1);
+});
+
 test('backend resolves actual attachment types and rejects outside paths before dispatch', t => {
   const root = project(t); mkdirSync(join(root, 'course')); writeFileSync(join(root, 'course/note.md'), 'Source context.');
   for (const path of ['course/note.md', join(root, 'course/note.md'), pathToFileURL(join(root, 'course/note.md')).href])
