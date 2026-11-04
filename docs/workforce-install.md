@@ -11,7 +11,7 @@ Use the native portable runtime asset for your platform and the matching VSIX. F
 For the commands below, use the extracted runtime directly or create a terminal-local helper. Windows PowerShell:
 
 ```powershell
-$wfRuntime = 'D:\tools\WorkForce\0.2.0-alpha.1\workforce'
+$wfRuntime = 'D:\tools\WorkForce\0.2.0-alpha.2\workforce'
 function workforce { & node (Join-Path $wfRuntime 'dist\cli.js') @args }
 workforce --version
 ```

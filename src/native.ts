@@ -1092,6 +1092,7 @@ async function startOwned(
             qualified_procedure: controlledToolNames(controlled.binding).includes('procedure_run'),
             evidence_documentation: controlled.binding.evidence_documentation === true,
             research: controlledToolNames(controlled.binding).includes('cornell_research_compile'),
+            ...(controlled.binding.artifact_revalidation ? { artifact_revalidation: true } : {}),
             ...(controlledToolNames(controlled.binding).includes('capability_invoke') ? { capabilities: true } : {}),
             ...(controlled.binding.planning_result === 'backend' ? { planning_result: 'backend' as const } : {}) } };
         if (controlled.model_tier === 'strong' && readConfig(root).execution_engine === 'opencode') {

@@ -155,6 +155,21 @@ test('identity encoding remains observable while non-SSE and failed HTTP bodies 
   assert.equal(relay.progress.length, 1); assert.equal(relay.progress[0].kind, 'text');
 });
 
+test('provider retry timing survives the relay unchanged without exposing response credentials', async t => {
+  const upstream = await provider(t, (_request, response) => {
+    response.writeHead(503, { 'content-type': 'application/json', 'retry-after': '2', 'retry-after-ms': '1',
+      authorization: 'Bearer private-response', 'set-cookie': 'private-response' });
+    response.end('{"error":{"message":"Provider temporarily unavailable"}}');
+  });
+  const relay = await stream(t, upstream), response = await post(relay);
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get('retry-after'), '2');
+  assert.equal(response.headers.get('retry-after-ms'), '1');
+  assert.equal(response.headers.get('authorization'), null); assert.equal(response.headers.get('set-cookie'), null);
+  assert.deepEqual(JSON.parse(await response.text()), { error: { message: 'Provider temporarily unavailable' } });
+  assert.equal(upstream.requests.length, 1); assert.deepEqual(relay.progress, []);
+});
+
 test('upstream redirect and credential headers cannot create a caller-selected destination or leak credentials', async t => {
   const other = await provider(t, (_request, response) => response.end('must not follow'));
   const upstream = await provider(t, (_request, response) => {

@@ -136,7 +136,9 @@ export function readHost(root: string): HostDescriptor {
     }
     throw new Error();
   } catch {
-    throw new Error('VS Code bridge is disabled or its descriptor is stale. Run NeoMind: Enable Model Bridge in the trusted workspace.');
+    throw new Error(existsSync(join(root, '.workforce'))
+      ? 'WorkForce is not connected to this VS Code workspace, or its saved connection has ended. Open WorkForce: Open Universe and choose Connect WorkForce in the trusted project window.'
+      : 'VS Code bridge is disabled or its descriptor is stale. Run NeoMind: Enable Model Bridge in the trusted workspace.');
   }
 }
 export async function hostRequest(host: HostDescriptor, operation: string, input: unknown, signal?: AbortSignal, options: BridgeTimeoutOptions = {}): Promise<any> {

@@ -154,7 +154,11 @@ async function deterministicEngine(t) {
           }
         } else if (binding.stage === 'implementation') {
           const selectedPlan = fixturePlans.get(name), output = selectedPlan.outputs[0], currentProduct = await call('project_read', { path: output });
-          if (name === 'readme-preservation') {
+          if (binding.artifact_revalidation) {
+            assert.ok(!listed.tools.some(tool => ['task_file_write', 'task_run', 'procedure_run', 'cornell_research_compile'].includes(tool.name)));
+            for (const path of selectedPlan.outputs) await call('project_read', { path });
+            await report({ artifacts: selectedPlan.outputs, summary: 'Assessed the externally changed current revision without modifying any file.' });
+          } else if (name === 'readme-preservation') {
             if (failAfterSavedStage === 'implementation') {
               if (count === 1) {
                 fixtureProductWrites.set(name, (fixtureProductWrites.get(name) ?? 0) + 1);
@@ -989,6 +993,53 @@ test('a real connection probe with duplicate current nonce calls cannot replace 
   await assert.rejects(() => probeWorkForceConnection(root, undefined, { not_before: new Date().toISOString() }), /did not complete its bound tool-call check/);
   assert.deepEqual(readFileSync(path), before, 'Duplicate current nonce calls cannot replace the prior complete proof with partial evidence.');
   assert.deepEqual(provider.failures, []); assert.deepEqual(errors, []);
+});
+
+for (const revision of ['eol', 'content']) test(`resume revalidates externally changed ${revision} bytes through a read-only producer and fresh independent checks`, { timeout: 90000 }, async t => {
+  const name = `external-revision-${revision}`, root = await fixture(t, [name]);
+  const priorRun = OpenCodeSession.prototype.run;
+  let entered, release, first = true;
+  const reviewEntered = new Promise(resolve => { entered = resolve; });
+  const resumeReview = new Promise(resolve => { release = resolve; });
+  OpenCodeSession.prototype.run = async function () {
+    if (this.receipt.role === 'reviewer' && first) {
+      first = false; entered(); await resumeReview;
+      if (revision === 'content') return priorRun.call(this);
+      await this.complete('interrupted', null); return;
+    }
+    return priorRun.call(this);
+  };
+  t.after(() => { OpenCodeSession.prototype.run = priorRun; release(); });
+  const started = await startControlledWorkflow(root, { requirement: `Case: ${name}\nCreate the requested JSON and independently verify it.` });
+  await reviewEntered;
+  if (revision === 'eol') {
+    const pausing = controlControlledWorkflow(root, { workflow_id: started.workflow_id, action: 'pause' });
+    await wait(root, started.workflow_id, 'paused'); release(); await pausing;
+  }
+  const before = controlledStatus(root, started.workflow_id), producer = before.attempts.find(attempt => attempt.stage === 'implementation');
+  const receiptPath = safePath(root, `.workforce/native/receipts/${producer.invocation_id}.json`);
+  const reportPath = safePath(root, getRecord(root, producer.report_id).path);
+  const oldReceipt = readFileSync(receiptPath), oldReport = readFileSync(reportPath);
+  const output = `products/${name}.json`, path = safePath(root, output);
+  const current = revision === 'eol' ? readFileSync(path, 'utf8').replaceAll('\n', '\r\n')
+    : JSON.stringify({ value: 42, comment: 'User added this content after implementation.' }) + '\n';
+  atomicWrite(path, current);
+  assert.notEqual(hash(current), producer.bound_hashes[output]);
+  if (revision === 'eol') {
+    const resumed = await controlControlledWorkflow(root, { workflow_id: started.workflow_id, action: 'resume' });
+    assert.equal(resumed.phase, 'implementation', 'Changed product bytes need a current producer result before review.');
+    assert.equal(resumed.artifact_revalidation?.source_attempt_id, producer.id);
+  } else release();
+  const completed = await wait(root, started.workflow_id);
+  assert.equal(requestProjection(root, completed).accepted, true);
+  assert.equal(completed.epoch_id, before.epoch_id);
+  assert.equal(completed.attempts.filter(attempt => attempt.stage === 'implementation').length, 2);
+  assert.equal(fixtureProductWrites.get(name), 1, 'Read-only reassessment cannot rewrite the user revision.');
+  assert.equal(completed.attempts.findLast(attempt => attempt.stage === 'implementation').bound_hashes[output], hash(current));
+  assert.ok(completed.events.some(event => event.kind === 'artifact-revalidation'));
+  assert.equal(readFileSync(path, 'utf8'), current);
+  assert.deepEqual(readFileSync(receiptPath), oldReceipt); assert.deepEqual(readFileSync(reportPath), oldReport);
+  assert.deepEqual(errors, []);
 });
 
 test('repeated canonical OpenCode HTTP 503 cannot spend healthy proof nonces indefinitely on an unchanged review', { timeout: 150000 }, async t => {

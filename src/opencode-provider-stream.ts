@@ -163,7 +163,7 @@ export async function createOpenCodeProviderStream(endpoint: OpenCodeEndpoint, o
         const headers: Record<string, string> = {};
         // Never forward upstream auth, cookies, arbitrary redirects or stale
         // framing. Node owns downstream chunk framing; payload bytes are intact.
-        for (const key of ['content-type', 'content-encoding', 'cache-control', 'retry-after']) {
+        for (const key of ['content-type', 'content-encoding', 'cache-control', 'retry-after', 'retry-after-ms']) {
           const value = incoming.headers[key]; if (typeof value === 'string') headers[key] = value;
         }
         response.writeHead(incoming.statusCode ?? 502, headers);

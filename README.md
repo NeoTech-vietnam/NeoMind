@@ -2,7 +2,7 @@
 
 WorkForce turns an ordinary project request into saved, reviewable products using **WF.PM + five engineering agents**. Copilot Local, Codex and WorkForce Universe share one request runtime. The runtime manages identity, scope, agent sessions and engineering state; models provide professional content through bound tools.
 
-The source repository remains [NeoTech-vietnam/NeoMind](https://github.com/NeoTech-vietnam/NeoMind). Earlier NeoMind releases and their history remain available. The WorkForce candidate is runtime **0.2.0-alpha.1** with VS Code extension **0.12.0**; a built candidate is not release acceptance.
+The source repository remains [NeoTech-vietnam/NeoMind](https://github.com/NeoTech-vietnam/NeoMind). Earlier NeoMind releases and their history remain available. The WorkForce candidate is runtime **0.2.0-alpha.2** with VS Code extension **0.12.0**; a built candidate is not release acceptance.
 
 ```mermaid
 flowchart LR
@@ -72,7 +72,7 @@ npm run extension:package
 npm run package:smoke
 ```
 
-`engine:bootstrap` installs the locked build prerequisite before any model request. `runtime:package` creates a self-contained platform runtime under `artifacts/workforce-v0.2.0-alpha.1/`; it must run natively on the target platform. The package smoke checks the installed CLI, engine, profiles, local exclusions, request-only MCP surface and edit-preserving updates without inference. `release:artifacts` builds local candidate assets and checksums; it does not publish them.
+`engine:bootstrap` installs the locked build prerequisite before any model request. `runtime:package` creates a self-contained platform runtime under `artifacts/workforce-v0.2.0-alpha.2/`; it must run natively on the target platform. The package smoke checks the installed CLI, engine, profiles, local exclusions, request-only MCP surface and edit-preserving updates without inference. `release:artifacts` builds local candidate assets and checksums; it does not publish them.
 
 A push to `codex/workforce-vmodel` reuses the normal Windows/Ubuntu CI regression matrix, then builds and extracts that platform's portable runtime and matching VSIX. Candidate assets, checksums and package-smoke reports are retained as CI artifacts. This path works before the optional manual candidate workflow reaches the default branch. CI never publishes a GitHub release automatically.
 

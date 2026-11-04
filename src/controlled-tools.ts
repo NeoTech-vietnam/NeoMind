@@ -35,6 +35,8 @@ export interface ControlledBinding {
   planning_result?: 'backend';
   /** Exact text outputs that an independent content assessment must actually read. */
   assessment_outputs?: string[];
+  /** Backend-only read-only adoption of an externally changed product revision. */
+  artifact_revalidation?: boolean;
   /** Original existing-output content supplied by the backend, never model-authored proof. */
   change_assessment_outputs?: string[];
   initial_change_coverage?: ControlledArtifactChangeCoverageMap;
@@ -223,6 +225,8 @@ function assertWritable(binding: ControlledBinding, path: string): void {
   }
 }
 export function controlledToolNames(binding: ControlledBinding): string[] {
+  if (binding.process_contract === 'workforce/v1' && binding.artifact_revalidation)
+    return ['runtime_context', 'project_read', 'project_list', 'project_search', 'assignment_report', 'check_evidence'];
   return ['runtime_context', 'project_read', 'project_list', 'project_search',
     ...(binding.process_contract === 'workforce/v1' && binding.stage === 'planning' && binding.planning_result === 'backend' ? [] : ['assignment_report']),
     ...(binding.stage === 'planning' ? ['workflow_plan', 'work_prepare'] : []),
@@ -270,11 +274,14 @@ function workforceInstructions(binding: ControlledBinding): string {
     diagnosis: 'WF.PM: diagnose the saved technical findings and actual execution evidence without changing files. Select one specific recovery direction and report failure_kind implementation/checker/protocol/environment/unknown. Never request that the user supply internal IDs, raise retry limits or change prompts.',
     synthesis: 'WF.PM: derive only requested final knowledge from actual artifacts and independent evidence. Save one compact report; do not manufacture extra documentation.',
   };
-  return `You are a WorkForce-owned ${binding.role} session using OpenCode. ${duties[binding.stage]}\n` +
+  const duty = binding.artifact_revalidation
+    ? 'WF.FnD: the product files changed externally after the previous implementation report. Read the complete current outputs and assess them against the unchanged requirement and plan. Preserve every file. Save one assignment_report describing the current product and any concrete product_findings. The backend binds this new report to the actual current bytes; independent review and tests follow. Do not claim to have recreated files or rerun previous checks.'
+    : duties[binding.stage];
+  return `You are a WorkForce-owned ${binding.role} session using OpenCode. ${duty}\n` +
     `${workforceStageHandoff(binding, available)}\n` +
     `Available operations: ${available.join(', ')}. Identity, task, authorization, operation IDs and lifecycle are already bound. Supply professional content only.\n` +
-    `Producer write paths: ${JSON.stringify(binding.implementation_paths)}. Tester write paths: ${JSON.stringify(binding.verification_paths)}. Review/design/requirements are read-only.\n` +
-    (binding.assessment_outputs?.length ? `This is independent text-content assessment. Read all content of each actual output before reporting pass: ${JSON.stringify(binding.assessment_outputs)}. No compilation or executed-test result is implied.\n` : '') +
+    `${binding.artifact_revalidation ? 'Read-only product reassessment paths' : 'Producer write paths'}: ${JSON.stringify(binding.implementation_paths)}. Tester write paths: ${JSON.stringify(binding.verification_paths)}. Review/design/requirements are read-only.\n` +
+    (binding.assessment_outputs?.length ? `Read all content of each actual output before reporting a successful content assessment: ${JSON.stringify(binding.assessment_outputs)}. No compilation or executed-test result is implied.\n` : '') +
     (available.includes('cornell_research_compile') ? 'Requested Cornell note.md/exercises.md/answers.md are compiler-owned: use cornell_research_compile with semantic research or an existing input_path, never task_file_write for those renderings.\n' : '') +
     (available.includes('task_run') ? 'task_run uses declared operations. Send the declared title and optional input_path for prepared JSON; backend builds the execution payload.\n' : '') +
     'Use runtime_context only if an execution fact is missing; its first successful snapshot suffices. Do not poll progress or ask the next stage. ' +
@@ -754,6 +761,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
           if (![...binding.implementation_paths, ...binding.verification_paths].some(scope => covers(scope, finding.path)))
             throw new ControlledToolError('SCOPE_DENIED', 'Product findings must name an affected assigned output or checker path; missing tools and future-stage evidence are not product paths.');
         });
+        if (binding.artifact_revalidation && report.outcome === 'completed') report.verdict = 'pass';
         return persistReport(report, source);
       }));
     return server;

@@ -84,7 +84,7 @@ export interface NativeReceipt {
     process_contract?: 'software-tools/v2' | 'workforce/v1';
     tool_contract?: { version: 2; local_execution: boolean; qualified_procedure: boolean } |
       { version: 3; local_execution: boolean; qualified_procedure: boolean; evidence_documentation: boolean; research: boolean;
-        capabilities?: boolean; planning_result?: 'backend' } };
+        capabilities?: boolean; planning_result?: 'backend'; artifact_revalidation?: true } };
   schema_version: 1;
   issuer: 'workforce-opencode' | 'neomind-codex-app-server' | 'neomind-vscode-lm' |
     'taskforces-codex-app-server' | 'taskforces-vscode-lm' |
@@ -425,6 +425,10 @@ export function observeInvocation(
     if (!toolContract || toolContract.version !== 3 || typeof toolContract.local_execution !== 'boolean' ||
         typeof toolContract.qualified_procedure !== 'boolean' || typeof toolContract.evidence_documentation !== 'boolean' ||
         typeof toolContract.research !== 'boolean' || toolContract.capabilities !== undefined && typeof toolContract.capabilities !== 'boolean' ||
+        toolContract.artifact_revalidation !== undefined && (toolContract.artifact_revalidation !== true ||
+          receipt.role !== 'developer' || receipt.controlled_execution?.stage !== 'implementation' ||
+          receipt.controlled_execution.process_contract !== 'workforce/v1' || toolContract.local_execution ||
+          toolContract.qualified_procedure || toolContract.research || toolContract.capabilities || toolContract.evidence_documentation) ||
         toolContract.planning_result !== undefined && (toolContract.planning_result !== 'backend' ||
           receipt.controlled_execution?.process_contract !== 'workforce/v1' || receipt.controlled_execution.stage !== 'planning' || receipt.role !== 'manager') ||
         toolContract.capabilities && receipt.controlled_execution?.process_contract !== 'workforce/v1' || toolContract.evidence_documentation &&
@@ -436,6 +440,7 @@ export function observeInvocation(
       const operations = controlledToolNames({ role: receipt.role, stage: receipt.controlled_execution.stage,
         process_contract: receipt.controlled_execution.process_contract,
         plugin_capabilities: toolContract.capabilities === true,
+        artifact_revalidation: toolContract.artifact_revalidation,
         ...(toolContract.planning_result ? { planning_result: toolContract.planning_result } : {}),
         workflow_id: receipt.workflow_id!, implementation_paths: [], verification_paths: [],
         evidence_documentation: toolContract.evidence_documentation, cornell_bound: toolContract.research,

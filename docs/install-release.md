@@ -1,11 +1,11 @@
 # Install the WorkForce runtime and VS Code extension
 
-This guide describes candidate **`workforce-v0.2.0-alpha.1`**: runtime **`workforce@0.2.0-alpha.1`** with extension **`workforce.workforce-model-bridge@0.12.0`**. It is not a claim that the candidate has been publicly released or passed installed-client acceptance. Use the matching assets and validation report once published in the [existing GitHub repository's releases](https://github.com/NeoTech-vietnam/NeoMind/releases). Earlier NeoMind releases remain unchanged.
+This guide describes candidate **`workforce-v0.2.0-alpha.2`**: runtime **`workforce@0.2.0-alpha.2`** with extension **`workforce.workforce-model-bridge@0.12.0`**. It is not a claim that the candidate has been publicly released or passed installed-client acceptance. Use the matching assets and validation report once published in the [existing GitHub repository's releases](https://github.com/NeoTech-vietnam/NeoMind/releases). Earlier releases remain unchanged.
 
 | Asset | Purpose |
 | --- | --- |
-| `workforce-runtime-0.2.0-alpha.1-windows-x64.tgz` | Native Windows x64 runtime, dependencies and engine |
-| `workforce-runtime-0.2.0-alpha.1-linux-x64.tgz` | Native Linux x64 runtime, dependencies and engine |
+| `workforce-runtime-0.2.0-alpha.2-windows-x64.tgz` | Native Windows x64 runtime, dependencies and engine |
+| `workforce-runtime-0.2.0-alpha.2-linux-x64.tgz` | Native Linux x64 runtime, dependencies and engine |
 | `workforce-model-bridge-0.12.0.vsix` | WorkForce Universe, Local WF.PM and workspace owner |
 | `SHA256SUMS` | SHA-256 digests for the paired artifacts/reports |
 | `release-manifest.json` and validation reports | Exact versions, engine pins, platform checks and acceptance evidence |
@@ -17,11 +17,11 @@ Portable runtimes include the pinned OpenCode **1.19.4** SDK/platform binary and
 Keep the runtime outside your project and use a new versioned directory. Windows PowerShell:
 
 ```powershell
-Get-FileHash .\workforce-runtime-0.2.0-alpha.1-windows-x64.tgz -Algorithm SHA256
+Get-FileHash .\workforce-runtime-0.2.0-alpha.2-windows-x64.tgz -Algorithm SHA256
 Get-FileHash .\workforce-model-bridge-0.12.0.vsix -Algorithm SHA256
-New-Item -ItemType Directory -Path D:\tools\WorkForce\0.2.0-alpha.1 -Force
-tar -xzf .\workforce-runtime-0.2.0-alpha.1-windows-x64.tgz -C D:\tools\WorkForce\0.2.0-alpha.1
-$wfRuntime = 'D:\tools\WorkForce\0.2.0-alpha.1\workforce'
+New-Item -ItemType Directory -Path D:\tools\WorkForce\0.2.0-alpha.2 -Force
+tar -xzf .\workforce-runtime-0.2.0-alpha.2-windows-x64.tgz -C D:\tools\WorkForce\0.2.0-alpha.2
+$wfRuntime = 'D:\tools\WorkForce\0.2.0-alpha.2\workforce'
 node "$wfRuntime\dist\cli.js" --version
 ```
 
@@ -31,9 +31,9 @@ Linux shell:
 
 ```sh
 sha256sum --check SHA256SUMS
-mkdir -p "$HOME/.local/share/workforce/0.2.0-alpha.1"
-tar -xzf workforce-runtime-0.2.0-alpha.1-linux-x64.tgz -C "$HOME/.local/share/workforce/0.2.0-alpha.1"
-wf_runtime="$HOME/.local/share/workforce/0.2.0-alpha.1/workforce"
+mkdir -p "$HOME/.local/share/workforce/0.2.0-alpha.2"
+tar -xzf workforce-runtime-0.2.0-alpha.2-linux-x64.tgz -C "$HOME/.local/share/workforce/0.2.0-alpha.2"
+wf_runtime="$HOME/.local/share/workforce/0.2.0-alpha.2/workforce"
 node "$wf_runtime/dist/cli.js" --version
 ```
 
@@ -45,7 +45,7 @@ Do not use the Windows engine asset on Linux or the Linux engine asset on Window
 code --install-extension .\workforce-model-bridge-0.12.0.vsix --force
 ```
 
-Alternatively use **Extensions: Install from VSIX**. Set the VS Code **User** setting `workforce.bridge.runtimePath` to the extracted `workforce` directory, such as `D:\tools\WorkForce\0.2.0-alpha.1\workforce`. Workspace overrides of this trusted runtime path are ignored.
+Alternatively use **Extensions: Install from VSIX**. Set the VS Code **User** setting `workforce.bridge.runtimePath` to the extracted `workforce` directory, such as `D:\tools\WorkForce\0.2.0-alpha.2\workforce`. Workspace overrides of this trusted runtime path are ignored.
 
 When replacing NeoMind, disconnect its previous owner and disable the previous extension in the intended workspace before connecting WorkForce. The new publisher/extension identity does not share another extension's SecretStorage: reconnect private calendar feeds or YouTube API keys from WorkForce when needed. Provider credentials in your existing custom endpoint catalog are preserved.
 
