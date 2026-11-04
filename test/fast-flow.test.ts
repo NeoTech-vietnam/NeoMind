@@ -9,7 +9,8 @@ import { flowExceptions } from '../src/runtime/run-manager.js';
 import { templates, defaultProject } from '../src/domain/templates.js';
 import { compileFlow } from '../src/domain/compiler.js';
 import { builtinProfile } from '../src/runtime/project.js';
-import { materializeRun } from '../src/domain/materialize.js';
+import { materializeRun, validateMaterializedRun } from '../src/domain/materialize.js';
+import { GraphScheduler } from '../src/core/graph-scheduler.js';
 import { WorkspaceCoordinator } from '../src/storage/coordination.js';
 import { CodexTurnEvents } from '../src/adapters/codex-turn-events.js';
 import { CodexRunnerFactory } from '../src/runners/codex-runner.js';
@@ -19,6 +20,7 @@ import { FakeRunnerFactory, fakeScope } from './helpers/fake-runner.js';
 
 const codexRole = { runner: 'codex', provider: 'openai', model: 'gpt-6-luna', reasoning: 'medium' };
 const codexModels = [{ runner: 'codex' as const, provider: 'openai', model: 'gpt-6-luna', reasoning: ['low', 'medium', 'high'] }];
+const relaxedPolicy = { ...defaultProject.policy, allowAutoApproval: true, allowHumanReview: true };
 const codes = (flow: unknown, policy: unknown) => { const result = compileFlow(flow, policy); return result.ok ? [] : result.diagnostics.map(item => item.code); };
 
 test('Fast is a quick plan approved by NeoMind, then implement, reviewed by the user; the project policy can forbid both exceptions', () => {
@@ -26,9 +28,10 @@ test('Fast is a quick plan approved by NeoMind, then implement, reviewed by the 
   assert.deepEqual(fast.definition.nodes.map(node => node.type), ['start', 'agent_task', 'approval', 'agent_task', 'finish']);
   assert.equal(fast.definition.review, 'human');
   assert.equal(fast.definition.bindings['fast-planner']?.reasoning.mode === 'pinned' && fast.definition.bindings['fast-planner'].reasoning.value, 'low');
-  assert.deepEqual(codes(fast, defaultProject.policy), []);
-  assert.deepEqual(codes(fast, { ...defaultProject.policy, allowAutoApproval: false }), ['auto_approval_denied']);
-  assert.deepEqual(codes(fast, { ...defaultProject.policy, allowHumanReview: false }), ['human_review_denied']);
+  assert.deepEqual(codes(fast, defaultProject.policy).sort(), ['auto_approval_denied', 'human_review_denied']);
+  assert.deepEqual(codes(fast, relaxedPolicy), []);
+  assert.deepEqual(codes(fast, { ...relaxedPolicy, allowAutoApproval: false }), ['auto_approval_denied']);
+  assert.deepEqual(codes(fast, { ...relaxedPolicy, allowHumanReview: false }), ['human_review_denied']);
   // A user-reviewed flow never commits, and Dev keeps its gates.
   assert.ok(codes({ ...templates.dev, definition: { ...templates.dev.definition, review: 'human' } }, defaultProject.policy).includes('human_review_commit'));
   const devWithoutReview = structuredClone(templates.dev);
@@ -44,10 +47,15 @@ test('a Fast run approves its own plan, implements without stopping, and the use
   const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   git('init', '-q'); git('config', 'core.autocrlf', 'false'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.test');
   await writeFile(path.join(repo, 'README.md'), 'Fixture\n'); await writeFile(path.join(repo, 'notes.md'), 'mine\n'); git('add', '.'); git('commit', '-qm', 'baseline');
-  const config = { ...structuredClone(defaultProject), roleDefaults: { implementer: codexRole, verifier: codexRole } };
+  const config = { ...structuredClone(defaultProject), policy: relaxedPolicy, roleDefaults: { implementer: codexRole, verifier: codexRole } };
   await mkdir(path.join(repo, 'neomind')); await writeFile(path.join(repo, 'neomind/project.json'), JSON.stringify(config));
   git('add', '.'); git('commit', '-qm', 'neomind config');
   const snapshot = await materializeRun(structuredClone(templates.fast), config, { 'implementer@1': builtinProfile('implementer')! }, repo);
+  const legacy = structuredClone(snapshot);
+  delete legacy.policy.allowAutoApproval; delete legacy.policy.allowHumanReview;
+  assert.doesNotThrow(() => validateMaterializedRun(legacy), 'saved snapshots from before explicit opt-in remain readable');
+  assert.doesNotThrow(() => new GraphScheduler(legacy.configuration.flow, legacy.policy, { legacyExceptions: true }));
+  assert.throws(() => new GraphScheduler(legacy.configuration.flow, legacy.policy), /auto_approval_denied/);
   assert.equal(snapshot.configuration.bindings.plan?.values.reasoning, 'low', 'the quick plan runs with low reasoning');
   const coordinator = new WorkspaceCoordinator(path.join(state, 'coordination.sqlite'));
   const codexAgentCalls: string[] = [];

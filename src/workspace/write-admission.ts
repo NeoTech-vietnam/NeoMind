@@ -17,6 +17,8 @@ export async function admitIsolatedWorkspaceWrite(input: {
   sandboxVerified: boolean; stopVerified: boolean;
   repair?: { roundId: string; baselineHash: string };
   continuation?: { baselineHash: string };
+  step?: { baselineHash: string };
+  workspaceMode?: 'current' | 'shared';
   /** A branch writer's work-packet scope; must lie inside the approved plan scope. */
   scope?: string[];
   /** The merged integration baseline the integration agent starts from. */
@@ -27,7 +29,7 @@ export async function admitIsolatedWorkspaceWrite(input: {
   if (!input.sandboxVerified || !input.stopVerified) throw new Error('Verified sandbox and stop capabilities required');
   if (!approvalMatches(input.approval, input.plan, input.livePolicy)) throw new Error('Approval does not match current plan and policy');
   const workspace = await realpath(input.workspace);
-  if (workspace === primaryWorktree(workspace)) throw new Error('A separate Git worktree is required');
+  if (!input.workspaceMode && workspace === primaryWorktree(workspace)) throw new Error('A separate Git worktree is required');
   if (workspace !== input.lease.workspace || !input.coordinator.isCurrent(input.lease)) throw new Error('Workspace writer lease is missing or stale');
   const writableRoots: string[] = [];
   const within = (child: string, parent: string) => parent === '.' || child === parent || child.startsWith(`${parent.replace(/\/$/, '')}/`);
@@ -49,7 +51,8 @@ export async function admitIsolatedWorkspaceWrite(input: {
   if (input.continuation && input.continuation.baselineHash !== baseline.baselineHash) throw new Error('Continuation baseline does not match');
   if (input.integration && input.integration.baselineHash !== baseline.baselineHash) throw new Error('Integration baseline does not match');
   if (input.start && input.start.baselineHash !== baseline.baselineHash) throw new Error('Run start baseline does not match');
-  if (!baseline.clean && !input.repair && !input.continuation && !input.integration && !input.start) throw new Error('Isolated worktree must be clean before the first write');
+  if (input.step && input.step.baselineHash !== baseline.baselineHash) throw new Error('Step baseline does not match');
+  if (!baseline.clean && !input.step && !input.repair && !input.continuation && !input.integration && !input.start) throw new Error('Isolated worktree must be clean before the first write');
   return { workspace, runId: input.lease.runId, fence: input.lease.fence, baseline, writableRoots,
     planId: input.plan.planId, planVersion: input.plan.version };
 }

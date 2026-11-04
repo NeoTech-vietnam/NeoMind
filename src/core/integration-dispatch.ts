@@ -1,3 +1,6 @@
+import { preserveRefs } from '../workspace/run-cleanup.js';
+import { lstat } from 'node:fs/promises';
+import { validateConflictResolutions } from '../domain/conflict-resolution.js';
 import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -6,8 +9,9 @@ import { flowSchema } from '../domain/schema.js';
 import { branchLayout } from '../domain/branches.js';
 import { OwnedJournal } from '../storage/owned-journal.js';
 import { WorkspaceCoordinator, type WorkspaceLease } from '../storage/coordination.js';
+import { buildReviewTree } from '../workspace/review-tree.js';
 import { captureBaseline } from '../workspace/baseline.js';
-import { applyTreeToWorkspace, commitBranch, filesWithConflictMarkers, inspectIntegration, mergeBranchCommits, prepareBranchWorktree } from '../workspace/integration.js';
+import { applyTreeToWorkspace, commitBranch, filesWithConflictMarkers, inspectIntegration, mergeBranchCommits, prepareBranchWorktree, snapshotWorkspace, markerlessConflicts } from '../workspace/integration.js';
 import { replayRun } from './recovery.js';
 
 /** Core-owned branch workspaces and merges. The caller serializes calls and holds the run owner lease. */
@@ -34,8 +38,18 @@ export class IntegrationDispatch {
     if (!branch) {
       // Siblings of the run workspace, never inside it: a nested path would appear as untracked content.
       const workspace = path.join(realpathSync.native(path.dirname(context.workspace)), `${this.journal.runId}--${nodeId}`);
-      branch = { nodeId, requestId: randomUUID(), workspace, baseCommit: context.sourceHead };
-      await this.append('branch_workspace_intent', { nodeId, workspace, baseCommit: context.sourceHead }, branch.requestId);
+      const layout = branchLayout(flow);
+      const preceding = layout.writersFor(nodeId);
+      const nearest = preceding.filter(writer => !preceding.some(other => other.id !== writer.id && layout.ancestors.get(other.id)!.has(writer.id)));
+      if (nearest.length > 1) throw new Error('A branch writer needs integration before consuming multiple branch outputs');
+      const source = nearest[0] ? report.branchWorkspaces.find(item => item.nodeId === nearest[0]!.id)?.workspace : context.workspace;
+      if (!source) throw new Error('Preceding branch has no workspace');
+      const before = await captureBaseline(source);
+      const parent = nearest[0] ? report.branchWorkspaces.find(item => item.nodeId === nearest[0]!.id)!.baseCommit : context.sourceHead;
+      const baseCommit = await snapshotWorkspace(source, before.baselineHash, parent);
+      await preserveRefs(context.projectRoot, [{ ref: `refs/neomind/${this.journal.runId}/baseline/${nodeId}`, commit: baseCommit }]);
+      branch = { nodeId, requestId: randomUUID(), workspace, baseCommit };
+      await this.append('branch_workspace_intent', { nodeId, workspace, baseCommit, sourceWorkspace: source, sourceBaselineHash: before.baselineHash }, branch.requestId);
     }
     const workspace = await prepareBranchWorktree(context.workspace, branch.workspace, branch.baseCommit);
     if (workspace !== branch.workspace) throw new Error('Branch workspace path changed');
@@ -63,18 +77,24 @@ export class IntegrationDispatch {
       const approved = report.approvals.at(-1)?.plan;
       if (!approved) throw new Error('Integration requires an approved plan');
       if (report.graph.nodes[nodeId]?.status === 'ready') await this.append('node_claimed', { nodeId, writeScopes: approved.scope });
-      const branches = [];
-      for (const writer of branchLayout(flow).writersFor(nodeId)) {
+      const branches: { nodeId: string; commit: string; tree: string; baselineHash: string }[] = [];
+      for (const writer of context.workspaceMode && context.workspaceMode !== 'isolated' ? [] : branchLayout(flow).writersFor(nodeId)) {
         const workspace = report.branchWorkspaces.find(item => item.nodeId === writer.id), attempt = report.attempts.filter(item => item.nodeId === writer.id).at(-1);
         if (!workspace || attempt?.status !== 'completed' || !attempt.baselineHash) throw new Error(`Branch ${writer.id} has no completed result`);
-        const result = await commitBranch(workspace.workspace, attempt.baselineHash, context.sourceHead, `refs/neomind/${this.journal.runId}/${writer.id}`, `NeoMind ${this.journal.runId} ${writer.id}`);
+        const result = await commitBranch(workspace.workspace, attempt.baselineHash, workspace.baseCommit, `refs/neomind/${this.journal.runId}/${writer.id}`, `NeoMind ${this.journal.runId} ${writer.id}`);
         branches.push({ nodeId: writer.id, ...result, baselineHash: attempt.baselineHash });
       }
-      const merged = await mergeBranchCommits(context.workspace, branches.map(branch => branch.commit));
-      integration = { nodeId, requestId: randomUUID(), baseCommit: context.sourceHead, branches, mergedTree: merged.tree, conflicts: merged.conflicts };
-      await this.append('integration_intent', { nodeId, baseCommit: integration.baseCommit, branches, mergedTree: merged.tree, conflicts: merged.conflicts }, integration.requestId);
+      const before = await captureBaseline(context.workspace), startingTree = (await buildReviewTree(context.workspace, before.baselineHash)).tree;
+      const base = branches.length ? report.branchWorkspaces.find(item => item.nodeId === branches[0]!.nodeId)!.baseCommit : context.sourceHead;
+      const currentCommit = await snapshotWorkspace(context.workspace, before.baselineHash, base);
+      const merged = await mergeBranchCommits(context.workspace, [currentCommit, ...branches.map(branch => branch.commit)]);
+      await preserveRefs(context.projectRoot, [{ ref: `refs/neomind/${this.journal.runId}/integration/${nodeId}`, commit: merged.commit }]);
+      integration = { nodeId, requestId: randomUUID(), baseCommit: before.head, branches, mergedTree: merged.tree, conflicts: merged.conflicts,
+        markerlessConflicts: await markerlessConflicts(context.workspace, merged.tree, merged.conflicts), startingTree, startingBaselineHash: before.baselineHash, ...(context.workspaceMode && context.workspaceMode !== 'isolated' ? { shared: true as const } : {}) };
+      const { requestId: _request, ...intent } = integration;
+      await this.append('integration_intent', intent, integration.requestId);
     }
-    await this.apply(integration.nodeId, integration.requestId, integration.baseCommit, integration.mergedTree, context.workspace, coordinator, lease);
+    await this.apply(integration.nodeId, integration.requestId, integration.baseCommit, integration.mergedTree, context.workspace, coordinator, lease, integration.startingTree, integration.startingBaselineHash);
     if (!integration.conflicts.length) await this.append('node_completed', { nodeId, outcome: 'completed' });
     return { conflicts: integration.conflicts };
   }
@@ -83,15 +103,15 @@ export class IntegrationDispatch {
   async reconcile(nodeId: string, coordinator: WorkspaceCoordinator, lease: WorkspaceLease): Promise<void> {
     const { report, context } = await this.state(), integration = report.integrations.find(item => item.nodeId === nodeId);
     if (!integration || integration.baselineHash) throw new Error('No interrupted integration to reconcile');
-    await this.apply(nodeId, integration.requestId, integration.baseCommit, integration.mergedTree, context.workspace, coordinator, lease);
+    await this.apply(nodeId, integration.requestId, integration.baseCommit, integration.mergedTree, context.workspace, coordinator, lease, integration.startingTree, integration.startingBaselineHash);
     if (!integration.conflicts.length && report.graph.nodes[nodeId]?.status === 'running') await this.append('node_completed', { nodeId, outcome: 'completed' });
   }
 
-  private async apply(nodeId: string, requestId: string, baseCommit: string, tree: string, workspace: string, coordinator: WorkspaceCoordinator, lease: WorkspaceLease) {
+  private async apply(nodeId: string, requestId: string, baseCommit: string, tree: string, workspace: string, coordinator: WorkspaceCoordinator, lease: WorkspaceLease, startingTree?: string, startingBaselineHash?: string) {
     if (lease.workspace !== workspace || !coordinator.isCurrent(lease)) throw new Error('Integration workspace lease is stale');
-    const state = await inspectIntegration(workspace, baseCommit, tree);
+    const state = await inspectIntegration(workspace, baseCommit, tree, startingTree, startingBaselineHash);
     if (state.state === 'unknown') throw new Error('Run workspace changed during integration; inspect it before continuing');
-    const baselineHash = state.state === 'applied' ? state.baselineHash : await applyTreeToWorkspace(workspace, baseCommit, tree);
+    const baselineHash = state.state === 'applied' ? state.baselineHash : await applyTreeToWorkspace(workspace, baseCommit, tree, startingTree, startingBaselineHash);
     await this.append('integration_applied', { nodeId, baselineHash }, requestId);
   }
 
@@ -101,6 +121,18 @@ export class IntegrationDispatch {
     const latest = report.attempts.filter(item => item.nodeId === nodeId).at(-1);
     if (!integration?.baselineHash || report.graph.nodes[nodeId]?.status !== 'running' || latest?.status !== 'completed' || !latest.baselineHash) throw new Error('Integration has no completed result to accept');
     if ((await captureBaseline(context.workspace)).baselineHash !== latest.baselineHash) throw new Error('Run workspace changed after the integration step');
+    if (integration.markerlessConflicts?.length) {
+      const artifact = [...report.artifacts].reverse().find(item => item.nodeId === nodeId && item.attemptId === latest.attemptId && item.baselineHash === latest.baselineHash);
+      if (!artifact) throw new Error('Complex conflicts require a recorded resolution manifest');
+      const terminal = report.nodeData.find(item => item.attemptId === latest.attemptId)?.output;
+      const manifest = validateConflictResolutions(terminal?.messages.at(-1) ?? artifact.text, integration.conflicts);
+      for (const decision of manifest.resolutions) {
+        const relative = path.relative(context.workspace, path.resolve(context.workspace, decision.path));
+        if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Conflict resolution path escapes workspace');
+        const info = await lstat(path.resolve(context.workspace, decision.path)).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
+        if (decision.action === 'deleted' ? !!info : !info) throw new Error(`Resolution action does not match the resulting file: ${decision.path}`);
+      }
+    }
     const remaining = await filesWithConflictMarkers(context.workspace, integration.conflicts);
     if (remaining.length) throw new Error(`Conflict markers remain in: ${remaining.join(', ')}`);
     await this.append('node_completed', { nodeId, outcome: 'completed' });

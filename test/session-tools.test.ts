@@ -22,7 +22,7 @@ async function project() {
   git('init', '-q'); git('config', 'core.autocrlf', 'false'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.test');
   await writeFile(path.join(repo, 'README.md'), 'Fixture\n');
   await mkdir(path.join(repo, 'neomind'));
-  await writeFile(path.join(repo, 'neomind/project.json'), JSON.stringify({ ...structuredClone(defaultProject), roleDefaults: { implementer: codexRole, verifier: codexRole } }));
+  await writeFile(path.join(repo, 'neomind/project.json'), JSON.stringify({ ...structuredClone(defaultProject), policy: { ...defaultProject.policy, allowAutoApproval: true, allowHumanReview: true }, roleDefaults: { implementer: codexRole, verifier: codexRole } }));
   git('add', '.'); git('commit', '-qm', 'baseline');
   const agents = new FakeRunnerFactory('codex', {
     respond: async (session, request) => {

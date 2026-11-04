@@ -37,6 +37,9 @@ test('run history stays readable after its flow definition is deleted, and templ
     const history = await manager.get(runId);
     assert.equal((history.snapshot as { configuration: { flow: { flowId: string; description: string } } }).configuration.flow.flowId, 'mine');
     assert.equal((history.snapshot as { configuration: { flow: { description: string } } }).configuration.flow.description, 'project copy');
-    assert.deepEqual((await manager.list()).map(item => item.runId), [runId]);
+    const listing = await manager.list();
+    assert.deepEqual(listing.map(item => item.runId), [runId]);
+    assert.equal(listing[0]?.flowId, 'mine');
+    assert.ok(listing[0]?.createdAt && !Number.isNaN(Date.parse(listing[0].createdAt)), 'history keeps the journal creation time after flow deletion');
   } finally { await manager.close(); }
 });

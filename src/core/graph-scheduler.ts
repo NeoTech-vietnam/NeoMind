@@ -16,8 +16,8 @@ export class GraphScheduler {
   private readonly order: string[];
   private readonly state: SchedulerSnapshot;
 
-  constructor(flow: unknown, policy: ProjectPolicy) {
-    const result: Compilation = compileFlow(flow, policy);
+  constructor(flow: unknown, policy: ProjectPolicy, options: { legacyExceptions?: boolean } = {}) {
+    const result: Compilation = compileFlow(flow, policy, options);
     if (!result.ok) throw new Error(`Invalid flow: ${result.diagnostics.map(d => d.code).join(', ')}`);
     this.flow = result.flow; this.order = result.order;
     this.state = { nodes: Object.fromEntries(this.flow.definition.nodes.map(n => [n.id, { status: 'pending' as const }])) };

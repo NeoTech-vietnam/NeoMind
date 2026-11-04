@@ -82,6 +82,8 @@ export class RunService {
   checkpointRuntime(state: RuntimeState) { return this.serialize(() => this.append('runtime_state', runtimeStateSchema.parse(state))); }
   extendRuntimeTime(seconds: number) { return this.serialize(() => this.append('runtime_time_extended', { seconds })); }
   selectAllowedFallback(key: string, values: BindingValues, reason: string) { return this.serialize(() => this.append('binding_fallback_selected', { key, values, reason })); }
+  recordNodeInput(input: unknown) { return this.serialize(() => this.append('node_input', input)); }
+  recordNodeOutput(output: unknown) { return this.serialize(() => this.append('node_output', output)); }
   recordArtifact(artifact: RuntimeArtifact) { return this.serialize(() => this.append('runtime_artifact', runtimeArtifactSchema.parse(artifact))); }
   recordUsage(attemptId: string, result: TurnResult) { return this.serialize(async () => {
     if (result.usage) await this.append('usage_observed', { attemptId, threadId: result.threadId, turnId: result.turnId, total: result.usage });
@@ -114,7 +116,7 @@ export class RunService {
   recordCheckoutApply(stage: 'applied', payload: { patchHash: string }): Promise<void>;
   recordCheckoutApply(stage: 'intent' | 'applied', payload: unknown) { return this.serialize(() => this.append(stage === 'intent' ? 'checkout_apply_intent' : 'checkout_applied', payload)); }
   /** Journal removing a finished run's worktrees: the plan (refs to keep, files discarded) before touching them, the receipt after. */
-  recordWorkspaceCleanup(stage: 'intent', payload: { workspaces: string[]; refs: { ref: string; commit: string }[]; discarded: string[] }): Promise<void>;
+  recordWorkspaceCleanup(stage: 'intent', payload: { workspaces: string[]; refs: { ref: string; commit: string }[]; discarded: string[]; baselines?: Record<string, string>; ignoredBaselines?: Record<string, string>; retained?: Record<string, string> }): Promise<void>;
   recordWorkspaceCleanup(stage: 'cleaned'): Promise<void>;
   recordWorkspaceCleanup(stage: 'intent' | 'cleaned', payload: unknown = {}) { return this.serialize(() => this.append(stage === 'intent' ? 'workspace_cleanup_intent' : 'workspace_cleaned', payload)); }
   includeImportedInCommit(nodeId: string) { return this.serialize(() => this.append('commit_scope_selected', { nodeId, includeImported: true })); }
@@ -148,7 +150,7 @@ export class RunService {
    * Keep the passing reviewers of the replaced round whose scopes the repair did not touch. Core derives the changed paths
    * from the reviewed tree and the current workspace; replay re-applies the same rule. Returns the reviewers still to run.
    */
-  carryUnaffectedReviews(nodeId: string, baselineHash: string) {
+  carryUnaffectedReviews(nodeId: string, baselineHash: string, workspace?: string) {
     return this.serialize(async () => {
       this.requireContinue();
       const report = replayRun(await this.journal.read()), round = report.repairRounds.at(-1), context = report.runtimeContext;
@@ -156,8 +158,8 @@ export class RunService {
       if (node?.type !== 'review_group' || !context) throw new Error('Not a review group');
       const all = node.reviewers.map(item => item.id), done = report.reviewerOutputs.filter(item => item.nodeId === nodeId).map(item => item.result.reviewerId);
       if (!round?.reviewedTree || done.length) return all.filter(id => !done.includes(id));
-      const reviewed = await buildReviewTree(context.workspace, baselineHash);
-      const changed = await changedPaths(context.workspace, round.reviewedTree, reviewed.tree);
+      const reviewed = await buildReviewTree(workspace ?? context.workspace, baselineHash);
+      const changed = await changedPaths(workspace ?? context.workspace, round.reviewedTree, reviewed.tree);
       if (!changed.length) return all;
       const prior = report.priorReviewerOutputs[nodeId] ?? [];
       const selection = selectReviewersForChanges(node.reviewers.map(item => ({ id: item.id, required: item.required, scopes: item.scope })), changed,

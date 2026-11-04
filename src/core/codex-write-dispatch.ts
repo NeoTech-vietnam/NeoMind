@@ -1,3 +1,4 @@
+import { conflictResolutionSchema } from '../domain/conflict-resolution.js';
 import { effectiveBinding } from './run-binding.js';
 import { realpath } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -44,22 +45,25 @@ export class CodexWriteDispatch {
     const node = created.flow.definition.nodes.find(item => item.id === nodeId);
     if (!((node?.type === 'agent_task' && node.permissions.write) || (node?.type === 'integration' && node.bindingId))) throw new Error('Node cannot write the workspace');
     const branchWriter = branchLayout(created.flow).branchWriters.some(writer => writer.id === nodeId);
+    const shared = report.runtimeContext?.workspaceMode && report.runtimeContext.workspaceMode !== 'isolated';
+    if (input.workspaceMode && (!shared || input.workspaceMode !== report.runtimeContext?.workspaceMode || input.workspace !== report.runtimeContext.workspace)) throw new Error('Workspace mode differs from run snapshot');
     if (branchWriter) {
       const packet = input.plan.workPackets?.find(item => item.nodeId === nodeId);
       if (!packet || !input.scope || JSON.stringify(input.scope) !== JSON.stringify(packet.scope)) throw new Error('Branch writer must use its approved work packet scope');
       const branch = report.branchWorkspaces.find(item => item.nodeId === nodeId);
-      if (!branch || branch.workspace !== input.lease.workspace || branch.fence !== input.lease.fence) throw new Error('Branch writer must use its own bound worktree');
+      if (!shared && (!branch || branch.workspace !== input.lease.workspace || branch.fence !== input.lease.fence)) throw new Error('Branch writer must use its own bound worktree');
     } else if (input.scope) throw new Error('Only branch writers use work packet scopes');
     if (node.type === 'integration') {
       if (input.lease.workspace !== report.runtimeContext?.workspace) throw new Error('Integration writes the run workspace');
       const integration = report.integrations.find(item => item.nodeId === nodeId);
       if (!integration?.baselineHash) throw new Error('Integration agent requires an applied merge');
-      if (!input.repair && input.integration?.baselineHash !== integration.baselineHash) throw new Error('Integration agent must start from the applied merge');
+      if (!input.repair && !input.continuation && input.integration?.baselineHash !== integration.baselineHash) throw new Error('Integration agent must start from the applied merge');
     } else if (input.integration) throw new Error('Only integration nodes start from a merge');
     if (input.start && (!report.runtimeContext?.imported || input.lease.workspace !== report.runtimeContext.workspace || input.start.baselineHash !== report.runtimeContext.initialBaselineHash)) throw new Error('Only a run with imported changes may start from its recorded baseline');
     if (input.continuation && !report.continuationBaselines.includes(input.continuation.baselineHash)) throw new Error('Continuation baseline has not been confirmed by the user');
+    if (input.step && !report.attempts.some(item => item.workspace === input.lease.workspace && item.status === 'completed' && item.baselineHash === input.step?.baselineHash && (shared || branchLayout(created.flow).ancestors.get(nodeId)?.has(item.nodeId)))) throw new Error('Step baseline is not a completed upstream result');
     if (input.repair) {
-      const round = report.repairRounds.at(-1), scope = created.flow.definition.nodes.find(item => item.id === round?.scopeId);
+      const round = report.repairRounds.find(item => item.roundId === input.repair?.roundId), scope = created.flow.definition.nodes.find(item => item.id === round?.scopeId);
       if (!round || round.roundId !== input.repair.roundId || round.baselineHash !== input.repair.baselineHash || scope?.type !== 'repair_scope' || !scope.ownerNodeIds.includes(nodeId)) throw new Error('Write repair is not authorized by the current repair round');
     } else if (report.repairRounds.some(round => { const scope = created.flow.definition.nodes.find(item => item.id === round.scopeId); return scope?.type === 'repair_scope' && scope.ownerNodeIds.includes(nodeId); })) throw new Error('Repair write requires the current round baseline');
     if (hashJson(created.policy) !== hashJson(input.livePolicy)) throw new Error('Live project policy does not match run snapshot');
@@ -86,7 +90,8 @@ export class CodexWriteDispatch {
       const current = await admitIsolatedWorkspaceWrite(input);
       if (!input.coordinator.isCurrent(input.lease)) throw new Error('Workspace writer lease is stale');
       assertGranted(session, current);
-      turnId = await runner.startTurn(session, { prompt, effort });
+      const complex = report.integrations.find(item => item.nodeId === nodeId)?.markerlessConflicts?.length;
+      turnId = await runner.startTurn(session, { prompt, effort, ...(complex ? { outputSchema: z.toJSONSchema(conflictResolutionSchema) } : {}) });
     }
     catch (error) { await this.append('dispatch_receipt', { attemptId, status: 'unknown' }, requestId); throw error; }
     await this.append('codex_turn_bound', { attemptId, turnId }, requestId);

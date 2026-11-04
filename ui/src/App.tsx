@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, applyNodeChanges,
   type Connection, type Edge, type Node, type NodeChange, type NodeProps, type NodeTypes, type ReactFlowInstance } from '@xyflow/react';
 import type { Binding, Flow, FlowNode } from '../../src/domain/schema';
+import { duplicateNodes } from '../../src/domain/duplicate-nodes';
 import { RunPanel } from './RunPanel';
+import { FlowVersions } from './FlowVersions';
 import { ProfilePanel } from './ProfilePanel';
 import { MemoryPanel } from './MemoryPanel';
 import { modelLabel, reasoningLabel, runnerLabel, useRunners, type RunnerModels } from './runners';
@@ -12,7 +14,7 @@ import { modelLabel, reasoningLabel, runnerLabel, useRunners, type RunnerModels 
 type FlowMeta = { flowId: string; name: string; archived: boolean };
 type Bootstrap = { projectName: string; projectRoot: string; flows: FlowMeta[]; templates: string[]; runtimeAvailable: boolean };
 type Diagnostic = { code: string; message: string; nodeId?: string };
-type GraphNode = Node<{ label: string; kind: FlowNode['type']; detail: string; agent?: string }, 'studio'>;
+type GraphNode = Node<{ label: string; kind: FlowNode['type']; detail: string; agent?: string; problems?: string[] }, 'studio'>;
 type Kind = FlowNode['type'];
 
 const kindInfo: Record<Kind, { label: string; icon: string; tone: string }> = {
@@ -24,14 +26,18 @@ const kindInfo: Record<Kind, { label: string; icon: string; tone: string }> = {
   git_commit: { label: 'Commit local', icon: '⌘', tone: 'mint' },
 };
 const palette: Kind[] = ['agent_task', 'approval', 'fork', 'join', 'condition', 'integration', 'review_group', 'repair_scope', 'git_commit', 'finish'];
+const paletteGroups: { label: string; kinds: Kind[] }[] = [
+  { label: 'Agent', kinds: ['agent_task', 'integration'] }, { label: 'Duyệt & review', kinds: ['approval', 'review_group', 'repair_scope'] },
+  { label: 'Điều khiển', kinds: ['fork', 'join', 'condition', 'finish'] }, { label: 'Git', kinds: ['git_commit'] },
+];
 const outcomes = ['completed', 'pass', 'needs_changes', 'blocked', 'true', 'false'] as const;
 
 function StudioNode({ data, selected }: NodeProps<GraphNode>) {
   const info = kindInfo[data.kind];
-  return <div className={`graph-card tone-${info.tone} ${selected ? 'graph-card-selected' : ''}`}>
+  return <div className={`graph-card tone-${info.tone} ${selected ? 'graph-card-selected' : ''} ${data.problems?.length ? 'graph-card-error' : ''}`}>
     {data.kind !== 'start' && <Handle type="target" position={Position.Left} />}
     <div className="graph-head"><span className="graph-icon">{info.icon}</span><span className="graph-kind">{info.label}</span></div>
-    <strong>{data.label}</strong><div className="graph-detail">{data.detail}</div>{data.agent && <span className="graph-runner">{data.agent}</span>}
+    <strong>{data.label}</strong><div className="graph-detail">{data.detail}</div>{data.agent && <span className="graph-runner">{data.agent}</span>}{!!data.problems?.length && <div className="graph-error">{data.problems.length} lỗi cấu hình</div>}
     {data.kind !== 'finish' && <Handle type="source" position={Position.Right} />}
   </div>;
 }
@@ -40,8 +46,8 @@ const nodeTypes: NodeTypes = { studio: StudioNode };
 function detailFor(node: FlowNode): string {
   switch (node.type) {
     case 'agent_task': return node.permissions.write ? 'Được sửa file' : 'Chỉ đọc';
-    case 'approval': return 'Chờ người dùng duyệt';
-    case 'review_group': return `${node.reviewers.length} reviewer · ${node.reviewers.filter(r => r.required).length} bắt buộc`;
+    case 'approval': return node.mode === 'auto' ? 'NeoMind tự duyệt' : 'Chờ người dùng duyệt';
+    case 'review_group': return `${node.reviewers.length} reviewer · ${node.reviewers.filter(r => r.required).length} bắt buộc · ${node.targetNodeId}`;
     case 'repair_scope': return `Tối đa ${node.maxRounds} vòng`;
     case 'fork': return 'Thực hiện song song';
     case 'join': return `${node.requiredBranches.length} nhánh bắt buộc`;
@@ -52,12 +58,14 @@ function detailFor(node: FlowNode): string {
     case 'finish': return 'Bàn giao kết quả';
   }
 }
-/** Pinned runner/model of a step's binding, shown on its canvas card. */
+/** Show pinned values and inherited settings without claiming to resolve project defaults. */
 function agentFor(node: FlowNode, flow: Flow): { agent?: string } {
   const bindingId = node.type === 'agent_task' ? node.bindingId : node.type === 'integration' ? node.bindingId : undefined;
   const binding = bindingId ? flow.definition.bindings[bindingId] : undefined;
-  if (!binding || binding.runner.mode !== 'pinned') return {};
-  return { agent: [runnerLabel(binding.runner.value), ...(binding.model.mode === 'pinned' ? [modelLabel(binding.model.value)] : [])].join(' · ') };
+  if (!binding) return {};
+  return { agent: [binding.runner.mode === 'pinned' ? runnerLabel(binding.runner.value) : 'Runner kế thừa',
+    binding.model.mode === 'pinned' ? modelLabel(binding.model.value) : 'Model kế thừa',
+    binding.reasoning.mode === 'pinned' ? reasoningLabel(binding.reasoning.value) : 'Suy luận kế thừa'].join(' · ') };
 }
 function slug(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 70);
@@ -137,6 +145,10 @@ export default function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [flow, setFlow] = useState<Flow | null>(null), revision = useRef<string | undefined>(undefined);
   const [selected, setSelected] = useState<string | null>(null);
+  const copiedNodes = useRef<{ flow: Flow; ids: string[] } | null>(null);
+  const pastedSelection = useRef<string[] | null>(null);
+  const [paletteQuery, setPaletteQuery] = useState('');
+  const [connectMenu, setConnectMenu] = useState<{ source: string; x: number; y: number; position: { x: number; y: number } } | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<number | null>(null);
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphInstance, setGraphInstance] = useState<ReactFlowInstance<GraphNode, Edge> | null>(null);
@@ -148,14 +160,17 @@ export default function App() {
   const [dialog, setDialog] = useState(false), [newName, setNewName] = useState(''), [newId, setNewId] = useState(''), [template, setTemplate] = useState('dev');
   const refresh = useCallback(async () => { const data = await api<Bootstrap>('/api/bootstrap'); setBoot(data); return data; }, []);
   useEffect(() => { void refresh().catch(e => setError(String(e))); }, [refresh]);
+  useEffect(() => setConnectMenu(null), [flow?.flowId, view]);
   const active = flow?.definition.nodes.find(node => node.id === selected);
 
   useEffect(() => {
     if (!flow) { setGraphNodes([]); return; }
-    setGraphNodes(flow.definition.nodes.map((node, index) => ({ id: node.id, type: 'studio',
+    const selectedIds = pastedSelection.current; pastedSelection.current = null;
+    setGraphNodes(previous => flow.definition.nodes.map((node, index) => ({ id: node.id, type: 'studio',
+      selected: selectedIds ? selectedIds.includes(node.id) : !!previous.find(item => item.id === node.id)?.selected,
       position: flow.layout[node.id] ?? { x: 80 + (index % 4) * 255, y: 110 + Math.floor(index / 4) * 165 },
-      data: { label: node.label, kind: node.type, detail: detailFor(node), ...agentFor(node, flow) } })));
-  }, [flow]);
+      data: { label: node.label, kind: node.type, detail: detailFor(node), ...agentFor(node, flow), problems: diagnostics.filter(item => item.nodeId === node.id).map(item => item.message) } })));
+  }, [flow, diagnostics]);
   const edges = useMemo<Edge[]>(() => (flow?.definition.edges ?? []).map((edge, index) => ({
     id: `edge-${index}`, source: edge.from, target: edge.to, label: edge.outcome === 'completed' ? '' : edge.outcome,
     type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed }, style: { stroke: '#7d7a72', strokeWidth: 1.6 },
@@ -239,9 +254,29 @@ export default function App() {
   async function validate(current: Flow) { const result = await api<{ valid: boolean; diagnostics?: Diagnostic[] }>(`/api/flows/${encodeURIComponent(current.flowId)}/validate`, 'POST', { draft: current }); setDiagnostics(result.diagnostics ?? []); return result.valid; }
   function addNode(kind: Kind, position?: { x: number; y: number }) { if (!flow) return; let index = 1; while (flow.definition.nodes.some(node => node.id === `${kind}-${index}`)) index++;
     const node = makeNode(kind, `${kind}-${index}`, flow); mutate(next => { next.definition.nodes.push(node); next.layout[node.id] = position ?? { x: 120 + (next.definition.nodes.length % 4) * 180, y: 350 }; }); setSelected(node.id); setSelectedEdge(null); }
-  function removeNode() { if (!flow || !active) return; const count = flow.definition.edges.filter(e => e.from === active.id || e.to === active.id).length;
-    if (!window.confirm(`Xóa bước “${active.label}” và ${count} kết nối?`)) return;
-    mutate(next => { next.definition.nodes = next.definition.nodes.filter(n => n.id !== active.id); next.definition.edges = next.definition.edges.filter(e => e.from !== active.id && e.to !== active.id); delete next.layout[active.id]; }); setSelected(null); }
+  function addConnectedNode(kind: Kind) {
+    if (!flow || !connectMenu) return;
+    const source = flow.definition.nodes.find(node => node.id === connectMenu.source);
+    if (!source || source.type === 'finish') { setConnectMenu(null); return; }
+    let index = 1; while (flow.definition.nodes.some(node => node.id === `${kind}-${index}`)) index++;
+    const node = makeNode(kind, `${kind}-${index}`, flow);
+    const outcome = source.type === 'approval' || source.type === 'review_group' ? 'pass' : source.type === 'condition' ? 'true' : 'completed';
+    mutate(next => { next.definition.nodes.push(node); next.layout[node.id] = connectMenu.position; next.definition.edges.push({ from: source.id, to: node.id, outcome }); });
+    setSelected(node.id); setSelectedEdge(null); setConnectMenu(null);
+  }
+  function removeNode() {
+    if (!flow) return;
+    const chosen = graphNodes.filter(node => node.selected && node.id !== flow.definition.startNodeId).map(node => node.id);
+    const ids = new Set(chosen.length ? chosen : active && active.type !== 'start' ? [active.id] : []);
+    if (!ids.size) return;
+    const count = flow.definition.edges.filter(edge => ids.has(edge.from) || ids.has(edge.to)).length;
+    const references = flow.definition.nodes.filter(node => !ids.has(node.id) && ((node.type === 'review_group' && ids.has(node.targetNodeId))
+      || (node.type === 'repair_scope' && (ids.has(node.targetReviewId) || node.ownerNodeIds.some(id => ids.has(id))))
+      || (node.type === 'join' && node.requiredBranches.some(id => ids.has(id))))).map(node => node.label);
+    if (!window.confirm(`Xóa ${ids.size} bước và ${count} kết nối?${references.length ? `\nCác bước còn tham chiếu cần chỉnh lại: ${references.join(', ')}.` : ''}`)) return;
+    mutate(next => { next.definition.nodes = next.definition.nodes.filter(node => !ids.has(node.id)); next.definition.edges = next.definition.edges.filter(edge => !ids.has(edge.from) && !ids.has(edge.to)); for (const id of ids) delete next.layout[id]; });
+    setSelected(null); setSelectedEdge(null);
+  }
   function undo() { if (!flow || !past.length) return; const previous = past[past.length - 1]!; setPast(past.slice(0, -1)); setFuture([structuredClone(flow), ...future]); setFlow(previous); setDirty(true); setDiagnostics([]); }
   function redo() { if (!flow || !future.length) return; setPast([...past, structuredClone(flow)]); setFlow(future[0]!); setFuture(future.slice(1)); setDirty(true); setDiagnostics([]); }
   const onNodesChange = useCallback((changes: NodeChange<GraphNode>[]) => { setGraphNodes(nodes => applyNodeChanges(changes, nodes)); }, []);
@@ -251,6 +286,33 @@ export default function App() {
     mutate(next => { next.definition.edges.push({ from: connection.source!, to: connection.target!, outcome }); }); }
   function changeBinding(bindingId: string, fn: (target: Binding) => void) { mutate(next => { const target = next.definition.bindings[bindingId]; if (target) fn(target); }); }
   const binding = active?.type === 'agent_task' ? flow?.definition.bindings[active.bindingId] : undefined;
+  useEffect(() => {
+    if (view !== 'flows' || !flow) return;
+    function keyboard(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void action(async () => { await saveDraft(); setMessage('Đã lưu bản nháp.'); }); return; }
+      const target = event.composedPath()[0] as HTMLElement | undefined;
+      if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
+      if (window.getSelection()?.toString()) return;
+      const mod = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();
+      if (key === 'escape' && connectMenu) { event.preventDefault(); setConnectMenu(null); }
+      else if (key === 'escape') { setSelected(null); setSelectedEdge(null); setGraphNodes(nodes => nodes.map(node => ({ ...node, selected: false }))); }
+      else if (mod && key === 's') { event.preventDefault(); void action(async () => { await saveDraft(); setMessage('Đã lưu bản nháp.'); }); }
+      else if (mod && key === 'a') { event.preventDefault(); setGraphNodes(nodes => nodes.map(node => ({ ...node, selected: true }))); }
+      else if (mod && key === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo(); }
+      else if (mod && key === 'y') { event.preventDefault(); redo(); }
+      else if (mod && key === 'c') {
+        const selectedIds = graphNodes.filter(node => node.selected && node.id !== flow!.definition.startNodeId).map(node => node.id);
+        const ids = selectedIds.length ? selectedIds : active && active.type !== 'start' ? [active.id] : [];
+        if (ids.length) { event.preventDefault(); copiedNodes.current = { flow: structuredClone(flow!), ids }; }
+      } else if (mod && key === 'v' && copiedNodes.current?.flow.flowId === flow!.flowId) {
+        event.preventDefault(); const result = duplicateNodes(flow!, copiedNodes.current.flow, copiedNodes.current.ids);
+        if (result.ids.length) { pastedSelection.current = result.ids; copiedNodes.current = { flow: result.flow, ids: result.ids }; edit(result.flow); setSelected(result.ids[0]!); setSelectedEdge(null); }
+      } else if ((key === 'delete' || key === 'backspace') && selectedEdge !== null) { event.preventDefault(); mutate(next => { next.definition.edges.splice(selectedEdge, 1); }); setSelectedEdge(null);
+      } else if ((key === 'delete' || key === 'backspace') && (active?.type !== 'start' || graphNodes.some(node => node.selected && node.id !== flow!.definition.startNodeId))) { event.preventDefault(); removeNode(); }
+    }
+    window.addEventListener('keydown', keyboard);
+    return () => window.removeEventListener('keydown', keyboard);
+  }, [view, flow, active, past, future, graphNodes, connectMenu, selectedEdge]);
 
   return <div className="app-shell"><TextDialogHost />
     <header className="topbar"><div className="brand"><span className="brand-mark">✳</span><span>neo<span className="brand-bold">mind</span></span><span className="brand-divider" /><span className="product-label">FLOW STUDIO</span></div>
@@ -274,15 +336,28 @@ export default function App() {
             <button className="secondary-btn" disabled={busy} onClick={() => void action(async () => { await saveDraft(); setMessage('Đã lưu bản nháp.'); })}>Lưu nháp</button>
             <button className="secondary-btn" disabled={busy} onClick={() => void action(async () => { const valid = await validate(flow); setMessage(valid ? 'Flow hợp lệ.' : 'Flow còn điểm cần chỉnh.'); })}>Kiểm tra</button>
             <button className="primary-btn" disabled={busy} onClick={() => void action(async () => { const expectedRevision = await saveDraft(); if (!await validate(flow)) return; const saved = await api<{ version: { version: number } }>(`/api/flows/${encodeURIComponent(flow.flowId)}/publish`, 'POST', { expectedRevision }); setMessage(`Đã lưu phiên bản ${saved.version.version}.`); })}>Lưu phiên bản <span>↗</span></button></div></div>
+        <FlowVersions flow={flow} />
         <div className="workspace"><div className="workspace-top"><div className="tab-active">Flow canvas</div><div className="tab-muted">{flow.definition.nodes.length} bước <span>·</span> {flow.definition.edges.length} kết nối</div><div className="workspace-top-right"><button className="ghost-btn" disabled={!boot?.runtimeAvailable} onClick={() => setView('runs')} title="Chạy phiên bản đã lưu">▶ &nbsp; Chạy flow</button></div></div>
-          <div className="workspace-body"><div className="palette" aria-label="Thêm bước">{palette.map(kind => <button key={kind} title={`Thêm ${kindInfo[kind].label} (bấm hoặc kéo vào canvas)`} aria-label={`Thêm ${kindInfo[kind].label}`} draggable onDragStart={event => { event.dataTransfer.setData('application/neomind-node', kind); event.dataTransfer.effectAllowed = 'copy'; }} onClick={() => addNode(kind)}><span className={`palette-icon tone-${kindInfo[kind].tone}`}>{kindInfo[kind].icon}</span><span className="palette-label">{kindInfo[kind].label}</span></button>)}</div>
-            <div className="canvas" onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }} onDrop={event => { event.preventDefault(); const kind = event.dataTransfer.getData('application/neomind-node') as Kind; if (palette.includes(kind) && graphInstance) addNode(kind, graphInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY })); }}><ReactFlow<GraphNode, Edge> nodes={graphNodes} edges={edges} nodeTypes={nodeTypes} onInit={setGraphInstance} onNodesChange={onNodesChange} onConnect={connect} onNodeClick={(_, node) => { setSelected(node.id); setSelectedEdge(null); }}
-              onEdgeClick={(_, edge) => { setSelectedEdge(Number(edge.id.replace('edge-', ''))); setSelected(null); }} onPaneClick={() => { setSelected(null); setSelectedEdge(null); }}
-              onNodeDragStop={(_, node) => mutate(next => { next.layout[node.id] = node.position; })} colorMode="dark" deleteKeyCode={null} fitView fitViewOptions={{ padding: 0.08, maxZoom: 1 }} minZoom={0.25} maxZoom={1.8}>
+          <div className="workspace-body"><div className="palette" aria-label="Thêm bước"><input className="palette-search" aria-label="Tìm bước" placeholder="Tìm" value={paletteQuery} onChange={e => setPaletteQuery(e.target.value)} />{paletteGroups.map(group => {
+            const kinds = group.kinds.filter(kind => `${kindInfo[kind].label} ${kind} ${group.label}`.toLocaleLowerCase().includes(paletteQuery.trim().toLocaleLowerCase()));
+            return kinds.length ? <div key={group.label} className="palette-group"><span className="palette-group-title">{group.label}</span>{kinds.map(kind => <button key={kind} title={`Thêm ${kindInfo[kind].label} (bấm hoặc kéo vào canvas)`} aria-label={`Thêm ${kindInfo[kind].label}`} draggable onDragStart={event => { event.dataTransfer.setData('application/neomind-node', kind); event.dataTransfer.effectAllowed = 'copy'; }} onClick={() => addNode(kind)}><span className={`palette-icon tone-${kindInfo[kind].tone}`}>{kindInfo[kind].icon}</span><span className="palette-label">{kindInfo[kind].label}</span></button>)}</div> : null;
+          })}</div>
+            <div className="canvas" onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }} onDrop={event => { event.preventDefault(); const kind = event.dataTransfer.getData('application/neomind-node') as Kind; if (palette.includes(kind) && graphInstance) addNode(kind, graphInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY })); }}><ReactFlow<GraphNode, Edge> nodes={graphNodes} edges={edges} nodeTypes={nodeTypes} onInit={setGraphInstance} onNodesChange={onNodesChange} onConnect={connect} onConnectEnd={(event, state) => {
+                if (!graphInstance || state.isValid || state.toNode || state.fromHandle?.type !== 'source' || !state.fromNode) return;
+                const point = 'changedTouches' in event ? event.changedTouches[0] : event;
+                if (!point || !(event.target instanceof Element) || !event.target.closest('.react-flow__pane')) return;
+                setConnectMenu({ source: state.fromNode.id, x: point.clientX, y: point.clientY, position: graphInstance.screenToFlowPosition({ x: point.clientX, y: point.clientY }) });
+              }} onNodeClick={(_, node) => { setSelected(node.id); setSelectedEdge(null); setConnectMenu(null); }}
+              onEdgeClick={(_, edge) => { setSelectedEdge(Number(edge.id.replace('edge-', ''))); setSelected(null); setConnectMenu(null); }} onPaneClick={() => { setSelected(null); setSelectedEdge(null); setConnectMenu(null); }}
+              onNodeDragStop={(_, node, dragged) => mutate(next => { for (const item of dragged.length ? dragged : [node]) next.layout[item.id] = item.position; })} colorMode="dark" deleteKeyCode={null} fitView fitViewOptions={{ padding: 0.08, maxZoom: 1 }} minZoom={0.25} maxZoom={1.8}>
               <Background color="#3b3a36" gap={23} size={1.1} /><Controls showInteractive={false} /></ReactFlow>
-              <div className="canvas-caption">Kéo thẻ để sắp xếp · Kéo từ chấm bên phải sang thẻ khác để nối</div></div>
+              {connectMenu && <div className="connect-menu" role="dialog" aria-label="Chọn bước để kết nối" style={{ left: Math.max(12, Math.min(connectMenu.x, window.innerWidth - 235)), top: Math.max(12, Math.min(connectMenu.y, window.innerHeight - 350)) }} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setConnectMenu(null); } if (event.key === 'Tab') { const buttons = Array.from(event.currentTarget.querySelectorAll('button')); const target = event.target; if (event.shiftKey && target === buttons[0]) { event.preventDefault(); buttons.at(-1)?.focus(); } else if (!event.shiftKey && target === buttons.at(-1)) { event.preventDefault(); buttons[0]?.focus(); } } }}><strong>Thêm bước được kết nối</strong>{palette.map(kind => <button type="button" autoFocus={kind === palette[0]} key={kind} onClick={() => addConnectedNode(kind)}>{kindInfo[kind].icon} &nbsp; {kindInfo[kind].label}</button>)}<button type="button" onClick={() => setConnectMenu(null)}>Hủy</button></div>}
+              <div className="canvas-caption">Kéo thẻ để sắp xếp · Kéo chấm để nối hoặc thêm bước · Ctrl/Cmd + C/V sao chép các bước đã chọn · Ctrl/Cmd + Z hoàn tác</div></div>
             <aside className="inspector"><div className="inspector-head"><div><span className="panel-heading">THUỘC TÍNH</span><h3>{active ? 'Chi tiết bước' : selectedEdge !== null ? 'Kết nối' : 'Tổng quan flow'}</h3></div>{active && <span className={`inspector-icon tone-${kindInfo[active.type].tone}`}>{kindInfo[active.type].icon}</span>}</div>
-              {active ? <div className="inspector-scroll"><Field label="Tên bước"><input value={active.label} onChange={e => updateNode(node => { node.label = e.target.value; })} /></Field><div className="type-pill">{kindInfo[active.type].icon} &nbsp; {kindInfo[active.type].label}</div>
+              <label className="field"><span>Chọn bước bằng bàn phím</span><select aria-label="Chọn bước" value={selected ?? ''} onChange={event => { setSelected(event.target.value || null); setSelectedEdge(null); setGraphNodes(nodes => nodes.map(node => ({ ...node, selected: node.id === event.target.value })));  }}><option value="">Tổng quan</option>{flow.definition.nodes.map(node => <option key={node.id} value={node.id}>{node.label} · {node.id}</option>)}</select></label>
+              <label className="field"><span>Chọn kết nối bằng bàn phím</span><select aria-label="Chọn kết nối" value={selectedEdge ?? ''} onChange={event => { setSelectedEdge(event.target.value === '' ? null : Number(event.target.value)); setSelected(null); setGraphNodes(nodes => nodes.map(node => ({ ...node, selected: false })));  }}><option value="">Không chọn</option>{flow.definition.edges.map((edge, index) => <option key={index} value={index}>{edge.from} → {edge.to} · {edge.outcome}</option>)}</select></label>
+              {active && active.type !== 'finish' && <button type="button" className="secondary-btn" onClick={() => { const position = flow.layout[active.id] ?? { x: 120, y: 350 }; const screen = graphInstance?.flowToScreenPosition({ x: position.x + 260, y: position.y }) ?? { x: 400, y: 200 }; setConnectMenu({ source: active.id, ...screen, position: { x: position.x + 260, y: position.y } }); }}>Thêm bước tiếp theo</button>}
+              {active ? <div className="inspector-scroll">{diagnostics.filter(item => item.nodeId === active.id).map((item, index) => <div className="callout tone-red" role="alert" key={`${item.code}-${index}`}>{item.message}</div>)}<Field label="Tên bước"><input value={active.label} onChange={e => updateNode(node => { node.label = e.target.value; })} /></Field><div className="type-pill">{kindInfo[active.type].icon} &nbsp; {kindInfo[active.type].label}</div>
                 {active.type === 'agent_task' && <>
                   <Field label="Mục tiêu"><textarea rows={3} value={active.goal} onChange={e => updateNode(node => { if (node.type === 'agent_task') node.goal = e.target.value; })} /></Field>
                   <div className="section-rule" /><div className="inspector-section">Agent</div>
@@ -302,9 +377,9 @@ export default function App() {
                     {binding && <JsonSetting label="Model thay thế (JSON)" value={binding.fallback} apply={value => { const fallback = fallbackValues(value); mutate(next => { const target = next.definition.bindings[active.bindingId]; if (target) target.fallback = fallback; }); }} />}
                   </details>
                 </>}
-                {active.type === 'approval' && <><Field label="Ai duyệt kế hoạch" hint={active.mode === 'auto' ? 'Agent sửa file ngay sau khi lập kế hoạch. Project có thể cấm (allowAutoApproval: false).' : undefined}><select value={active.mode ?? 'user'} onChange={e => updateNode(node => { if (node.type === 'approval') { if (e.target.value === 'auto') node.mode = 'auto'; else delete node.mode; } })}><option value="user">Bạn duyệt</option><option value="auto">NeoMind tự duyệt</option></select></Field>
+                {active.type === 'approval' && <><Field label="Ai duyệt kế hoạch" hint={active.mode === 'auto' ? 'Agent sửa file ngay sau khi lập kế hoạch. Project cần cho phép (allowAutoApproval: true) khi yêu cầu người dùng duyệt.' : undefined}><select value={active.mode ?? 'user'} onChange={e => updateNode(node => { if (node.type === 'approval') { if (e.target.value === 'auto') node.mode = 'auto'; else delete node.mode; } })}><option value="user">Bạn duyệt</option><option value="auto">NeoMind tự duyệt</option></select></Field>
                   <Field label="Nội dung cần duyệt"><textarea rows={3} value={active.purpose} onChange={e => updateNode(node => { if (node.type === 'approval') node.purpose = e.target.value; })} /></Field></>}
-                {active.type === 'review_group' && <><div className="section-rule" /><div className="inspector-section">Review</div>
+                {active.type === 'review_group' && <><Field label="Checks riêng của bước review (mỗi dòng một lệnh)" hint="Review nhánh chỉ chạy các checks này; review kết quả tích hợp luôn chạy toàn bộ checks của kế hoạch. Các lệnh phải có trong kế hoạch được duyệt."><textarea value={(active.checks ?? []).join('\n')} onChange={event => updateNode(node => { if (node.type === 'review_group') node.checks = event.target.value.split('\n').map(value => value.trim()).filter(Boolean); })} /></Field><div className="section-rule" /><div className="inspector-section">Review</div>
                   <Field label="Kiểm tra output của"><select value={active.targetNodeId} onChange={e => updateNode(node => { if (node.type === 'review_group') node.targetNodeId = e.target.value; })}>{flow.definition.nodes.filter(n => n.type === 'agent_task' || n.type === 'integration').map(n => <option key={n.id} value={n.id}>{n.label} · {n.id}</option>)}</select></Field>
                   {active.reviewers.map((reviewer, index) => <div className="reviewer-box" key={index}><div className="reviewer-heading"><strong>Reviewer {index + 1}</strong><button className="text-button" onClick={() => updateNode(node => { if (node.type === 'review_group') node.reviewers.splice(index, 1); })}>Xóa</button></div>
                     <Field label="Tên reviewer"><input value={reviewer.id} onChange={e => updateNode(node => { if (node.type === 'review_group' && node.reviewers[index]) node.reviewers[index].id = e.target.value; })} /></Field>
@@ -345,7 +420,7 @@ export default function App() {
                 <Field label="Giới hạn sửa toàn run"><input type="number" min="0" value={flow.definition.limits.maxRepairRounds} onChange={e => mutate(next => { next.definition.limits.maxRepairRounds = Number(e.target.value); })} /></Field>
                 <Field label="Thời gian xử lý (giây)"><input type="number" min="1" value={flow.definition.limits.activeTimeSeconds} onChange={e => mutate(next => { next.definition.limits.activeTimeSeconds = Number(e.target.value); })} /></Field>
                 <Field label="Review code" hint={flow.definition.review === 'human' ? 'Flow không có bước review và không được commit; khi xong bạn xem rồi áp dụng thay đổi vào checkout.' : undefined}><select value={flow.definition.review ?? 'independent'} onChange={e => mutate(next => { if (e.target.value === 'human') next.definition.review = 'human'; else delete next.definition.review; })}><option value="independent">Agent review độc lập trong flow</option><option value="human">Bạn tự review ngoài flow</option></select></Field>
-                <Field label="Workspace"><select value={flow.definition.workspacePolicy} onChange={e => mutate(next => { next.definition.workspacePolicy = e.target.value as 'isolated' | 'shared'; })}><option value="isolated">Worktree riêng</option><option value="shared">Workspace chung</option></select></Field></div>}
+                <Field label="Workspace"><select value={flow.definition.workspacePolicy} onChange={e => mutate(next => { next.definition.workspacePolicy = e.target.value as 'isolated' | 'current' | 'shared'; })}><option value="isolated">Worktree riêng</option><option value="current">Checkout hiện tại</option><option value="shared">Workspace chung (tuần tự hóa thao tác ghi)</option></select></Field></div>}
             </aside></div>
           <div className={`validation-bar ${diagnostics.length ? 'has-errors' : ''}`}><div><span className="validation-icon">{diagnostics.length ? '!' : '✓'}</span><strong>{diagnostics.length ? `${diagnostics.length} điểm cần chỉnh` : 'Sẵn sàng thiết kế'}</strong><span>{diagnostics.length ? diagnostics[0]?.message : 'Kiểm tra flow trước khi lưu phiên bản.'}</span></div><button onClick={() => void action(async () => { const valid = await validate(flow); setMessage(valid ? 'Flow hợp lệ.' : 'Flow còn điểm cần chỉnh.'); })}>Kiểm tra flow ↗</button></div>
         </div><div className="footnote"><span>✳</span> NeoMind Flow Studio · Thay đổi bản nháp không ảnh hưởng phiên bản đã lưu.</div>

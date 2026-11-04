@@ -1,6 +1,48 @@
 # NeoMind v1 — trạng thái implementation
 
-Cập nhật: **29/10/2026**. Branch: `hieu/adaptive-agent-flow`. Baseline trước đợt này: `d19c998`. **V1 chưa hoàn tất.** Đọc [bàn giao hiện tại](session-handoff-2026-10-29.md) để tiếp tục; [design-v1](design-v1.md) là phạm vi mục tiêu.
+Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
+Bàn giao hiện tại: [04/11/2026](session-handoff-2026-11-04.md). Phạm vi v1 rộng hơn tám việc vừa triển khai; đã có walkthrough browser cho Dev tuần tự bên dưới, các thao tác canvas nâng cao, Windows và host acceptance Nimbalyst vẫn cần kiểm chứng riêng.
+
+## Walkthrough Flow Studio trên Linux — 04/11/2026
+
+Đã thao tác giao diện thật: mở canvas và inspector model/reasoning, cấu hình run và memory preview, khởi động run, xem trạng thái và log trực tiếp, mở input/output theo attempt, checks, verdict, commit và cập nhật context có nguồn trong project memory. [Bộ review 10 ảnh](ui-review-2026-11-04/REVIEW.md), [gallery offline](ui-review-2026-11-04/index.html) và [báo cáo kết quả](ui-review-2026-11-04/report.json) được lưu cùng repo.
+
+Project C11 dùng Luna 6 / low, flow demo tự khai báo auto approval trong project riêng cho phép. Run `run-c2403d71-d305-4feb-af4e-3f0c1945bbda` hoàn tất sau **42,25 giây**: `sh verify.sh` biên dịch với `-std=c11 -Wall -Wextra -Werror`, ba ca cộng/trừ/số âm đạt; reviewer độc lập đạt 8/8 tiêu chí; commit local `9e6fbbd010b06653525cc118f73a3726e2a10400` chỉ sửa `main.c` trong worktree demo. Usage run thành công **62125 tokens**, gồm **24192 cached input**; USD không được cung cấp. Server demo đã dừng.
+
+Lần trước dùng `node verify.cjs` bị `spawnSync cc EPERM` trong sandbox dù check chạy trên host đạt. Flow giữ trạng thái blocked và chưa commit; script shell được kiểm tra đạt trong cùng sandbox trước khi chạy run mới. Chưa xác định nguyên nhân gốc lỗi Node subprocess; không coi thay script demo là đã sửa lỗi runtime NeoMind. Không chạy lại suite/build cho đợt lưu bằng chứng vì không đổi source. Walkthrough này chưa kiểm chứng kéo/thả, multi-copy/paste, screen reader, lesson revisions, mọi biến thể song song hoặc Windows/Nimbalyst host.
+
+## Cập nhật 04/11/2026 — tám hạng mục workflow/workspace/Studio/memory
+
+| Hạng mục | Đã triển khai | Bằng chứng / giới hạn |
+| --- | --- | --- |
+| Flow nhiều giai đoạn | Writer trước/sau fork, baseline nhánh theo thời điểm bắt đầu, nhiều integration, review và repair riêng từng nhánh; checks nhánh có thể cấu hình riêng, final review vẫn chạy checks/criteria toàn kế hoạch | Regression hai fork/hai integration và branch repair; các check riêng phải được liệt kê trong plan để duyệt. Fork lồng nhau/integration nằm trong nhánh chưa join vẫn bị preflight chặn; dùng các giai đoạn nối tiếp |
+| Checkout/shared workspace | Chọn theo flow hoặc trước run trên UI/API/CLI; xác nhận dirty baseline; một writer lease mỗi workspace; shared writer chạy tuần tự; commit chỉ phần run và rebase staging của người dùng qua private index dưới index.lock | Regression giữ đồng thời staged, unstaged, untracked; không dọn hoặc áp patch lại vào checkout mượn |
+| Race cleanup | Dọn bằng atomic rename vào `workspaces/.retained/<run>` rồi `git worktree repair`; giữ toàn bộ dữ liệu và Git registration, không recursive delete | Regression ghi tiếp qua file descriptor đang mở sau dọn. Thư mục lưu khôi phục còn chiếm dung lượng; không tự purge |
+| Canvas | Thêm bước khi thả đầu nối ra pane hoặc nút thêm bước tiếp theo; multi-copy/paste giữ cạnh/tham chiếu, multi-delete, undo/redo, Ctrl/Cmd+A/S/C/V/Z, Escape, chọn node/cạnh bằng select và popup keyboard | Build UI đạt; chưa có browser acceptance cho các thao tác mới |
+| Version diff | Diff từng thuộc tính lồng nhau, trước/sau; hiện thêm theo mỗi 200 thay đổi | Regression structural diff; so sánh version đã lưu với draft |
+| Run graph | Ghi input/output theo attempt vào journal, hash và provenance task/memory/plan/artifact/check/code; API tải riêng payload; cạnh dữ liệu khác cạnh điều khiển | Regression input bị sửa hash bị từ chối; prompt/output trên 1 triệu ký tự được rút gọn có cờ rõ ràng; run cũ thiếu node data vẫn đọc được |
+| Lesson revisions | Mỗi lần chỉnh tạo file revision bất biến, số version nằm trong proposal hash, edit CAS, approval cũ không duyệt revision mới kể cả nội dung quay lại như cũ | Regression stale edit/approval/revert; chỉ người dùng duyệt mới promote |
+| Memory retrieval | Suy ra path từ đường dẫn và tên file/thư mục trong repo; lexical/LSA/hybrid; loại trùng nội dung cùng loại/scope/tags; `expiresAt`/`supersedes` và chặn chu trình thay thế | LSA chạy cục bộ theo corpus, tối đa 512 record sau lọc; không phải pretrained embeddings. Hết hạn/thay thế dựa vào metadata tường minh, không tự kết luận fact đã sai |
+
+**Inference thật:** Luna 6 chạy fixture song song trên Linux: conflict cả `value.txt` và `value.bin` → resolution manifest → `node verify.cjs` pass → reviewer độc lập pass → commit `9251a0d7a867fc8e7364e3d2579283042486cd54`. Run `run-c2f7b2a1-eed4-4c7e-b5e8-821408370b75`, dữ liệu tại `demo/workflow-acceptance/real-1793708133433/` (bị ignore). Fixture tự khai báo auto approval và project fixture cho phép; không giả mạo người dùng duyệt. Đã recovery/resume qua hai lỗi thực: ghép lời dẫn cùng JSON manifest, và reviewer thiếu nguồn đối chiếu; core nay đọc message cuối và cung cấp source evidence từ đúng baseline. Tổng usage của fixture sau recovery: **195388 tokens**, trong đó **118016 cached input tokens**; không dùng Astra. Có script opt-in `node scripts/acceptance-conflicts.mjs --real` để tái hiện khi cần, không chạy trong `npm test`.
+
+Kiểm chứng cuối trên Linux: `npm test` **207 tests, 196 pass, 11 skip, 0 fail**; UI và extension Nimbalyst build thành công. Code commit `1204e8f`. Chi tiết trong bàn giao 04/11. Các kiểm chứng lịch sử bên dưới phản ánh thời điểm ghi, không thay thế trạng thái mới nhất ở trên.
+
+## Lịch sử 03/11/2026
+
+- Bổ sung: lesson có thể chỉnh nội dung tạo revision bất biến; edit ràng buộc vào hash bản đang xem và approval cũ không duyệt nội dung mới. Việc đưa vào memory vẫn cần người dùng duyệt.
+- Memory selection có cấu hình tùy chọn theo scope/tag, lexical task match, số record và ngân sách bytes. `inferTaskPaths` nhận diện đường dẫn có dấu `/` được nêu trong task, lọc scope tương ứng và scope `project`; khi không tìm thấy đường dẫn giữ hành vi cũ. Chưa có semantic search hoặc tự tìm đường dẫn không được nhắc đến.
+- Canvas hỗ trợ copy/paste nhiều bước cùng cạnh và tham chiếu nội bộ; kéo đầu nối ra vùng trống để chọn bước mới; diff phiên bản có thuộc tính lồng nhau (tối đa 200 thay đổi). Graph run cho xem task, định nghĩa đã ghim, cạnh vào/ra và delivery; cạnh chỉ phản ánh luồng điều khiển, chưa chứng minh dữ liệu được truyền.
+- Git conflict không có marker văn bản bị chặn để tránh nhận nhầm kết quả. Chưa hỗ trợ giải quyết đầy đủ conflict nhị phân, đổi tên/xóa phức tạp.
+- Còn thiếu writer trước/sau fork, nhiều integration, review từng nhánh, current/shared workspace, race khi dọn worktree, semantic search và xử lý memory trùng/lỗi thời. Giữ các chặn preflight hiện có; chưa browser acceptance hoặc chạy model thật cho thay đổi mới.
+
+- Bổ sung sau cập nhật ban đầu: canvas run từ snapshot; lọc lịch sử theo flow/trạng thái/ngày và báo mất kết nối; so sánh draft/version; palette theo nhóm, copy/paste một bước và keyboard undo/redo. Memory preview trước run và snapshot metadata (revision, nguồn, lý do), hàng đợi lesson cùng thao tác từ chối ghi receipt. Xem [plan](next-plan-workflow-memory-studio.md) để biết phần còn thiếu.
+- Chưa có browser acceptance cho UI mới; P1–P4 chưa hoàn tất. Chưa bật shared workspace, current checkout, nhiều integration hoặc workflow graph tổng quát.
+
+- Bắt đầu [kế hoạch ưu tiên mới](next-plan-workflow-memory-studio.md). Compiler yêu cầu opt-in tường minh `allowAutoApproval` / `allowHumanReview` khi project có gate tương ứng; Fast vẫn dùng được sau khi project cho phép. Snapshot và journal của run cũ được đọc theo quy tắc đã lưu; validate/publish và run mới dùng quy tắc mới.
+- Cleanup kiểm tra branch worktree so với ref đã lưu, ghi baseline và đối chiếu lại trước khi dọn, gồm sau recovery. Intent cũ không có baseline không tự dọn worktree còn tồn tại; giữ lại để kiểm tra. Intent mới còn ghim hash nội dung file ignored để phát hiện thay đổi trước khi tiếp tục dọn bắt buộc. Có regression cho thay đổi sau intent và thay đổi nhánh sau ref. Việc kiểm tra baseline không khóa chỉnh sửa từ công cụ ngoài trong khoảng giữa đối chiếu và lệnh Git.
+- Flow Studio: node thể hiện approval tự động hay người duyệt, binding kế thừa/ghim và reviewer target; có tìm bước. Memory lọc loại/phạm vi/tag trong tập kết quả tìm kiếm hiện tại. Đây là lát UI đầu tiên, P1–P4 chưa hoàn tất; chưa có browser acceptance cho thay đổi mới.
+- Linux: bộ kiểm tra 190 test, 179 pass, 11 skip, 0 fail; UI build thành công. Các skip là test Windows/Claude scope. Chưa chạy inference thật hoặc kiểm thử Windows trong đợt này.
 
 ## Đã hoàn thành trong đợt hiện tại
 

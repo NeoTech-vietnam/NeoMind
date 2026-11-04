@@ -7,11 +7,12 @@ import { syncDirectorySync } from '../storage/fs-sync.js';
 
 const idSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/);
 const kindSchema = z.enum(['context', 'decision', 'lesson']);
+const lifecycle = { expiresAt: z.iso.datetime().optional(), supersedes: z.array(idSchema).optional() };
 const inputSchema = z.strictObject({ id: idSchema, type: kindSchema, scope: z.string().min(1),
-  sources: z.array(z.string().min(1)).min(1), tags: z.array(z.string().min(1)), body: z.string().min(1) });
+  sources: z.array(z.string().min(1)).min(1), tags: z.array(z.string().min(1)), ...lifecycle, body: z.string().min(1) });
 const headerSchema = z.strictObject({ id: idSchema, type: kindSchema, status: z.literal('approved'), scope: z.string().min(1),
   sources: z.array(z.string().min(1)).min(1), tags: z.array(z.string().min(1)), updatedAt: z.iso.datetime(),
-  contentHash: z.string().regex(/^[a-f0-9]{64}$/) });
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/), ...lifecycle });
 export type MemoryInput = z.infer<typeof inputSchema>;
 export interface MemoryRecord { header: z.infer<typeof headerSchema>; body: string; revision: string }
 export class MemoryConflict extends Error { constructor() { super('Memory revision conflict'); this.name = 'MemoryConflict'; } }
@@ -100,9 +101,17 @@ export class MemoryStore {
     try {
       const current = this.read(value.type, value.id);
       if ((current?.revision ?? null) !== expectedRevision) throw new MemoryConflict();
+      const supersedes = value.supersedes ?? [];
+      const visit = (id: string, seen = new Set<string>()): void => {
+        if (id === value.id) throw new Error('Memory supersession cannot contain a cycle');
+        if (seen.has(id)) return; seen.add(id);
+        const record = this.read(value.type, id); if (!record) throw new Error(`Superseded memory does not exist: ${id}`);
+        for (const parent of record.header.supersedes ?? []) visit(parent, seen);
+      };
+      for (const id of supersedes) visit(id);
       const file = this.file(value.type, value.id, true);
       const header = headerSchema.parse({ id: value.id, type: value.type, status: 'approved', scope: value.scope,
-        sources: value.sources, tags: value.tags, updatedAt: new Date().toISOString(), contentHash: sha(value.body) });
+        sources: value.sources, tags: value.tags, ...(value.expiresAt ? { expiresAt: value.expiresAt } : {}), ...(value.supersedes ? { supersedes: value.supersedes } : {}), updatedAt: new Date().toISOString(), contentHash: sha(value.body) });
       // A JSON object is valid YAML frontmatter and avoids unsafe YAML parsing.
       const bytes = `---\n${JSON.stringify(header)}\n---\n${value.body}`;
       temporary = `${file}.${randomUUID()}.tmp`;

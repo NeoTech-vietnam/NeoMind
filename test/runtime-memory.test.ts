@@ -1,11 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, readdir, rename } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { RunManager } from '../src/runtime/run-manager.js';
-import { memoryForRun } from '../src/runtime/memory.js';
+import { formatMemorySnapshot, memoryForRun, taskPaths } from '../src/runtime/memory.js';
+import { createEditorApi } from '../src/ui-server/server.js';
+import { defaultProject } from '../src/domain/templates.js';
+import { runtimeContextSchema } from '../src/core/runtime-state.js';
+import { readMemorySelection, writeMemorySelection } from '../src/runtime/project-memory-policy.js';
 
 test('runtime memory shares a root, pins approved revisions, audits decisions and rejects stale writes', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'neomind-runtime-memory-')), project = path.join(root, 'repo'); await mkdir(project);
@@ -13,6 +17,7 @@ test('runtime memory shares a root, pins approved revisions, audits decisions an
   const manager = await RunManager.open(project, path.join(root, 'state'));
   try {
     assert.equal(manager.readMemory().root, null);
+    assert.deepEqual(await manager.lessonQueue(), { runs: [], errors: [], scanned: 0, totalCompleted: 0 });
     const configured = await manager.configureMemory({ initializeDefault: true, expectedPrevious: null });
     assert.equal(configured.root, path.join(project, 'neomind', 'memory'), 'a new project keeps NeoMind data in the visible neomind/ folder');
     const record = { id: 'test-decision', type: 'decision' as const, scope: 'project', sources: ['user:confirmed'], tags: ['flow'], body: 'Use independent review' };
@@ -21,12 +26,66 @@ test('runtime memory shares a root, pins approved revisions, audits decisions an
     const audit = JSON.parse(await readFile(path.join(manager.stateRoot, 'memory-actions', `${written.actionId}.requested.json`), 'utf8')) as { actor: string; record: { body: string } };
     assert.equal(audit.actor, 'local-user'); assert.equal(audit.record.body, record.body);
     const snapshot = memoryForRun(project, path.join(manager.stateRoot, 'coordination.sqlite'), 'flow review')!;
+    const pinned = formatMemorySnapshot(snapshot, 'flow review');
+    const preview = await manager.previewMemory('flow review');
+    assert.equal(preview.root, configured.root);
+    assert.equal(preview.records[0]?.revision, written.record.revision);
+    const response = await createEditorApi(project, async () => manager)({ method: 'POST', path: '/api/memory/preview', body: { task: 'flow review' } });
+    assert.equal(response.status, 200);
+    assert.equal((response.body as typeof preview).records[0]?.revision, written.record.revision);
+    assert.equal(pinned.records[0]?.revision, written.record.revision);
+    assert.match(pinned.records[0]?.selectionReason ?? '', /flow|review/);
+    assert.match(pinned.text, /Use independent review/);
+    const oversized = structuredClone(snapshot.records[0]!);
+    oversized.header.sources = ['x'.repeat(40000)];
+    const bounded = formatMemorySnapshot({ root: snapshot.root, records: [oversized, snapshot.records[0]!] }, 'flow review');
+    assert.equal(bounded.records.length, 1, 'metadata does not claim a record whose full text was omitted');
+    assert.ok(bounded.text.length <= 40000);
+    await manager.writeMemory({ id: 'other', type: 'context', scope: 'src/ui', sources: ['file:ui'], tags: ['ui'], body: 'UI layout' }, null, 'ui');
+    const configPath = path.join(project, 'neomind', 'project.json');
+    await writeFile(configPath, JSON.stringify({ ...defaultProject, memorySelection: { scopes: ['src/ui'], tags: ['ui'], requireTaskMatch: true, maxRecords: 1, maxBodyBytes: 100 } }));
+    const configuredPreview = await manager.previewMemory('UI layout');
+    assert.deepEqual(configuredPreview.records.map(item => item.id), ['other']);
+    assert.deepEqual(configuredPreview.selectionPolicy?.scopes, ['src/ui']);
+    const selected = memoryForRun(project, path.join(manager.stateRoot, 'coordination.sqlite'), 'UI layout', configuredPreview.selectionPolicy)!;
+    const context = runtimeContextSchema.parse({ projectRoot: project, workspace: project, task: 'UI layout', sourceHead: 'a'.repeat(40), initialBaselineHash: 'test', lease: { workspace: project, runId: 'run-1', hostId: 'host-1', fence: 1 }, memory: formatMemorySnapshot(selected, 'UI layout', configuredPreview.selectionPolicy) });
+    assert.deepEqual(context.memory?.selectionPolicy?.scopes, ['src/ui'], 'the effective selection policy survives journal validation');
+    assert.deepEqual((await manager.previewMemory('unrelated')).records, []);
+    await writeFile(configPath, JSON.stringify({ ...defaultProject, memorySelection: { scopes: ['src'], tags: ['ui'], maxBodyBytes: 2 } }));
+    assert.deepEqual((await manager.previewMemory('UI layout')).records, [], 'byte budget excludes an oversized record');
+    await writeFile(configPath, JSON.stringify({ ...defaultProject, memorySelection: { scopes: ['src'], tags: ['ui'], maxBodyBytes: 100 } }));
+    assert.deepEqual((await manager.previewMemory('UI layout')).records.map(item => item.id), ['other'], 'scope includes slash-delimited descendants');
+    await writeFile(configPath, JSON.stringify({ ...defaultProject, memorySelection: { inferTaskPaths: true } }));
+    const inferred = await manager.previewMemory('Update `src/ui/panel.ts`');
+    assert.deepEqual(inferred.inferredPaths, ['src/ui/panel.ts']);
+    assert.deepEqual(inferred.records.map(item => item.id).sort(), ['other', 'test-decision']);
+    assert.deepEqual(taskPaths('Use https://example.com/a/b and ../secret/file'), []);
+    await writeFile(configPath, JSON.stringify({ ...defaultProject, memorySelection: { maxRecords: 0 } }));
+    assert.deepEqual((await manager.previewMemory('UI layout')).records, []);
     await manager.writeMemory({ ...record, body: 'Updated decision' }, written.record.revision, 'ui');
     assert.equal(snapshot.records[0]?.body, record.body); assert.equal(snapshot.records[0]?.revision, written.record.revision);
     await assert.rejects(manager.writeMemory(record, written.record.revision, 'ui'), /revision conflict/);
     const resultFiles = (await readdir(path.join(manager.stateRoot, 'memory-actions'))).filter(name => name.endsWith('.result.json'));
-    assert.equal(resultFiles.length, 2);
+    assert.equal(resultFiles.length, 3);
     await rename(configured.root!, `${configured.root}-offline`);
     assert.throws(() => manager.readMemory(), /ENOENT/);
   } finally { await manager.close(); }
+});
+
+test('memory selection editor preserves project fields and rejects stale concurrent writes', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'neomind-selection-')), project = path.join(root, 'repo'); await mkdir(project);
+  execFileSync('git', ['-C', project, 'init', '-q']);
+  const first = await readMemorySelection(project), second = await readMemorySelection(project);
+  assert.deepEqual(first.selection, {});
+  const api = createEditorApi(project, async () => { throw new Error('Selection editor does not need a run manager'); });
+  assert.equal((await api({ method: 'GET', path: '/api/memory/selection' })).status, 200);
+  const saved = await writeMemorySelection(project, { scopes: ['src'], tags: ['ui'], maxRecords: 2 }, first.revision);
+  assert.notEqual(saved.revision, first.revision);
+  await assert.rejects(writeMemorySelection(project, { maxRecords: 1 }, second.revision), /revision conflict/);
+  const persisted = JSON.parse(await readFile(path.join(project, 'neomind', 'project.json'), 'utf8')) as { policy: { requireApprovalBeforeWrite: boolean }; memorySelection: { scopes: string[] } };
+  assert.equal(persisted.policy.requireApprovalBeforeWrite, true);
+  assert.deepEqual(persisted.memorySelection.scopes, ['src']);
+  await assert.rejects(writeMemorySelection(project, { maxRecords: 31 }, saved.revision));
+  const stale = await api({ method: 'PUT', path: '/api/memory/selection', body: { selection: { maxRecords: 1 }, expectedRevision: first.revision } });
+  assert.equal(stale.status, 409);
 });

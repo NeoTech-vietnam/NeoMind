@@ -1,10 +1,10 @@
-export const runUsage = 'Usage: neomind run list <project> | preview <project> <flow> | start <project> <flow> "task" [--import-dirty HASH] | show|resume|pause|cancel|retry-git|include-imported|apply <project> <run-id> | clean <project> <run-id>|--all [--force] | approve <project> <run-id> --plan-hash HASH | changes <project> <run-id> --plan-hash HASH "feedback" | extend-time <project> <run-id> <seconds>';
+export const runUsage = 'Usage: neomind run list <project> | preview <project> <flow> | start <project> <flow> "task" [--import-dirty HASH] [--workspace isolated|current|shared] | show|resume|pause|cancel|retry-git|include-imported|apply <project> <run-id> | clean <project> <run-id>|--all [--force] | approve <project> <run-id> --plan-hash HASH | changes <project> <run-id> --plan-hash HASH "feedback" | extend-time <project> <run-id> <seconds>';
 type RunCommand =
   | { kind: 'list'; project: string }
   | { kind: 'show' | 'resume' | 'pause' | 'cancel' | 'retry-git' | 'include-imported' | 'apply'; project: string; runId: string }
   | { kind: 'clean'; project: string; runId?: string; force: boolean }
-  | { kind: 'preview'; project: string; flowId: string }
-  | { kind: 'start'; project: string; flowId: string; task: string; importDirty?: string }
+  | { kind: 'preview'; project: string; flowId: string; workspaceMode?: 'isolated' | 'current' | 'shared' }
+  | { kind: 'start'; project: string; flowId: string; task: string; importDirty?: string; workspaceMode?: 'isolated' | 'current' | 'shared' }
   | { kind: 'approve'; project: string; runId: string; planHash: string }
   | { kind: 'changes'; project: string; runId: string; planHash: string; feedback: string }
   | { kind: 'extend-time'; project: string; runId: string; seconds: number };
@@ -18,9 +18,20 @@ export function parseRunCommand(args: string[]): RunCommand | undefined {
   if (!id) return undefined;
   if (kind === 'clean' && rest.length <= 1 && (!rest.length || rest[0] === '--force')) return { kind, project, ...(id === '--all' ? {} : { runId: id }), force: rest[0] === '--force' };
   if (['show', 'resume', 'pause', 'cancel', 'retry-git', 'include-imported', 'apply'].includes(kind) && !rest.length) return { kind: kind as 'show', project, runId: id };
-  if (kind === 'preview' && !rest.length) return { kind, project, flowId: id };
-  if (kind === 'start' && rest.length === 1 && rest[0]!.trim()) return { kind, project, flowId: id, task: rest[0]! };
-  if (kind === 'start' && rest.length === 3 && rest[0]!.trim() && rest[1] === '--import-dirty' && planHash(rest[2])) return { kind, project, flowId: id, task: rest[0]!, importDirty: rest[2]! };
+  if (kind === 'preview' || kind === 'start') {
+    const task = kind === 'start' ? rest[0] : undefined;
+    if (kind === 'start' && !task?.trim()) return undefined;
+    const flags = kind === 'start' ? rest.slice(1) : rest;
+    let importDirty: string | undefined, workspaceMode: 'isolated' | 'current' | 'shared' | undefined;
+    for (let i = 0; i < flags.length; i += 2) {
+      const key = flags[i], value = flags[i + 1];
+      if (key === '--import-dirty' && kind === 'start' && !importDirty && planHash(value)) importDirty = value;
+      else if (key === '--workspace' && !workspaceMode && ['isolated', 'current', 'shared'].includes(value ?? '')) workspaceMode = value as typeof workspaceMode;
+      else return undefined;
+    }
+    return kind === 'preview' ? { kind, project, flowId: id, ...(workspaceMode ? { workspaceMode } : {}) }
+      : { kind, project, flowId: id, task: task!, ...(importDirty ? { importDirty } : {}), ...(workspaceMode ? { workspaceMode } : {}) };
+  }
   if (kind === 'approve' && rest.length === 2 && rest[0] === '--plan-hash' && planHash(rest[1])) return { kind, project, runId: id, planHash: rest[1]! };
   if (kind === 'changes' && rest.length === 3 && rest[0] === '--plan-hash' && planHash(rest[1]) && rest[2]!.trim() && rest[2]!.length <= 10000)
     return { kind, project, runId: id, planHash: rest[1]!, feedback: rest[2]! };

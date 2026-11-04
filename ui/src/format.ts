@@ -11,6 +11,7 @@ export const phaseInfo = (phase: string) => phases[phase] ?? { label: phase, ton
 const statuses: Record<string, { label: string; tone: Tone; icon: string }> = {
   succeeded: { label: 'Xong', tone: 'green', icon: '✓' }, running: { label: 'Đang chạy', tone: 'violet', icon: '●' },
   ready: { label: 'Sẵn sàng', tone: 'blue', icon: '○' }, pending: { label: 'Chờ', tone: 'gray', icon: '○' },
+  waiting: { label: 'Chờ xử lý', tone: 'amber', icon: '◷' },
   failed: { label: 'Lỗi', tone: 'red', icon: '✕' }, skipped: { label: 'Bỏ qua', tone: 'gray', icon: '–' },
 };
 export const statusInfo = (status: string | undefined) => statuses[status ?? 'pending'] ?? { label: status ?? '', tone: 'gray' as Tone, icon: '○' };

@@ -1,7 +1,8 @@
 import { gitConfigEnv } from './git-env.js';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { readFile, realpath } from 'node:fs/promises';
+import { readFile, realpath, lstat, mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { captureBaseline } from './baseline.js';
@@ -48,35 +49,56 @@ export async function commitBranch(workspace: string, baselineHash: string, base
 }
 
 /** Merge branch commits in order without touching any worktree. Conflicted files keep Git's markers in the result tree. */
-export async function mergeBranchCommits(repository: string, commits: string[]): Promise<{ tree: string; conflicts: string[] }> {
+export async function mergeBranchCommits(repository: string, commits: string[]): Promise<{ tree: string; conflicts: string[]; commit: string }> {
   if (!commits.length || commits.some(item => !objectId.test(item))) throw new Error('Integration needs branch commits');
   let current = commits[0]!, tree = oid((await git(repository, ['rev-parse', `${current}^{tree}`])).stdout);
   const conflicts = new Set<string>();
   for (const next of commits.slice(1)) {
-    const result = await git(repository, ['merge-tree', '--write-tree', '--name-only', '--no-messages', current, next], [1]);
-    const [first, ...rest] = result.stdout.split('\n');
+    const result = await git(repository, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', current, next], [1]);
+    const [first, ...rest] = result.stdout.split('\0');
     tree = oid(first ?? '');
-    if (result.code === 1) for (const line of rest) { if (!line.trim()) break; conflicts.add(line.trim()); }
+    if (result.code === 1) for (const line of rest) { if (!line) break; conflicts.add(line); }
     current = oid((await git(repository, ['commit-tree', tree, '-p', current, '-p', next, '-m', 'neomind integration'])).stdout);
   }
-  return { tree, conflicts: [...conflicts].sort() };
+  return { tree, conflicts: [...conflicts].sort(), commit: current };
 }
 
-/** Put a tree's content into a clean worktree as unstaged changes; the index stays at HEAD like an agent's edits. */
-export async function applyTreeToWorkspace(workspace: string, baseCommit: string, tree: string): Promise<string> {
+/** Capture the exact current tree as an internal commit without changing HEAD or the user's index. */
+export async function snapshotWorkspace(workspace: string, baselineHash: string, parent: string): Promise<string> {
+  const review = await buildReviewTree(workspace, baselineHash);
+  if (!objectId.test(parent)) throw new Error('Invalid snapshot parent');
+  if (oid((await git(workspace, ['rev-parse', `${parent}^{tree}`])).stdout) === review.tree) return parent;
+  return oid((await git(workspace, ['commit-tree', review.tree, '-p', parent, '-m', 'neomind workspace snapshot'])).stdout);
+}
+
+/** Apply a merge to the exact recorded starting tree, retaining all existing staging. */
+export async function applyTreeToWorkspace(workspace: string, baseCommit: string, tree: string, startingTree?: string, startingBaselineHash?: string): Promise<string> {
   const before = await captureBaseline(workspace);
-  if (before.head !== baseCommit || !before.clean) throw new Error('Integration workspace must be clean at the run base');
-  await git(workspace, ['read-tree', '-m', '-u', baseCommit, tree]);
-  await git(workspace, ['read-tree', baseCommit]);
-  return (await captureBaseline(workspace)).baselineHash;
+  if (before.head !== baseCommit || (startingBaselineHash ? before.baselineHash !== startingBaselineHash : !before.clean)) throw new Error('Integration workspace must be clean or match its recorded starting baseline');
+  const current = await buildReviewTree(workspace, before.baselineHash);
+  if (startingTree && current.tree !== startingTree) throw new Error('Integration starting tree changed');
+  const patch = (await git(workspace, ['diff', '--binary', '--full-index', '--no-ext-diff', '--no-renames', current.tree, tree])).stdout;
+  if (!patch) return before.baselineHash;
+  const directory = await mkdtemp(path.join(tmpdir(), 'neomind-merge-'));
+  try {
+    const file = path.join(directory, 'merge.patch'); await writeFile(file, patch);
+    await git(workspace, ['apply', '--check', '--binary', file]);
+    if ((await captureBaseline(workspace)).baselineHash !== before.baselineHash) throw new Error('Workspace changed during merge application');
+    await git(workspace, ['apply', '--binary', '--whitespace=nowarn', file]);
+    const after = await captureBaseline(workspace);
+    if ((await buildReviewTree(workspace, after.baselineHash)).tree !== tree) throw new Error('Applied merge tree does not match intent');
+    return after.baselineHash;
+  } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
-/** Inspect an integration whose application was not journaled: not applied, applied exactly, or unknown. */
-export async function inspectIntegration(workspace: string, baseCommit: string, tree: string): Promise<{ state: 'not_applied' } | { state: 'applied'; baselineHash: string } | { state: 'unknown' }> {
+/** Read-only reconciliation, including merges into an already dirty workspace. */
+export async function inspectIntegration(workspace: string, baseCommit: string, tree: string, startingTree?: string, startingBaselineHash?: string): Promise<{ state: 'not_applied' } | { state: 'applied'; baselineHash: string } | { state: 'unknown' }> {
   const baseline = await captureBaseline(workspace);
   if (baseline.head !== baseCommit) return { state: 'unknown' };
-  if (baseline.clean) return { state: 'not_applied' };
-  return (await buildReviewTree(workspace, baseline.baselineHash)).tree === tree ? { state: 'applied', baselineHash: baseline.baselineHash } : { state: 'unknown' };
+  const current = (await buildReviewTree(workspace, baseline.baselineHash)).tree;
+  if (current === tree) return { state: 'applied', baselineHash: baseline.baselineHash };
+  if (startingTree ? current === startingTree && baseline.baselineHash === startingBaselineHash : baseline.clean) return { state: 'not_applied' };
+  return { state: 'unknown' };
 }
 
 /** Files that still contain Git conflict markers. */
@@ -86,8 +108,22 @@ export async function filesWithConflictMarkers(workspace: string, paths: string[
     const absolute = path.resolve(root, file), relative = path.relative(root, absolute);
     if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Conflict path escapes workspace');
     let text: string;
+    const info = await lstat(absolute).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
+    if (!info || info.isSymbolicLink()) continue;
+    if (!info.isFile()) throw new Error(`Conflict path is not a regular file: ${file}`);
     try { text = await readFile(absolute, 'utf8'); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
     if (/^(?:<{7}|>{7})(?: |\r?$)/m.test(text) || /^\|{7}(?: |\r?$)/m.test(text)) remaining.push(file);
   }
   return remaining;
+}
+
+
+/** Non-text conflicts need an explicit resolution decision, not merely absence of text markers. */
+export async function markerlessConflicts(repository: string, tree: string, files: string[]): Promise<string[]> {
+  const result: string[] = [];
+  for (const file of files) {
+    const text = await git(repository, ['show', `${tree}:${file}`]).then(value => value.stdout, () => '');
+    if (!/^(?:<{7}|>{7}|\|{7})(?: |\r?$)/m.test(text)) result.push(file);
+  }
+  return result;
 }

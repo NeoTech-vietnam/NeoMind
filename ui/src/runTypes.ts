@@ -6,9 +6,10 @@ export type Plan = { goal: string; approach: string; scope: string[]; acceptance
 export type Evidence = { criteria: { criterion: string; status: string }[]; findings: { id: string; criterion: string; explanation: string }[] };
 
 export type Run = {
+  nodeData?: { nodeId: string; attemptId: string; workspace: string; promptHash: string; truncated: boolean; sources: { kind: string; id: string; fromNodeId?: string; hash: string }[]; output?: { outputHash: string; truncated: boolean; messageCount: number } }[];
   runId: string; busy: boolean; proposedPlanHash?: string; timeLimitMs?: number; timeExtensionsMs: number;
   runtimeState?: { phase: string; reason: string; activeMs: number };
-  runtimeContext?: { task: string; workspace: string; sourceHead?: string };
+  runtimeContext?: { workspaceMode?: 'isolated' | 'current' | 'shared'; task: string; workspace: string; sourceHead?: string; memory?: { root: string; text: string; selectionPolicy?: unknown; inferredPaths?: string[]; records?: { id: string; type: string; scope: string; revision: string; sources: string[]; selectionReason: string }[] } };
   snapshot?: MaterializedRun;
   bindingSelections: { key: string; values: BindingValues; reason: string }[];
   usage: { totalTokens: number | null; partial: boolean };
@@ -24,7 +25,7 @@ export type Run = {
   /** A finished flow without a commit: the files it changed for the user to review and apply. */
   handoff?: { files: string[]; applied: boolean };
   /** The run's worktrees were (or are being) removed; commits stay reachable through the listed refs. */
-  workspaceCleanup?: { workspaces: string[]; refs: { ref: string; commit: string }[]; discarded: string[]; cleaned: boolean };
+  workspaceCleanup?: { workspaces: string[]; refs: { ref: string; commit: string }[]; discarded: string[]; retained?: Record<string, string>; cleaned: boolean };
 };
 
 export type Preview = {
@@ -34,7 +35,7 @@ export type Preview = {
   dirtyImport: { baselineHash: string; changes: { path: string; change: 'modified' | 'added' | 'deleted' }[]; blockers: string[] };
 };
 
-export type RunSummary = { runId: string; task?: string | undefined; flowName?: string | undefined; phase: string; reason: string; activeMs?: number | undefined };
+export type RunSummary = { runId: string; task?: string | undefined; flowId?: string | undefined; flowName?: string | undefined; createdAt?: string | undefined; phase: string; reason: string; activeMs?: number | undefined };
 
 /** Effective runner/model per binding: the latest recorded selection wins over the snapshot. */
 export function effectiveBindings(run: Run): Map<string, BindingValues> {

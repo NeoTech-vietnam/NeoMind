@@ -24,7 +24,7 @@ export async function materializeRun(
   const root = await realpath(projectRoot);
   const validFlow = flowSchema.parse(flow), validProject = projectSchema.parse(project);
   const compiled = compileFlow(validFlow, validProject.policy);
-  if (!compiled.ok) throw new Error(`Invalid flow: ${compiled.diagnostics.map(d => d.code).join(', ')}`);
+  if (!compiled.ok) throw new Error(`Invalid flow: ${compiled.diagnostics.map(d => `${d.code}: ${d.message}`).join('; ')}`);
   const configuration = snapshotConfiguration(compiled.flow, validProject, overrides);
   const profilesByStep: Record<string, MaterializedProfile> = {};
 
@@ -97,7 +97,7 @@ export function validateMaterializedRun(input: unknown): MaterializedRun {
   const snapshot = materializedRunSchema.parse(input), flow = snapshot.configuration.flow;
   const hashes = flowHashes(flow);
   if (hashes.contentHash !== snapshot.configuration.contentHash || hashes.semanticHash !== snapshot.configuration.semanticHash) throw new Error('Materialized flow hash mismatch');
-  const compiled = compileFlow(flow, snapshot.policy);
+  const compiled = compileFlow(flow, snapshot.policy, { legacyExceptions: true });
   if (!compiled.ok) throw new Error('Materialized flow violates project policy');
   const expected = new Map<string, { profileId: string; version: number; reviewer: boolean; requested?: Profile['requestedPermissions'] }>();
   for (const node of flow.definition.nodes) {

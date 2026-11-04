@@ -52,7 +52,7 @@ Mặc định standalone dùng `gpt-6-luna` reasoning `low`; có thể chọn `g
 | **Dev song song** | Plan chia 2 gói → bạn duyệt → 2 agent code song song → ghép (agent tích hợp xử lý xung đột) → review → commit | Commit |
 | **Research** | Agent chỉ đọc, viết báo cáo có nguồn → agent review nguồn | Báo cáo, không sửa file |
 
-Fast dùng hai ngoại lệ do flow khai báo: bước duyệt tự động (`mode: "auto"`) và review do người (`review: "human"`). Project có thể cấm bằng `"allowAutoApproval": false` hoặc `"allowHumanReview": false` trong policy của `neomind/project.json`; khi đó Fast không qua kiểm tra flow. Preview ghi rõ các ngoại lệ trước khi chạy.
+Fast dùng hai ngoại lệ do flow khai báo: bước duyệt tự động (`mode: "auto"`) và review do người (`review: "human"`). Khi policy yêu cầu duyệt trước sửa hoặc review độc lập, project phải chủ động đặt `"allowAutoApproval": true` và `"allowHumanReview": true` trong `policy` của `neomind/project.json` để cho phép các ngoại lệ tương ứng. Trường bị bỏ trống không nới gate bắt buộc; Fast sẽ báo lỗi validation cho tới khi policy được cập nhật. Preview ghi rõ các ngoại lệ trước khi chạy.
 
 ## Sửa flow bằng canvas (Nimbalyst, Obsidian)
 
@@ -108,3 +108,16 @@ Dữ liệu NeoMind của project nằm trong thư mục `neomind/` (không có 
 Memory Markdown độc lập với frontend. UI cho cấu hình root, ghi context/quyết định với receipt và duyệt lesson trước khi chia sẻ. Revision và nội dung memory được ghim trong từng run; root không khả dụng sẽ báo lỗi. Nimbalyst adapter chưa được triển khai.
 
 Executor chạy trong worktree riêng: một writer, hoặc các writer trong nhánh fork (mỗi nhánh một worktree, gộp bởi bước integration). Reviewer và các nhánh chạy song song trong giới hạn cấu hình; commit nội bộ của nhánh nằm trên `refs/neomind/<run>/…`, không đụng nhánh của bạn. Commit local dùng `commit-tree` và cập nhật ref có kiểm tra baseline, **không chạy Git hooks**. Flow không tự push hoặc tạo PR. Xem bàn giao để biết giới hạn recovery, Git và acceptance còn lại.
+
+### Workflow, workspace và memory (04/11/2026)
+
+Run mới có thể chọn worktree riêng, checkout hiện tại hoặc shared workspace trên Flow Studio. CLI tương ứng:
+
+```bash
+npm run neomind -- run preview /path/to/repo dev --workspace current
+npm run neomind -- run start /path/to/repo dev "task" --workspace current --import-dirty BASELINE_HASH
+```
+
+Lấy `BASELINE_HASH` từ preview khi checkout có thay đổi. Shared/current tuần tự hóa writer, giữ staging và chỉ commit phần run. Isolated hỗ trợ nhiều giai đoạn fork/join/integration và review/repair từng nhánh; fork lồng nhau vẫn bị chặn. `run clean` giữ nguyên worktree trong vùng `.retained` để bảo vệ file trước writer bên ngoài; dữ liệu lưu khôi phục còn chiếm dung lượng.
+
+Project memory có policy lexical/LSA/hybrid, suy ra path từ task/tên file, dedup và metadata `expiresAt`/`supersedes`. LSA chạy cục bộ theo corpus project; lesson chỉnh sửa tạo version mới và cần duyệt lại. Chi tiết kiểm chứng và giới hạn: [bàn giao 04/11](docs/adaptive-agent-flow/session-handoff-2026-11-04.md).

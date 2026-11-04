@@ -1,3 +1,4 @@
+import type { SharedIndex } from '../workspace/shared-index.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { projectPolicySchema, type ProjectPolicy } from '../domain/schema.js';
@@ -24,7 +25,7 @@ export class GitCommitDispatch {
     if (!intent || intent.confirmed || lease.runId !== this.journal.runId || intent.workspace !== lease.workspace ||
         intent.workspaceFence !== lease.fence || await realpath(workspace) !== intent.workspace) throw new Error('Commit intent or workspace lease does not match');
     const outcome = await inspectCommitOutcome({ workspace, lease, coordinator, expectedParent: intent.expectedParent,
-      expectedTree: intent.expectedTree, baselineHash: intent.baselineHash, ...(intent.workspaceTree ? { workspaceTree: intent.workspaceTree } : {}) });
+      expectedTree: intent.expectedTree, baselineHash: intent.baselineHash, ...(intent.workspaceTree ? { workspaceTree: intent.workspaceTree } : {}), ...(intent.sharedIndex ? { sharedIndex: intent.sharedIndex } : {}) });
     if (outcome.state === 'applied') {
       await this.append('git_commit_receipt', { nodeId, ...outcome.receipt }, intent.requestId);
       await this.append('node_completed', { nodeId, outcome: 'completed' });
@@ -35,25 +36,26 @@ export class GitCommitDispatch {
   async authorizeRetry(nodeId: string, workspace: string, lease: WorkspaceLease, coordinator: WorkspaceCoordinator) {
     const report = replayRun(await this.journal.read()), intent = report.commits.find(item => item.nodeId === nodeId);
     if (!intent || intent.confirmed || lease.runId !== this.journal.runId || intent.workspace !== lease.workspace || intent.workspaceFence !== lease.fence || await realpath(workspace) !== intent.workspace) throw new Error('Commit intent or workspace lease does not match');
-    const outcome = await inspectCommitOutcome({ workspace, lease, coordinator, expectedParent: intent.expectedParent, expectedTree: intent.expectedTree, baselineHash: intent.baselineHash, ...(intent.workspaceTree ? { workspaceTree: intent.workspaceTree } : {}) });
+    const outcome = await inspectCommitOutcome({ workspace, lease, coordinator, expectedParent: intent.expectedParent, expectedTree: intent.expectedTree, baselineHash: intent.baselineHash, ...(intent.workspaceTree ? { workspaceTree: intent.workspaceTree } : {}), ...(intent.sharedIndex ? { sharedIndex: intent.sharedIndex } : {}) });
     if (outcome.state !== 'not_applied' || (await buildReviewTree(workspace, intent.baselineHash)).tree !== (intent.workspaceTree ?? intent.expectedTree)) throw new Error('Git retry requires a verified unchanged and unapplied commit');
     await this.append('git_commit_abandoned', { nodeId }, intent.requestId);
   }
   async commit(input: { nodeId: string; reviewNodeId: string; workspace: string; lease: WorkspaceLease; coordinator: WorkspaceCoordinator;
-    livePolicy: ProjectPolicy; baselineHash: string; parent: string; tree: string; message: string; requestId: string; authorized: boolean; signal?: AbortSignal; workspaceTree?: string }) {
+    livePolicy: ProjectPolicy; baselineHash: string; parent: string; tree: string; message: string; requestId: string; authorized: boolean; signal?: AbortSignal; workspaceTree?: string; sharedIndex?: SharedIndex }) {
     if (!input.authorized) throw new Error('Explicit user continuation required');
     if (input.lease.runId !== this.journal.runId) throw new Error('Workspace lease belongs to another run');
     const events = await this.journal.read(), report = replayRun(events);
     const initial = z.object({ policy: projectPolicySchema }).parse(events[0]?.payload);
     if (!input.livePolicy.allowGitCommit || hashJson(initial.policy) !== hashJson(input.livePolicy)) throw new Error('Commit is blocked by project policy');
+    if (input.sharedIndex && (!report.runtimeContext?.workspaceMode || report.runtimeContext.workspaceMode === 'isolated' || report.runtimeContext.workspace !== input.workspace)) throw new Error('Shared commit requires the recorded shared workspace');
     if (!report.acceptedReviews.some(item => item.nodeId === input.reviewNodeId && item.baselineHash === input.baselineHash)) throw new Error('Commit requires matching accepted review');
     if (report.unresolvedAttemptIds.length || report.unresolvedCommitNodeIds.length) throw new Error('Reconcile uncertain effects before commit');
     await this.append('node_claimed', { nodeId: input.nodeId });
     await this.append('git_commit_intent', { nodeId: input.nodeId, reviewNodeId: input.reviewNodeId, baselineHash: input.baselineHash,
-      expectedParent: input.parent, expectedTree: input.tree, ...(input.workspaceTree && input.workspaceTree !== input.tree ? { workspaceTree: input.workspaceTree } : {}) }, input.requestId);
+      expectedParent: input.parent, expectedTree: input.tree, ...(input.sharedIndex ? { sharedIndex: input.sharedIndex } : {}), ...(input.workspaceTree && input.workspaceTree !== input.tree ? { workspaceTree: input.workspaceTree } : {}) }, input.requestId);
     await this.append('git_workspace_bound', { nodeId: input.nodeId, workspace: input.lease.workspace, fence: input.lease.fence }, input.requestId);
     const receipt = await commitReviewedTree({ workspace: input.workspace, lease: input.lease, coordinator: input.coordinator,
-      expectedParent: input.parent, expectedTree: input.tree, baselineHash: input.baselineHash, message: input.message, ...(input.signal ? { signal: input.signal } : {}), ...(input.workspaceTree ? { workspaceTree: input.workspaceTree } : {}) });
+      expectedParent: input.parent, expectedTree: input.tree, ...(input.sharedIndex ? { sharedIndex: input.sharedIndex } : {}), baselineHash: input.baselineHash, message: input.message, ...(input.signal ? { signal: input.signal } : {}), ...(input.workspaceTree ? { workspaceTree: input.workspaceTree } : {}) });
     await this.append('git_commit_receipt', { nodeId: input.nodeId, ...receipt }, input.requestId);
     await this.append('node_completed', { nodeId: input.nodeId, outcome: 'completed' }); return receipt;
   }

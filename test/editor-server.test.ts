@@ -30,6 +30,10 @@ test('local editor persists drafts and published versions while rejecting unauth
     const published = await fetch(`${editor.url}/api/flows/demo/publish`, { method: 'POST', headers });
     const payload = await published.json() as { version: { version: number; definition: { nodes: { id: string; label: string }[] } } };
     assert.equal(payload.version.version, 1);
+    const versions = await (await fetch(`${editor.url}/api/flows/demo/versions`)).json() as { versions: number[] };
+    assert.deepEqual(versions.versions, [1]);
+    const stored = await (await fetch(`${editor.url}/api/flows/demo/versions?version=1`)).json() as typeof payload;
+    assert.equal(stored.version.definition.nodes.find(node => node.id === 'plan')?.label, 'My plan');
     assert.equal(payload.version.definition.nodes.find(node => node.id === 'plan')?.label, 'My plan');
     const cloned = await fetch(`${editor.url}/api/flows/demo/clone`, { method: 'POST', headers,
       body: JSON.stringify({ targetId: 'demo-copy', name: 'Demo copy' }) });

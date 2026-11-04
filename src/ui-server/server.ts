@@ -1,3 +1,4 @@
+import { readMemorySelection, writeMemorySelection } from '../runtime/project-memory-policy.js';
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { readFile, realpath, stat } from 'node:fs/promises';
@@ -63,12 +64,22 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
     if (url.pathname === '/api/runners' && method === 'GET') { return reply(200, { runners: runnerModels }); }
     if (url.pathname === '/api/runtime/models' && method === 'GET') { return reply(200, { models: await (await runs()).models() }); }
     if (url.pathname === '/api/memory' && method === 'GET') { return reply(200, (await runs()).readMemory(url.searchParams.get('q') ?? undefined)); }
+    if (url.pathname === '/api/memory/selection' && method === 'GET') return reply(200, await readMemorySelection(projectRoot));
+    if (url.pathname === '/api/memory/selection' && method === 'PUT') {
+      const input = z.strictObject({ selection: z.json(), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/) }).parse(payload);
+      return reply(200, await writeMemorySelection(projectRoot, input.selection, input.expectedRevision));
+    }
+    if (url.pathname === '/api/memory/lesson-queue' && method === 'GET') { return reply(200, await (await runs()).lessonQueue()); }
+    if (url.pathname === '/api/memory/preview' && method === 'POST') {
+      const input = z.strictObject({ task: z.string().min(1).max(10000) }).parse(payload);
+      return reply(200, await (await runs()).previewMemory(input.task));
+    }
     if (url.pathname === '/api/memory/configure' && method === 'POST') {
       const input = z.strictObject({ root: z.string().min(1).optional(), initializeDefault: z.boolean(), expectedPrevious: z.string().nullable() }).parse(payload);
       return reply(200, await (await runs()).configureMemory({ initializeDefault: input.initializeDefault, expectedPrevious: input.expectedPrevious, ...(input.root ? { root: input.root } : {}) }));
     }
     if (url.pathname === '/api/memory' && method === 'POST') {
-      const input = z.strictObject({ record: z.strictObject({ id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/), type: z.enum(['context', 'decision']), scope: z.string().min(1), sources: z.array(z.string().min(1)).min(1), tags: z.array(z.string()), body: z.string().min(1) }), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable() }).parse(payload);
+      const input = z.strictObject({ record: z.strictObject({ id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/), type: z.enum(['context', 'decision']), scope: z.string().min(1), sources: z.array(z.string().min(1)).min(1), tags: z.array(z.string()), body: z.string().min(1), expiresAt: z.iso.datetime().optional(), supersedes: z.array(z.string().min(1)).optional() }), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable() }).parse(payload);
       return reply(200, await (await runs()).writeMemory(input.record, input.expectedRevision, 'ui'));
     }
     if (url.pathname === '/api/profiles' && method === 'GET') { return reply(200, { profiles: await profiles.list(), builtins: ['implementer', 'verifier'].map(id => builtinProfile(id)) }); }
@@ -97,19 +108,22 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
     }
     if (url.pathname === '/api/runs' && method === 'GET') { return reply(200, { runs: await (await runs()).list() }); }
     const runInput = z.strictObject({ flowId: z.string().min(1), version: z.number().int().positive().optional(), task: z.string().min(1).optional(), configurationHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+      workspaceMode: z.enum(['isolated', 'current', 'shared']).optional(),
       importDirty: z.string().regex(/^[a-f0-9]{64}$/).optional(),
       limits: z.strictObject({ activeTimeSeconds: z.number().int().positive().optional(), maxConcurrency: z.number().int().positive().optional(), maxRepairRounds: z.number().int().nonnegative().optional() }).transform(value => Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined))).optional(),
       overrides: z.record(z.string(), z.strictObject({ runner: z.string().min(1).optional(), provider: z.string().min(1).optional(), model: z.string().min(1).optional(), reasoning: z.string().min(1).optional() }).transform(value => Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined)) as BindingOverride)).optional() });
     if (url.pathname === '/api/runs/preview' && method === 'POST') {
       const input = runInput.parse(payload);
-      return reply(200, await (await runs()).preview(input.flowId, input.version, input.overrides, input.limits));
+      return reply(200, await (await runs()).preview(input.flowId, input.version, input.overrides, input.limits, input.workspaceMode));
     }
     if (url.pathname === '/api/runs' && method === 'POST') {
       const input = runInput.parse(payload);
       if (!input.task?.trim()) throw new Error('Task is required');
       if (!input.configurationHash) throw new Error('Preview the effective configuration before starting');
-      return reply(201, await (await runs()).create(input.flowId, input.task, input.version, input.overrides, input.configurationHash, input.limits, input.importDirty));
+      return reply(201, await (await runs()).create(input.flowId, input.task, input.version, input.overrides, input.configurationHash, input.limits, input.importDirty, input.workspaceMode));
     }
+    const nodeDataMatch = /^\/api\/runs\/([a-z0-9-]+)\/node-data\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
+    if (nodeDataMatch && method === 'GET') return reply(200, await (await runs()).nodeData(nodeDataMatch[1]!, nodeDataMatch[2]!));
     const transcriptMatch = /^\/api\/runs\/([a-z0-9-]+)\/transcripts(?:\/([A-Za-z0-9_-]+))?$/.exec(url.pathname);
     if (transcriptMatch && method === 'GET') {
       if (!transcriptMatch[2]) { return reply(200, await (await runs()).transcripts(transcriptMatch[1]!)); }
@@ -122,12 +136,20 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       const { force } = z.strictObject({ force: z.boolean().default(false) }).parse(payload);
       return reply(200, cleanMatch[1] ? await (await runs()).clean(cleanMatch[1], force) : { results: await (await runs()).cleanFinished(force) });
     }
-    const lessonMatch = /^\/api\/runs\/([a-z0-9-]+)\/lessons(?:\/(approve))?$/.exec(url.pathname);
+    const lessonMatch = /^\/api\/runs\/([a-z0-9-]+)\/lessons(?:\/(approve|reject|revise))?$/.exec(url.pathname);
     if (lessonMatch) {
       if (!lessonMatch[2] && method === 'GET') { return reply(200, await (await runs()).lessons(lessonMatch[1]!)); }
       if (lessonMatch[2] === 'approve' && method === 'POST') {
         const input = z.strictObject({ proposalId: z.string().min(1), proposalHash: z.string().regex(/^[a-f0-9]{64}$/), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable(), memoryRoot: z.string().min(1) }).parse(payload);
         return reply(200, await (await runs()).approveLesson(lessonMatch[1]!, input));
+      }
+      if (lessonMatch[2] === 'reject' && method === 'POST') {
+        const input = z.strictObject({ proposalId: z.string().min(1), proposalHash: z.string().regex(/^[a-f0-9]{64}$/) }).parse(payload);
+        return reply(200, await (await runs()).rejectLesson(lessonMatch[1]!, input));
+      }
+      if (lessonMatch[2] === 'revise' && method === 'POST') {
+        const input = z.strictObject({ proposalId: z.string().min(1), proposalHash: z.string().regex(/^[a-f0-9]{64}$/), body: z.string().trim().min(1).max(30000) }).parse(payload);
+        return reply(200, await (await runs()).reviseLesson(lessonMatch[1]!, input));
       }
       return reply(405, { error: 'Method not allowed' });
     }
@@ -154,9 +176,15 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       const draft = { ...structuredClone(templates[input.template]), flowId: input.id, name: input.name, version: 1 };
       return reply(201, { metadata, draft, revision: await library.saveDraft(input.id, draft) });
     }
-    const match = /^\/api\/flows\/([^/]+)\/(draft|validate|publish|archive|restore|rename|delete|clone|canvas-export|canvas-import)$/.exec(url.pathname);
+    const match = /^\/api\/flows\/([^/]+)\/(draft|validate|publish|archive|restore|rename|delete|clone|canvas-export|canvas-import|versions)$/.exec(url.pathname);
     if (match) {
       const id = decodeURIComponent(match[1]!), action = match[2]!;
+      if (action === 'versions' && method === 'GET') {
+        const selected = url.searchParams.get('version');
+        if (selected === null) return reply(200, { versions: await library.versions(id) });
+        const version = z.coerce.number().int().positive().parse(selected);
+        return reply(200, { version: await library.readVersion(id, version) });
+      }
       if (action === 'draft' && method === 'GET') { return reply(200, await library.readDraftWithRevision(id)); }
       if (action === 'draft' && method === 'PUT') {
         const input = z.strictObject({ draft: z.json(), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional() }).parse(payload);

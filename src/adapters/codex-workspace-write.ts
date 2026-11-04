@@ -55,8 +55,8 @@ export class CodexWorkspaceWriteAdapter {
     return this.startGrantedTurn(threadId, prompt, effort, grant, model);
   }
   /** The caller must have admitted `grant` immediately before and confirmed its lease is current. */
-  async startGrantedTurn(threadId: string, prompt: string, effort: string, grant: Grant, model?: string): Promise<string> {
-    const response = await this.transport.request('turn/start', { threadId, cwd: grant.workspace, effort, ...(model ? { model } : {}),
+  async startGrantedTurn(threadId: string, prompt: string, effort: string, grant: Grant, model?: string, outputSchema?: unknown): Promise<string> {
+    const response = await this.transport.request('turn/start', { threadId, cwd: grant.workspace, effort, ...(model ? { model } : {}), ...(outputSchema !== undefined ? { outputSchema } : {}),
       input: [{ type: 'text', text: prompt }],
       sandboxPolicy: { type: 'workspaceWrite', writableRoots: grant.writableRoots, networkAccess: false, excludeSlashTmp: true, excludeTmpdirEnvVar: true } });
     return turnResponse.parse(response).turn.id;
