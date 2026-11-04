@@ -15,7 +15,7 @@ import { captureBaseline } from '../src/workspace/baseline.js';
 import type { WorkerFactory } from '../src/runtime/worker.js';
 
 /** A checkout with the user's uncommitted work; the writer either adds its own file or rewrites the user's edited line. */
-async function fixture(mode: 'separate' | 'overlap') {
+async function fixture(mode: 'separate' | 'overlap', workspaceMode: 'isolated' | 'current' | 'shared' = 'isolated') {
   const root = await mkdtemp(path.join(tmpdir(), 'neomind-import-run-')), project = path.join(root, 'repo'), state = path.join(root, 'state');
   await mkdir(project); await mkdir(path.join(state, 'runs'), { recursive: true }); await mkdir(path.join(state, 'workspaces'));
   const git = (...args: string[]) => execFileSync('git', ['-C', project, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -27,7 +27,9 @@ async function fixture(mode: 'separate' | 'overlap') {
   git('add', '.'); git('commit', '-qm', 'baseline');
   await writeFile(path.join(project, 'app.js'), 'const mode = "user";\nmodule.exports = { mode };\n');
   await writeFile(path.join(project, 'notes.md'), 'user notes\n');
-  const snapshot = await materializeRun(templates.dev, config, { 'implementer@1': builtinProfile('implementer'), 'verifier@1': builtinProfile('verifier') }, project);
+  if (workspaceMode !== 'isolated') { git('add', 'app.js'); await writeFile(path.join(project, 'app.js'), 'const mode = "user unstaged";\nmodule.exports = { mode };\n'); }
+  const flow = structuredClone(templates.dev); flow.definition.workspacePolicy = workspaceMode;
+  const snapshot = await materializeRun(flow, config, { 'implementer@1': builtinProfile('implementer'), 'verifier@1': builtinProfile('verifier') }, project);
   const coordinator = new WorkspaceCoordinator(path.join(state, 'coordination.sqlite'));
   const threads = new Map<string, { cwd: string; sandbox: string }>(), prompts: string[] = [];
   const factory: WorkerFactory = async () => {
@@ -101,5 +103,25 @@ test('a run change that cannot be separated from the user change waits for the u
     assert.equal(show(f.project, `${report.commits[0]!.commit}:app.js`), 'const mode = "user and run";\nmodule.exports = { mode };\n');
     assert.equal(show(f.project, `${report.commits[0]!.commit}:notes.md`), 'user notes\n', 'the chosen scope includes every imported change');
     assert.deepEqual(report.includeImportedCommitNodeIds, ['commit']);
+  } finally { await f.run.close(); f.coordinator.close(); }
+});
+
+
+for (const mode of ['current', 'shared'] as const) test(`${mode} workspace commits only run changes and preserves staged and unstaged user edits`, async () => {
+  const f = await fixture('separate', mode);
+  try {
+    const staged = show(f.project, ':app.js');
+    const report = await f.approve();
+    assert.equal(report.runtimeState.phase, 'completed', report.runtimeState.reason);
+    assert.equal(f.run.context.workspace, f.project);
+    assert.equal(show(f.project, 'HEAD:app.js'), 'const mode = "base";\nmodule.exports = { mode };\n');
+    assert.equal(show(f.project, ':app.js'), staged);
+    assert.equal(await readFile(path.join(f.project, 'app.js'), 'utf8'), 'const mode = "user unstaged";\nmodule.exports = { mode };\n');
+    assert.equal(await readFile(path.join(f.project, 'notes.md'), 'utf8'), 'user notes\n');
+    assert.equal(show(f.project, 'HEAD:feature.js'), 'exports.feature = true;\n');
+    assert.equal(show(f.project, ':feature.js'), 'exports.feature = true;\n');
+    assert.equal(report.workspaceCleanup, undefined);
+    await assert.rejects(f.run.cleanWorkspaces(), /Không dọn checkout/);
+    assert.equal(f.coordinator.getWriter(f.project), undefined, 'finished runs release the shared writer lease');
   } finally { await f.run.close(); f.coordinator.close(); }
 });

@@ -38,12 +38,12 @@ async function main(args: string[]): Promise<number> {
       switch (command.kind) {
         case 'list': console.log(JSON.stringify(await manager.list(), null, 2)); return 0;
         case 'show': console.log(JSON.stringify(await manager.get(command.runId), null, 2)); return 0;
-        case 'preview': console.log(JSON.stringify(await manager.preview(command.flowId), null, 2)); return 0;
+        case 'preview': console.log(JSON.stringify(await manager.preview(command.flowId, undefined, {}, {}, command.workspaceMode), null, 2)); return 0;
         case 'start': {
-          const preview = await manager.preview(command.flowId);
-          console.log(JSON.stringify({ configuration: preview.snapshot.configuration, workspace: 'isolated', dirtyPaths: preview.dirtyPaths }, null, 2));
+          const preview = await manager.preview(command.flowId, undefined, {}, {}, command.workspaceMode);
+          console.log(JSON.stringify({ configuration: preview.snapshot.configuration, workspace: preview.snapshot.configuration.flow.definition.workspacePolicy, dirtyPaths: preview.dirtyPaths }, null, 2));
           if (preview.dirtyImport.changes.length && !command.importDirty) console.error(`Checkout có ${preview.dirtyImport.changes.length} thay đổi chưa commit; run dùng HEAD. Mang vào run: thêm --import-dirty ${preview.dirtyImport.baselineHash}`);
-          const run = await manager.create(command.flowId, command.task, undefined, {}, preview.configurationHash, {}, command.importDirty);
+          const run = await manager.create(command.flowId, command.task, undefined, {}, preview.configurationHash, {}, command.importDirty, command.workspaceMode);
           await settle(run.runId); return 0;
         }
         case 'approve': await manager.action(command.runId, 'approve', 'cli', command.planHash); await settle(command.runId); return 0;

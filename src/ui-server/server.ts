@@ -79,7 +79,7 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       return reply(200, await (await runs()).configureMemory({ initializeDefault: input.initializeDefault, expectedPrevious: input.expectedPrevious, ...(input.root ? { root: input.root } : {}) }));
     }
     if (url.pathname === '/api/memory' && method === 'POST') {
-      const input = z.strictObject({ record: z.strictObject({ id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/), type: z.enum(['context', 'decision']), scope: z.string().min(1), sources: z.array(z.string().min(1)).min(1), tags: z.array(z.string()), body: z.string().min(1) }), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable() }).parse(payload);
+      const input = z.strictObject({ record: z.strictObject({ id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/), type: z.enum(['context', 'decision']), scope: z.string().min(1), sources: z.array(z.string().min(1)).min(1), tags: z.array(z.string()), body: z.string().min(1), expiresAt: z.iso.datetime().optional(), supersedes: z.array(z.string().min(1)).optional() }), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable() }).parse(payload);
       return reply(200, await (await runs()).writeMemory(input.record, input.expectedRevision, 'ui'));
     }
     if (url.pathname === '/api/profiles' && method === 'GET') { return reply(200, { profiles: await profiles.list(), builtins: ['implementer', 'verifier'].map(id => builtinProfile(id)) }); }
@@ -108,19 +108,22 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
     }
     if (url.pathname === '/api/runs' && method === 'GET') { return reply(200, { runs: await (await runs()).list() }); }
     const runInput = z.strictObject({ flowId: z.string().min(1), version: z.number().int().positive().optional(), task: z.string().min(1).optional(), configurationHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+      workspaceMode: z.enum(['isolated', 'current', 'shared']).optional(),
       importDirty: z.string().regex(/^[a-f0-9]{64}$/).optional(),
       limits: z.strictObject({ activeTimeSeconds: z.number().int().positive().optional(), maxConcurrency: z.number().int().positive().optional(), maxRepairRounds: z.number().int().nonnegative().optional() }).transform(value => Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined))).optional(),
       overrides: z.record(z.string(), z.strictObject({ runner: z.string().min(1).optional(), provider: z.string().min(1).optional(), model: z.string().min(1).optional(), reasoning: z.string().min(1).optional() }).transform(value => Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined)) as BindingOverride)).optional() });
     if (url.pathname === '/api/runs/preview' && method === 'POST') {
       const input = runInput.parse(payload);
-      return reply(200, await (await runs()).preview(input.flowId, input.version, input.overrides, input.limits));
+      return reply(200, await (await runs()).preview(input.flowId, input.version, input.overrides, input.limits, input.workspaceMode));
     }
     if (url.pathname === '/api/runs' && method === 'POST') {
       const input = runInput.parse(payload);
       if (!input.task?.trim()) throw new Error('Task is required');
       if (!input.configurationHash) throw new Error('Preview the effective configuration before starting');
-      return reply(201, await (await runs()).create(input.flowId, input.task, input.version, input.overrides, input.configurationHash, input.limits, input.importDirty));
+      return reply(201, await (await runs()).create(input.flowId, input.task, input.version, input.overrides, input.configurationHash, input.limits, input.importDirty, input.workspaceMode));
     }
+    const nodeDataMatch = /^\/api\/runs\/([a-z0-9-]+)\/node-data\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
+    if (nodeDataMatch && method === 'GET') return reply(200, await (await runs()).nodeData(nodeDataMatch[1]!, nodeDataMatch[2]!));
     const transcriptMatch = /^\/api\/runs\/([a-z0-9-]+)\/transcripts(?:\/([A-Za-z0-9_-]+))?$/.exec(url.pathname);
     if (transcriptMatch && method === 'GET') {
       if (!transcriptMatch[2]) { return reply(200, await (await runs()).transcripts(transcriptMatch[1]!)); }
@@ -133,7 +136,7 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       const { force } = z.strictObject({ force: z.boolean().default(false) }).parse(payload);
       return reply(200, cleanMatch[1] ? await (await runs()).clean(cleanMatch[1], force) : { results: await (await runs()).cleanFinished(force) });
     }
-    const lessonMatch = /^\/api\/runs\/([a-z0-9-]+)\/lessons(?:\/(approve|reject))?$/.exec(url.pathname);
+    const lessonMatch = /^\/api\/runs\/([a-z0-9-]+)\/lessons(?:\/(approve|reject|revise))?$/.exec(url.pathname);
     if (lessonMatch) {
       if (!lessonMatch[2] && method === 'GET') { return reply(200, await (await runs()).lessons(lessonMatch[1]!)); }
       if (lessonMatch[2] === 'approve' && method === 'POST') {
@@ -143,6 +146,10 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       if (lessonMatch[2] === 'reject' && method === 'POST') {
         const input = z.strictObject({ proposalId: z.string().min(1), proposalHash: z.string().regex(/^[a-f0-9]{64}$/) }).parse(payload);
         return reply(200, await (await runs()).rejectLesson(lessonMatch[1]!, input));
+      }
+      if (lessonMatch[2] === 'revise' && method === 'POST') {
+        const input = z.strictObject({ proposalId: z.string().min(1), proposalHash: z.string().regex(/^[a-f0-9]{64}$/), body: z.string().trim().min(1).max(30000) }).parse(payload);
+        return reply(200, await (await runs()).reviseLesson(lessonMatch[1]!, input));
       }
       return reply(405, { error: 'Method not allowed' });
     }

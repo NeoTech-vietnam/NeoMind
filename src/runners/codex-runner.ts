@@ -56,8 +56,7 @@ export class CodexRunner implements AgentRunner {
     if (session.access.kind === 'read') {
       return this.reader.startBoundTurn(session.sessionId, request.prompt, { runner: 'codex', provider: session.provider, model: session.model, reasoning: request.effort }, request.outputSchema);
     }
-    if (request.outputSchema !== undefined) throw new Error('Codex writer turns do not take an output schema');
-    return this.writer.startGrantedTurn(session.sessionId, request.prompt, request.effort, { workspace: session.workspace, writableRoots: session.access.writableRoots }, session.model);
+    return this.writer.startGrantedTurn(session.sessionId, request.prompt, request.effort, { workspace: session.workspace, writableRoots: session.access.writableRoots }, session.model, request.outputSchema);
   }
   waitForTurn(session: VerifiedRunnerSession, turnId: string, stopped: () => boolean): Promise<TurnResult> {
     this.owned(session);

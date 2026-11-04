@@ -2,7 +2,7 @@ import { gitConfigEnv } from './git-env.js';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createReadStream } from 'node:fs';
-import { lstat, readdir, readlink, rm } from 'node:fs/promises';
+import { lstat, readdir, readlink, mkdir, rename } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -61,19 +61,32 @@ export async function preserveRefs(repo: string, refs: PreservedRef[]): Promise<
   }
 }
 
+/** Deterministic recovery location, recorded before retirement so a crash can resume it. */
+export function retainedWorkspacePath(workspace: string, workspacesDir: string): string {
+  if (comparable(path.dirname(workspace)) !== comparable(workspacesDir)) throw new Error('Only managed run workspaces can be retired');
+  return path.join(workspacesDir, '.retained', path.basename(workspace));
+}
+
 /**
- * Remove run worktrees from `repo`. A registered worktree is removed through Git (with its uncommitted files: callers
- * decide beforehand whether anything there still matters); an unregistered leftover directory is deleted only when it
- * lies directly inside `workspacesDir`, NeoMind's own directory of run worktrees. Missing paths are skipped.
+ * Retire by atomic rename, never recursive deletion. An external process with an open file/cwd may
+ * still write after the last baseline check; those writes then remain in the retained directory.
  */
 export async function removeWorktrees(repo: string, workspaces: string[], workspacesDir: string): Promise<string[]> {
-  const registered = await registeredWorktrees(repo), removed: string[] = [];
+  const removed: string[] = [], directory = path.join(workspacesDir, '.retained');
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  if ((await lstat(directory)).isSymbolicLink()) throw new Error('Retained workspace directory cannot be a symlink');
   for (const workspace of workspaces) {
-    if (registered.has(comparable(workspace))) { await git(repo, 'worktree', 'remove', '--force', '--force', workspace); removed.push(workspace); continue; }
-    if (!existsSync(workspace)) continue;
-    if (comparable(path.dirname(workspace)) !== comparable(workspacesDir)) throw new Error(`Không xóa ${workspace}: không phải worktree của run`);
-    await rm(workspace, { recursive: true, force: true }); removed.push(workspace);
+    const retained = retainedWorkspacePath(workspace, workspacesDir);
+    if (existsSync(workspace)) {
+      if ((await lstat(workspace)).isSymbolicLink()) throw new Error('Managed workspace cannot be a symlink');
+      if (existsSync(retained)) throw new Error(`Recovery directory already exists: ${retained}`);
+      await rename(workspace, retained);
+    }
+    if (!existsSync(retained)) continue;
+    if ((await lstat(retained)).isSymbolicLink()) throw new Error('Retained workspace cannot be a symlink');
+    // Repair is idempotent after a crash between the rename and updating Git's registration.
+    if (existsSync(path.join(retained, '.git'))) await git(repo, 'worktree', 'repair', retained);
+    removed.push(workspace);
   }
-  await git(repo, 'worktree', 'prune');
   return removed;
 }

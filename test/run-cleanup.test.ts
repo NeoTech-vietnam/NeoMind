@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, open } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { LocalRun } from '../src/runtime/local-run.js';
@@ -13,7 +13,7 @@ import { WorkspaceCoordinator } from '../src/storage/coordination.js';
 import { CodexTurnEvents } from '../src/adapters/codex-turn-events.js';
 import { RunnerRegistry } from '../src/runners/registry.js';
 import { captureBaseline } from '../src/workspace/baseline.js';
-import { ignoredFingerprint } from '../src/workspace/run-cleanup.js';
+import { ignoredFingerprint, retainedWorkspacePath } from '../src/workspace/run-cleanup.js';
 import { parseRunCommand } from '../src/cli/run-command.js';
 import type { WorkerFactory } from '../src/runtime/worker.js';
 import { FakeRunnerFactory, fakeScope } from './helpers/fake-runner.js';
@@ -58,8 +58,8 @@ test('a delivered run cleans its worktree by itself; unapplied changes keep it u
     await f.run.applyToCheckout();
     assert.equal(await readFile(path.join(f.repo, 'proof.txt'), 'utf8'), 'ok\n');
     const report = await f.run.report();
-    assert.deepEqual({ ...report.workspaceCleanup, baselines: undefined, ignoredBaselines: undefined }, { workspaces: [f.run.context.workspace], refs: [], discarded: [], baselines: undefined, ignoredBaselines: undefined, cleaned: true });
-    assert.ok(!existsSync(f.run.context.workspace)); assert.equal(f.worktrees(), 1);
+    assert.deepEqual({ ...report.workspaceCleanup, baselines: undefined, ignoredBaselines: undefined, retained: undefined }, { workspaces: [f.run.context.workspace], refs: [], discarded: [], baselines: undefined, ignoredBaselines: undefined, retained: undefined, cleaned: true });
+    assert.ok(!existsSync(f.run.context.workspace)); assert.equal(f.worktrees(), 2, 'the recovery worktree remains registered at its retained location');
     assert.equal(f.coordinator.isCurrent(f.run.context.lease), false, 'the workspace lease is released');
     assert.deepEqual(await f.run.cleanWorkspaces(), report.workspaceCleanup, 'cleaning again is a no-op');
   } finally { await f.close(); }
@@ -85,7 +85,7 @@ test('a project can keep run worktrees; an interrupted cleanup resumes from its 
     await f.run.durable.service.recordWorkspaceCleanup('intent', { workspaces: [f.run.context.workspace], refs: [], discarded: [], baselines: { [f.run.context.workspace]: (await captureBaseline(f.run.context.workspace)).baselineHash } });
     assert.equal((await f.run.report()).workspaceCleanup?.cleaned, false);
     assert.equal((await f.run.cleanWorkspaces()).cleaned, true);
-    assert.ok(!existsSync(f.run.context.workspace)); assert.equal(f.worktrees(), 1);
+    assert.ok(!existsSync(f.run.context.workspace)); assert.equal(f.worktrees(), 2, 'the recovery worktree remains registered at its retained location');
   } finally { await f.close(); }
 });
 
@@ -139,4 +139,19 @@ test('recovery refuses to discard ignored content changed after a forced cleanup
     await assert.rejects(f.run.cleanWorkspaces(true), /File bị ignore đã đổi/);
     assert.equal(await readFile(path.join(workspace, 'private-output.log'), 'utf8'), 'later\n');
   } finally { await f.close(); }
+});
+
+
+test('retirement preserves writes through an open descriptor after the final cleanup checks', async () => {
+  const f = await finishedFastRun();
+  const workspace = f.run.context.workspace, file = path.join(workspace, 'proof.txt');
+  const descriptor = await open(file, 'a');
+  try {
+    const cleanup = await f.run.cleanWorkspaces(true);
+    await descriptor.write('late external write\n'); await descriptor.sync();
+    const retained = retainedWorkspacePath(workspace, path.dirname(workspace));
+    assert.equal(cleanup.retained?.[workspace], retained);
+    assert.equal(await readFile(path.join(retained, 'proof.txt'), 'utf8'), 'ok\nlate external write\n');
+    assert.equal(execFileSync('git', ['-C', retained, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim(), retained);
+  } finally { await descriptor.close(); await f.close(); }
 });

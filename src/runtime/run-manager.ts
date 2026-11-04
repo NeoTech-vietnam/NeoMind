@@ -58,14 +58,13 @@ export class RunManager {
       ...(missing && codexUsed ? [`Runner codex không khả dụng: ${missing}`] : [])];
     return { runners, checks: { executor: 'codex' as const, required: checks, available: !missing, ...(missing ? { reason: missing } : {}) }, blockers };
   }
-  async preview(flowId: string, version?: number, overrides: Record<string, BindingOverride> = {}, limits: Partial<Flow['definition']['limits']> = {}) {
-    const snapshot = await snapshotProjectFlow(this.projectRoot, flowId, version, overrides, limits), baseline = await captureBaseline(this.projectRoot);
-    const dirty = planDirtyImport(baseline), importBlockers = [...(dirty.refused.length ? [`Symlink không mang vào run được: ${dirty.refused.join(', ')}`] : []),
-      ...(branchLayout(snapshot.configuration.flow).branchWriters.length ? ['Flow có bước ghi song song chưa hỗ trợ mang thay đổi chưa commit'] : [])];
+  async preview(flowId: string, version?: number, overrides: Record<string, BindingOverride> = {}, limits: Partial<Flow['definition']['limits']> = {}, workspaceMode?: Flow['definition']['workspacePolicy']) {
+    const snapshot = await snapshotProjectFlow(this.projectRoot, flowId, version, overrides, limits, workspaceMode), baseline = await captureBaseline(this.projectRoot);
+    const dirty = planDirtyImport(baseline), importBlockers = [...(dirty.refused.length ? [`Symlink không mang vào run được: ${dirty.refused.join(', ')}`] : [])];
     return { snapshot, runtimeDiagnostics: standaloneDiagnostics(snapshot.configuration.flow), runnerPreflight: this.runnerPreflight(snapshot), flowExceptions: flowExceptions(snapshot.configuration.flow), configurationHash: hashJson({ snapshot, sourceHead: baseline.head }), sourceHead: baseline.head, dirtyPaths: baseline.entries.map(entry => entry.path),
       // Confirming `baselineHash` copies exactly these changes into the run; they stay out of its commit.
-      dirtyImport: { baselineHash: dirty.baselineHash, changes: dirty.changes, blockers: importBlockers },
-      workspaceChoices: ['isolated'], gitDelivery: 'Local commit from the reviewed tree; configured Git hooks are not executed. Approved checks run before review.' };
+      dirtyImport: { baselineHash: dirty.baselineHash, changes: snapshot.configuration.flow.definition.workspacePolicy === 'isolated' ? dirty.changes : baseline.entries.map(entry => ({ path: entry.path, change: entry.kind === 'missing' ? 'deleted' as const : entry.status === '??' ? 'added' as const : 'modified' as const })), blockers: snapshot.configuration.flow.definition.workspacePolicy === 'isolated' ? importBlockers : [] },
+      workspaceChoices: ['isolated', 'current', 'shared'], gitDelivery: 'Local commit from the reviewed tree; configured Git hooks are not executed. Approved checks run before review.' };
   }
   /** Allowed models of each runner, discovered one runner at a time; a runner that cannot list models is reported, not fatal. */
   private async discoverModels(runners: readonly string[]) {
@@ -82,8 +81,8 @@ export class RunManager {
     if (failures.length) throw new Error(failures.join('; '));
     return models;
   }
-  async create(flowId: string, task: string, version?: number, overrides: Record<string, BindingOverride> = {}, configurationHash?: string, limits: Partial<Flow['definition']['limits']> = {}, importDirty?: string) {
-    const snapshot = await snapshotProjectFlow(this.projectRoot, flowId, version, overrides, limits);
+  async create(flowId: string, task: string, version?: number, overrides: Record<string, BindingOverride> = {}, configurationHash?: string, limits: Partial<Flow['definition']['limits']> = {}, importDirty?: string, workspaceMode?: Flow['definition']['workspacePolicy']) {
+    const snapshot = await snapshotProjectFlow(this.projectRoot, flowId, version, overrides, limits, workspaceMode);
     const diagnostics = standaloneDiagnostics(snapshot.configuration.flow);
     if (diagnostics.length) throw new Error(diagnostics.join(' '));
     if (Object.values(snapshot.profilesByStep).some(profile => !profile.requestedPermissions.read)) throw new Error('Executor hiện cần quyền đọc trong mọi agent profile');
@@ -110,13 +109,14 @@ export class RunManager {
     for (const selection of selections) await run.durable.service.selectAllowedFallback(selection.key, selection.values, 'Lựa chọn chính không khả dụng; dùng model trong danh sách thay thế đã cấu hình');
     run.launch(); return run.report();
   }
-  async get(runId: string) { return this.withHandoff(await this.withDelivery(await this.report(runId))); }
+  async get(runId: string) { const report = await this.withHandoff(await this.withDelivery(await this.report(runId))); return { ...report, nodeData: report.nodeData.map(({ prompt: _prompt, output, ...input }) => ({ ...input, ...(output ? { output: { outputHash: output.outputHash, truncated: output.truncated, messageCount: output.messages.length } } : {}) })) }; }
+  async nodeData(runId: string, attemptId: string) { const item = (await this.report(runId)).nodeData.find(item => item.attemptId === attemptId); if (!item) throw new Error('No recorded input/output for this attempt'); return item; }
   async previewMemory(task: string) {
     const selectionPolicy = (await readProject(this.projectRoot)).memorySelection;
     const memory = memoryForRun(this.projectRoot, path.join(this.stateRoot, 'coordination.sqlite'), task, selectionPolicy);
-    if (!memory) return { root: null, records: [], ...(selectionPolicy ? { selectionPolicy } : {}) };
+    if (!memory) return { root: null, records: [], ...(selectionPolicy?.inferTaskPaths ? { inferredPaths: [] as string[] } : {}), ...(selectionPolicy ? { selectionPolicy } : {}) };
     const snapshot = formatMemorySnapshot(memory, task, selectionPolicy);
-    return { root: snapshot.root, records: snapshot.records, ...(snapshot.selectionPolicy ? { selectionPolicy: snapshot.selectionPolicy } : {}) };
+    return { root: snapshot.root, records: snapshot.records, ...(snapshot.excluded ? { excluded: snapshot.excluded } : {}), ...(snapshot.inferredPaths ? { inferredPaths: snapshot.inferredPaths } : {}), ...(snapshot.selectionPolicy ? { selectionPolicy: snapshot.selectionPolicy } : {}) };
   }
   /**
    * A finished flow without a commit hands its changes to the user: list the files it changed in its worktree and
@@ -128,7 +128,7 @@ export class RunManager {
     if (!flow || !context || report.runtimeState?.phase !== 'completed' || flow.definition.nodes.some(node => node.type === 'git_commit')) return report;
     let files: string[] = report.checkoutApply?.paths ?? [];
     if (!report.workspaceCleanup) { try { files = (await runChanges(context.workspace, context.imported?.tree ?? context.sourceHead)).paths; } catch { /* the run worktree may have been removed */ } }
-    return { ...report, handoff: { files, applied: report.checkoutApply?.applied ?? false } };
+    return { ...report, handoff: { files, applied: (report.runtimeContext as { workspaceMode?: string } | undefined)?.workspaceMode && (report.runtimeContext as { workspaceMode?: string }).workspaceMode !== 'isolated' ? true : report.checkoutApply?.applied ?? false } };
   }
   private readonly deliveredFiles = new Map<string, string[]>();
   /** Confirmed local commits with the paths each one changed, so a frontend can show what the run delivered. */
@@ -266,8 +266,8 @@ export class RunManager {
     try {
       const files = (await readdir(directory)).filter(file => file.endsWith('.proposal.json'));
       return { memoryRoot: memory?.root ?? null, proposals: files.map(file => {
-        const proposal = proposals.read(file.slice(0, -'.proposal.json'.length)), current = memory?.store.read('lesson', proposal.record.id);
-        return { proposal, proposalHash: hashJson(proposal), expectedRevision: current?.revision ?? null, promoted: current?.header.sources.includes(`proposal:${proposal.proposalId}`) ?? false, rejected: !!proposals.rejection(proposal.proposalId) };
+        const { proposal, version } = proposals.readVersion(file.slice(0, -'.proposal.json'.length)), current = memory?.store.read('lesson', proposal.record.id);
+        return { proposal, version, proposalHash: hashJson(proposal), expectedRevision: current?.revision ?? null, promoted: current?.header.sources.includes(`proposal:${proposal.proposalId}`) ?? false, rejected: !!proposals.rejection(proposal.proposalId) };
       }) };
     } finally { memory?.store.close(); }
   }
@@ -310,6 +310,18 @@ export class RunManager {
       try { if (memory?.store.read('lesson', proposal.record.id)?.header.sources.includes(`proposal:${proposal.proposalId}`)) throw new Error('Lesson đã được duyệt'); }
       finally { memory?.store.close(); }
       return proposals.reject(input.proposalId, input.proposalHash, { confirmedByUser: true });
+    });
+  }
+  async reviseLesson(runId: string, input: { proposalId: string; proposalHash: string; body: string }) {
+    const directory = path.dirname(await this.store.journal(runId));
+    return withLibraryLock(directory, async () => {
+      const report = await this.get(runId); if (report.runtimeState?.phase !== 'completed') throw new Error('Chỉ sửa lessons từ run đã hoàn tất');
+      const proposals = new LessonProposals(directory), proposal = proposals.read(input.proposalId);
+      if (proposal.runId !== runId) throw new Error('Lesson belongs to another run');
+      const memory = openProjectMemory(this.projectRoot, path.join(this.stateRoot, 'coordination.sqlite'));
+      try { if (memory?.store.read('lesson', proposal.record.id)?.header.sources.includes(`proposal:${proposal.proposalId}`)) throw new Error('Lesson đã được duyệt'); }
+      finally { memory?.store.close(); }
+      return proposals.revise(input.proposalId, input.proposalHash, input.body, { confirmedByUser: true });
     });
   }
   /** Pause active runs (confirming worker stop) and release resources. Returns the final state of each run this process owned. */

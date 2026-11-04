@@ -57,7 +57,7 @@ export const nodeSchema = z.discriminatedUnion('type', [
     writeScopes: z.array(z.string().min(1)), outputContract: z.string().min(1),
     instructionsOverride: z.string().optional(), skillsOverride: z.array(skillReferenceSchema).optional() }),
   z.strictObject({ ...base, type: z.literal('review_group'), targetNodeId: id,
-    reviewers: z.array(reviewer).min(1), criteria: z.array(z.string().min(1)).min(1) }),
+    reviewers: z.array(reviewer).min(1), criteria: z.array(z.string().min(1)).min(1), checks: z.array(z.string().min(1)).optional() }),
   z.strictObject({ ...base, type: z.literal('repair_scope'), targetReviewId: id,
     ownerNodeIds: z.array(id).min(1), maxRounds: z.number().int().min(1) }),
 ]);
@@ -76,7 +76,7 @@ export const flowDefinitionSchema = z.strictObject({
   sessionGroups: z.array(z.strictObject({ id, bindingId: id })).min(1),
   limits: z.strictObject({ maxConcurrency: z.number().int().min(1),
     maxRepairRounds: z.number().int().min(0), activeTimeSeconds: z.number().int().min(1) }),
-  workspacePolicy: z.enum(['isolated', 'shared']),
+  workspacePolicy: z.enum(['isolated', 'current', 'shared']),
   outputContract: z.string().min(1),
   // `human`: the user reviews the changes outside the flow, so the flow has no review gate and never commits.
   review: z.enum(['independent', 'human']).optional(),
@@ -101,7 +101,8 @@ export const projectPolicySchema = z.strictObject({
 
 export const memorySelectionSchema = z.strictObject({
   scopes: z.array(z.string().min(1)).optional(), tags: z.array(z.string().min(1)).optional(),
-  requireTaskMatch: z.boolean().optional(), maxRecords: z.number().int().min(0).max(30).optional(),
+  retrievalMode: z.enum(['lexical', 'semantic', 'hybrid']).optional(),
+  requireTaskMatch: z.boolean().optional(), inferTaskPaths: z.boolean().optional(), maxRecords: z.number().int().min(0).max(30).optional(),
   maxBodyBytes: z.number().int().min(0).max(16000).optional(),
 });
 

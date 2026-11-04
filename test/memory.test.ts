@@ -90,6 +90,30 @@ test('a rejected proposal remains outside shared memory and cannot be promoted',
   } finally { store.close(); }
 });
 
+test('lesson revisions are immutable, reject stale edits and invalidate older approvals', async () => {
+  const { LessonProposals } = await import('../src/memory/proposals.js');
+  const { hashJson } = await import('../src/domain/resolve.js');
+  const dir = mkdtempSync(path.join(tmpdir(), 'neomind-lesson-revisions-')), root = path.join(dir, 'memory'), artifacts = path.join(dir, 'artifacts');
+  mkdirSync(root); mkdirSync(artifacts);
+  const store = new MemoryStore(root, path.join(dir, 'coordination.sqlite')), proposals = new LessonProposals(artifacts);
+  try {
+    proposals.create({ proposalId: 'lesson-3', runId: 'run-1', createdAt: new Date().toISOString(), record: { ...record, id: 'revised', type: 'lesson', body: 'First' } });
+    const before = hashJson(proposals.read('lesson-3'));
+    proposals.approve('lesson-3', 'approval-old', 'user', null, { projectWrite: true, confirmedByUser: true }, before);
+    const revised = proposals.revise('lesson-3', before, 'Second', { confirmedByUser: true });
+    assert.equal(revised.version, 2);
+    assert.equal(proposals.read('lesson-3').record.body, 'Second');
+    assert.throws(() => proposals.revise('lesson-3', before, 'Stale', { confirmedByUser: true }), /changed since/);
+    assert.throws(() => proposals.promote('approval-old', store, { projectWrite: true }), /changed/);
+    const reverted = proposals.revise('lesson-3', revised.proposalHash, 'First', { confirmedByUser: true });
+    assert.notEqual(reverted.proposalHash, before, 'reverting the text cannot revive an old approval');
+    assert.throws(() => proposals.promote('approval-old', store, { projectWrite: true }), /changed/);
+    const latest = proposals.revise('lesson-3', reverted.proposalHash, 'Second', { confirmedByUser: true });
+    proposals.approve('lesson-3', 'approval-new', 'user', null, { projectWrite: true, confirmedByUser: true }, latest.proposalHash);
+    assert.equal(proposals.promote('approval-new', store, { projectWrite: true }).body, 'Second');
+  } finally { store.close(); }
+});
+
 test('CLI reads approved memory and filters lexical search', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'neomind-memory-cli-')), root = path.join(dir, 'memory'); mkdirSync(root);
   const db = path.join(dir, 'coordination.sqlite'), store = new MemoryStore(root, db);

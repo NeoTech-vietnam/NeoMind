@@ -34,6 +34,7 @@ export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }
     try { setRun(await api<Run>(`/api/runs/${run.runId}/${path}`, 'POST', body)); after?.(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   }
+  const sharedWorkspace = !!run.runtimeContext?.workspaceMode && run.runtimeContext.workspaceMode !== 'isolated';
   const cleanup = run.workspaceCleanup, cleaned = !!cleanup?.cleaned, finished = phase === 'completed' || phase === 'cancelled';
   /** Remove the run's worktrees; when changes would be lost, ask before discarding them. */
   async function cleanWorktree() {
@@ -41,7 +42,7 @@ export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }
     try { setRun(await api<Run>(`/api/runs/${run.runId}/clean`, 'POST', { force: false })); }
     catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      if (!message.startsWith('Run còn thay đổi') || !window.confirm(`${message}\n\nVẫn dọn và bỏ các thay đổi này?`)) { if (!message.startsWith('Run còn thay đổi')) setError(message); return; }
+      if (!message.startsWith('Run còn thay đổi') || !window.confirm(`${message}\n\nVẫn chuyển worktree vào vùng lưu khôi phục?`)) { if (!message.startsWith('Run còn thay đổi')) setError(message); return; }
       try { setRun(await api<Run>(`/api/runs/${run.runId}/clean`, 'POST', { force: true })); } catch (again) { setError(again instanceof Error ? again.message : String(again)); }
     } finally { setBusy(false); }
   }
@@ -81,6 +82,7 @@ export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }
       })}</ol>
     </div>
 
+    {cleanup?.retained && <div className="run-card"><h3>Worktree lưu khôi phục</h3><p>Giữ nguyên dữ liệu khi dọn, gồm cả file ignored. Các thư mục này vẫn chiếm dung lượng.</p>{Object.values(cleanup.retained).map(directory => <p key={directory}><code>{directory}</code></p>)}</div>}
     <RunGraph run={run} hasSession={nodeId => !!latestAttempt(listing, nodeId)} openSession={nodeId => { const attempt = latestAttempt(listing, nodeId); if (attempt) setSession(attempt); }} />
 
     <LiveActivity run={run} flow={flow} listing={listing} active={phase === 'running'} open={setSession} />
@@ -90,8 +92,8 @@ export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }
       {delivery.map(item => <div key={item.commit} className="delivery">
         <div className="delivery-commit"><span>Commit</span><code>{item.commit.slice(0, 12)}</code><Copy text={item.commit} label="Chép mã đầy đủ" /></div>
         {item.files.length > 0 && <ul className="file-list">{item.files.map(file => <li key={file}>{file}</li>)}</ul>}
-        <p className="hint">{cleaned ? <>Commit chưa vào branch của bạn; NeoMind giữ nó ở <code>refs/neomind/{run.runId}/delivery/{item.nodeId}</code> (worktree của run đã dọn).</> : 'Commit nằm trong worktree riêng của run, chưa vào branch của bạn.'} Lấy về checkout hiện tại:</p>
-        <div className="command"><code>git cherry-pick {item.commit.slice(0, 12)}</code><Copy text={`git cherry-pick ${item.commit}`} /></div>
+        <p className="hint">{sharedWorkspace ? 'Commit đã nằm trên branch checkout hiện tại.' : cleaned ? <>Commit chưa vào branch của bạn; NeoMind giữ nó ở <code>refs/neomind/{run.runId}/delivery/{item.nodeId}</code> (worktree của run đã dọn).</> : 'Commit nằm trong worktree riêng của run, chưa vào branch của bạn.'} {!sharedWorkspace && 'Lấy về checkout hiện tại:'}</p>
+        {!sharedWorkspace && <div className="command"><code>git cherry-pick {item.commit.slice(0, 12)}</code><Copy text={`git cherry-pick ${item.commit}`} /></div>}
       </div>)}
     </div>}
 
@@ -99,8 +101,8 @@ export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }
       <div className="card-title"><h3>{run.handoff.applied ? 'Đã áp dụng vào checkout' : 'Thay đổi để bạn review'}</h3>{run.handoff.applied ? <Badge tone="green">Đã áp dụng</Badge> : run.handoff.files.length > 0 && <Badge tone="amber">Chờ bạn</Badge>}</div>
       {run.handoff.files.length === 0 ? <p className="hint">Run không thay đổi file nào.</p> : <>
         <ul className="file-list">{run.handoff.files.map(file => <li key={file}>{file}</li>)}</ul>
-        {run.handoff.applied ? <p className="hint">Các thay đổi đã được chép vào checkout của bạn (chưa stage, chưa commit). Xem bằng <code>git diff</code> rồi tự commit khi ưng.</p>
-          : cleaned ? <p className="hint">Worktree của run đã được dọn mà chưa áp dụng; các thay đổi này không còn.</p> : <>
+        {run.handoff.applied ? <p className="hint">{sharedWorkspace ? 'Thay đổi đã nằm trực tiếp trong checkout của bạn' : 'Các thay đổi đã được chép vào checkout của bạn'} (chưa stage, chưa commit). Xem bằng <code>git diff</code> rồi tự commit khi ưng.</p>
+          : cleaned ? <p className="hint">Worktree của run đã được dọn mà chưa áp dụng; xem thư mục lưu khôi phục để lấy lại thay đổi.</p> : <>
           <p className="hint">Flow này không có agent review và không commit. Xem thay đổi trong worktree của run, rồi áp dụng vào checkout của bạn (chỉ chép file, không stage, không commit).</p>
           <div className="command"><code>git -C &quot;{run.runtimeContext?.workspace}&quot; diff</code><Copy text={`git -C "${run.runtimeContext?.workspace ?? ''}" diff`} /></div>
           <div className="approval-actions" style={{ marginTop: 12 }}><button className="primary-btn" disabled={locked} onClick={() => void act('apply')}>Áp dụng vào checkout</button></div></>}</>}
@@ -145,6 +147,7 @@ export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }
 
     {run.runtimeContext?.memory && <div className="run-card"><details><summary>Memory đã ghim cho run</summary><p className="hint">Nội dung và revision dưới đây là snapshot khi run bắt đầu, được đưa vào context agent.</p><p><code>{run.runtimeContext.memory.root}</code></p>
       {!!run.runtimeContext.memory.selectionPolicy && <details><summary>Policy chọn memory khi run bắt đầu</summary><pre>{JSON.stringify(run.runtimeContext.memory.selectionPolicy, null, 2)}</pre></details>}
+      {run.runtimeContext.memory.inferredPaths && <p className="hint">Path từ task: {run.runtimeContext.memory.inferredPaths.join(', ') || 'không có; không lọc theo path'}</p>}
       {run.runtimeContext.memory.records?.map(record => <div key={`${record.type}/${record.id}`}><strong>{record.type} · {record.id}</strong><p className="hint">{record.scope} · {record.selectionReason}</p><p className="hint">Revision: <code>{record.revision}</code> · Nguồn: {record.sources.join(', ')}</p></div>)}
       <pre className="memory-snapshot">{run.runtimeContext.memory.text || 'Không có bản ghi được chọn.'}</pre></details></div>}
 
@@ -155,8 +158,8 @@ export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }
         {run.artifacts.map((artifact, index) => <details key={index}><summary>{bindingLabel(artifact.nodeId, flow)} · {artifactLabel(artifact.kind)}</summary><pre>{artifact.text}</pre></details>)}</details>
       <details className="logs"><summary>Chi tiết kỹ thuật</summary>
         <dl className="tech"><dt>Run</dt><dd><code>{run.runId}</code></dd><dt>Worktree</dt><dd><code>{run.runtimeContext?.workspace}</code>
-            {cleaned ? <span className="muted-inline"> · đã dọn{cleanup!.discarded.length ? ` (bỏ ${cleanup!.discarded.length} thay đổi chưa lưu)` : ''}</span>
-              : finished && <button type="button" className="secondary-btn small tech-action" disabled={locked} onClick={() => void cleanWorktree()}>Dọn worktree</button>}</dd>
+            {cleaned ? <span className="muted-inline"> · đã dọn{cleanup!.discarded.length ? ` (lưu khôi phục ${cleanup!.discarded.length} thay đổi chưa giao)` : ''}</span>
+              : finished && !sharedWorkspace && <button type="button" className="secondary-btn small tech-action" disabled={locked} onClick={() => void cleanWorktree()}>Dọn worktree</button>}</dd>
           {run.bindingSelections.map((selection, index) => <Fragment key={index}><dt>Đổi model</dt><dd>{bindingLabel(selection.key, flow)}: {agentLine(selection.values)} — {selection.reason}</dd></Fragment>)}</dl></details>
     </div>
     {session && <SessionDrawer run={run} flow={flow} listing={listing} target={session} setTarget={setSession} close={() => setSession(null)} />}

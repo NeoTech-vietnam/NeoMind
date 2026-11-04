@@ -10,15 +10,21 @@ export function branchLayout(flow: Flow) {
   };
   const parents = (id: string) => edges.filter(edge => edge.to === id).map(edge => edge.from);
   const children = (id: string) => edges.filter(edge => edge.from === id).map(edge => edge.to);
-  const typeOf = (id: string) => nodes.find(node => node.id === id)?.type;
-  const ancestors = new Map(nodes.map(node => [node.id, closure(node.id, parents)]));
+    const ancestors = new Map(nodes.map(node => [node.id, closure(node.id, parents)]));
   const descendants = new Map(nodes.map(node => [node.id, closure(node.id, children)]));
-  /** Between a fork and its join: may run concurrently with sibling branches. */
-  const insideBranch = (id: string) => [...ancestors.get(id)!].some(item => typeOf(item) === 'fork') && [...descendants.get(id)!].some(item => typeOf(item) === 'join');
+  // Pair a fork with the first join reachable from every outgoing branch. A later fork must not
+  // make steps after an earlier join look like members of the earlier parallel region.
+  const regions = nodes.filter(node => node.type === 'fork').flatMap(fork => {
+    const starts = children(fork.id);
+    const candidates = nodes.filter(node => node.type === 'join' && starts.every(start => start === node.id || descendants.get(start)!.has(node.id)));
+    const first = candidates.filter(join => !candidates.some(other => other.id !== join.id && ancestors.get(join.id)!.has(other.id)));
+    return first.map(join => ({ fork: fork.id, join: join.id }));
+  });
+  const insideBranch = (id: string) => regions.some(region => ancestors.get(id)!.has(region.fork) && descendants.get(id)!.has(region.join));
   const isWriter = (node: FlowNode) => node.type === 'agent_task' && node.permissions.write;
   const branchWriters = nodes.filter(node => isWriter(node) && insideBranch(node.id)) as Extract<FlowNode, { type: 'agent_task' }>[];
   const integrations = nodes.filter(node => node.type === 'integration') as Extract<FlowNode, { type: 'integration' }>[];
-  return { ancestors, descendants, insideBranch, isWriter, branchWriters, integrations,
+  return { ancestors, descendants, regions, insideBranch, isWriter, branchWriters, integrations,
     /** Branch writers merged by an integration node: those upstream of it. */
-    writersFor: (integrationId: string) => branchWriters.filter(writer => ancestors.get(integrationId)!.has(writer.id)) };
+    writersFor: (integrationId: string) => branchWriters.filter(writer => ancestors.get(integrationId)!.has(writer.id) && !integrations.some(previous => previous.id !== integrationId && ancestors.get(integrationId)!.has(previous.id) && ancestors.get(previous.id)!.has(writer.id))) };
 }

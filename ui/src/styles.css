@@ -516,3 +516,8 @@ input, select, textarea { background-color: var(--field); color: var(--ink); }
 .flow-versions { padding: 8px 12px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-2); }
 .flow-versions label { display: block; margin-top: 8px; }
 .flow-versions p { margin: 6px 0; font-size: 12px; }
+.flow-versions pre { max-height: 200px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.connect-menu { position: fixed; z-index: 100; display: grid; gap: 2px; max-height: min(70vh, 440px); overflow: auto; min-width: 190px; padding: 10px; background: #262624; border: 1px solid #59564e; border-radius: 8px; box-shadow: 0 8px 28px #0009; }
+.connect-menu strong { padding: 6px; }
+.connect-menu button { text-align: left; padding: 7px; color: inherit; border: 0; border-radius: 4px; background: transparent; cursor: pointer; }
+.connect-menu button:hover, .connect-menu button:focus-visible { background: #45433d; outline: 2px solid #a5d9c2; }

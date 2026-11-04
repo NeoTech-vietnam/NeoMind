@@ -1,3 +1,4 @@
+import { reviewRequirements } from '../domain/review-requirements.js';
 import { effectiveBinding } from './run-binding.js';
 import { realpath } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -87,7 +88,7 @@ export class CodexReviewDispatch {
     if (node?.type !== 'review_group') throw new Error('Not a review group');
     if (z.object({ snapshot: z.json().optional() }).parse(events[0]?.payload).snapshot) {
       assessments = {};
-      const criteria = [...new Set([...node.criteria, ...report.approvals.flatMap(item => item.plan.acceptanceCriteria)])];
+      const criteria = reviewRequirements(flow, node, report.approvals.at(-1)?.plan).criteria;
       // A carried-forward pass cites the receipts of the baseline it reviewed; its sources lie outside the changed paths.
       for (const output of report.reviewerOutputs.filter(item => item.nodeId === nodeId)) assessments[output.result.reviewerId] = await assessReviewEvidence({ workspace: context.workspace, criteria, evidence: output.evidence, findingIds: output.result.findingIds, baselineHash: output.carried?.fromBaselineHash ?? baselineHash, checks: report.checks, artifacts: report.artifacts.filter(item => item.nodeId === node.targetNodeId && item.baselineHash === (output.carried?.fromBaselineHash ?? baselineHash)) });
       await this.verifyWorkspace(nodeId, baselineHash, context);
@@ -96,7 +97,7 @@ export class CodexReviewDispatch {
     const results = report.reviewerOutputs.filter(item => item.nodeId === nodeId).map(item => item.result);
     const decision = evaluateReviews(node.reviewers.map(r => ({ id: r.id, required: r.required })), results, assessments, baselineHash, producerSessionId);
     if (decision.decision !== 'pass') return decision;
-    const approvedChecks = report.approvals.flatMap(item => item.plan.checks);
+    const approvedChecks = reviewRequirements(flow, node, report.approvals.at(-1)?.plan).checks;
     for (const command of approvedChecks) {
       if (!report.checks.some(check => check.command === command && check.baselineHash === baselineHash && check.status === 'passed')) {
         throw new Error(`Approved check has not passed for this baseline: ${command}`);

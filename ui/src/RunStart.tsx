@@ -4,7 +4,7 @@ import { modelLabel, reasoningLabel, runnerLabel, useRunners } from './runners';
 import { bindingLabel, type BindingValues, type Preview, type Run } from './runTypes';
 
 type Limits = { activeTimeSeconds?: number; maxConcurrency?: number };
-type MemoryPreview = { root: string | null; selectionPolicy?: Record<string, unknown>; records: { id: string; type: string; scope: string; revision: string; selectionReason: string }[] };
+type MemoryPreview = { excluded?: { id: string; reason: string }[]; root: string | null; selectionPolicy?: Record<string, unknown>; inferredPaths?: string[]; records: { id: string; type: string; scope: string; revision: string; selectionReason: string }[] };
 const templateFlows = [{ flowId: 'dev', name: 'Dev' }, { flowId: 'parallel', name: 'Dev song song' }, { flowId: 'fast', name: 'Fast' }, { flowId: 'research', name: 'Research' }];
 
 /**
@@ -14,6 +14,7 @@ const templateFlows = [{ flowId: 'dev', name: 'Dev' }, { flowId: 'parallel', nam
 export function RunStart({ initialFlow, flows, started }: { initialFlow?: string; flows: { flowId: string; name: string; archived: boolean }[]; started(run: Run): void }) {
   const runners = useRunners();
   const [flowId, setFlowId] = useState(initialFlow ?? 'dev'), [task, setTask] = useState('');
+  const [workspaceMode, setWorkspaceMode] = useState<'isolated' | 'current' | 'shared' | ''>('');
   const [overrides, setOverrides] = useState<Record<string, Partial<BindingValues>>>({}), [limits, setLimits] = useState<Limits>({});
   const [preview, setPreview] = useState<Preview | null>(null), [loading, setLoading] = useState(false), [previewError, setPreviewError] = useState('');
   const [importDirty, setImportDirty] = useState(false), [starting, setStarting] = useState(false), [error, setError] = useState('');
@@ -33,13 +34,13 @@ export function RunStart({ initialFlow, flows, started }: { initialFlow?: string
   useEffect(() => {
     const id = ++request.current; setLoading(true);
     const timer = setTimeout(() => {
-      api<Preview>('/api/runs/preview', 'POST', { flowId, overrides, limits })
+      api<Preview>('/api/runs/preview', 'POST', { flowId, overrides, limits, ...(workspaceMode ? { workspaceMode } : {}) })
         .then(value => { if (id === request.current) { setPreview(value); setPreviewError(''); } })
         .catch(e => { if (id === request.current) { setPreview(null); setPreviewError(e instanceof Error ? e.message : String(e)); } })
         .finally(() => { if (id === request.current) setLoading(false); });
     }, 250);
     return () => clearTimeout(timer);
-  }, [flowId, overrides, limits]);
+  }, [flowId, overrides, limits, workspaceMode]);
   function chooseFlow(id: string) { setFlowId(id); setOverrides({}); setLimits({}); setImportDirty(false); }
   const choices = [...flows.filter(flow => !flow.archived), ...templateFlows.filter(item => !flows.some(flow => flow.flowId === item.flowId)).map(item => ({ ...item, name: `${item.name} · mẫu có sẵn`, archived: false }))];
   const definition = preview?.snapshot.configuration.flow;
@@ -49,12 +50,13 @@ export function RunStart({ initialFlow, flows, started }: { initialFlow?: string
   const parallel = definition?.definition.nodes.some(node => node.type === 'fork');
   const blockers = [...(preview?.runtimeDiagnostics ?? []), ...(preview?.runnerPreflight?.blockers ?? [])];
   const canImport = !!preview && preview.dirtyImport.changes.length > 0 && !preview.dirtyImport.blockers.length;
-  const reason = !task.trim() ? 'Nhập yêu cầu để bắt đầu' : loading ? 'Đang cập nhật cấu hình…' : !preview ? 'Chưa có cấu hình hợp lệ' : blockers.length ? 'Cần xử lý các điểm chặn ở trên' : '';
+  const shared = !!definition && definition.definition.workspacePolicy !== 'isolated';
+  const reason = shared && canImport && !importDirty ? 'Xác nhận baseline có sẵn trước khi chạy trong checkout' : !task.trim() ? 'Nhập yêu cầu để bắt đầu' : loading ? 'Đang cập nhật cấu hình…' : !preview ? 'Chưa có cấu hình hợp lệ' : blockers.length ? 'Cần xử lý các điểm chặn ở trên' : '';
   async function start() {
     if (!preview) return;
     setStarting(true); setError('');
     try {
-      started(await api<Run>('/api/runs', 'POST', { flowId, task, overrides, limits, configurationHash: preview.configurationHash,
+      started(await api<Run>('/api/runs', 'POST', { flowId, task, overrides, limits, configurationHash: preview.configurationHash, ...(workspaceMode ? { workspaceMode } : {}),
         ...(importDirty && canImport ? { importDirty: preview.dirtyImport.baselineHash } : {}) }));
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setStarting(false); }
   }
@@ -65,6 +67,7 @@ export function RunStart({ initialFlow, flows, started }: { initialFlow?: string
       <label className="form-field">Flow<select aria-label="Flow" value={flowId} onChange={e => chooseFlow(e.target.value)}>{choices.map(flow => <option key={flow.flowId} value={flow.flowId}>{flow.name}</option>)}</select>
         {definition?.description && <small>{definition.description}</small>}
         {(preview?.flowExceptions ?? []).length > 0 && <div className="callout tone-amber"><strong>Flow này khác Dev:</strong><ul>{preview!.flowExceptions!.map(note => <li key={note}>{note}</li>)}</ul></div>}</label>
+      <label className="form-field">Workspace<select aria-label="Workspace khi chạy" value={workspaceMode} onChange={e => { setWorkspaceMode(e.target.value as typeof workspaceMode); setImportDirty(false); }}><option value="">Theo flow</option><option value="isolated">Worktree riêng</option><option value="current">Checkout hiện tại</option><option value="shared">Workspace chung</option></select><small>Checkout/shared giữ một quyền ghi cho mỗi run; các writer dùng chung được chạy tuần tự.</small></label>
       <label className="form-field">Yêu cầu<textarea aria-label="Yêu cầu" rows={4} value={task} onChange={e => setTask(e.target.value)} placeholder="Ví dụ: Thêm hàm power(a, b) vào calc.js và viết test cho nó" /></label>
     </div>
 
@@ -97,7 +100,9 @@ export function RunStart({ initialFlow, flows, started }: { initialFlow?: string
       {memoryError && <div className="callout tone-red" role="alert">Không đọc được memory: {memoryError}</div>}
       {task.trim() && !memoryPreview && !memoryError && <p className="hint">Đang chọn memory…</p>}
       {memoryPreview && (memoryPreview.root ? (memoryPreview.records.length ? <ul>{memoryPreview.records.map(record => <li key={`${record.type}/${record.id}`}><strong>{record.type} · {record.id}</strong> · {record.scope} · {record.selectionReason} <code>{record.revision.slice(0, 12)}</code></li>)}</ul> : <p className="hint">Không có bản ghi được chọn.</p>) : <p className="hint">Project chưa cấu hình memory.</p>)}
+      {memoryPreview?.excluded?.length ? <details><summary>Memory loại khỏi context ({memoryPreview.excluded.length})</summary>{memoryPreview.excluded.map(item => <p key={item.id}>{item.id}: {item.reason}</p>)}</details> : null}
       {memoryPreview?.selectionPolicy && <details><summary>Policy chọn memory</summary><pre>{JSON.stringify(memoryPreview.selectionPolicy, null, 2)}</pre></details>}
+      {memoryPreview?.inferredPaths && <p className="hint">Đường dẫn tìm thấy trong task: {memoryPreview.inferredPaths.join(', ') || 'không có; không lọc theo path'}</p>}
     </section>
 
     {preview && <section className="start-section">
@@ -108,12 +113,12 @@ export function RunStart({ initialFlow, flows, started }: { initialFlow?: string
         <div className="fact"><span>Vòng sửa tối đa</span><strong>{definition!.definition.limits.maxRepairRounds}</strong></div>
         <div className="fact"><span>Bắt đầu từ commit</span><code>{preview.sourceHead.slice(0, 10)}</code></div>
       </div>
-      <p className="hint">Run làm việc trong worktree riêng; checkout của bạn chỉ thay đổi khi bạn chọn áp dụng kết quả. Bước commit của flow dùng commit local và không chạy Git hooks.</p>
+      <p className="hint">{shared ? 'Run sửa trực tiếp checkout, giữ staging có sẵn và commit chỉ thay đổi của run.' : 'Run làm việc trong worktree riêng; checkout chỉ đổi khi bạn áp dụng kết quả.'} Commit local không chạy Git hooks.</p>
       {preview.dirtyImport.changes.length > 0 && <div className="callout tone-amber">
         <strong>Checkout có {preview.dirtyImport.changes.length} thay đổi chưa commit.</strong>
-        {canImport ? <label className="check-line"><input type="checkbox" checked={importDirty} onChange={e => setImportDirty(e.target.checked)} /> Mang các thay đổi này vào run (commit của run chỉ chứa phần run làm)</label>
+        {canImport ? <label className="check-line"><input type="checkbox" checked={importDirty} onChange={e => setImportDirty(e.target.checked)} /> {shared ? 'Dùng các thay đổi này làm baseline của run' : 'Mang các thay đổi này vào worktree của run'} (commit chỉ chứa phần run làm)</label>
           : <span> {preview.dirtyImport.blockers.join(' ')}</span>}
-        {!importDirty && <span> Nếu không chọn, run chỉ dùng commit HEAD.</span>}
+        {!shared && !importDirty && <span> Nếu không chọn, run chỉ dùng commit HEAD.</span>}
         <details><summary>Xem danh sách</summary><ul className="file-list">{preview.dirtyImport.changes.map(item => <li key={item.path}><span className={`change change-${item.change}`}>{item.change === 'added' ? 'A' : item.change === 'deleted' ? 'D' : 'M'}</span>{item.path}</li>)}</ul></details>
       </div>}
     </section>}
