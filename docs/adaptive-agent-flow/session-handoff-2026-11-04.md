@@ -29,6 +29,9 @@ npm run neomind -- editor /duong/dan/toi/repo
 
 ## Cleanup giữ dữ liệu
 
+> [!NOTE]
+> Cơ chế dưới đây đã được thay cùng ngày trên Windows: worktree được chụp thành ref `refs/neomind/<run>/snapshot/...` rồi xóa hẳn, không còn chuyển vào `.retained`. Xem [bàn giao Windows](session-handoff-2026-11-04-windows.md). Đoạn sau giữ để tham khảo lịch sử.
+
 `run clean` hiện chuyển nguyên thư mục vào `<state>/workspaces/.retained/<run>`, sửa lại Git registration và nhả lease của đường dẫn cũ. Không dùng `git worktree remove --force` hoặc recursive delete nữa: tiến trình ngoài vẫn mở file/cwd sẽ ghi vào bản được giữ thay vì làm mất dữ liệu giữa lần kiểm tra và lệnh xóa. UI hiển thị đường dẫn khôi phục. Các thư mục này vẫn chiếm dung lượng và vẫn có Git registration; chưa có auto-purge. `--force` cho phép chuyển các thay đổi chưa giao vào vùng lưu khôi phục, không còn mang nghĩa xóa sạch file. Checkout/shared workspace của người dùng không bao giờ được dọn bằng cơ chế này.
 
 ## Kiểm chứng

@@ -6,11 +6,11 @@ Cập nhật: 04/11/2026 · Baseline: `3d7aedf` · Trạng thái: các chức n�
 
 | Phần | Đã làm | Còn lại |
 | --- | --- | --- |
-| P0 | Cleanup giữ toàn thư mục bằng atomic retirement, kiểm tra baseline/ref/ignored, source evidence đúng baseline và policy gates | Không tự purge vùng `.retained`; cần người dùng quản lý dung lượng |
+| P0 | Cleanup: ~~atomic retirement vào `.retained`~~ thay ngày 04/11 (Windows) bằng snapshot ref `refs/neomind/<run>/snapshot/...` rồi xóa hẳn, xem [bàn giao Windows](session-handoff-2026-11-04-windows.md); source evidence đúng baseline và policy gates | Thư mục `.retained` do bản cũ tạo không tự xóa; *Áp dụng vào checkout* từ snapshot sau khi đã dọn chưa hỗ trợ |
 | P1 | Connector insertion, multi-copy/delete, keyboard/selectors, draft/undo/redo, diff từng thuộc tính có tải thêm | Browser acceptance và kiểm tra screen reader thực tế |
 | P2 | Journal input/output theo attempt, hash/provenance và cạnh dữ liệu riêng, payload tải theo yêu cầu | Browser acceptance cho live/recovery; không tự tạo mapping thực thi từ cạnh dữ liệu quan sát |
 | P3 | Proposal revisions + stale approval protection; path inference; local LSA/hybrid; dedup/expiry/supersession | Kiểm chứng tương tác frontend thực và corpus memory lớn; LSA không có kiến thức pretrained |
-| P4 | Writer trước/sau fork, nhiều integration, branch review/repair; current/shared + staged attribution; conflict text/binary và Luna 6 thật tới commit | Windows/browser/host Nimbalyst acceptance chưa chạy trong đợt này; các mục v1 ngoài tám yêu cầu giữ trạng thái riêng |
+| P4 | Writer trước/sau fork, nhiều integration, branch review/repair; current/shared + staged attribution; conflict text/binary và Luna 6 thật tới commit. Windows: `npm test` 208 test (206 pass, 2 skip), UI/extension build | Windows UI và run thật, browser, host Nimbalyst acceptance chưa chạy; các mục v1 ngoài tám yêu cầu giữ trạng thái riêng |
 
 Lịch sử cũ thiếu metadata memory được hiển thị bằng text snapshot cũ. Memory preview là dự kiến: khi bắt đầu run core mới ghim revision thực.
 
@@ -28,9 +28,9 @@ NeoMind đã có canvas React Flow, kéo thả, kết nối, undo/redo, draft/ve
 
 ## P0 — An toàn và contract trước khi mở rộng
 
-1. Sửa cleanup: so sánh trạng thái thực của từng branch worktree với tree đã lưu, từ chối tự dọn nếu có thay đổi mới; kiểm tra cả sau khi đã ghi cleanup intent. Regression có ref rồi sửa file trước dọn, và thay đổi xảy ra khi recovery.
+1. Sửa cleanup: so sánh trạng thái thực của từng branch worktree với tree đã lưu, từ chối tự dọn nếu có thay đổi mới; kiểm tra cả sau khi đã ghi cleanup intent. Regression có ref rồi sửa file trước dọn, và thay đổi xảy ra khi recovery. *(04/11, Windows: thay bằng snapshot ngay trước khi xóa; thay đổi mới, kể cả trong recovery, nằm trong snapshot thay vì làm cleanup từ chối.)*
 2. Rà soát policy Fast: `requireApprovalBeforeWrite`/`requireIndependentReviewForCode` phải có nghĩa nhất quán với `allowAutoApproval`/`allowHumanReview`. Giữ khả năng cấu hình flow theo lựa chọn đang có, nhưng project gate bắt buộc không bị nới ngầm vì trường mới bị bỏ trống; có migration/diagnostic rõ cho cấu hình cũ. Không tự xóa Fast hay giả định user đã phê duyệt thay đổi policy.
-3. Chuẩn hóa capability của từng graph: preview/canvas chỉ rõ node và cấu hình chạy được, chưa hỗ trợ, hoặc đang chặn; validate phía core là nguồn chuẩn. Cập nhật status/acceptance theo commit hiện tại và Linux `npm test` 173 pass/11 skip.
+3. Chuẩn hóa capability của từng graph: preview/canvas chỉ rõ node và cấu hình chạy được, chưa hỗ trợ, hoặc đang chặn; validate phía core là nguồn chuẩn. Cập nhật status/acceptance theo commit hiện tại (số test mới nhất: Linux 207 test, 196 pass, 11 skip; Windows 208 test, 206 pass, 2 skip, xem `implementation-status.md`).
 
 **Xong khi:** test regression bảo vệ dữ liệu và policy đạt; preview giải thích blocker trước khi run; không thay đổi snapshot run cũ.
 

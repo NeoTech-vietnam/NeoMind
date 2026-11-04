@@ -26,6 +26,8 @@ Phân tích: trong 4 flow có sẵn, chỉ Fast chưa áp dụng và run bị h�
 - `--force` vẫn cần khi còn thay đổi chưa giao; ignored files không vào snapshot và bị xóa khi force.
 - Journal cũ có `baselines`/`ignoredBaselines`/`retained` vẫn replay; UI vẫn hiện thư mục `.retained` của run cũ. Các thư mục `.retained` đã có không tự xóa.
 - Đánh đổi chấp nhận: ghi từ chương trình ngoài trong khoảng giữa chụp và xóa sẽ mất.
+- Khác kế hoạch đã duyệt: kế hoạch ghi xóa bằng `git worktree remove --force --force`; thực tế dùng `fs.rm` rồi `git worktree prune`, vì Git dừng giữa chừng khi gặp file bị khóa trên Windows và khó báo lỗi rõ. Tác dụng phụ: `prune` cũng gỡ đăng ký mọi worktree khác của repo có thư mục đã mất (worktree bị `lock` thì không), không chỉ worktree của NeoMind.
+- Thay đổi được gộp thành một commit (`61670bc`) thay vì commit theo từng việc, vì công cụ commit của Nimbalyst yêu cầu đề xuất toàn bộ file đã sửa trong session.
 
 ## Kiểm chứng
 
