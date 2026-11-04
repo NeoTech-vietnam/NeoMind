@@ -1,16 +1,16 @@
 # Kế hoạch tiếp theo: Workflow, Memory và Flow Studio
 
-Ngày: 03/11/2026 · Baseline: `c99f18b` · Trạng thái: đang triển khai; xem bảng tiến độ bên dưới, các mục chưa kiểm chứng hoặc chưa thực hiện vẫn để mở.
+Cập nhật: 04/11/2026 · Baseline: `3d7aedf` · Trạng thái: các chức năng trong tám hạng mục đã triển khai, đang hoàn tất kiểm chứng; xem bảng tiến độ bên dưới, các mục chưa kiểm chứng hoặc chưa thực hiện vẫn để mở.
 
-## Tiến độ thực tế 03/11/2026
+## Tiến độ thực tế 04/11/2026
 
 | Phần | Đã làm | Còn lại |
 | --- | --- | --- |
-| P0 | Policy ngoại lệ Fast opt-in, tương thích đọc snapshot cũ; cleanup đối chiếu ref/baseline và giữ file ignored; regression | Không có khóa đối với writer bên ngoài giữa lần kiểm tra cuối và lệnh Git; chưa giải quyết hết rủi ro race |
-| P1 | Palette có nhóm/tìm kiếm; node hiện binding và approval; diagnostics theo node, cảnh báo tham chiếu khi xóa; copy/paste một node, undo/redo keyboard, drag nhiều node; xem so sánh draft/version | Thêm node từ điểm nối, copy/paste nhiều node, so sánh diff chi tiết, keyboard/accessibility và browser acceptance |
-| P2 | Graph chỉ đọc từ snapshot của run, xem artifacts/plan/review và session, lọc lịch sử theo flow/trạng thái/ngày, báo mất đồng bộ | Chưa có đầy đủ data mapping/input-output theo node, automation browser và acceptance end-to-end |
-| P3 | Lọc memory, preview trước run, metadata revision/nguồn/lý do trên snapshot mới, hàng đợi 50 run gần nhất, duyệt/từ chối lesson với receipt, policy memory có UI và kiểm tra revision | Sửa proposal/version và kiểm chứng đa frontend thực; lựa chọn tự động theo path chưa có |
-| P4 | Giữ preflight chặn graph/workspace chưa hỗ trợ | Toàn bộ phần mở rộng workspace, graph và integration/Nimbalyst cùng acceptance/pilot vẫn còn |
+| P0 | Cleanup giữ toàn thư mục bằng atomic retirement, kiểm tra baseline/ref/ignored, source evidence đúng baseline và policy gates | Không tự purge vùng `.retained`; cần người dùng quản lý dung lượng |
+| P1 | Connector insertion, multi-copy/delete, keyboard/selectors, draft/undo/redo, diff từng thuộc tính có tải thêm | Browser acceptance và kiểm tra screen reader thực tế |
+| P2 | Journal input/output theo attempt, hash/provenance và cạnh dữ liệu riêng, payload tải theo yêu cầu | Browser acceptance cho live/recovery; không tự tạo mapping thực thi từ cạnh dữ liệu quan sát |
+| P3 | Proposal revisions + stale approval protection; path inference; local LSA/hybrid; dedup/expiry/supersession | Kiểm chứng tương tác frontend thực và corpus memory lớn; LSA không có kiến thức pretrained |
+| P4 | Writer trước/sau fork, nhiều integration, branch review/repair; current/shared + staged attribution; conflict text/binary và Luna 6 thật tới commit | Windows/browser/host Nimbalyst acceptance chưa chạy trong đợt này; các mục v1 ngoài tám yêu cầu giữ trạng thái riêng |
 
 Lịch sử cũ thiếu metadata memory được hiển thị bằng text snapshot cũ. Memory preview là dự kiến: khi bắt đầu run core mới ghim revision thực.
 
@@ -82,10 +82,12 @@ Có thể cấu hình tại Project memory → Chọn memory cho run. Ngoài ra,
     "scopes": ["project", "src/ui"],
     "tags": ["workflow"],
     "requireTaskMatch": true,
+    "inferTaskPaths": true,
+    "retrievalMode": "hybrid",
     "maxRecords": 20,
     "maxBodyBytes": 12000
   }
 }
 ```
 
-Đây là đoạn cấu hình cần ghép vào project JSON hiện có, không thay toàn bộ file. Scope khớp chính xác hoặc theo nhánh con phân tách `/`; record phải chứa **tất cả** tag được chỉ định. Mảng rỗng hoặc bỏ trường là không lọc theo trường đó. `requireTaskMatch` chỉ giữ record khớp ít nhất một từ khóa task trên 2 ký tự; đây là lexical search, không tự suy ra path từ task. `maxRecords` 0–30 và `maxBodyBytes` 0–16000; 0 là không chọn gì. Nếu bỏ cấu hình, mặc định tương thích cũ (30 record/16000 bytes, cho phép record không khớp). Context text còn trần 40000 ký tự và chỉ ghi metadata của record được đưa vào đầy đủ. Preview là dự kiến; lúc run bắt đầu ghi policy, text và revision đã chọn vào snapshot.
+Đây là đoạn cấu hình cần ghép vào project JSON hiện có, không thay toàn bộ file. Scope khớp chính xác hoặc theo nhánh con phân tách `/`; record phải chứa **tất cả** tag được chỉ định. Mảng rỗng hoặc bỏ trường là không lọc theo trường đó. `requireTaskMatch` chỉ giữ record khớp ít nhất một từ khóa task trên 2 ký tự; với lexical mode là khớp từ khóa, còn semantic/hybrid dùng LSA cục bộ. `inferTaskPaths` suy ra đường dẫn từ task và tên file/thư mục trong repo; scope project vẫn được giữ. `retrievalMode` gồm lexical (mặc định), semantic và hybrid. LSA giới hạn 512 record sau scope/tag filtering, không gửi memory ra dịch vụ ngoài. `maxRecords` 0–30 và `maxBodyBytes` 0–16000; 0 là không chọn gì. Nếu bỏ cấu hình, mặc định tương thích cũ (30 record/16000 bytes, cho phép record không khớp). Context text còn trần 40000 ký tự và chỉ ghi metadata của record được đưa vào đầy đủ. Preview là dự kiến; lúc run bắt đầu ghi policy, text và revision đã chọn vào snapshot.

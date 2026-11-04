@@ -1,5 +1,11 @@
 # Acceptance matrix v1 — đối chiếu bằng chứng
 
+## Bổ sung 04/11/2026
+
+Tám hạng mục workflow/workspace/Studio/memory đã có implementation; xem [trạng thái mới nhất](implementation-status.md) và [bàn giao](session-handoff-2026-11-04.md) cho kết quả suite cuối. Bằng chứng mới: regression nhiều fork/integration/branch review/repair, current/shared giữ staged/unstaged/untracked, index.lock fencing, atomic retirement giữ late writes, versioned proposals chống stale/revert approval, local LSA và memory lifecycle, journal input/output integrity. Luna 6 thật giải quyết conflict text + binary, chạy check, qua review độc lập và tạo commit `9251a0d7a867fc8e7364e3d2579283042486cd54`. Chưa thực hiện browser/Windows/Nimbalyst host acceptance mới; không đánh dấu các acceptance đó là đạt.
+
+## Ma trận lịch sử 30/10/2026
+
 Cập nhật: 30/10/2026, commit sau `b741ca7`. Đối chiếu design-v1 mục 18 với bằng chứng hiện có. Test được nêu bằng tên trong `npm test` (Windows 11: 133 tests, 131 pass, 0 fail, 2 skip — skip do Windows không cho tạo file symlink khi chưa bật Developer Mode và không gửi được tín hiệu console tới tiến trình con; skip không tính là đạt). "Run thật" là Codex CLI với model thật trên `demo/repo1`.
 
 **Kết luận:** v1 chưa đạt toàn bộ. Mục 1, 3, 6, 8, 9 đạt; mục 2, 4, 5, 7 đạt một phần; mục 10 và mốc M5 (Nimbalyst) chưa đạt. Pilot Calculator chưa chạy.
