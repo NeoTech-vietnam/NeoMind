@@ -59,16 +59,19 @@ test('overlapping edits are reported as conflicts with markers left for the inte
 });
 
 
+// NTFS rejects newlines in file names; a non-ASCII name is C-quoted by Git unless paths are NUL-delimited too.
+const oddName = process.platform === 'win32' ? 'renamed-a é.txt' : 'renamed-a\n.txt';
+
 test('rename conflicts retain exact newline-containing paths for explicit resolution', async () => {
   const { root, base, run } = await repository();
   const a = await prepareBranchWorktree(run, path.join(root, 'rename-a'), base), b = await prepareBranchWorktree(run, path.join(root, 'rename-b'), base);
-  execFileSync('git', ['-C', a, 'mv', 'shared.txt', 'renamed-a\n.txt']);
+  execFileSync('git', ['-C', a, 'mv', 'shared.txt', oddName]);
   execFileSync('git', ['-C', b, 'mv', 'shared.txt', 'renamed-b.txt']);
   const ca = await commitBranch(a, (await captureBaseline(a)).baselineHash, base, 'refs/neomind/rename/a', 'a');
   const cb = await commitBranch(b, (await captureBaseline(b)).baselineHash, base, 'refs/neomind/rename/b', 'b');
   const merged = await mergeBranchCommits(run, [ca.commit, cb.commit]);
-  assert.ok(merged.conflicts.includes('renamed-a\n.txt'), 'NUL-delimited Git paths preserve newlines exactly');
+  assert.ok(merged.conflicts.includes(oddName), 'NUL-delimited Git paths are kept exactly');
   await applyTreeToWorkspace(run, base, merged.tree);
-  assert.equal(await readFile(path.join(run, 'renamed-a\n.txt'), 'utf8'), 'one\ntwo\nthree\n');
+  assert.equal(await readFile(path.join(run, oddName), 'utf8'), 'one\ntwo\nthree\n');
   assert.equal(await readFile(path.join(run, 'renamed-b.txt'), 'utf8'), 'one\ntwo\nthree\n');
 });

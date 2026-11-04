@@ -25,7 +25,7 @@ import { indexTreeOf, prepareSharedIndex } from '../workspace/shared-index.js';
 import { createDetachedWorktree } from '../workspace/worktree.js';
 import { buildReviewTree, reviewDiff } from '../workspace/review-tree.js';
 import { applyToCheckout, runChanges } from '../workspace/checkout-apply.js';
-import { ignoredFingerprint, ignoredPaths, preserveRefs, refExists, removeWorktrees, retainedWorkspacePath } from '../workspace/run-cleanup.js';
+import { ignoredPaths, preserveRefs, refExists, removeWorktrees, snapshotBeforeRemoval } from '../workspace/run-cleanup.js';
 import { admitIsolatedWorkspaceWrite } from '../workspace/write-admission.js';
 import { readProject, standaloneDiagnostics } from './project.js';
 import { verifyRuntimeCapabilities } from './capabilities.js';
@@ -691,8 +691,10 @@ export class LocalRun {
   }
   /**
    * Remove the worktrees of a finished run. Commits only the worktree's HEAD kept are first preserved under
-   * `refs/neomind/<run>/delivery/<node>` (`git cherry-pick` keeps working); changes that exist nowhere else are refused
-   * unless `force`. The journal holds the plan before anything is removed, so an interrupted cleanup resumes it.
+   * `refs/neomind/<run>/delivery/<node>` (`git cherry-pick` keeps working), and each worktree is snapshotted under
+   * `refs/neomind/<run>/snapshot/...` right before it is deleted. Changes not yet delivered (applied or committed) are
+   * refused unless `force`: afterwards they live only in the snapshot, and ignored files are gone. The journal holds the
+   * plan before anything is removed, so an interrupted cleanup resumes it.
    */
   async cleanWorkspaces(force = false) {
     if (this.busy) throw new Error('Run đang chạy; chỉ dọn được khi run đã dừng hẳn');
@@ -707,31 +709,26 @@ export class LocalRun {
     if (!report.workspaceCleanup) {
       const workspaces = [this.context.workspace, ...report.branchWorkspaces.map(item => item.workspace)];
       if (workspaces.some(workspace => writer(workspace)?.quarantined)) throw new Error('Worktree của run đang bị cách ly vì worker chưa xác nhận dừng; không dọn');
-      const baselines: Record<string, string> = {};
-      for (const workspace of workspaces) if (existsSync(workspace)) baselines[workspace] = (await captureBaseline(workspace)).baselineHash;
       const unsaved = await this.unsavedChanges(report);
-      if (unsaved.length && !force) throw new Error(`Run còn thay đổi chưa áp dụng hoặc chưa commit: ${unsaved.slice(0, 10).join(', ')}${unsaved.length > 10 ? ` và ${unsaved.length - 10} file khác` : ''}. Dọn sẽ chuyển worktree vào vùng lưu khôi phục và giải phóng đường dẫn làm việc.`);
+      if (unsaved.length && !force) throw new Error(`Run còn thay đổi chưa áp dụng hoặc chưa commit: ${unsaved.slice(0, 10).join(', ')}${unsaved.length > 10 ? ` và ${unsaved.length - 10} file khác` : ''}. Dọn sẽ lưu chúng trong ref snapshot của run (file bị ignore thì bị xóa) và giải phóng đường dẫn làm việc.`);
       const refs = report.commits.filter(item => item.confirmed && item.commit).map(item => ({ ref: `refs/neomind/${this.runId}/delivery/${item.nodeId}`, commit: item.commit! }));
-      const ignoredBaselines: Record<string, string> = {};
-      for (const workspace of workspaces) if (existsSync(workspace)) ignoredBaselines[workspace] = await ignoredFingerprint(workspace);
-      for (const workspace of workspaces) if (existsSync(workspace) && (!baselines[workspace] || (await captureBaseline(workspace)).baselineHash !== baselines[workspace])) throw new Error(`Worktree đã đổi trong lúc kiểm tra dọn dẹp: ${workspace}`);
-      await this.durable.service.recordWorkspaceCleanup('intent', { workspaces, refs, discarded: unsaved, baselines, ignoredBaselines, retained: Object.fromEntries(workspaces.map(workspace => [workspace, retainedWorkspacePath(workspace, path.dirname(this.context.workspace))])) });
+      await this.durable.service.recordWorkspaceCleanup('intent', { workspaces, refs, discarded: unsaved });
       report = await this.durable.service.report();
     }
     const plan = report.workspaceCleanup!, leases = plan.workspaces.map(writer).filter(item => item?.runId === this.runId && !item.quarantined);
-    for (const workspace of plan.workspaces) {
-      if (!existsSync(workspace)) continue;
-      if (!plan.baselines?.[workspace] || (await captureBaseline(workspace)).baselineHash !== plan.baselines[workspace]) throw new Error(`Worktree đã đổi hoặc thiếu baseline dọn dẹp: ${workspace}. Giữ lại để kiểm tra.`);
-      const ignored = await ignoredPaths(workspace);
-      if (plan.ignoredBaselines?.[workspace] ? (await ignoredFingerprint(workspace)) !== plan.ignoredBaselines[workspace] : ignored.length > 0) throw new Error(`File bị ignore đã đổi hoặc thiếu baseline dọn dẹp: ${workspace}. Giữ lại để kiểm tra.`);
-    }
-    const currentUnsaved = await this.unsavedChanges(report);
-    if (currentUnsaved.some(file => !plan.discarded.includes(file))) throw new Error('Worktree có thay đổi mới sau khi xác nhận dọn; giữ lại để kiểm tra.');
     await preserveRefs(this.context.projectRoot, plan.refs);
+    // Snapshot right before removal rather than at intent time, so whatever the worktree holds by then is kept.
+    const snapshots: { workspace: string; ref: string; commit: string }[] = [];
+    for (const workspace of plan.workspaces) {
+      const branch = report.branchWorkspaces.find(item => item.workspace === workspace);
+      const ref = `refs/neomind/${this.runId}/snapshot/${branch ? `branch/${branch.nodeId}` : 'workspace'}`;
+      const commit = await snapshotBeforeRemoval(this.context.projectRoot, workspace, ref);
+      if (commit) snapshots.push({ workspace, ref, commit });
+    }
     await removeWorktrees(this.context.projectRoot, plan.workspaces, path.dirname(this.context.workspace));
     for (const lease of leases) this.coordinator.release(lease!, true);
-    await this.durable.service.recordWorkspaceCleanup('cleaned');
-    return { ...plan, cleaned: true };
+    await this.durable.service.recordWorkspaceCleanup('cleaned', { snapshots });
+    return { ...plan, snapshots, cleaned: true };
   }
   /** After delivery, remove the run's worktrees unless the project keeps them. Never discards changes and never fails the run. */
   private async autoClean() {

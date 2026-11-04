@@ -25,7 +25,7 @@ export type Run = {
   /** A finished flow without a commit: the files it changed for the user to review and apply. */
   handoff?: { files: string[]; applied: boolean };
   /** The run's worktrees were (or are being) removed; commits stay reachable through the listed refs. */
-  workspaceCleanup?: { workspaces: string[]; refs: { ref: string; commit: string }[]; discarded: string[]; retained?: Record<string, string>; cleaned: boolean };
+  workspaceCleanup?: { workspaces: string[]; refs: { ref: string; commit: string }[]; discarded: string[]; snapshots?: { workspace: string; ref: string; commit: string }[]; retained?: Record<string, string>; cleaned: boolean };
 };
 
 export type Preview = {

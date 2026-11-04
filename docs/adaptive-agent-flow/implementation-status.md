@@ -1,7 +1,18 @@
 # NeoMind v1 — trạng thái implementation
 
 Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
-Bàn giao hiện tại: [04/11/2026](session-handoff-2026-11-04.md). Phạm vi v1 rộng hơn tám việc vừa triển khai; đã có walkthrough browser cho Dev tuần tự bên dưới, các thao tác canvas nâng cao, Windows và host acceptance Nimbalyst vẫn cần kiểm chứng riêng.
+Bàn giao hiện tại: [04/11/2026 Windows](session-handoff-2026-11-04-windows.md), trước đó [04/11/2026 Linux](session-handoff-2026-11-04.md). Phạm vi v1 rộng hơn tám việc vừa triển khai; đã có walkthrough browser cho Dev tuần tự bên dưới, các thao tác canvas nâng cao, Windows và host acceptance Nimbalyst vẫn cần kiểm chứng riêng.
+
+## Suite trên Windows sau đợt 04/11 — 04/11/2026
+
+Windows 11, Node 24.18.0, Git 2.53.0, Codex CLI 0.166.0, Claude Code 2.1.312. Checkout chép từ Linux cần `npm ci` lại (`node_modules/.bin` của Linux không có shim `.cmd`). Lần đầu: 207 test, 201 pass, 4 fail, 2 skip. Sau khi sửa bốn lỗi và đổi thiết kế cleanup: **208 test, 206 pass, 0 fail, 2 skip** (symlink file không có trên máy, SIGTERM không gửi được tới process con trên Windows). `npm run build:ui` và build extension Nimbalyst đạt (cảnh báo bundle >500 kB như trước).
+
+- Rename conflict với newline trong tên: NTFS không cho phép tên như vậy; trên Windows test dùng tên non-ASCII, mà Git cũng C-quote nếu không tách bằng NUL.
+- Cleanup bằng rename: Windows không cho đổi tên thư mục khi có process mở file/cwd bên trong (`EPERM`), và intent có thể kẹt vĩnh viễn nếu worktree bị ghi sau đó. Người dùng duyệt **đổi thiết kế**: ngay trước khi xóa, mỗi worktree được chụp (tracked + untracked, trừ ignored) thành `refs/neomind/<run>/snapshot/workspace` hoặc `.../snapshot/branch/<node>`, rồi xóa hẳn và `git worktree prune`. Snapshot chụp lúc thực hiện, không lúc ghi intent, nên file ghi sau intent vẫn được giữ; ref đã có thì không chụp lại (lần xóa dở không ghi đè bản đầy đủ). Bỏ baseline/fingerprint ignored/`.retained`/`worktree repair`. `workspace_cleaned` mang danh sách snapshot; intent cũ có `baselines`/`retained` vẫn replay. Trên Windows, chương trình giữ thư mục làm việc xóa dừng sau ~3 giây retry, báo lỗi; dọn lại là xong. Đánh đổi: ghi từ bên ngoài trong khoảng giữa chụp và xóa sẽ mất (worker NeoMind đã dừng chắc chắn lúc đó).
+- Tool `wait` của session trả kết quả khi phase vừa chuyển sang `completed`, trong khi run vẫn bận `autoClean`; vì vậy `apply` gọi ngay sau đó bị từ chối. `wait` nay chờ run settle trước khi trả về.
+- Ngắt Claude: `ActiveProcesses` của job về 0 trong khi process cháu vẫn đang được kernel dọn và PID còn thấy `alive`. Lệnh `stop` của helper nay mở handle các process trong job trước khi terminate và chỉ báo `stopped` khi tất cả đã signal. Helper được biên dịch lại theo hash mới.
+
+Chưa chạy lại run thật Codex/Claude trên Windows và chưa kiểm chứng host Nimbalyst sau đợt này.
 
 ## Walkthrough Flow Studio trên Linux — 04/11/2026
 
@@ -17,7 +28,7 @@ Lần trước dùng `node verify.cjs` bị `spawnSync cc EPERM` trong sandbox d
 | --- | --- | --- |
 | Flow nhiều giai đoạn | Writer trước/sau fork, baseline nhánh theo thời điểm bắt đầu, nhiều integration, review và repair riêng từng nhánh; checks nhánh có thể cấu hình riêng, final review vẫn chạy checks/criteria toàn kế hoạch | Regression hai fork/hai integration và branch repair; các check riêng phải được liệt kê trong plan để duyệt. Fork lồng nhau/integration nằm trong nhánh chưa join vẫn bị preflight chặn; dùng các giai đoạn nối tiếp |
 | Checkout/shared workspace | Chọn theo flow hoặc trước run trên UI/API/CLI; xác nhận dirty baseline; một writer lease mỗi workspace; shared writer chạy tuần tự; commit chỉ phần run và rebase staging của người dùng qua private index dưới index.lock | Regression giữ đồng thời staged, unstaged, untracked; không dọn hoặc áp patch lại vào checkout mượn |
-| Race cleanup | Dọn bằng atomic rename vào `workspaces/.retained/<run>` rồi `git worktree repair`; giữ toàn bộ dữ liệu và Git registration, không recursive delete | Regression ghi tiếp qua file descriptor đang mở sau dọn. Thư mục lưu khôi phục còn chiếm dung lượng; không tự purge |
+| Race cleanup | ~~Dọn bằng atomic rename vào `workspaces/.retained/<run>`~~ — thay ngày 04/11 (Windows) bằng snapshot ref rồi xóa, xem mục đầu file | Journal cũ có `retained`/`baselines` vẫn replay; thư mục `.retained` đã tạo không tự xóa |
 | Canvas | Thêm bước khi thả đầu nối ra pane hoặc nút thêm bước tiếp theo; multi-copy/paste giữ cạnh/tham chiếu, multi-delete, undo/redo, Ctrl/Cmd+A/S/C/V/Z, Escape, chọn node/cạnh bằng select và popup keyboard | Build UI đạt; chưa có browser acceptance cho các thao tác mới |
 | Version diff | Diff từng thuộc tính lồng nhau, trước/sau; hiện thêm theo mỗi 200 thay đổi | Regression structural diff; so sánh version đã lưu với draft |
 | Run graph | Ghi input/output theo attempt vào journal, hash và provenance task/memory/plan/artifact/check/code; API tải riêng payload; cạnh dữ liệu khác cạnh điều khiển | Regression input bị sửa hash bị từ chối; prompt/output trên 1 triệu ký tự được rút gọn có cờ rõ ràng; run cũ thiếu node data vẫn đọc được |

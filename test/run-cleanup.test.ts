@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, writeFile, open } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { LocalRun } from '../src/runtime/local-run.js';
@@ -13,7 +13,7 @@ import { WorkspaceCoordinator } from '../src/storage/coordination.js';
 import { CodexTurnEvents } from '../src/adapters/codex-turn-events.js';
 import { RunnerRegistry } from '../src/runners/registry.js';
 import { captureBaseline } from '../src/workspace/baseline.js';
-import { ignoredFingerprint, retainedWorkspacePath } from '../src/workspace/run-cleanup.js';
+import { resolveRef, snapshotBeforeRemoval } from '../src/workspace/run-cleanup.js';
 import { parseRunCommand } from '../src/cli/run-command.js';
 import type { WorkerFactory } from '../src/runtime/worker.js';
 import { FakeRunnerFactory, fakeScope } from './helpers/fake-runner.js';
@@ -45,27 +45,28 @@ async function finishedFastRun(policy: Record<string, unknown> = {}) {
   run.launch(); await run.settled();
   assert.equal((await run.report()).runtimeState.phase, 'completed');
   const worktrees = () => git('worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ')).length;
-  return { run, repo, coordinator, worktrees, close: async () => { await run.close(); coordinator.close(); } };
+  const snapshotRef = `refs/neomind/${run.runId}/snapshot/workspace`, show = (spec: string) => git('show', spec);
+  return { run, repo, coordinator, worktrees, snapshotRef, show, close: async () => { await run.close(); coordinator.close(); } };
 }
 
 test('a delivered run cleans its worktree by itself; unapplied changes keep it until the user decides', async () => {
   const f = await finishedFastRun();
   try {
-    // Finished but not applied: the worktree holds the only copy of the change, so neither auto nor plain cleanup removes it.
+    // Finished but not applied: the worktree holds the only working copy of the change, so neither auto nor plain cleanup removes it.
     assert.ok(existsSync(f.run.context.workspace)); assert.equal(f.worktrees(), 2);
     await assert.rejects(f.run.cleanWorkspaces(), /Run còn thay đổi chưa áp dụng hoặc chưa commit: proof\.txt/);
     assert.equal((await f.run.report()).workspaceCleanup, undefined, 'a refused cleanup journals nothing');
     await f.run.applyToCheckout();
     assert.equal(await readFile(path.join(f.repo, 'proof.txt'), 'utf8'), 'ok\n');
-    const report = await f.run.report();
-    assert.deepEqual({ ...report.workspaceCleanup, baselines: undefined, ignoredBaselines: undefined, retained: undefined }, { workspaces: [f.run.context.workspace], refs: [], discarded: [], baselines: undefined, ignoredBaselines: undefined, retained: undefined, cleaned: true });
-    assert.ok(!existsSync(f.run.context.workspace)); assert.equal(f.worktrees(), 2, 'the recovery worktree remains registered at its retained location');
+    const report = await f.run.report(), commit = await resolveRef(f.repo, f.snapshotRef);
+    assert.deepEqual(report.workspaceCleanup, { workspaces: [f.run.context.workspace], refs: [], discarded: [], snapshots: [{ workspace: f.run.context.workspace, ref: f.snapshotRef, commit }], cleaned: true });
+    assert.ok(!existsSync(f.run.context.workspace)); assert.equal(f.worktrees(), 1, 'the worktree is deleted and unregistered');
     assert.equal(f.coordinator.isCurrent(f.run.context.lease), false, 'the workspace lease is released');
     assert.deepEqual(await f.run.cleanWorkspaces(), report.workspaceCleanup, 'cleaning again is a no-op');
   } finally { await f.close(); }
 });
 
-test('forcing a cleanup records what it discarded, and the discarded changes can no longer be applied', async () => {
+test('forcing a cleanup records what it discarded; the snapshot keeps it and restores as a worktree', async () => {
   const f = await finishedFastRun();
   try {
     const cleanup = await f.run.cleanWorkspaces(true);
@@ -73,6 +74,10 @@ test('forcing a cleanup records what it discarded, and the discarded changes can
     assert.ok(!existsSync(f.run.context.workspace));
     await assert.rejects(f.run.applyToCheckout(), /đã được dọn/);
     assert.ok(!existsSync(path.join(f.repo, 'proof.txt')));
+    assert.equal(f.show(`${f.snapshotRef}:proof.txt`), 'ok\n');
+    const restored = path.join(path.dirname(f.repo), 'restored');
+    execFileSync('git', ['-C', f.repo, 'worktree', 'add', '-q', '--detach', restored, f.snapshotRef]);
+    assert.equal(await readFile(path.join(restored, 'proof.txt'), 'utf8'), 'ok\n');
   } finally { await f.close(); }
 });
 
@@ -82,37 +87,52 @@ test('a project can keep run worktrees; an interrupted cleanup resumes from its 
     await f.run.applyToCheckout();
     assert.ok(existsSync(f.run.context.workspace), 'kept by project policy');
     // A cleanup that stopped after journaling its plan finishes it, without re-deciding what to keep.
-    await f.run.durable.service.recordWorkspaceCleanup('intent', { workspaces: [f.run.context.workspace], refs: [], discarded: [], baselines: { [f.run.context.workspace]: (await captureBaseline(f.run.context.workspace)).baselineHash } });
+    await f.run.durable.service.recordWorkspaceCleanup('intent', { workspaces: [f.run.context.workspace], refs: [], discarded: [] });
     assert.equal((await f.run.report()).workspaceCleanup?.cleaned, false);
     assert.equal((await f.run.cleanWorkspaces()).cleaned, true);
-    assert.ok(!existsSync(f.run.context.workspace)); assert.equal(f.worktrees(), 2, 'the recovery worktree remains registered at its retained location');
+    assert.ok(!existsSync(f.run.context.workspace)); assert.equal(f.worktrees(), 1);
   } finally { await f.close(); }
 });
 
 test('a cleanup receipt needs its journaled plan, and the CLI parses clean for one run or all', async () => {
   const f = await finishedFastRun();
   try {
-    await assert.rejects(f.run.durable.service.recordWorkspaceCleanup('cleaned'), /without its intent/);
+    await assert.rejects(f.run.durable.service.recordWorkspaceCleanup('cleaned', { snapshots: [] }), /without its intent/);
   } finally { await f.close(); }
   assert.deepEqual(parseRunCommand(['run', 'clean', 'p', 'run-1']), { kind: 'clean', project: 'p', runId: 'run-1', force: false });
   assert.deepEqual(parseRunCommand(['run', 'clean', 'p', '--all', '--force']), { kind: 'clean', project: 'p', force: true });
   assert.equal(parseRunCommand(['run', 'clean', 'p', 'run-1', '--yes']), undefined);
 });
 
-
-test('an interrupted cleanup refuses changes made after its intent', async () => {
+test('files written after an interrupted cleanup journaled its plan are kept in the snapshot', async () => {
   const f = await finishedFastRun({ keepRunWorktrees: true });
   try {
     await f.run.applyToCheckout();
     const workspace = f.run.context.workspace;
-    await f.run.durable.service.recordWorkspaceCleanup('intent', { workspaces: [workspace], refs: [], discarded: [], baselines: { [workspace]: (await captureBaseline(workspace)).baselineHash } });
+    await f.run.durable.service.recordWorkspaceCleanup('intent', { workspaces: [workspace], refs: [], discarded: [] });
     await writeFile(path.join(workspace, 'later.txt'), 'keep me\n');
-    await assert.rejects(f.run.cleanWorkspaces(), /Worktree đã đổi/);
-    assert.equal(await readFile(path.join(workspace, 'later.txt'), 'utf8'), 'keep me\n');
+    await f.run.cleanWorkspaces();
+    assert.ok(!existsSync(workspace));
+    assert.equal(f.show(`${f.snapshotRef}:later.txt`), 'keep me\n');
   } finally { await f.close(); }
 });
 
-test('cleanup keeps ignored files that exist only in a run worktree', async () => {
+test('a resumed cleanup keeps the first snapshot of a half-removed worktree', async () => {
+  const f = await finishedFastRun({ keepRunWorktrees: true });
+  try {
+    await f.run.applyToCheckout();
+    const workspace = f.run.context.workspace;
+    await writeFile(path.join(workspace, 'extra.txt'), 'extra\n');
+    await f.run.durable.service.recordWorkspaceCleanup('intent', { workspaces: [workspace], refs: [], discarded: [] });
+    const first = await snapshotBeforeRemoval(f.repo, workspace, f.snapshotRef);
+    await rm(path.join(workspace, 'extra.txt')); // the removal stopped after deleting this file
+    const cleanup = await f.run.cleanWorkspaces();
+    assert.equal(cleanup.snapshots?.[0]?.commit, first);
+    assert.equal(f.show(`${f.snapshotRef}:extra.txt`), 'extra\n');
+  } finally { await f.close(); }
+});
+
+test('cleanup keeps ignored files that exist only in a run worktree unless forced', async () => {
   const f = await finishedFastRun({ keepRunWorktrees: true });
   try {
     await f.run.applyToCheckout();
@@ -122,36 +142,35 @@ test('cleanup keeps ignored files that exist only in a run worktree', async () =
     await writeFile(path.join(f.run.context.workspace, 'private-output.log'), 'keep\n');
     await assert.rejects(f.run.cleanWorkspaces(), /private-output\.log/);
     assert.equal(await readFile(path.join(f.run.context.workspace, 'private-output.log'), 'utf8'), 'keep\n');
+    // Ignored files are not part of the snapshot: forcing records them as discarded.
+    assert.deepEqual((await f.run.cleanWorkspaces(true)).discarded, ['private-output.log']);
+    assert.throws(() => f.show(`${f.snapshotRef}:private-output.log`));
   } finally { await f.close(); }
 });
 
-test('recovery refuses to discard ignored content changed after a forced cleanup intent', async () => {
+test('a plan journaled before snapshots (baselines, retained directory) still replays and finishes', async () => {
   const f = await finishedFastRun({ keepRunWorktrees: true });
   try {
     await f.run.applyToCheckout();
-    const workspace = f.run.context.workspace, excludeFile = path.join(path.dirname(f.repo), 'excludes');
-    await writeFile(excludeFile, 'private-output.log\n');
-    execFileSync('git', ['-C', f.repo, 'config', 'core.excludesFile', excludeFile]);
-    await writeFile(path.join(workspace, 'private-output.log'), 'first\n');
-    await f.run.durable.service.recordWorkspaceCleanup('intent', { workspaces: [workspace], refs: [], discarded: ['private-output.log'],
-      baselines: { [workspace]: (await captureBaseline(workspace)).baselineHash }, ignoredBaselines: { [workspace]: await ignoredFingerprint(workspace) } });
-    await writeFile(path.join(workspace, 'private-output.log'), 'later\n');
-    await assert.rejects(f.run.cleanWorkspaces(true), /File bị ignore đã đổi/);
-    assert.equal(await readFile(path.join(workspace, 'private-output.log'), 'utf8'), 'later\n');
+    const workspace = f.run.context.workspace;
+    await f.run.durable.service.recordWorkspaceCleanup('intent', { workspaces: [workspace], refs: [], discarded: [],
+      baselines: { [workspace]: (await captureBaseline(workspace)).baselineHash }, retained: { [workspace]: path.join(path.dirname(workspace), '.retained', path.basename(workspace)) } } as never);
+    assert.equal((await f.run.cleanWorkspaces()).cleaned, true);
+    assert.ok(!existsSync(workspace));
   } finally { await f.close(); }
 });
 
-
-test('retirement preserves writes through an open descriptor after the final cleanup checks', async () => {
+test('on Windows a process holding the worktree stops the removal; the snapshot is kept and cleanup resumes', { skip: process.platform !== 'win32' && 'Windows-only sharing semantics', timeout: 60000 }, async () => {
   const f = await finishedFastRun();
-  const workspace = f.run.context.workspace, file = path.join(workspace, 'proof.txt');
-  const descriptor = await open(file, 'a');
+  const workspace = f.run.context.workspace;
+  // A process whose working directory is inside the worktree keeps Windows from deleting that directory.
+  const holder = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { cwd: workspace, stdio: 'ignore' });
   try {
-    const cleanup = await f.run.cleanWorkspaces(true);
-    await descriptor.write('late external write\n'); await descriptor.sync();
-    const retained = retainedWorkspacePath(workspace, path.dirname(workspace));
-    assert.equal(cleanup.retained?.[workspace], retained);
-    assert.equal(await readFile(path.join(retained, 'proof.txt'), 'utf8'), 'ok\nlate external write\n');
-    assert.equal(execFileSync('git', ['-C', retained, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim(), retained);
-  } finally { await descriptor.close(); await f.close(); }
+    await assert.rejects(f.run.cleanWorkspaces(true), /Không xóa hết được worktree/);
+    assert.equal(f.show(`${f.snapshotRef}:proof.txt`), 'ok\n');
+  } finally { holder.kill(); await new Promise(resolve => holder.once('exit', resolve)); }
+  try {
+    assert.equal((await f.run.cleanWorkspaces()).cleaned, true);
+    assert.ok(!existsSync(workspace)); assert.equal(f.worktrees(), 1);
+  } finally { await f.close(); }
 });

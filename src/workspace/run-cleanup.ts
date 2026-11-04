@@ -1,11 +1,11 @@
 import { gitConfigEnv } from './git-env.js';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { createReadStream } from 'node:fs';
-import { lstat, readdir, readlink, mkdir, rename } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { lstat, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { captureBaseline } from './baseline.js';
+import { snapshotWorkspace } from './integration.js';
 const execFileAsync = promisify(execFile);
 
 function gitEnv(): NodeJS.ProcessEnv {
@@ -20,37 +20,16 @@ export interface PreservedRef { ref: string; commit: string }
 
 const comparable = (file: string) => { const resolved = path.resolve(file); return process.platform === 'win32' ? resolved.toLowerCase() : resolved; };
 
-/** Worktrees Git has registered for the repository of `repo` (any of its worktrees). */
-export async function registeredWorktrees(repo: string): Promise<Set<string>> {
-  const listing = await git(repo, 'worktree', 'list', '--porcelain', '-z');
-  return new Set(listing.split('\0').filter(line => line.startsWith('worktree ')).map(line => comparable(line.slice('worktree '.length))));
+/** The commit `ref` points to, or undefined when it does not exist. */
+export async function resolveRef(repo: string, ref: string): Promise<string | undefined> {
+  return git(repo, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`).then(output => output.trim(), () => undefined);
 }
+export async function refExists(repo: string, ref: string): Promise<boolean> { return !!await resolveRef(repo, ref); }
 
-export async function refExists(repo: string, ref: string): Promise<boolean> {
-  return git(repo, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`).then(() => true, () => false);
-}
-
-/** Git force-removal also deletes ignored files; treat them as unsaved unless explicitly discarded. */
+/** Ignored files are not part of a workspace snapshot, so removal loses them; treat them as unsaved unless explicitly discarded. */
 export async function ignoredPaths(workspace: string): Promise<string[]> {
   const output = await git(workspace, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z');
   return output.split('\0').filter(Boolean).sort();
-}
-
-/** Hash ignored entries without following symlinks, so a resumed forced cleanup cannot discard changed data. */
-export async function ignoredFingerprint(workspace: string): Promise<string> {
-  const hash = createHash('sha256'), root = path.resolve(workspace);
-  async function visit(relative: string): Promise<void> {
-    const absolute = path.resolve(root, relative), inside = path.relative(root, absolute);
-    if (!inside || inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) throw new Error('Ignored path escapes workspace');
-    const info = await lstat(absolute);
-    hash.update(JSON.stringify([relative, info.mode, info.isFile() ? 'file' : info.isDirectory() ? 'directory' : info.isSymbolicLink() ? 'symlink' : 'special']));
-    if (info.isSymbolicLink()) hash.update(JSON.stringify(await readlink(absolute)));
-    else if (info.isDirectory()) for (const child of (await readdir(absolute)).sort()) await visit(path.join(relative, child));
-    else if (info.isFile()) { const content = createHash('sha256'); for await (const chunk of createReadStream(absolute)) content.update(chunk as Buffer); hash.update(content.digest()); }
-    else throw new Error(`Không dọn file đặc biệt bị ignore: ${relative}`);
-  }
-  for (const entry of await ignoredPaths(workspace)) await visit(entry);
-  return hash.digest('hex');
 }
 
 /** Write each ref to its commit (idempotent: an existing ref is moved to the same commit). */
@@ -61,32 +40,35 @@ export async function preserveRefs(repo: string, refs: PreservedRef[]): Promise<
   }
 }
 
-/** Deterministic recovery location, recorded before retirement so a crash can resume it. */
-export function retainedWorkspacePath(workspace: string, workspacesDir: string): string {
-  if (comparable(path.dirname(workspace)) !== comparable(workspacesDir)) throw new Error('Only managed run workspaces can be retired');
-  return path.join(workspacesDir, '.retained', path.basename(workspace));
+/**
+ * Keep everything a worktree holds except ignored files (tracked and untracked, staged or not) as a commit on `ref`.
+ * An existing ref is kept as is: after an interrupted removal the worktree may be half deleted, and the first
+ * snapshot is the complete one. Restore with `git worktree add <dir> <ref>`.
+ */
+export async function snapshotBeforeRemoval(repo: string, workspace: string, ref: string): Promise<string | undefined> {
+  const existing = await resolveRef(repo, ref);
+  if (existing || !existsSync(workspace)) return existing;
+  const baseline = await captureBaseline(workspace), commit = await snapshotWorkspace(workspace, baseline.baselineHash, baseline.head);
+  await preserveRefs(repo, [{ ref, commit }]);
+  return commit;
 }
 
 /**
- * Retire by atomic rename, never recursive deletion. An external process with an open file/cwd may
- * still write after the last baseline check; those writes then remain in the retained directory.
+ * Delete run worktrees and drop their Git registration. Callers snapshot them first, so a removal that stops halfway
+ * (on Windows, a file another program holds open) loses nothing and is simply run again.
  */
 export async function removeWorktrees(repo: string, workspaces: string[], workspacesDir: string): Promise<string[]> {
-  const removed: string[] = [], directory = path.join(workspacesDir, '.retained');
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  if ((await lstat(directory)).isSymbolicLink()) throw new Error('Retained workspace directory cannot be a symlink');
+  const removed: string[] = [];
   for (const workspace of workspaces) {
-    const retained = retainedWorkspacePath(workspace, workspacesDir);
-    if (existsSync(workspace)) {
-      if ((await lstat(workspace)).isSymbolicLink()) throw new Error('Managed workspace cannot be a symlink');
-      if (existsSync(retained)) throw new Error(`Recovery directory already exists: ${retained}`);
-      await rename(workspace, retained);
+    if (comparable(path.dirname(workspace)) !== comparable(workspacesDir)) throw new Error(`Không xóa ${workspace}: không phải worktree của run`);
+    if (!existsSync(workspace)) continue;
+    if ((await lstat(workspace)).isSymbolicLink()) throw new Error('Managed workspace cannot be a symlink');
+    try { await rm(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
+    catch (error) {
+      throw new Error(`Không xóa hết được worktree ${workspace}${process.platform === 'win32' ? ' (thường do một chương trình khác đang mở file trong đó)' : ''}: ${error instanceof Error ? error.message : String(error)}. Thay đổi đã được lưu trong ref snapshot; đóng chương trình đó rồi dọn lại.`);
     }
-    if (!existsSync(retained)) continue;
-    if ((await lstat(retained)).isSymbolicLink()) throw new Error('Retained workspace cannot be a symlink');
-    // Repair is idempotent after a crash between the rename and updating Git's registration.
-    if (existsSync(path.join(retained, '.git'))) await git(repo, 'worktree', 'repair', retained);
     removed.push(workspace);
   }
+  await git(repo, 'worktree', 'prune');
   return removed;
 }

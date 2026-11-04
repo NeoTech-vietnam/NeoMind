@@ -124,6 +124,12 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
         await new Promise(resolve => setTimeout(resolve, 1000));
         current = await summary(id);
       }
+      // The phase is journaled before post-run work (worktree cleanup) finishes, and actions refuse a busy run.
+      if (!['running', 'stopping'].includes(current.phase)) {
+        let timer: NodeJS.Timeout | undefined;
+        await Promise.race([(await runs()).settle(id).catch(() => undefined), new Promise(resolve => { timer = setTimeout(resolve, Math.max(0, deadline - Date.now())); })]);
+        clearTimeout(timer); current = await summary(id);
+      }
       return { ...current, changed: current.phase !== first.phase, ...(current.phase === first.phase && ['running', 'stopping'].includes(current.phase) ? { note: 'Still running; call wait again.' } : {}) };
     },
     approve: async args => {

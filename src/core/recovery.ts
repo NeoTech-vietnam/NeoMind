@@ -91,8 +91,13 @@ export interface RecoveryReport {
   includeImportedCommitNodeIds: string[];
   /** A flow without a commit hands its changes to the user: the patch applied (or being applied) to the checkout. */
   checkoutApply?: { tree: string; paths: string[]; patchHash: string; applied: boolean };
-  /** Removal of a finished run's worktrees: refs written first to keep its commits, files knowingly discarded, and whether it finished. */
-  workspaceCleanup?: { workspaces: string[]; refs: { ref: string; commit: string }[]; discarded: string[]; baselines?: Record<string, string> | undefined; ignoredBaselines?: Record<string, string> | undefined; retained?: Record<string, string> | undefined; cleaned: boolean };
+  /**
+   * Removal of a finished run's worktrees: refs written first to keep its commits, files knowingly discarded, the snapshot
+   * of each removed worktree, and whether it finished. Baselines and retained directories come from journals written before
+   * worktrees were snapshotted and deleted (they were moved aside instead).
+   */
+  workspaceCleanup?: { workspaces: string[]; refs: { ref: string; commit: string }[]; discarded: string[]; snapshots?: { workspace: string; ref: string; commit: string }[] | undefined;
+    baselines?: Record<string, string> | undefined; ignoredBaselines?: Record<string, string> | undefined; retained?: Record<string, string> | undefined; cleaned: boolean };
   /** Per review group, the reviewer outputs of the round the latest repair replaced. */
   priorReviewerOutputs: Record<string, RecoveryReport['reviewerOutputs']>;
   requiresUserContinue: true;
@@ -528,9 +533,10 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
         workspaceCleanup = { ...payload, cleaned: false }; break;
       }
       case 'workspace_cleaned': {
-        z.strictObject({}).parse(event.payload);
+        const { snapshots } = z.strictObject({ snapshots: z.array(z.strictObject({ workspace: z.string().min(1), ref: z.string().startsWith('refs/neomind/'), commit: gitObject })).optional() }).parse(event.payload);
         if (!workspaceCleanup || workspaceCleanup.cleaned) throw new Error('Workspace cleanup receipt without its intent');
-        workspaceCleanup.cleaned = true; break;
+        if (snapshots?.some(item => !workspaceCleanup!.workspaces.includes(item.workspace))) throw new Error('Workspace snapshot outside its cleanup plan');
+        workspaceCleanup.cleaned = true; if (snapshots) workspaceCleanup.snapshots = snapshots; break;
       }
       default: throw new Error(`Unknown run event type: ${event.type}`);
     }

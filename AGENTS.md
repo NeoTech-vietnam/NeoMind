@@ -12,7 +12,7 @@ Công cụ cấu hình và chạy *agent flow* trên một Git repo: lập kế 
 
 ## Đọc theo thứ tự
 
-1. [Bàn giao mới nhất](docs/adaptive-agent-flow/session-handoff-2026-11-04.md): trạng thái, việc đang dở, bài học.
+1. [Bàn giao mới nhất](docs/adaptive-agent-flow/session-handoff-2026-11-04-windows.md) (Windows, cleanup bằng snapshot) và [bàn giao Linux cùng ngày](docs/adaptive-agent-flow/session-handoff-2026-11-04.md): trạng thái, việc đang dở, bài học.
 2. [Trạng thái triển khai](docs/adaptive-agent-flow/implementation-status.md) và [acceptance matrix](docs/adaptive-agent-flow/acceptance-matrix.md).
 3. [README](README.md): cách dùng; [START-HERE-WINDOWS](START-HERE-WINDOWS.md): chi tiết Windows.
 4. Thiết kế khi cần: [design-v1](docs/adaptive-agent-flow/design-v1.md), [quyết định v1](docs/adaptive-agent-flow/v1-design-decisions.md), [extension Nimbalyst](docs/adaptive-agent-flow/nimbalyst-extension.md), [Claude Code runner](docs/adaptive-agent-flow/claude-code-runner.md), [transcript session](docs/adaptive-agent-flow/session-transcripts.md).
@@ -33,7 +33,7 @@ npm run neomind -- editor /duong/dan/toi/mot/git-repo
 | --- | --- | --- |
 | Giữ và dừng process | Job Object qua helper `neomind-job-<hash>.exe`, tự biên dịch lần đầu bằng `csc.exe` của .NET Framework 4 (có sẵn), cache ở `%LOCALAPPDATA%\neomind\bin` | `systemd-run --user --scope`: cần user systemd chạy được (`systemctl --user status`) |
 | State (journal, SQLite, worktree của run) | `%LOCALAPPDATA%\neomind\<project-key>` | `${XDG_STATE_HOME:-~/.local/state}/neomind/<project-key>` |
-| Kiểm chứng gần nhất | 30/10/2026: `npm test` 184 test (182 pass, 2 skip), run thật Codex + Claude, extension Nimbalyst | 04/11/2026: suite workflow/workspace/memory + UI/extension build; Luna 6 thật xử lý conflict text/binary tới commit. Xem bàn giao mới nhất cho số test và phần chưa kiểm chứng |
+| Kiểm chứng gần nhất | 04/11/2026: `npm test` 208 test (206 pass, 2 skip), UI/extension build. Run thật Codex + Claude và extension trong Nimbalyst: lần cuối 30/10/2026 | 04/11/2026: suite workflow/workspace/memory + UI/extension build; Luna 6 thật xử lý conflict text/binary tới commit. Xem bàn giao mới nhất cho số test và phần chưa kiểm chứng |
 
 Trên Linux, việc đầu tiên là chạy `npm test`. Test nào lỗi được coi là việc port, ghi lại vào bàn giao; không sửa test cho xanh bằng cách nới điều kiện.
 

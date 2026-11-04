@@ -10,11 +10,12 @@ import { stateBase } from './state-dir.js';
  *
  *   run <name> <exe> [args...]  create Global\<name> with kill-on-close, join it, run exe, return its exit code
  *   query <name>                "absent" | "active <processes>"
- *   stop <name> <timeoutMs>     terminate the job: "absent" | "stopped" | "running <processes>" (exit 4)
+ *   stop <name> <timeoutMs>     terminate the job and wait for its members: "absent" | "stopped" | "running <processes>" (exit 4)
  *   procinfo <pid>              "boot=<id> state=<alive|exited|absent|unknown> start=<filetime>"
  */
 const source = String.raw`
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -37,6 +38,7 @@ static class NeoMindJob {
   [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr OpenJobObjectW(uint access, bool inherit, string name);
   [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetInformationJobObject(IntPtr job, int infoClass, ref ExtendedLimit info, int length);
   [DllImport("kernel32.dll", SetLastError = true)] static extern bool QueryInformationJobObject(IntPtr job, int infoClass, out Accounting info, int length, IntPtr returned);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool QueryInformationJobObject(IntPtr job, int infoClass, IntPtr info, int length, IntPtr returned);
   [DllImport("kernel32.dll", SetLastError = true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
   [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateJobObject(IntPtr job, uint exitCode);
   [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
@@ -71,6 +73,26 @@ static class NeoMindJob {
     bool ok = QueryInformationJobObject(job, 1, out info, Marshal.SizeOf(typeof(Accounting)), IntPtr.Zero);
     processes = ok ? info.ActiveProcesses : 0;
     return ok;
+  }
+  // A job's active count drops while a member is still being torn down, so its PID can look alive for a moment after
+  // "0 active". Stop opens the members first and confirms only once every one of them is signaled.
+  static List<IntPtr> Members(IntPtr job) {
+    List<IntPtr> handles = new List<IntPtr>();
+    int size = 8 + 1024 * IntPtr.Size;
+    IntPtr list = Marshal.AllocHGlobal(size);
+    try {
+      if (!QueryInformationJobObject(job, 3, list, size, IntPtr.Zero)) return handles;
+      int count = Marshal.ReadInt32(list, 4);
+      for (int i = 0; i < count; i++) {
+        IntPtr process = OpenProcess(SYNCHRONIZE, false, (int)Marshal.ReadIntPtr(list, 8 + i * IntPtr.Size).ToInt64());
+        if (process != IntPtr.Zero) handles.Add(process);
+      }
+    } finally { Marshal.FreeHGlobal(list); }
+    return handles;
+  }
+  static bool Signaled(List<IntPtr> handles) {
+    foreach (IntPtr handle in handles) if (WaitForSingleObject(handle, 0) != 0) return false;
+    return true;
   }
 
   static int Run(string[] args) {
@@ -120,12 +142,13 @@ static class NeoMindJob {
       if (Marshal.GetLastWin32Error() == ERROR_FILE_NOT_FOUND) { Console.WriteLine("absent"); return 0; }
       return Fail("OpenJobObject failed");
     }
+    List<IntPtr> members = Members(job);
     if (!TerminateJobObject(job, 1)) return Fail("TerminateJobObject failed");
     DateTime deadline = DateTime.UtcNow.AddMilliseconds(int.Parse(args[2]));
     uint processes = 0;
     while (true) {
       if (!Active(job, out processes)) return Fail("QueryInformationJobObject failed");
-      if (processes == 0) { Console.WriteLine("stopped"); return 0; }
+      if (processes == 0 && Signaled(members)) { Console.WriteLine("stopped"); return 0; }
       if (DateTime.UtcNow > deadline) { Console.WriteLine("running " + processes); return 4; }
       System.Threading.Thread.Sleep(50);
     }
