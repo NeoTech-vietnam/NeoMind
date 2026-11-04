@@ -155,6 +155,8 @@ async function deterministicEngine(t) {
         } else if (binding.stage === 'implementation') {
           const selectedPlan = fixturePlans.get(name), output = selectedPlan.outputs[0], currentProduct = await call('project_read', { path: output });
           if (binding.artifact_revalidation) {
+            assert.match(this.receipt.input_text, /Current assignment: read-only artifact revalidation\./);
+            assert.doesNotMatch(this.receipt.input_text, /Read before writing;|For Cornell, use the supplied semantic compiler/);
             assert.ok(!listed.tools.some(tool => ['task_file_write', 'task_run', 'procedure_run', 'cornell_research_compile'].includes(tool.name)));
             for (const path of selectedPlan.outputs) await call('project_read', { path });
             await report({ artifacts: selectedPlan.outputs, summary: 'Assessed the externally changed current revision without modifying any file.' });
