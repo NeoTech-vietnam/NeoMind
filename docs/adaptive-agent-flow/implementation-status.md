@@ -1,7 +1,15 @@
 # NeoMind v1 — trạng thái implementation
 
 Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
-Bàn giao hiện tại: [04/11/2026](session-handoff-2026-11-04.md). Phạm vi v1 rộng hơn tám việc vừa triển khai; browser acceptance mới, Windows và host acceptance Nimbalyst vẫn cần kiểm chứng riêng.
+Bàn giao hiện tại: [04/11/2026](session-handoff-2026-11-04.md). Phạm vi v1 rộng hơn tám việc vừa triển khai; đã có walkthrough browser cho Dev tuần tự bên dưới, các thao tác canvas nâng cao, Windows và host acceptance Nimbalyst vẫn cần kiểm chứng riêng.
+
+## Walkthrough Flow Studio trên Linux — 04/11/2026
+
+Đã thao tác giao diện thật: mở canvas và inspector model/reasoning, cấu hình run và memory preview, khởi động run, xem trạng thái và log trực tiếp, mở input/output theo attempt, checks, verdict, commit và cập nhật context có nguồn trong project memory. [Bộ review 10 ảnh](ui-review-2026-11-04/REVIEW.md), [gallery offline](ui-review-2026-11-04/index.html) và [báo cáo kết quả](ui-review-2026-11-04/report.json) được lưu cùng repo.
+
+Project C11 dùng Luna 6 / low, flow demo tự khai báo auto approval trong project riêng cho phép. Run `run-c2403d71-d305-4feb-af4e-3f0c1945bbda` hoàn tất sau **42,25 giây**: `sh verify.sh` biên dịch với `-std=c11 -Wall -Wextra -Werror`, ba ca cộng/trừ/số âm đạt; reviewer độc lập đạt 8/8 tiêu chí; commit local `9e6fbbd010b06653525cc118f73a3726e2a10400` chỉ sửa `main.c` trong worktree demo. Usage run thành công **62125 tokens**, gồm **24192 cached input**; USD không được cung cấp. Server demo đã dừng.
+
+Lần trước dùng `node verify.cjs` bị `spawnSync cc EPERM` trong sandbox dù check chạy trên host đạt. Flow giữ trạng thái blocked và chưa commit; script shell được kiểm tra đạt trong cùng sandbox trước khi chạy run mới. Chưa xác định nguyên nhân gốc lỗi Node subprocess; không coi thay script demo là đã sửa lỗi runtime NeoMind. Không chạy lại suite/build cho đợt lưu bằng chứng vì không đổi source. Walkthrough này chưa kiểm chứng kéo/thả, multi-copy/paste, screen reader, lesson revisions, mọi biến thể song song hoặc Windows/Nimbalyst host.
 
 ## Cập nhật 04/11/2026 — tám hạng mục workflow/workspace/Studio/memory
 

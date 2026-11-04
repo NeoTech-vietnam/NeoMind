@@ -2,6 +2,15 @@
 
 Branch `codex/temporary-workflow-memory`, baseline trước đợt này `3d7aedf`, code commit `1204e8f`. Người dùng yêu cầu triển khai tám việc còn lại: workflow nhiều giai đoạn, checkout/shared workspace, cleanup race, canvas, version diff, run input/output, lesson revisions và memory retrieval. Code của các phần này đã được nối vào core/UI; xem bảng mới nhất trong [implementation-status](implementation-status.md). Không dùng Astra; không push hoặc tạo PR trong đợt này.
 
+## Bổ sung: chạy UI và lưu ảnh review
+
+Theo yêu cầu người dùng, đã chạy Flow Studio trên Linux, thao tác qua browser và lưu [bộ 10 ảnh cùng báo cáo](ui-review-2026-11-04/REVIEW.md); [gallery](ui-review-2026-11-04/index.html) mở offline sau checkout/clone. Bản báo cáo JSON trong repo đã rút gọn, không lưu journal/transcripts hoặc session IDs.
+
+- Demo C11 dùng Luna 6 / low; flow tự khai báo auto approval trong project demo riêng. Run `run-c2403d71-d305-4feb-af4e-3f0c1945bbda` hoàn tất trong 42,25 giây: checks biên dịch và ba ca đạt, reviewer độc lập 8/8 tiêu chí đạt, commit `9e6fbbd010b06653525cc118f73a3726e2a10400` chỉ sửa `main.c` trong worktree demo. Không sửa source NeoMind và không push.
+- Walkthrough gồm canvas/inspector, chọn model/reasoning, run setup/memory preview, trạng thái/logs trực tiếp, input/output theo attempt, kết quả và context memory. Chưa kiểm chứng các thao tác canvas nâng cao, screen reader hay lesson revision bằng browser; chưa có Windows/Nimbalyst host acceptance mới.
+- Lần đầu `node verify.cjs` bị `spawnSync cc EPERM` trong sandbox; host check đạt, nhưng flow vẫn bị chặn trước commit. Đã xác minh `sh verify.sh` đạt trong cùng sandbox rồi chạy run mới. Nguyên nhân gốc lỗi Node subprocess vẫn mở; không suy ra mọi Node check hoặc compiler đều không chạy được. Usage run thành công 62125 tokens (24192 cached input), không gồm lần bị chặn; USD không được cung cấp.
+- Evidence gốc tại `demo/ui-tour-2026-11-04/`, ZIP offline tại `demo/NeoMind-UI-review-2026-11-04.zip`; cả hai bị ignore. Server demo đã dừng. Đợt lưu bằng chứng chỉ đổi docs/assets, không chạy lại suite/build; kết quả suite triển khai trước vẫn ghi bên dưới.
+
 ## Cách review nhanh
 
 ```bash
@@ -28,7 +37,7 @@ npm run neomind -- editor /duong/dan/toi/repo
 - Test mới gồm hai fork/hai integration và writer trước/sau, branch repair/check context, checkout/shared giữ staged+unstaged+untracked, index.lock fencing, late write qua file descriptor sau retirement, rename conflict với newline trong tên file, binary resolution manifest, input tampering, source evidence đúng baseline, proposal revision/revert và LSA/memory lifecycle.
 - Luna 6 thật: run `run-c2f7b2a1-eed4-4c7e-b5e8-821408370b75`; fixture auto-approval opt-in riêng, không giả mạo approval người dùng. Hai nhánh tạo conflict text + binary, integration giải quyết, check `node verify.cjs` pass, review độc lập pass, commit `9251a0d7a867fc8e7364e3d2579283042486cd54`. Đã resume từ journal qua hai lỗi phát hiện thực tế: core ghép lời dẫn với JSON manifest, rồi reviewer không có source bytes trong context. Core nay lấy message cuối và cấp source evidence từ đúng baseline. Usage cuối: 195388 tokens, trong đó 118016 cached input tokens. Không cần chạy thêm inference chỉ để lặp lại kết quả.
 - Evidence local bị ignore: `demo/workflow-acceptance/real-1793708133433/report-resumed.json`, journal/transcripts và worktrees bên cạnh. Script tái hiện có opt-in quota: `node scripts/acceptance-conflicts.mjs --real`.
-- Chưa browser acceptance hoặc screen-reader acceptance cho UI mới; browser automation đã bị từ chối trước đó và không tìm cách vòng qua. Chưa chạy acceptance mới trên Windows hoặc host Nimbalyst. Build extension đạt không thay thế host acceptance. Những phần v1 ngoài tám yêu cầu này như host notifications/pilot Calculator giữ trạng thái riêng trong acceptance matrix.
+- Lúc kết thúc đợt code chưa có browser acceptance; walkthrough browser được bổ sung sau đó ở đầu file. Screen-reader acceptance, các thao tác canvas nâng cao, Windows và host Nimbalyst vẫn chưa kiểm chứng mới. Build extension đạt không thay thế host acceptance. Demo C11 này không thay thế pilot Calculator trong NeoPlayground với approval người dùng; các mốc đó giữ trạng thái riêng trong acceptance matrix.
 
 ## Điểm cần giữ khi làm tiếp
 

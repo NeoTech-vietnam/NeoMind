@@ -2,7 +2,9 @@
 
 ## Bổ sung 04/11/2026
 
-Tám hạng mục workflow/workspace/Studio/memory đã có implementation; xem [trạng thái mới nhất](implementation-status.md) và [bàn giao](session-handoff-2026-11-04.md) cho kết quả suite cuối. Bằng chứng mới: regression nhiều fork/integration/branch review/repair, current/shared giữ staged/unstaged/untracked, index.lock fencing, atomic retirement giữ late writes, versioned proposals chống stale/revert approval, local LSA và memory lifecycle, journal input/output integrity. Luna 6 thật giải quyết conflict text + binary, chạy check, qua review độc lập và tạo commit `9251a0d7a867fc8e7364e3d2579283042486cd54`. Chưa thực hiện browser/Windows/Nimbalyst host acceptance mới; không đánh dấu các acceptance đó là đạt.
+Tám hạng mục workflow/workspace/Studio/memory đã có implementation; xem [trạng thái mới nhất](implementation-status.md) và [bàn giao](session-handoff-2026-11-04.md) cho kết quả suite cuối. Bằng chứng mới: regression nhiều fork/integration/branch review/repair, current/shared giữ staged/unstaged/untracked, index.lock fencing, atomic retirement giữ late writes, versioned proposals chống stale/revert approval, local LSA và memory lifecycle, journal input/output integrity. Luna 6 thật giải quyết conflict text + binary, chạy check, qua review độc lập và tạo commit `9251a0d7a867fc8e7364e3d2579283042486cd54`.
+
+Đã bổ sung [walkthrough browser trên Linux với 10 ảnh](ui-review-2026-11-04/REVIEW.md): cấu hình flow/model, chạy Dev tuần tự bằng Luna 6 tới commit `9e6fbbd010b06653525cc118f73a3726e2a10400`, xem logs/input-output/checks/review và cập nhật context memory. Bài kiểm tra C11 và ba ca đạt, 8/8 tiêu chí review đạt. Lần đầu dùng Node spawnSync gặp EPERM trong sandbox và bị chặn; run mới dùng shell check đạt trong cùng sandbox. Đây là bằng chứng thao tác thủ công, chưa phải browser test tự động hoặc acceptance đầy đủ canvas/keyboard/recovery/lesson revisions. Windows và Nimbalyst host chưa có acceptance mới.
 
 ## Ma trận lịch sử 30/10/2026
 
