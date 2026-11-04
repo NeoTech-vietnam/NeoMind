@@ -996,9 +996,14 @@ test('a real connection probe with duplicate current nonce calls cannot replace 
 });
 
 for (const revision of ['eol', 'content']) test(`resume revalidates externally changed ${revision} bytes through a read-only producer and fresh independent checks`, { timeout: 90000 }, async t => {
+  const nativeRun = OpenCodeSession.prototype.run;
+  let release;
+  // Restore the pre-fixture engine, not the fixture's fake run closure. This
+  // cleanup is correct regardless of ordering with fixture(t)'s own cleanup.
+  t.after(() => { OpenCodeSession.prototype.run = nativeRun; release?.(); });
   const name = `external-revision-${revision}`, root = await fixture(t, [name]);
   const priorRun = OpenCodeSession.prototype.run;
-  let entered, release, first = true;
+  let entered, first = true;
   const reviewEntered = new Promise(resolve => { entered = resolve; });
   const resumeReview = new Promise(resolve => { release = resolve; });
   OpenCodeSession.prototype.run = async function () {
@@ -1009,7 +1014,6 @@ for (const revision of ['eol', 'content']) test(`resume revalidates externally c
     }
     return priorRun.call(this);
   };
-  t.after(() => { OpenCodeSession.prototype.run = priorRun; release(); });
   const started = await startControlledWorkflow(root, { requirement: `Case: ${name}\nCreate the requested JSON and independently verify it.` });
   await reviewEntered;
   if (revision === 'eol') {
