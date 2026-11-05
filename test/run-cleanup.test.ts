@@ -23,6 +23,17 @@ const codexModels = [{ runner: 'codex' as const, provider: 'openai', model: 'gpt
 
 /** A finished Fast run (plan approved by NeoMind, `proof.txt` written, nothing applied yet). */
 async function finishedFastRun(policy: Record<string, unknown> = {}) {
+  const f = await fastRun(policy);
+  f.run.launch(); await f.run.settled();
+  assert.equal((await f.run.report()).runtimeState.phase, 'completed');
+  return f;
+}
+
+/**
+ * A Fast run not yet launched. With `hold`, starting that step's runner (`plan` or `write`) waits for `release`; the
+ * hold sits before any dispatch is journaled, so a cancel there needs no OS proof that a turn stopped.
+ */
+async function fastRun(policy: Record<string, unknown> = {}, hold?: 'plan' | 'write') {
   const root = await mkdtemp(path.join(tmpdir(), 'neomind-cleanup-')), repo = path.join(root, 'repo'), state = path.join(root, 'state');
   await mkdir(repo); await mkdir(path.join(state, 'runs'), { recursive: true }); await mkdir(path.join(state, 'workspaces'));
   const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -34,7 +45,15 @@ async function finishedFastRun(policy: Record<string, unknown> = {}) {
   const snapshot = await materializeRun(structuredClone(templates.fast), config, { 'implementer@1': builtinProfile('implementer')! }, repo);
   const coordinator = new WorkspaceCoordinator(path.join(state, 'coordination.sqlite'));
   const codex: WorkerFactory = async () => ({ events: new CodexTurnEvents(), fault: () => undefined, scope: { ...fakeScope(), transport: { request: async () => ({}) } } });
-  const agents = new FakeRunnerFactory('codex', {
+  let release!: () => void, entered!: () => void;
+  const released = new Promise<void>(resolve => { release = resolve; }), held = new Promise<void>(resolve => { entered = resolve; });
+  const agents = new class extends FakeRunnerFactory {
+    override async start() {
+      // The Fast flow starts the planner's runner first and the implementer's second.
+      if (this.started.length === (hold === 'plan' ? 0 : hold === 'write' ? 1 : -1)) { entered(); await released; }
+      return super.start();
+    }
+  }('codex', {
     respond: async (session, request) => {
       if ((request.outputSchema as { properties?: Record<string, unknown> } | undefined)?.properties?.planId)
         return JSON.stringify({ planId: 'p', version: 1, goal: 'Add proof', scope: ['.'], approach: 'Create proof.txt', acceptanceCriteria: ['proof'], checks: [], riskChanges: [] });
@@ -42,12 +61,57 @@ async function finishedFastRun(policy: Record<string, unknown> = {}) {
     },
   }, codexModels);
   const run = await LocalRun.create({ projectRoot: repo, stateRoot: state, task: 'Add proof', snapshot, coordinator, workerFactory: codex, runners: new RunnerRegistry([agents]) });
-  run.launch(); await run.settled();
-  assert.equal((await run.report()).runtimeState.phase, 'completed');
   const worktrees = () => git('worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ')).length;
   const snapshotRef = `refs/neomind/${run.runId}/snapshot/workspace`, show = (spec: string) => git('show', spec);
-  return { run, repo, coordinator, worktrees, snapshotRef, show, close: async () => { await run.close(); coordinator.close(); } };
+  return { run, repo, coordinator, worktrees, snapshotRef, show, held, release, close: async () => { await run.close(); coordinator.close(); } };
 }
+
+/** Cancel while the held step waits to start; `meanwhile` runs between the cancel request and the release. */
+async function cancelDuring(f: Awaited<ReturnType<typeof fastRun>>, meanwhile?: () => Promise<void>) {
+  f.run.launch(); await f.held;
+  const cancelled = f.run.stop('cancel'); await meanwhile?.(); f.release(); await cancelled;
+  const state = (await f.run.report()).runtimeState; assert.equal(state.phase, 'cancelled', state.reason);
+}
+
+test('cancelling a run while it plans cleans its unchanged worktree into a snapshot', async () => {
+  const f = await fastRun({}, 'plan');
+  try {
+    await cancelDuring(f);
+    const report = await f.run.report(), commit = await resolveRef(f.repo, f.snapshotRef);
+    assert.equal(report.plans.length, 0, 'cancelled before a plan was proposed');
+    assert.deepEqual(report.workspaceCleanup, { workspaces: [f.run.context.workspace], refs: [], discarded: [], snapshots: [{ workspace: f.run.context.workspace, ref: f.snapshotRef, commit }], cleaned: true });
+    assert.ok(!existsSync(f.run.context.workspace)); assert.equal(f.worktrees(), 1);
+    assert.equal(f.show(`${f.snapshotRef}:README.md`), 'Fixture\n');
+    assert.equal(f.coordinator.isCurrent(f.run.context.lease), false, 'the workspace lease is released');
+  } finally { await f.close(); }
+});
+
+test('cancelling a run with changes keeps its worktree; the project can keep unchanged ones too', async () => {
+  const changed = await fastRun({}, 'write');
+  try {
+    // A change already in the worktree when the cancel lands, as an earlier write step would leave it.
+    await cancelDuring(changed, () => writeFile(path.join(changed.run.context.workspace, 'proof.txt'), 'partial\n'));
+    assert.equal((await changed.run.report()).workspaceCleanup, undefined);
+    assert.equal(await readFile(path.join(changed.run.context.workspace, 'proof.txt'), 'utf8'), 'partial\n'); assert.equal(changed.worktrees(), 2);
+    await assert.rejects(changed.run.cleanWorkspaces(), /proof\.txt/);
+  } finally { await changed.close(); }
+  const kept = await fastRun({ keepRunWorktrees: true }, 'plan');
+  try {
+    await cancelDuring(kept);
+    assert.equal((await kept.run.report()).workspaceCleanup, undefined); assert.ok(existsSync(kept.run.context.workspace));
+  } finally { await kept.close(); }
+});
+
+test('a cleanup failure after cancelling is recorded and the run stays cancelled', async () => {
+  const f = await fastRun({}, 'plan');
+  try {
+    // An unreadable project config makes the cleanup fail after the cancel itself succeeded.
+    await cancelDuring(f, () => writeFile(path.join(f.repo, 'neomind/project.json'), '{'));
+    const report = await f.run.report();
+    assert.equal(report.workspaceCleanup, undefined); assert.ok(existsSync(f.run.context.workspace));
+    assert.ok(report.artifacts.some(item => item.nodeId === 'run' && item.text.startsWith('Chưa tự dọn được worktree của run')));
+  } finally { await f.close(); }
+});
 
 test('a delivered run cleans its worktree by itself; unapplied changes keep it until the user decides', async () => {
   const f = await finishedFastRun();

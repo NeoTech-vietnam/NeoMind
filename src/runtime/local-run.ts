@@ -45,6 +45,8 @@ import type { Plan } from '../domain/approval.js';
 type Admission = Parameters<typeof admitIsolatedWorkspaceWrite>[0];
 const importOverlapMarker = 'Chồng lên thay đổi có sẵn';
 type Stop = 'pause' | 'cancel' | 'deadline';
+/** A repair round is not started with less active time left than this, or than the previous round took. */
+const minRepairRoundMs = 5 * 60 * 1000;
 export function parseCheck(command: string): string[] {
   const argv = command.trim().split(/\s+/);
   if (!argv.length || argv.some(arg => !/^[A-Za-z0-9_./:=+,%@-]+$/.test(arg))) throw new Error(`Check cần dùng argv đơn giản, không có shell: ${command}`);
@@ -424,8 +426,35 @@ export class LocalRun {
       try { await this.reconcile(); }
       catch (error) { await this.checkpoint('blocked', error instanceof Error ? error.message : String(error)); return; }
       await this.checkpoint(intent === 'cancel' ? 'cancelled' : 'paused', intent === 'cancel' ? 'Đã hủy; giữ code và artifacts' : 'Đã tạm dừng');
-      if (intent === 'cancel' && this.context.workspaceMode && this.context.workspaceMode !== 'isolated' && this.coordinator.isCurrent(this.context.lease)) this.coordinator.release(this.context.lease, true);
+      // A cancelled run without changes (e.g. cancelled while planning) has nothing worth keeping in its worktree.
+      if (intent === 'cancel') await this.autoClean();
     }
+  }
+  /** Active time so far, including what the timer has not added yet. */
+  private activeNow() { return this.state.activeMs + (this.timer ? Math.max(0, Date.now() - this.lastTick) : 0); }
+  /**
+   * A writer (or report/integration) step opens a writer+review round. Before a repair round, pause instead of starting a
+   * round the deadline would cut off: it needs at least the time the previous round took. Returns false when paused.
+   */
+  private async openRound(node: FlowNode, report: RecoveryReport): Promise<boolean> {
+    if (this.state.roundStartMs !== undefined || !(node.type === 'integration' || (node.type === 'agent_task' && node.outputContract !== 'plan'))) return true;
+    const now = this.activeNow();
+    if (report.repairRounds.length) {
+      const needed = Math.max(minRepairRoundMs, this.state.lastRoundMs ?? 0), remaining = this.snapshot.configuration.flow.definition.limits.activeTimeSeconds * 1000 + this.extraTimeMs - now;
+      if (remaining < needed) {
+        await this.checkpoint('paused', `Không đủ thời gian cho vòng sửa (còn ${Math.max(0, Math.floor(remaining / 60000))} phút, cần khoảng ${Math.ceil(needed / 60000)} phút); gia hạn rồi tiếp tục`);
+        return false;
+      }
+    }
+    this.state = { ...this.state, roundStartMs: now };
+    return true;
+  }
+  /** A review decision ends the open round; its duration sizes the time a repair round needs. */
+  private closeRound() {
+    const start = this.state.roundStartMs;
+    if (start === undefined) return;
+    const { roundStartMs: _, ...state } = this.state;
+    this.state = { ...state, lastRoundMs: Math.max(0, this.activeNow() - start) };
   }
   private async reconcile() {
     const report = await this.durable.service.report();
@@ -472,6 +501,7 @@ export class LocalRun {
         const shared = this.context.workspaceMode && this.context.workspaceMode !== 'isolated';
         const parallel = !shared ? ready.find(item => item.type === 'agent_task' && item.permissions.write && layout.insideBranch(item.id)) : undefined;
         if (parallel?.type === 'agent_task' && this.inflight.size < concurrency) {
+          if (!await this.openRound(parallel, report)) break;
           const task = this.agent(parallel, report).catch(error => { this.branchFailure ??= error instanceof Error ? error : new Error(String(error)); })
             .finally(() => { this.inflight.delete(parallel.id); });
           this.inflight.set(parallel.id, task); continue;
@@ -489,6 +519,7 @@ export class LocalRun {
           if (node.mode === 'auto' && this.snapshot.policy.allowAutoApproval !== false) { if (await this.autoApprove(node, report)) continue; return; }
           await this.checkpoint('waiting_approval', node.purpose); return;
         }
+        if (!await this.openRound(node, report)) return;
         if (['start', 'fork', 'join', 'repair_scope', 'finish'].includes(node.type)) await this.durable.service.completeControl(node.id);
         else if (node.type === 'condition') await this.durable.service.evaluateConditionNode(node.id);
         else if (node.type === 'agent_task') await this.agent(node, report);
@@ -639,6 +670,7 @@ export class LocalRun {
     }
     lastDispatcher ??= new CodexReviewDispatch(this.durable.journal);
     const decision = await this.durable.service.finishReview(lastDispatcher, node.id, producer.sessionId, baselineHash, {}, context);
+    if (decision.decision !== 'waiting') this.closeRound();
     if (decision.decision === 'pass') return true;
     if (decision.decision === 'waiting') {
       const current = await this.durable.service.report();

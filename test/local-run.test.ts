@@ -15,7 +15,7 @@ import { RunStore } from '../src/storage/run-store.js';
 import { CodexTurnEvents } from '../src/adapters/codex-turn-events.js';
 import type { WorkerFactory } from '../src/runtime/worker.js';
 
-async function fixture(repair = false, kind: 'dev' | 'research' = 'dev', reviewers = 1, holdCheck = false) {
+async function fixture(repair = false, kind: 'dev' | 'research' = 'dev', reviewers = 1, holdCheck = false, activeTimeSeconds?: number) {
   const root = await mkdtemp(path.join(tmpdir(), 'neomind-local-runtime-')), project = path.join(root, 'repo'), state = path.join(root, 'state');
   await mkdir(project); await mkdir(path.join(state, 'runs'), { recursive: true }); await mkdir(path.join(state, 'workspaces'));
   const git = (...args: string[]) => execFileSync('git', ['-C', project, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -26,6 +26,7 @@ async function fixture(repair = false, kind: 'dev' | 'research' = 'dev', reviewe
   await mkdir(path.join(project, '.neomind')); await writeFile(path.join(project, '.neomind/project.json'), JSON.stringify(config));
   const profiles = { 'implementer@1': builtinProfile('implementer'), 'verifier@1': builtinProfile('verifier') };
   const flow = structuredClone(templates[kind]);
+  if (activeTimeSeconds) flow.definition.limits.activeTimeSeconds = activeTimeSeconds;
   if (reviewers > 1) {
     flow.definition.limits.maxConcurrency = 2;
     const group = flow.definition.nodes.find(node => node.type === 'review_group')!;
@@ -122,14 +123,42 @@ test('plan feedback creates a new unapproved version and stale approval is rejec
   } finally { await f.run.close(); f.coordinator.close(); }
 });
 
-test('cancelling at approval retains the workspace and prevents subsequent execution', async () => {
+test('cancelling at approval cleans the unchanged worktree and prevents subsequent execution', async () => {
   const f = await fixture();
   try {
     f.run.launch(); await f.run.settled(); await f.run.stop('cancel');
-    assert.equal((await f.run.report()).runtimeState.phase, 'cancelled'); assert.equal(f.writes(), 0);
-    assert.equal(await readFile(path.join(f.run.context.workspace, 'README.md'), 'utf8'), 'Fixture\n');
+    const report = await f.run.report(), ref = `refs/neomind/${f.run.runId}/snapshot/workspace`;
+    assert.equal(report.runtimeState.phase, 'cancelled'); assert.equal(f.writes(), 0);
+    // Nothing was changed, so the worktree goes; its snapshot still holds the starting files.
+    assert.ok(!existsSync(f.run.context.workspace)); assert.equal(report.workspaceCleanup?.cleaned, true); assert.deepEqual(report.workspaceCleanup?.discarded, []);
+    assert.equal(execFileSync('git', ['-C', f.run.context.projectRoot, 'show', `${ref}:README.md`], { encoding: 'utf8' }), 'Fixture\n');
+    assert.equal(f.coordinator.isCurrent(f.run.context.lease), false);
     await assert.rejects(f.run.resume(), /không thể tiếp tục/);
   } finally { await f.run.close(); f.coordinator.close(); }
+});
+
+test('a repair round that would overrun the time budget pauses until the user extends it', async () => {
+  const f = await fixture(true, 'dev', 1, false, 240); let run = f.run;
+  const recover = async () => { await run.close(); run = await LocalRun.recover(await RunStore.open(path.join(f.state, 'runs')), f.coordinator, run.runId, f.factory, async () => ({ sandboxVerified: true, stopVerified: true })); };
+  try {
+    run.launch(); await run.settled(); await run.approve('fixture-user', 'cli'); await run.settled();
+    let report = await run.report();
+    // Four minutes is less than the five a repair round is given, so the round does not start.
+    assert.equal(report.runtimeState.phase, 'paused'); assert.match(report.runtimeState.reason, /^Không đủ thời gian cho vòng sửa .*gia hạn rồi tiếp tục$/);
+    assert.equal(report.repairRounds.length, 1); assert.equal(f.writes(), 1); assert.equal(report.runtimeState.roundStartMs, undefined);
+    assert.ok(report.runtimeState.lastRoundMs !== undefined, 'the reviewed round\'s duration is kept for the next decision');
+    // A round that took ten minutes asks for ten minutes, not five; the duration survives recovery through the checkpoint.
+    await run.durable.service.checkpointRuntime({ ...report.runtimeState, lastRoundMs: 600000 });
+    // Each extension is a separate CLI process (`run extend-time`), so the run is recovered from its journal in between.
+    await recover();
+    await run.extendTime(120); await run.settled();
+    report = await run.report();
+    assert.equal(report.runtimeState.phase, 'paused', 'six minutes are still less than the last round took'); assert.match(report.runtimeState.reason, /cần khoảng 10 phút/); assert.equal(f.writes(), 1);
+    await recover();
+    await run.extendTime(600); await run.settled();
+    report = await run.report();
+    assert.equal(report.runtimeState.phase, 'completed', report.runtimeState.reason); assert.equal(f.writes(), 2); assert.equal(report.timeExtensionsMs, 720000);
+  } finally { await run.close(); f.coordinator.close(); }
 });
 
 test('local commit failure preserves technical acceptance and retries only after an explicit Git action', async () => {

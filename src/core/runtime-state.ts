@@ -17,6 +17,8 @@ export const runtimeStateSchema = z.strictObject({
   phase: z.enum(['running', 'waiting_approval', 'paused', 'blocked', 'completed', 'cancelled', 'recovering', 'stopping']),
   reason: z.string(), activeMs: z.number().int().nonnegative(),
   sessions: z.record(z.string(), z.string().min(1)),
+  /** Active time when the open writer+review round began, and the active time the last finished round took. */
+  roundStartMs: z.number().int().nonnegative().optional(), lastRoundMs: z.number().int().nonnegative().optional(),
 });
 export type RuntimeContext = z.infer<typeof runtimeContextSchema>;
 export type RuntimeState = z.infer<typeof runtimeStateSchema>;
