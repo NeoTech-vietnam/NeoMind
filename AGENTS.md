@@ -61,7 +61,7 @@ Extension Nimbalyst: `cd extensions/nimbalyst && npm run build` (dùng `node_mod
 | Codex/Claude transport, giữ process | `src/adapters/` (`claude-cli.ts`, `codex-*.ts`, `windows-job.ts`, `systemd-scope.ts`, `worker-environment.ts`) |
 | Git, worktree, dọn dẹp | `src/workspace/` (mọi lệnh git đi qua env trong `git-env.ts`) |
 | API editor (dùng chung HTTP và extension) | `src/ui-server/server.ts` (`createEditorApi`) |
-| Giao diện | `ui/src/` (`App.tsx`, `RunMonitor.tsx`, `RunActivity.tsx`); mockup ở `docs/design/` |
+| Giao diện | `ui/src/` (`App.tsx`, `RunMonitor.tsx`, `RunActivity.tsx`); khung app `shell/`, component `components/ui/` (kiểu shadcn), token `theme.css`, CSS vào `app.css`; xem component ở `/__gallery/` khi `vite dev`. Thiết kế: [redesign-plan.md](docs/design/redesign-plan.md), mockup v2 ở `docs/design/mockups/` |
 | Extension Nimbalyst | `extensions/nimbalyst/` (`src/backend.ts`, `src/index.tsx`, `claude-plugin/commands/run.md`) |
 | CLI | `src/cli/main.ts`, `run-command.ts` |
 

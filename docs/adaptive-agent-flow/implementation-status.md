@@ -3,6 +3,18 @@
 Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
 Bàn giao hiện tại: [04/11/2026 Windows](session-handoff-2026-11-04-windows.md), trước đó [04/11/2026 Linux](session-handoff-2026-11-04.md). Phạm vi v1 rộng hơn tám việc vừa triển khai; đã có walkthrough browser cho Dev tuần tự bên dưới, các thao tác canvas nâng cao, Windows và host acceptance Nimbalyst vẫn cần kiểm chứng riêng.
 
+## Thiết kế lại giao diện · GĐ 1 — 05/11/2026
+
+Theo [redesign-plan.md](../design/redesign-plan.md) (GĐ 0 thử kỹ thuật ở branch `spike/ui-shadcn`; GĐ 1 ở branch `ui/redesign-p1`). Tailwind v4 + component kiểu shadcn (Radix), token sáng/tối từ mockup v2, khung app web và panel, Ctrl K, màn chưa có flow, hộp thoại trong trang thay `window.confirm`/`prompt`. Màn Runs, Flow Studio, Profiles, Memory vẫn dùng `styles.css` cũ (GĐ 2–4) nhưng đã đổi theo theme.
+
+| Kiểm chứng (Windows) | Kết quả |
+| --- | --- |
+| `npm test` | 222 test: 220 pass, 2 skip, 0 fail |
+| `npm run build:ui`, build extension, `tsc -p tsconfig.ui.json` | Đạt |
+| Editor web trên repo tạm, Edge headless + CDP | Runs, Flows (tự mở flow), Profiles, Memory, Ctrl K, theme sáng/tối, màn chưa có flow, hộp thoại tạo/đổi tên/xóa flow; không lỗi console |
+| `/__gallery` (vite dev) | Mọi component ở cả hai theme |
+| Panel trong Nimbalyst | **Chưa kiểm** bản GĐ 1 (GĐ 0 đã kiểm cơ chế: portal, `@property`, font, theme theo host) |
+
 ## Sửa sau lần dùng thật — 05/11/2026 (5 session Nimbalyst song song)
 
 Theo [kế hoạch](plan-fixes-2026-11-05.md) người dùng duyệt; mỗi gói một session Opus trong worktree riêng, session điều phối gộp bằng cherry-pick lên `codex/temporary-workflow-memory` (không xung đột). Sau khi gộp, Windows: `npm test` **222 test, 220 pass, 0 fail, 2 skip**; build extension đạt và đã cài lại.

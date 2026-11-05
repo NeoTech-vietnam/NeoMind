@@ -1,6 +1,6 @@
 # Kế hoạch thiết kế lại UI NeoMind (editor web + extension Nimbalyst)
 
-Ngày: 05/11/2026. Trạng thái: **đã chốt; GĐ 0 xong ngày 05/11 (kết quả ở mục 7), chưa sửa code sản phẩm.** Bắt đầu GĐ 1 khi session khác đang sửa `ui/` (worktree `loud-cliff`, `loud-dawn`, `narrow-moon`, `wise-summit`) đã merge.
+Ngày: 05/11/2026. Trạng thái: **đã chốt; GĐ 0 xong (mục 7); GĐ 1 xong phần code ngày 05/11 trên branch `ui/redesign-p1`** (kết quả ở cuối mục GĐ 1), còn kiểm trong panel Nimbalyst và cài skill.
 
 Đã chốt với người dùng:
 
@@ -158,6 +158,17 @@ Mỗi giai đoạn: người dùng duyệt mockup v2 của giai đoạn đó (v�
 - Đổi toàn bộ nhãn sang tiếng Việt; bảng thuật ngữ giữ nguyên: flow, run, commit, review, worktree, profile, memory, lesson.
 - Sửa màn trống: chỉ hiện khi thật sự chưa có flow; có flow thì mở thẳng flow gần nhất.
 - Xóa class cũ khi màn tương ứng đã chuyển xong; `styles.css` chỉ còn phần React Flow cho tới GĐ 3.
+
+**Kết quả GĐ 1 (05/11/2026, branch `ui/redesign-p1`):**
+
+- Đã làm: `ui/src/theme.css`, `app.css`, `lib/` (`theme.tsx`, `portal.tsx`, `shadow.ts`, `utils.ts`), `components/ui/` (Button, Badge/StatusDot/Tag, Card, Input/Textarea/Field, Select, Tabs, Tooltip, Dialog/Sheet, DropdownMenu, Separator, Skeleton, Kbd, EmptyState, Callout), `shell/AppShell.tsx` (web, panel, Ctrl K), `shell/FlowStart.tsx` (màn chưa có flow, hộp thoại tạo flow), `dialog.tsx` (`confirmAction`, `askText`), `/__gallery`, `components.json`. Không còn `window.confirm`/`prompt`; nhãn tiếng Anh còn sót đã dịch; canvas React Flow theo theme.
+- Khác dự kiến:
+  - **Preflight của Tailwind tắt** tới GĐ 4; `theme.css` chỉ thêm `box-sizing: border-box` cho phần trong `.nm-theme`.
+  - **CSS cũ nằm trong layer.** `app.css` xếp layer `xyflow, legacy, theme, base, components, utilities`. Để `styles.css` ngoài layer thì nó thắng mọi utility (`button { font: inherit }` làm sai cỡ chữ mọi nút mới). Đã kiểm: không class nào của màn cũ trùng tên utility Tailwind.
+  - **Cầu nối biến cũ** (`--ink`, `--surface`, `--accent-2`…) trỏ sang token mới: màn cũ đổi theo theme sáng/tối ngay. `--accent` cũ (clay) đổi tên thành `--clay` vì trùng tên token shadcn.
+  - **Font chỉ woff2, tự khai báo `@font-face` có `unicode-range`.** File CSS theo subset của `@fontsource` không có `unicode-range`, nên face latin che face tiếng Việt; bỏ `.woff` dự phòng bớt 99 KB khỏi panel.
+  - Bundle panel 1,25 MB chưa minify (trước 668 KB): Radix, tailwind-merge, lucide, font nhúng base64.
+- Chưa làm trong GĐ 1: kiểm trong panel Nimbalyst (cần cài bản extension mới thay bản đang dùng), cài skill thiết kế và kiểm font/màu bằng UI UX Pro Max (mục 5). Khi thêm component bằng `npx shadcn add`, phải sửa `Portal` của nó nhận `container` từ `usePortalContainer()`.
 
 ### GĐ 2. Runs (màn dùng nhiều nhất)
 
