@@ -3,7 +3,17 @@
 Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
 Bàn giao hiện tại: [04/11/2026 Windows](session-handoff-2026-11-04-windows.md), trước đó [04/11/2026 Linux](session-handoff-2026-11-04.md). Phạm vi v1 rộng hơn tám việc vừa triển khai; đã có walkthrough browser cho Dev tuần tự bên dưới, các thao tác canvas nâng cao, Windows và host acceptance Nimbalyst vẫn cần kiểm chứng riêng.
 
-## Thiết kế lại giao diện · GĐ 1 — 05/11/2026
+## Thiết kế lại giao diện · GĐ 2 — 05/11/2026
+
+Màn Runs làm lại theo mockup 10, 13–17 của [redesign-plan.md](../design/redesign-plan.md), branch `ui/redesign-p2` (từ `494b329`), không đổi backend: danh sách run (nhóm Cần bạn / Đang chạy / Gần đây, popover lọc), Run mới, chi tiết run với stepper và từng trạng thái (chờ duyệt, đang chạy, bị chặn/hết thời gian/commit lỗi, hoàn tất, handoff không commit, đã hủy), Xem session trong `SheetContent` với timeline 3 tầng. Đã xóa các class cũ của màn Runs khỏi `styles.css` (523 → 328 dòng); `/__gallery/runs.html` (chỉ có ở vite dev) dựng màn bằng dữ liệu giả cho mọi trạng thái, không chạy run thật.
+
+| Kiểm chứng (Windows) | Kết quả |
+| --- | --- |
+| `npm test` | 222 test: 220 pass, 2 skip, 0 fail |
+| `npm run build:ui`, build extension, `tsc -p tsconfig.ui.json` | Đạt; panel 1,35 MB chưa minify (GĐ 1: 1,25 MB), không có `require()` |
+| Ảnh chụp Edge headless từ `/__gallery/runs.html` | Chờ duyệt, đang chạy (2 nhánh), bị chặn, hết thời gian, commit lỗi, hoàn tất, handoff, Run mới (có/không thay đổi chưa commit, flow chưa publish), popover lọc, Xem session; theme tối và sáng, rộng 1440 và 900 (panel) |
+| Panel trong Nimbalyst | Chưa kiểm (session điều phối làm sau) |
+
 
 Theo [redesign-plan.md](../design/redesign-plan.md) (GĐ 0 thử kỹ thuật ở branch `spike/ui-shadcn`; GĐ 1 ở branch `ui/redesign-p1`). Tailwind v4 + component kiểu shadcn (Radix), token sáng/tối từ mockup v2, khung app web và panel, Ctrl K, màn chưa có flow, hộp thoại trong trang thay `window.confirm`/`prompt`. Màn Runs, Flow Studio, Profiles, Memory vẫn dùng `styles.css` cũ (GĐ 2–4) nhưng đã đổi theo theme.
 

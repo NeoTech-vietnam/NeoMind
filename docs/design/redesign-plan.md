@@ -1,6 +1,6 @@
 # Kế hoạch thiết kế lại UI NeoMind (editor web + extension Nimbalyst)
 
-Ngày: 05/11/2026. Trạng thái: **đã chốt; GĐ 0 xong (mục 7); GĐ 1 xong phần code ngày 05/11 trên branch `ui/redesign-p1`** (kết quả ở cuối mục GĐ 1), panel Nimbalyst đã kiểm đạt; còn cài skill.
+Ngày: 05/11/2026. Trạng thái: **đã chốt; GĐ 0 xong (mục 7); GĐ 1 xong phần code ngày 05/11 trên branch `ui/redesign-p1`** (kết quả ở cuối mục GĐ 1), panel Nimbalyst đã kiểm đạt; còn cài skill. **GĐ 2 xong phần code ngày 05/11 trên branch `ui/redesign-p2`** (kết quả ở cuối mục GĐ 2), chưa kiểm trong panel Nimbalyst.
 
 Đã chốt với người dùng:
 
@@ -178,6 +178,14 @@ Mỗi giai đoạn: người dùng duyệt mockup v2 của giai đoạn đó (v�
 - **Run monitor:** header (trạng thái, yêu cầu, flow, thời gian) + stepper ngang dùng màu trạng thái; thẻ kế hoạch chờ duyệt có viền hổ phách và nút "Duyệt và thực hiện" là nút chính duy nhất; hoạt động trực tiếp và "Xem session" mở trong `Sheet` bên phải thay vì cuộn xuống. Các trạng thái theo mockup 14–17.
 - **Xem session** làm lại theo mục 4a bên dưới.
 - Giữ nguyên dữ liệu và API; các phần đánh dấu ĐỀ XUẤT trong `docs/design/README.md` cần backend thì không làm ở đây.
+
+**Kết quả GĐ 2 (05/11/2026, branch `ui/redesign-p2`):**
+
+- Đã làm: `RunList` (nhóm, popover lọc, menu "…" dọn worktree có hộp xác nhận), `RunStart`, `RunMonitor` + `RunStepper` / `RunPlan` / `RunChecks` / `RunResult` / `RunGraph` / `RunLessons`, `SessionTimeline` + `RunActivity` (hoạt động trực tiếp, `SessionSheet`), `runSteps.ts` (gộp nhánh song song, ẩn fork/join, đưa "Vòng sửa" sau Review), component `Popover`, `Disclosure`, `CopyButton`; `SheetContent` thêm `actions`/`subheader`. Trang `/__gallery/runs.html` (vite dev) với dữ liệu giả cho mọi trạng thái. Đã xóa class cũ của màn Runs khỏi `styles.css`.
+- Ẩn vì thiếu backend: ước tính token (chỉ còn ước tính thời gian từ các run `completed` cùng flow đã có trong danh sách), "Áp dụng vào main" tự cherry-pick (thay bằng lệnh `git cherry-pick` có nút chép), khối "Thay đổi" với diff của commit, "Chạy lại checks", "Mở worktree", "Đổi reviewer", chọn cách xử lý nhiều phương án khi bị chặn (chỉ còn "Tiếp tục" và "Hủy run"), góp ý nhanh gợi ý sẵn, so sánh kế hoạch giữa các phiên bản. Chi phí theo bước lấy từ transcript nên chỉ có hàng cho bước có agent.
+- Lệch mockup: thẻ flow chỉ hiện mô tả và chuỗi bước cho flow đang chọn (không có API lấy định nghĩa các flow còn lại mà không preview từng flow); mô tả flow là văn bản gốc của flow (template còn tiếng Anh); `paused`/`recovering` nằm ở nhóm "Gần đây" với chấm xám (nhóm Cần bạn chỉ có `waiting_approval`, `blocked` như đã chốt); nhãn bước tiếng Việt chỉ áp cho nhãn mặc định của template (`stepName` trong `format.ts`); tab của hoạt động trực tiếp đếm gộp hai nhánh và dùng chung một bộ lọc; panel hẹp (900px) cho stepper cho phép nhãn xuống dòng.
+- Thêm `@radix-ui/react-popover` 1.3.1. Vẫn còn class cũ không còn dùng của shell GĐ 1 (`.app-shell`, `.brand*`, `.modal*`, `.text-dialog*`…) trong `styles.css`: để GĐ 3.
+- Lưu ý khi chụp ảnh: Edge ở máy này tự bật chế độ tối ép buộc, làm ảnh theme sáng bị đảo màu; thêm `--disable-features=WebContentsForceDark,AutoDarkMode`. Process `msedge` trả về ngay, file ảnh ghi sau vài giây: phải đợi file xuất hiện.
 
 ### 4a. Ngăn "Xem session" (timeline của agent)
 
