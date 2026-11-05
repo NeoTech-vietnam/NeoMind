@@ -51,6 +51,36 @@ export function parseCheck(command: string): string[] {
   return argv;
 }
 
+/** Check output as recorded in the journal. Long output keeps its end, where test runners and compilers report failures. */
+export function checkArtifactText(command: string, exitCode: number, stdout: string, stderr: string, limit = 100000): string {
+  const head = `${command}\nexit ${exitCode}\n`, output = `${stdout}\n${stderr}`;
+  if (head.length + output.length <= limit) return head + output;
+  const marker = (kept: number) => `[output truncated: earlier output omitted, kept the last ${kept} of ${output.length} characters]\n`;
+  // Sized with the longest possible count, so the actual marker never pushes the text past the limit.
+  const kept = limit - head.length - marker(output.length).length;
+  return head + marker(kept) + output.slice(-kept);
+}
+
+/**
+ * Failed checks of the review that started the latest repair round, for the repair writer's prompt.
+ * A writer without a shell (Claude Code) cannot rerun them and would otherwise repair blind; passing checks are left out.
+ */
+export function failedCheckOutput(report: RecoveryReport, maxLines = 200, maxChars = 20000): string {
+  const round = report.repairRounds.at(-1);
+  if (!round) return '';
+  const commands = new Set(report.checks.filter(check => check.baselineHash === round.baselineHash && check.status === 'failed').map(check => check.command));
+  const sections = [...commands].flatMap(command => {
+    const artifact = [...report.artifacts].reverse().find(item => item.kind === 'check' && item.baselineHash === round.baselineHash && item.text.split('\n', 1)[0] === command);
+    if (!artifact) return [];
+    const [, exit = 'exit ?', ...lines] = artifact.text.split('\n'), output = lines.join('\n');
+    let tail = lines.slice(-maxLines).join('\n');
+    if (tail.length > maxChars) tail = tail.slice(-maxChars);
+    const marker = tail.length < output.length ? `[output truncated: showing the last ${tail.split('\n').length} lines / ${tail.length} characters of ${lines.length} lines / ${output.length} characters]\n` : '';
+    return [`$ ${command}\n${exit}\n${marker}${tail}`];
+  });
+  return sections.length ? `\nChecks that failed in the latest review (command, exit code and the end of the output; passing checks are omitted):\n${sections.join('\n\n')}\n` : '';
+}
+
 /** Owns a real standalone run. Every external effect goes through the durable services. */
 export class LocalRun {
   private state: RuntimeState;
@@ -498,7 +528,7 @@ export class LocalRun {
       const { runner, session, binding } = await this.session(node.id, node.sessionGroup, { kind: 'read' }, workspace);
       const dispatcher = new CodexReadOnlyDispatch(this.durable.journal, runner, session);
       const context = { workspace, lease, coordinator: this.coordinator };
-      const instruction = node.outputContract === 'plan' ? `Requested plan revision (if present, keep planId and use the specified version):\n${JSON.stringify(report.planRevisions.filter(item => item.planningNodeId === node.id).at(-1) ?? null)}\nReturn the required plan JSON. The plan describes the changes a later implementation step will make to accomplish the original user task; it does not describe this read-only survey. Its goal is the user's intended outcome, its approach lists the concrete edits, its acceptance criteria are verifiable properties of the finished change, and its checks verify that change (prefer the project's own test or build command). Do not put this step's read-only restriction into the plan.${this.packetInstruction()} Scope entries (in the plan and in work packets) must be existing workspace-relative directories, never files; use "." for the repository root. Each checks entry is one complete command line such as "npm test"; never split one command into several entries. Checks must be simple argv commands (no pipes, redirects or shell operators).${process.platform === 'win32' ? ' Checks run on Windows without a shell: use real programs such as npm, node, git or python, not POSIX shell builtins such as test or ls.' : ''}`
+      const instruction = node.outputContract === 'plan' ? `Requested plan revision (if present, keep planId and use the specified version):\n${JSON.stringify(report.planRevisions.filter(item => item.planningNodeId === node.id).at(-1) ?? null)}\nReturn the required plan JSON. The plan describes the changes a later implementation step will make to accomplish the original user task; it does not describe this read-only survey. Its goal is the user's intended outcome, its approach lists the concrete edits, its acceptance criteria are verifiable properties of the finished change, and its checks verify that change (prefer the project's own test or build command). Do not put this step's read-only restriction into the plan.${this.packetInstruction()} Scope entries (in the plan and in work packets) must be existing workspace-relative directories, never files; use "." for the repository root. Each checks entry is one complete command line such as "npm test"; never split one command into several entries. Checks must be simple argv commands (no pipes, redirects or shell operators). Checks must not write files into the repository working tree (bytecode such as __pycache__, build output, coverage reports): a check that changes the tree blocks the run. Choose commands or flags that avoid writing, and when a check needs files, put them in the system temp directory or a path the repository already ignores.${process.platform === 'win32' ? ' Checks run on Windows without a shell: use real programs such as npm, node, git or python, not POSIX shell builtins such as test or ls.' : ''}`
         : `Your current directory is the project workspace: inspect its files with your tools before answering. ${report.repairRounds.length ? `Address these review findings on your previous report:\n${JSON.stringify(report.artifacts.filter(item => item.kind === 'agent' && item.nodeId !== node.id).slice(-1))}\n` : ''}Produce a report that answers the original task, with concrete references to local project sources. Cite sources as workspace-relative paths with line numbers (for example src/cli/main.ts:39), never as absolute paths. This executor has no web or external connector access. Do not assert facts you cannot verify locally.`;
       const prompt = `${this.prompt(node.id, node.goal)}\nRead-only task; do not edit files. ${instruction}`;
       const writer = this.transcript(runner, session, { attemptId: attempt, nodeId: node.id, key: node.id, role: node.outputContract === 'plan' ? 'plan' : 'read' }, prompt);
@@ -527,7 +557,8 @@ export class LocalRun {
     const { runner, session, binding } = await this.session(nodeId, sessionGroup, { kind: 'write', writableRoots: grant.writableRoots }, grant.workspace);
     const dispatcher = new CodexWriteDispatch(this.durable.journal, runner, session);
     // Branch writers never repair, and sibling branches' output is not theirs to read.
-    const findings = branch ? '' : `\nRepair findings (if any):\n${JSON.stringify(report.artifacts.filter(item => item.kind === 'agent').slice(-3))}`;
+    const findings = branch ? '' : `\nRepair findings (if any):\n${JSON.stringify(report.artifacts.filter(item => item.kind === 'agent').slice(-3))}${report.repairRounds.length
+      ? `${failedCheckOutput(report)}\nIf a failure is caused by the environment (permissions, sandbox, a missing tool or command) rather than by the code, do not change code to work around it; say so explicitly in your final message so the reviewer and the user can see it.` : ''}`;
     const prompt = `${this.prompt(nodeId, goal)}\nApproved plan:\n${JSON.stringify(admission.plan)}${extra}${findings}\nDo not commit, push, create PRs, launch agents or change files outside approved scope.`;
     const writer = this.transcript(runner, session, { attemptId: attempt, nodeId, key: nodeId, role: 'write' }, prompt);
     const { turn, result } = await this.traced(writer, () => this.durable.service.dispatchWrite(dispatcher, nodeId, session.sessionId, prompt, binding.reasoning, attempt, randomUUID(), admission, runner.scope),
@@ -569,7 +600,7 @@ export class LocalRun {
       if ((await this.durable.service.report()).checks.some(check => check.command === command && check.baselineHash === baselineHash && check.status === 'passed')) continue;
       const worker = await this.newCheckWorker(workspace), dispatcher = new CodexCheckDispatch(this.durable.journal, new CodexCheckExecutor(worker.scope.transport));
       const result = await this.durable.service.runCheck(dispatcher, { id: randomUUID(), command: parseCheck(command), cwd: workspace, timeoutMs: 120000 }, baselineHash, context, randomUUID(), worker.scope);
-      await this.durable.service.recordArtifact({ nodeId: node.id, kind: 'check', text: `${command}\nexit ${result.exitCode}\n${result.stdout}\n${result.stderr}`.slice(0, 100000) });
+      await this.durable.service.recordArtifact({ nodeId: node.id, kind: 'check', baselineHash, text: checkArtifactText(command, result.exitCode, result.stdout, result.stderr) });
       this.release(worker.scope);
 
     }
