@@ -10,7 +10,7 @@ The [ready-to-use template](../examples/model-routing.json) illustrates provider
   "enabled": true,
   "platform": "copilot",
   "runtime_version": "0.162.1",
-  "language_models_file": "C:/Users/TYH5HC/AppData/Roaming/Code/User/chatLanguageModels.json",
+  "language_models_file": "%APPDATA%/Code/User/chatLanguageModels.json",
   "strong_provider": "9localrouter",
   "strong_model": "company-top-tier-model",
   "worker_provider": "Bosch Model Farm",
@@ -26,6 +26,8 @@ For a project initialized with NeoMind, apply the template in PowerShell (use `.
 Copy-Item D:\workspace\NeoMind\examples\model-routing.json .neomind\routing.json
 npx neomind update
 ```
+
+The `%APPDATA%` catalog path above is a portable documentation placeholder. Replace it with the actual absolute path before saving the JSON; in PowerShell, `Join-Path $env:APPDATA 'Code\User\chatLanguageModels.json'` displays that path.
 
 This replaces the selected project's previous routing choices. Change the catalog path when moving to another machine; relative paths resolve from the project root. Installation creates an initial policy when absent and preserves customized policies on subsequent updates. Existing initial Copilot defaults remain unchanged until you edit the policy or apply this template.
 
