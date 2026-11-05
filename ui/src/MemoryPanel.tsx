@@ -17,9 +17,9 @@ export function MemoryPanel() {
   useEffect(() => { void refresh().catch(e => setError(String(e))); }, []);
   useEffect(() => { void api<typeof queue>('/api/memory/lesson-queue').then(setQueue).catch(e => setError(String(e))); }, []);
   async function action(fn: () => Promise<void>) { setBusy(true); setError(''); setMessage(''); try { await fn(); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } }
-  return <section className="runs-page"><div className="page-heading"><div><h1>Project memory</h1><p>Context, quyết định và lessons dùng chung cho các frontend.</p></div></div>
+  return <section className="runs-page"><div className="page-heading"><div><h1>Memory</h1><p>Context, quyết định và lessons dùng chung cho các frontend.</p></div></div>
     {error && <div className="alert error" role="alert">{error}</div>}{message && <div className="alert success">{message}</div>}
-    <div className="run-card"><h3>Memory root</h3>{memory.root ? <p><code>{memory.root}</code></p> : <p>Chưa chọn memory root. Run vẫn có thể chạy và lưu kết quả riêng.</p>}
+    <div className="run-card"><h3>Thư mục memory</h3>{memory.root ? <p><code>{memory.root}</code></p> : <p>Chưa chọn memory root. Run vẫn có thể chạy và lưu kết quả riêng.</p>}
       {!memory.root && <button className="secondary-btn" disabled={busy} onClick={() => void action(async () => { setMemory(await api('/api/memory/configure', 'POST', { initializeDefault: true, expectedPrevious: null })); })}>Khởi tạo memory trong project</button>}
       <details><summary>Chọn thư mục memory đã có</summary><label>Đường dẫn tuyệt đối<input value={externalRoot} onChange={e => setExternalRoot(e.target.value)} /></label><button className="secondary-btn" disabled={busy || !externalRoot.trim()} onClick={() => void action(async () => { setMemory(await api('/api/memory/configure', 'POST', { root: externalRoot, initializeDefault: false, expectedPrevious: memory.root })); })}>Dùng thư mục này</button></details>
       <p className="run-note">Run ghim nội dung đã duyệt và revision khi bắt đầu. Cập nhật sau đó áp dụng cho run mới.</p></div>

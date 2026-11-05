@@ -1,5 +1,6 @@
 import { Fragment, useState } from 'react';
 import { api } from './api';
+import { confirmAction } from './dialog';
 import { artifactLabel, formatDuration, formatTokens, phaseInfo, statusInfo, verdictInfo } from './format';
 import { RunLessons } from './RunLessons';
 import { RunGraph } from './RunGraph';
@@ -42,7 +43,8 @@ export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }
     try { setRun(await api<Run>(`/api/runs/${run.runId}/clean`, 'POST', { force: false })); }
     catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      if (!message.startsWith('Run còn thay đổi') || !window.confirm(`${message}\n\nVẫn dọn? Thay đổi được lưu trong ref snapshot của run; file bị ignore sẽ bị xóa.`)) { if (!message.startsWith('Run còn thay đổi')) setError(message); return; }
+      if (!message.startsWith('Run còn thay đổi')) { setError(message); return; }
+      if (!await confirmAction({ title: 'Vẫn dọn worktree?', description: `${message}\n\nThay đổi được lưu trong ref snapshot của run; file bị ignore sẽ bị xóa.`, confirmLabel: 'Vẫn dọn', danger: true })) return;
       try { setRun(await api<Run>(`/api/runs/${run.runId}/clean`, 'POST', { force: true })); } catch (again) { setError(again instanceof Error ? again.message : String(again)); }
     } finally { setBusy(false); }
   }
@@ -61,7 +63,7 @@ export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }
           {phase === 'running' && <button className="secondary-btn" disabled={busy} onClick={() => void act('pause')}>Tạm dừng</button>}
           {['paused', 'blocked', 'recovering'].includes(phase) && run.unresolvedCommitNodeIds.length === 0 && !timeExhausted && <button className="primary-btn" disabled={locked} onClick={() => void act('resume')}>Tiếp tục</button>}
           {run.unresolvedCommitNodeIds.length > 0 && <button className="primary-btn" disabled={locked} onClick={() => void act('retry_git')}>Thử commit lại</button>}
-          {!['completed', 'cancelled'].includes(phase) && <button className="secondary-btn subtle" disabled={busy} onClick={() => { if (window.confirm('Hủy run? Thay đổi trong worktree của run được giữ lại.')) void act('cancel'); }}>Hủy run</button>}
+          {!['completed', 'cancelled'].includes(phase) && <button className="secondary-btn subtle" disabled={busy} onClick={() => void confirmAction({ title: 'Hủy run?', description: 'Thay đổi trong worktree của run được giữ lại; bạn có thể xem diff hoặc dọn worktree sau.', confirmLabel: 'Hủy run', cancelLabel: 'Giữ run chạy', danger: true }).then(ok => { if (ok) void act('cancel'); })}>Hủy run</button>}
         </div>
       </div>
       {phase !== 'completed' && run.runtimeState?.reason && <div className={`callout tone-${info.tone}`}>{run.runtimeState.reason}</div>}

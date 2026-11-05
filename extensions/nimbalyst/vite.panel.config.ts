@@ -1,13 +1,15 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 // The panel bundle: React and the host runtime are provided by Nimbalyst and must not be bundled.
 export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   // React Flow's store pulls in CommonJS use-sync-external-store, whose require('react') fails in the panel runtime.
   resolve: { alias: [
+    { find: /^@\//, replacement: `${fileURLToPath(new URL('../../ui/src/', import.meta.url))}` },
     { find: /^use-sync-external-store\/shim\/with-selector(\.js)?$/, replacement: fileURLToPath(new URL('src/shims/with-selector.js', import.meta.url)) },
     { find: /^use-sync-external-store\/shim(\/index\.js)?$/, replacement: fileURLToPath(new URL('src/shims/use-sync-external-store-shim.js', import.meta.url)) },
   ] },

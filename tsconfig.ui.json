@@ -9,7 +9,18 @@
     "exactOptionalPropertyTypes": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["vite/client"]
+    "types": [
+      "vite/client"
+    ],
+    "paths": {
+      "@/*": [
+        "./ui/src/*"
+      ]
+    }
   },
-  "include": ["ui/src/**/*.ts", "ui/src/**/*.tsx", "src/domain/schema.ts"]
+  "include": [
+    "ui/src/**/*.ts",
+    "ui/src/**/*.tsx",
+    "src/domain/schema.ts"
+  ]
 }
