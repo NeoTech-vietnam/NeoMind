@@ -12,7 +12,7 @@ Màn Runs làm lại theo mockup 10, 13–17 của [redesign-plan.md](../design/
 | `npm test` | 222 test: 220 pass, 2 skip, 0 fail |
 | `npm run build:ui`, build extension, `tsc -p tsconfig.ui.json` | Đạt; panel 1,35 MB chưa minify (GĐ 1: 1,25 MB), không có `require()` |
 | Ảnh chụp Edge headless từ `/__gallery/runs.html` | Chờ duyệt, đang chạy (2 nhánh), bị chặn, hết thời gian, commit lỗi, hoàn tất, handoff, Run mới (có/không thay đổi chưa commit, flow chưa publish), popover lọc, Xem session; theme tối và sáng, rộng 1440 và 900 (panel) |
-| Panel trong Nimbalyst | Chưa kiểm (session điều phối làm sau) |
+| Panel trong Nimbalyst | Đạt (người dùng kiểm 05/11): danh sách run, lọc, Run mới, chi tiết run, Xem session, đổi theme khi panel đang mở |
 
 
 Theo [redesign-plan.md](../design/redesign-plan.md) (GĐ 0 thử kỹ thuật ở branch `spike/ui-shadcn`; GĐ 1 ở branch `ui/redesign-p1`). Tailwind v4 + component kiểu shadcn (Radix), token sáng/tối từ mockup v2, khung app web và panel, Ctrl K, màn chưa có flow, hộp thoại trong trang thay `window.confirm`/`prompt`. Màn Runs, Flow Studio, Profiles, Memory vẫn dùng `styles.css` cũ (GĐ 2–4) nhưng đã đổi theo theme.

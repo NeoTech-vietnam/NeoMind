@@ -1,6 +1,6 @@
 # Kế hoạch thiết kế lại UI NeoMind (editor web + extension Nimbalyst)
 
-Ngày: 05/11/2026. Trạng thái: **đã chốt; GĐ 0 xong (mục 7); GĐ 1 xong phần code ngày 05/11 trên branch `ui/redesign-p1`** (kết quả ở cuối mục GĐ 1), panel Nimbalyst đã kiểm đạt; còn cài skill. **GĐ 2 xong phần code ngày 05/11 trên branch `ui/redesign-p2`** (kết quả ở cuối mục GĐ 2), chưa kiểm trong panel Nimbalyst.
+Ngày: 05/11/2026. Trạng thái: **đã chốt; GĐ 0 xong (mục 7); GĐ 1 xong phần code ngày 05/11 trên branch `ui/redesign-p1`** (kết quả ở cuối mục GĐ 1), panel Nimbalyst đã kiểm đạt; còn cài skill. **GĐ 2 xong phần code ngày 05/11 trên branch `ui/redesign-p2`** (kết quả ở cuối mục GĐ 2), panel Nimbalyst đã kiểm đạt.
 
 Đã chốt với người dùng:
 
