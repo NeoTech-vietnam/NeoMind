@@ -1,4 +1,5 @@
 import type { Flow } from '../../src/domain/schema';
+import { stepName } from './format';
 
 export type BindingValues = { runner: string; provider: string; model: string; reasoning: string };
 export type MaterializedRun = { configuration: { flow: Flow; bindings: Record<string, { values: BindingValues }> } };
@@ -48,6 +49,6 @@ export function effectiveBindings(run: Run): Map<string, BindingValues> {
 export function bindingLabel(key: string, flow: Flow | undefined): string {
   const [nodeId, reviewerId] = key.split('/');
   const node = flow?.definition.nodes.find(item => item.id === nodeId);
-  const label = node?.label ?? nodeId ?? key;
+  const label = node ? stepName(node.label) : nodeId ?? key;
   return reviewerId ? `${label} · ${reviewerId}` : label;
 }
