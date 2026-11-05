@@ -36,7 +36,10 @@ function detail(step: Step, run: Run, flow: Flow, listing: Listing, now: number)
 /** Horizontal progress of the run: one bar per step, colored by the step's state; a step with a session opens it. */
 export function RunStepper({ run, flow, steps, listing, now, openSession }: { run: Run; flow: Flow; steps: Step[]; listing: Listing; now: number; openSession(target: SessionTarget): void }) {
   return <ol className="m-0 grid list-none grid-flow-col auto-cols-[minmax(88px,1fr)] gap-2 overflow-x-auto p-0 pb-0.5" aria-label="Các bước của run">{steps.map(step => {
-    const state = stepState(step, run), info = state.interrupted ? { label: 'Dừng giữa chừng', status: 'attention' as Status } : statusInfo(state.status);
+    const state = stepState(step, run), rounds = step.node.type === 'repair_scope' ? repairRounds(run, flow) : null;
+    // Spent repair rounds are part of why an unfinished run stopped, so they read as "needs you", not as done.
+    const exhausted = !!rounds && rounds.max > 0 && rounds.used >= rounds.max && !['completed', 'cancelled'].includes(run.runtimeState?.phase ?? '');
+    const info = state.interrupted ? { label: 'Dừng giữa chừng', status: 'attention' as Status } : exhausted ? { label: 'Đã dùng hết vòng sửa', status: 'attention' as Status } : statusInfo(state.status);
     const attempt = step.nodeIds.map(id => latestAttempt(listing, id)).filter(Boolean).at(-1), text = detail(step, run, flow, listing, now);
     const body = <>
       <span className={cn('block h-[3px] rounded-full', bar[info.status])} />
