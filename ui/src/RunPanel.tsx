@@ -1,19 +1,28 @@
 import { useEffect, useState } from 'react';
+import { CircleAlert, CircleCheck, TriangleAlert, X } from 'lucide-react';
+import { Callout } from '@/components/ui/misc';
+import { confirmAction } from './dialog';
 import { api } from './api';
-import { formatDuration, phaseInfo } from './format';
+import { RunList } from './RunList';
 import { RunMonitor } from './RunMonitor';
 import { RunStart } from './RunStart';
 import type { Run, RunSummary } from './runTypes';
 
 const terminal = ['completed', 'cancelled'];
 
+function Dismiss({ onClick }: { onClick(): void }) {
+  return <button type="button" aria-label="Đóng" onClick={onClick} className="-my-0.5 ml-2 inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground"><X className="size-3.5" /></button>;
+}
+
+/** Runs screen: the list of runs on the left, the selected run or the new-run form on the right (docs/design/mockups/13-runs-v2). */
 export function RunPanel({ flowId, flows }: { flowId?: string; flows: { flowId: string; name: string; archived: boolean }[] }) {
-  const [run, setRun] = useState<Run | null>(null), [history, setHistory] = useState<RunSummary[]>([]), [error, setError] = useState('');
-  const [flowFilter, setFlowFilter] = useState(''), [phaseFilter, setPhaseFilter] = useState(''), [dateFilter, setDateFilter] = useState(''), [stale, setStale] = useState(false);
-  const visibleHistory = history.filter(item => (!flowFilter || item.flowId === flowFilter) && (!phaseFilter || item.phase === phaseFilter)
-    && (!dateFilter || (!!item.createdAt && new Date(item.createdAt).toLocaleDateString('en-CA') === dateFilter)));
+  const [run, setRun] = useState<Run | null>(null), [history, setHistory] = useState<RunSummary[]>([]), [error, setError] = useState(''), [stale, setStale] = useState(false);
   async function refresh() { setHistory((await api<{ runs: RunSummary[] }>('/api/runs')).runs.slice().reverse()); }
-  useEffect(() => { void refresh().catch(e => setError(String(e))); }, []);
+  useEffect(() => {
+    void refresh().catch(e => setError(String(e)));
+    const timer = setInterval(() => void refresh().catch(() => {}), 5000);
+    return () => clearInterval(timer);
+  }, []);
   const phase = run?.runtimeState?.phase;
   // Poll the open run while it can still change.
   useEffect(() => {
@@ -33,6 +42,7 @@ export function RunPanel({ flowId, flows }: { flowId?: string; flows: { flowId: 
   const [notice, setNotice] = useState(''), [cleaning, setCleaning] = useState(false);
   /** Remove the worktrees of every finished run that has nothing unsaved; runs with unsaved changes are listed, not touched. */
   async function cleanFinished() {
+    if (!await confirmAction({ title: 'Dọn worktree của các run đã xong?', description: 'Commit vẫn được giữ. Run còn thay đổi chưa lưu hoặc đang bận sẽ được bỏ qua và liệt kê lại.', confirmLabel: 'Dọn worktree' })) return;
     setCleaning(true); setError(''); setNotice('');
     try {
       const { results } = await api<{ results: { runId: string; status: string; reason?: string }[] }>('/api/runs/clean', 'POST', { force: false });
@@ -43,28 +53,16 @@ export function RunPanel({ flowId, flows }: { flowId?: string; flows: { flowId: 
   }
   async function open(runId: string) { setError(''); try { setRun(await api<Run>(`/api/runs/${runId}`)); setStale(false); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } }
 
-  return <section className="runs-page">
-    <div className="page-heading"><div><h1>Runs</h1><p>Giao việc cho agent, duyệt kế hoạch và theo dõi tới khi có commit.</p></div></div>
-    {error && <div className="alert error" role="alert">{error}<button onClick={() => setError('')}>×</button></div>}
-    {stale && <div className="alert error" role="status">Mất kết nối cập nhật run. Trạng thái đang hiển thị có thể đã cũ; hệ thống sẽ thử đồng bộ lại.</div>}
-    {notice && <div className="alert success" role="status">{notice}<button onClick={() => setNotice('')}>×</button></div>}
-    <div className="runs-layout">
-      <aside className="runs-history">
-        <button className={`new-run ${run ? '' : 'selected'}`} onClick={() => setRun(null)}>＋ Run mới</button>
-        <div className="history-title">Lịch sử</div>
-        <label>Flow<select aria-label="Lọc lịch sử theo flow" value={flowFilter} onChange={e => setFlowFilter(e.target.value)}><option value="">Tất cả flow</option>{[...new Map(history.filter(item => item.flowId).map(item => [item.flowId!, item.flowName || item.flowId!])).entries()].map(([id, name]) => <option key={id} value={id}>{name} · {id}</option>)}</select></label>
-        <label>Trạng thái<select aria-label="Lọc lịch sử theo trạng thái" value={phaseFilter} onChange={e => setPhaseFilter(e.target.value)}><option value="">Tất cả trạng thái</option>{[...new Set(history.map(item => item.phase))].map(phase => <option key={phase} value={phase}>{phaseInfo(phase).label}</option>)}</select></label>
-        <label>Ngày bắt đầu<input type="date" aria-label="Lọc lịch sử theo ngày bắt đầu" value={dateFilter} onChange={e => setDateFilter(e.target.value)} /></label>
-        {history.some(item => terminal.includes(item.phase)) && <button type="button" className="history-clean" disabled={cleaning} onClick={() => void cleanFinished()}
-          title="Xóa worktree của các run đã xong; commit vẫn giữ, run còn thay đổi chưa lưu thì bỏ qua">{cleaning ? 'Đang dọn…' : 'Dọn worktree run đã xong'}</button>}
-        {history.length === 0 && <p className="muted-inline">Chưa có run nào.</p>}
-        {visibleHistory.map(item => { const info = phaseInfo(item.phase);
-          return <button key={item.runId} className={`run-history-item ${run?.runId === item.runId ? 'selected' : ''}`} onClick={() => void open(item.runId)}>
-            <span className={`dot tone-${info.tone}`} /><span className="history-text"><strong>{item.task || item.runId}</strong>
-              <small>{info.label}{item.flowName ? ` · ${item.flowName}` : ''}{item.createdAt ? ` · ${new Date(item.createdAt).toLocaleString()}` : ''}{item.activeMs ? ` · ${formatDuration(item.activeMs)}` : ''}</small></span></button>; })}
-      </aside>
-      <div className="run-content">{run ? <RunMonitor run={run} setRun={value => { setRun(value); void refresh(); }} />
-        : <RunStart {...(flowId ? { initialFlow: flowId } : {})} flows={flows} started={value => { setRun(value); void refresh(); }} />}</div>
+  return <section className="grid h-full min-h-0 grid-cols-[272px_minmax(0,1fr)] min-[1200px]:grid-cols-[296px_minmax(0,1fr)]">
+    <RunList history={history} selectedId={run?.runId} open={id => void open(id)} startNew={() => setRun(null)} cleaning={cleaning} clean={() => void cleanFinished()} />
+    <div className="min-h-0 min-w-0 overflow-auto">
+      <div className="mx-auto flex max-w-[1040px] flex-col gap-3 px-6 pb-0 pt-5">
+        {error && <Callout tone="danger" icon={<CircleAlert />}><div className="flex items-start"><span className="flex-1">{error}</span><Dismiss onClick={() => setError('')} /></div></Callout>}
+        {stale && <Callout tone="attention" icon={<TriangleAlert />}><span role="status">Mất kết nối cập nhật run. Trạng thái đang hiển thị có thể đã cũ; hệ thống sẽ thử đồng bộ lại.</span></Callout>}
+        {notice && <Callout tone="success" icon={<CircleCheck />}><div className="flex items-start"><span className="flex-1" role="status">{notice}</span><Dismiss onClick={() => setNotice('')} /></div></Callout>}
+        {run ? <RunMonitor key={run.runId} run={run} setRun={value => { setRun(value); void refresh(); }} />
+          : <RunStart {...(flowId ? { initialFlow: flowId } : {})} flows={flows} history={history} started={value => { setRun(value); void refresh(); }} />}
+      </div>
     </div>
   </section>;
 }

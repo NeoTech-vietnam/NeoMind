@@ -2,6 +2,7 @@ import { api } from './api';
 import { askText, confirmAction } from './dialog';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CircleAlert, CircleCheck, X } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { AppRoot, Shell, type FlowMeta, type ShellKind, type View } from './shell/AppShell';
 import { CreateFlowDialog, NoFlows, slug, type Template } from './shell/FlowStart';
 import { Callout } from './components/ui/misc';
@@ -340,10 +341,10 @@ function Workspace({ shell }: { shell: ShellKind }) {
   const dismiss = (clear: () => void) => <button type="button" aria-label="Đóng" onClick={clear} className="-my-0.5 ml-2 inline-flex size-5 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground"><X className="size-3.5" /></button>;
   return <Shell shell={shell} view={view} onView={setView} projectName={boot?.projectName} projectRoot={boot?.projectRoot} flows={flows} currentFlowId={flow?.flowId}
     onOpenFlow={id => void openFlow(id)} onCreateFlow={() => openCreate()}>
-    <div className={shell === 'panel' ? 'px-5 py-4' : 'px-7 py-5'}>
-      {error && <Callout tone="danger" icon={<CircleAlert />} className="mb-3"><div className="flex items-start"><span className="flex-1">{error}</span>{dismiss(() => setError(''))}</div></Callout>}
-      {message && <Callout tone="success" icon={<CircleCheck />} className="mb-3"><div className="flex items-start"><span className="flex-1">{message}</span>{dismiss(() => setMessage(''))}</div></Callout>}
-      {view === 'memory' ? <MemoryPanel /> : view === 'profiles' ? <ProfilePanel /> : view === 'runs' ? <RunPanel {...(flow ? { flowId: flow.flowId } : {})} flows={flows} />
+    <div className={view === 'runs' ? 'flex h-full flex-col' : shell === 'panel' ? 'px-5 py-4' : 'px-7 py-5'}>
+      {error && <Callout tone="danger" icon={<CircleAlert />} className={cn('mb-3', view === 'runs' && 'mx-6 mt-3')}><div className="flex items-start"><span className="flex-1">{error}</span>{dismiss(() => setError(''))}</div></Callout>}
+      {message && <Callout tone="success" icon={<CircleCheck />} className={cn('mb-3', view === 'runs' && 'mx-6 mt-3')}><div className="flex items-start"><span className="flex-1">{message}</span>{dismiss(() => setMessage(''))}</div></Callout>}
+      {view === 'memory' ? <MemoryPanel /> : view === 'profiles' ? <ProfilePanel /> : view === 'runs' ? <div className="min-h-0 flex-1"><RunPanel {...(flow ? { flowId: flow.flowId } : {})} flows={flows} /></div>
         : !flow ? (boot && !hasFlows ? <NoFlows onPick={openCreate} /> : null) : <>
         <div className="page-heading"><div><div className="title-line"><h1>{flow.name}</h1><span className="draft-badge"><span /> BẢN NHÁP</span>{dirty && <span className="unsaved">● Chưa lưu</span>}</div><p>Thiết kế quy trình và cấu hình cách các agent phối hợp.</p></div>
           <div className="heading-actions"><details className="menu"><summary className="quiet-btn" aria-label="Quản lý flow">Quản lý ▾</summary><div className="menu-list"><button onClick={e => { e.currentTarget.closest('details')?.removeAttribute('open'); void manageFlow('rename'); }}>Đổi tên</button><button onClick={e => { e.currentTarget.closest('details')?.removeAttribute('open'); void manageFlow('clone'); }}>Sao chép</button><button onClick={e => { e.currentTarget.closest('details')?.removeAttribute('open'); void manageFlow(boot?.flows.find(item => item.flowId === flow.flowId)?.archived ? 'restore' : 'archive'); }}>{boot?.flows.find(item => item.flowId === flow.flowId)?.archived ? 'Khôi phục' : 'Lưu trữ'}</button><button onClick={e => { e.currentTarget.closest('details')?.removeAttribute('open'); void exportCanvas(); }}>Xuất ra .canvas</button><button onClick={e => { e.currentTarget.closest('details')?.removeAttribute('open'); void importCanvas(); }}>Nhập từ .canvas</button><button className="danger" onClick={e => { e.currentTarget.closest('details')?.removeAttribute('open'); void manageFlow('delete'); }}>Xóa vĩnh viễn…</button></div></details><button className="quiet-btn icon" title="Hoàn tác" aria-label="Hoàn tác" disabled={!past.length} onClick={undo}>↶</button><button className="quiet-btn icon" title="Làm lại" aria-label="Làm lại" disabled={!future.length} onClick={redo}>↷</button><span className="action-separator" />
