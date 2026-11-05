@@ -3,6 +3,23 @@
 Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
 Bàn giao hiện tại: [04/11/2026 Windows](session-handoff-2026-11-04-windows.md), trước đó [04/11/2026 Linux](session-handoff-2026-11-04.md). Phạm vi v1 rộng hơn tám việc vừa triển khai; đã có walkthrough browser cho Dev tuần tự bên dưới, các thao tác canvas nâng cao, Windows và host acceptance Nimbalyst vẫn cần kiểm chứng riêng.
 
+## Dùng thật đầu tiên: `leetcode-practice` — 04/11/2026
+
+Repo luyện LeetCode của người dùng (`W:\projects\AI\leetcode-practice`), flow Dev, Claude Opus 5.5 / high cho planner, writer và reviewer; checks qua Codex. Task: script tạo bài, build/test harness, selftest. Run `run-0f7e84e0-b21e-47b8-badf-7e445d73d67c`.
+
+- Plan sửa hai lần theo yêu cầu người dùng (tách `solution.c`/`test.c` để dán lên LeetCode; clang MSYS2 và `--sanitize`). Duyệt plan v3.
+- Bị **blocked** lần đầu: check `python -m py_compile` ghi `tools/__pycache__`, repo chưa ignore nên baseline đổi. Gỡ bằng cách thêm `__pycache__/` vào `.gitignore` trong worktree rồi `run resume`.
+- Checks trong **sandbox Codex trên Windows** chạy được `python`, nhưng `selftest.py` hỏng: process trong sandbox tạo được thư mục, nhưng **tạo thư mục con trong thư mục vừa tạo thì bị `WinError 5 Access is denied`**, kể cả trong worktree. Ngoài sandbox, selftest pass toàn bộ với MinGW GCC 6.3.
+- Writer Claude không có shell và lúc đầu không thấy chỗ hỏng trong output check, nên hai vòng sửa là sửa mò (thêm cờ `-U__STRICT_ANSI__` ngoài plan; reviewer bắt được). Run hết ngân sách 30 phút và paused; người dùng chọn hủy.
+- Chi phí: khoảng 30 phút chạy, ít nhất **3,36 triệu token** (journal ghi partial). Code lấy về checkout chưa commit sau khi gỡ cờ ngoài plan; selftest pass trên máy thật. Review độc lập **chưa pass** (chỉ vì selftest trong sandbox).
+
+Việc cần làm cho NeoMind, xếp theo mức ảnh hưởng:
+1. Checks Windows: cho phép tạo cây thư mục tạm (hoặc chỉ định thư mục tạm ghi được) trong sandbox Codex.
+2. Vòng sửa phải đưa nguyên output lỗi của check cho writer; writer không có shell nên không tự chạy lại được.
+3. Planner cần biết check không được ghi file vào worktree (hoặc NeoMind báo rõ file nào làm đổi baseline).
+4. CLI: `--task-file` (task nhiều dòng qua `cmd` bị cắt còn dòng đầu) và xuất plan ra Markdown để đọc/duyệt.
+5. Ngân sách 30 phút hết giữa lượt sửa: cảnh báo trước hoặc cho gia hạn khi đang chạy.
+
 ## Suite trên Windows sau đợt 04/11 — 04/11/2026
 
 Windows 11, Node 24.18.0, Git 2.53.0, Codex CLI 0.166.0, Claude Code 2.1.312. Checkout chép từ Linux cần `npm ci` lại (`node_modules/.bin` của Linux không có shim `.cmd`). Lần đầu: 207 test, 201 pass, 4 fail, 2 skip. Sau khi sửa bốn lỗi và đổi thiết kế cleanup: **208 test, 206 pass, 0 fail, 2 skip** (symlink file không có trên máy, SIGTERM không gửi được tới process con trên Windows). `npm run build:ui` và build extension Nimbalyst đạt (cảnh báo bundle >500 kB như trước).

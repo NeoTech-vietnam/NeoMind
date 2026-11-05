@@ -13,10 +13,11 @@ Công cụ cấu hình và chạy *agent flow* trên một Git repo: lập kế 
 ## Đọc theo thứ tự
 
 1. [Bàn giao mới nhất](docs/adaptive-agent-flow/session-handoff-2026-11-04-windows.md) (Windows, cleanup bằng snapshot) và [bàn giao Linux cùng ngày](docs/adaptive-agent-flow/session-handoff-2026-11-04.md): trạng thái, việc đang dở, bài học.
-2. [Trạng thái triển khai](docs/adaptive-agent-flow/implementation-status.md) và [acceptance matrix](docs/adaptive-agent-flow/acceptance-matrix.md).
-3. [README](README.md): cách dùng; [START-HERE-WINDOWS](START-HERE-WINDOWS.md): chi tiết Windows.
-4. Thiết kế khi cần: [design-v1](docs/adaptive-agent-flow/design-v1.md), [quyết định v1](docs/adaptive-agent-flow/v1-design-decisions.md), [extension Nimbalyst](docs/adaptive-agent-flow/nimbalyst-extension.md), [Claude Code runner](docs/adaptive-agent-flow/claude-code-runner.md), [transcript session](docs/adaptive-agent-flow/session-transcripts.md).
-5. Bảng tổng quan để mở trong Nimbalyst/Obsidian: `docs/adaptive-agent-flow/neomind-status.canvas`.
+2. [Định hướng từ 11/2026](docs/adaptive-agent-flow/direction-2026-11.md): rule của project, đo kết quả run, AI điều phối, flow tự thích ứng (đang chờ duyệt).
+3. [Trạng thái triển khai](docs/adaptive-agent-flow/implementation-status.md) và [acceptance matrix](docs/adaptive-agent-flow/acceptance-matrix.md).
+4. [README](README.md): cách dùng; [START-HERE-WINDOWS](START-HERE-WINDOWS.md): chi tiết Windows.
+5. Thiết kế khi cần: [design-v1](docs/adaptive-agent-flow/design-v1.md), [quyết định v1](docs/adaptive-agent-flow/v1-design-decisions.md), [extension Nimbalyst](docs/adaptive-agent-flow/nimbalyst-extension.md), [Claude Code runner](docs/adaptive-agent-flow/claude-code-runner.md), [transcript session](docs/adaptive-agent-flow/session-transcripts.md).
+6. Bảng tổng quan để mở trong Nimbalyst/Obsidian: `docs/adaptive-agent-flow/neomind-status.canvas`.
 
 ## Cài đặt trên máy mới
 
