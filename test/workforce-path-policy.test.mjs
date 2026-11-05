@@ -38,7 +38,8 @@ test('WorkForce CI product writes use the same frozen path permission through re
   assert.equal((await api.call('task_file_write', { path, content })).isError, undefined);
   assert.equal(readFileSync(join(root, path), 'utf8'), content);
   const schema = (await api.client.listTools()).tools.find(tool => tool.name === 'task_file_write').inputSchema;
-  assert.deepEqual(Object.keys(schema.properties).sort(), ['content', 'path']);
+  assert.deepEqual(Object.keys(schema.properties).sort(), ['content', 'edits', 'path']);
+  assert.deepEqual(schema.required, ['path']);
   writeFileSync(join(root, path), content + '# Outside user edit\n');
   const stale = await api.call('task_file_write', { path, content: 'name: stale replacement\n' });
   assert.equal(stale.isError, true); assert.equal(decoded(stale).code, 'INPUT_CHANGED');
