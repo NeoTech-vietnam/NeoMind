@@ -13,7 +13,7 @@ Theo [redesign-plan.md](../design/redesign-plan.md) (GĐ 0 thử kỹ thuật �
 | `npm run build:ui`, build extension, `tsc -p tsconfig.ui.json` | Đạt |
 | Editor web trên repo tạm, Edge headless + CDP | Runs, Flows (tự mở flow), Profiles, Memory, Ctrl K, theme sáng/tối, màn chưa có flow, hộp thoại tạo/đổi tên/xóa flow; không lỗi console |
 | `/__gallery` (vite dev) | Mọi component ở cả hai theme |
-| Panel trong Nimbalyst | **Chưa kiểm** bản GĐ 1 (GĐ 0 đã kiểm cơ chế: portal, `@property`, font, theme theo host) |
+| Panel trong Nimbalyst | Đạt (người dùng kiểm 05/11): thanh tab 40px, theme theo Nimbalyst khi đổi sáng/tối, chọn flow, hộp thoại đổi tên, Ctrl K, số run cần bạn |
 
 ## Sửa sau lần dùng thật — 05/11/2026 (5 session Nimbalyst song song)
 

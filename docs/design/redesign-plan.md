@@ -1,6 +1,6 @@
 # Kế hoạch thiết kế lại UI NeoMind (editor web + extension Nimbalyst)
 
-Ngày: 05/11/2026. Trạng thái: **đã chốt; GĐ 0 xong (mục 7); GĐ 1 xong phần code ngày 05/11 trên branch `ui/redesign-p1`** (kết quả ở cuối mục GĐ 1), còn kiểm trong panel Nimbalyst và cài skill.
+Ngày: 05/11/2026. Trạng thái: **đã chốt; GĐ 0 xong (mục 7); GĐ 1 xong phần code ngày 05/11 trên branch `ui/redesign-p1`** (kết quả ở cuối mục GĐ 1), panel Nimbalyst đã kiểm đạt; còn cài skill.
 
 Đã chốt với người dùng:
 
@@ -168,7 +168,8 @@ Mỗi giai đoạn: người dùng duyệt mockup v2 của giai đoạn đó (v�
   - **Cầu nối biến cũ** (`--ink`, `--surface`, `--accent-2`…) trỏ sang token mới: màn cũ đổi theo theme sáng/tối ngay. `--accent` cũ (clay) đổi tên thành `--clay` vì trùng tên token shadcn.
   - **Font chỉ woff2, tự khai báo `@font-face` có `unicode-range`.** File CSS theo subset của `@fontsource` không có `unicode-range`, nên face latin che face tiếng Việt; bỏ `.woff` dự phòng bớt 99 KB khỏi panel.
   - Bundle panel 1,25 MB chưa minify (trước 668 KB): Radix, tailwind-merge, lucide, font nhúng base64.
-- Chưa làm trong GĐ 1: kiểm trong panel Nimbalyst (cần cài bản extension mới thay bản đang dùng), cài skill thiết kế và kiểm font/màu bằng UI UX Pro Max (mục 5). Khi thêm component bằng `npx shadcn add`, phải sửa `Portal` của nó nhận `container` từ `usePortalContainer()`.
+- Panel trong Nimbalyst: người dùng kiểm đạt ngày 05/11.
+- Chưa làm trong GĐ 1: cài skill thiết kế và kiểm font/màu bằng UI UX Pro Max (mục 5). Khi thêm component bằng `npx shadcn add`, phải sửa `Portal` của nó nhận `container` từ `usePortalContainer()`.
 
 ### GĐ 2. Runs (màn dùng nhiều nhất)
 
