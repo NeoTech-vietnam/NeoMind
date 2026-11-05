@@ -183,7 +183,7 @@ export class OpenCodeSession {
       this.assertCurrent();
       if (!response.data || response.data.info.providerID !== opencodeProviderId ||
           response.data.info.modelID !== endpoint.model || response.data.info.sessionID !== sessionID ||
-          response.data.info.parentID !== this.messageId)
+          !this.turn.ownsParent(response.data.info.parentID))
         throw new Error('OpenCode response identity or inference result did not validate.');
       if (response.data?.info.error) {
         const failure = canonicalOpenCodeProviderFailure(response.data.info.error, { session_id: sessionID,

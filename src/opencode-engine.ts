@@ -135,6 +135,11 @@ export async function createOpenCodeGateway(factory: () => McpServer, assertActi
     }
     if (connections.size >= 32) { response.writeHead(503); response.end(); return; }
     try { await assertActive(); } catch { response.writeHead(409); response.end(); return; }
+    // Several requests can await ownership validation together. Reserve the
+    // bounded MCP slot only after that await, with no further async gap before
+    // adding the connection; a raw TCP cap must not enforce this admission.
+    if (closed) { response.writeHead(403); response.end(); return; }
+    if (connections.size >= 32) { response.writeHead(503); response.end(); return; }
     let server: McpServer;
     try { server = factory(); } catch { response.writeHead(409); response.end(); return; }
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true,
@@ -154,7 +159,10 @@ export async function createOpenCodeGateway(factory: () => McpServer, assertActi
       await transport.handleRequest(request, response);
     } catch { if (!response.headersSent) response.writeHead(500); response.end(); }
   });
-  http.maxConnections = 32;
+  // Bound active MCP requests above, not raw TCP connections. Node drops a
+  // socket above maxConnections before HTTP authentication/dispatch, turning
+  // harmless retained idle connections into ECONNRESET for an unrelated tool.
+  // The request-level limit returns an explicit 503 without executing a call.
   http.headersTimeout = 10000;
   await new Promise<void>((fulfill, reject) => { http.once('error', reject); http.listen(0, '127.0.0.1', () => { http.off('error', reject); fulfill(); }); });
   const address = http.address();

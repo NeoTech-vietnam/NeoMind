@@ -1,4 +1,4 @@
-import type { AssistantMessage, Part } from '@opencode-ai/sdk/v2/client';
+import type { AssistantMessage, Message, Part } from '@opencode-ai/sdk/v2/client';
 import type { OpenCodeClient } from './opencode-engine.js';
 import { canonicalJson } from './routing.js';
 import { hash } from './storage.js';
@@ -32,6 +32,8 @@ export class OpenCodeTurnObserver {
   private lastProgress: number;
   private lastReadable: number;
   private admitted = false;
+  private readonly ownedParents = new Set<string>();
+  private readonly compactionSummaries = new Set<string>();
   private sessionError?: unknown;
   private statusUnreadableSince?: number;
   private readonly clock: () => number;
@@ -39,9 +41,37 @@ export class OpenCodeTurnObserver {
   private readonly poll: number;
   private readonly httpTimeout: number;
   constructor(private readonly client: OpenCodeClient, readonly identity: OpenCodeTurnIdentity, private readonly options: OpenCodeTurnOptions) {
+    this.ownedParents.add(identity.messageID);
     this.clock = options.now ?? (() => performance.now());
     this.idle = options.model_idle_ms ?? 120000; this.poll = options.poll_ms ?? 2000; this.httpTimeout = options.http_timeout_ms ?? 5000;
     this.lastProgress = this.clock(); this.lastReadable = this.clock();
+  }
+  /** The original submission remains immutable. Only the pinned engine's
+   * persisted automatic-compaction chain can add an internal parent. */
+  ownsParent(messageID: string): boolean { return this.ownedParents.has(messageID); }
+  private reconcileCompactions(rows: { info: Message; parts: Part[] }[]): void {
+    const compactions = new Set<string>();
+    const model = (info: Message) => info.role === 'assistant'
+      ? info.providerID === this.identity.providerID && info.modelID === this.identity.modelID
+      : info.model?.providerID === this.identity.providerID && info.model?.modelID === this.identity.modelID;
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index]!, previous = rows[index - 1];
+      if (row.info.sessionID !== this.identity.sessionID || !model(row.info)) continue;
+      if (row.info.role === 'user' && previous?.info.role === 'assistant' &&
+          previous.info.sessionID === this.identity.sessionID && model(previous.info) &&
+          this.ownsParent(previous.info.parentID) && previous.info.time.completed && !previous.info.error &&
+          row.parts.length === 1 && row.parts[0]?.type === 'compaction' && row.parts[0].auto === true &&
+          row.parts[0].sessionID === this.identity.sessionID && row.parts[0].messageID === row.info.id)
+        compactions.add(row.info.id);
+      if (row.info.role === 'assistant' && row.info.summary === true && compactions.has(row.info.parentID) && previous?.info.id === row.info.parentID &&
+          !row.info.error && row.info.time.completed && row.info.finish === 'stop' &&
+          !row.parts.some(part => part.type === 'tool' && ['pending', 'running'].includes(part.state.status)))
+        this.compactionSummaries.add(row.info.id);
+      if (row.info.role === 'user' && previous?.info.role === 'assistant' && this.compactionSummaries.has(previous.info.id) &&
+          row.parts.length > 0 && row.parts.every(part => part.type === 'text' && part.synthetic === true && !part.ignored && part.metadata?.compaction_continue === true &&
+            part.sessionID === this.identity.sessionID && part.messageID === row.info.id))
+        this.ownedParents.add(row.info.id);
+    }
   }
   private signal() { return AbortSignal.any([this.options.signal, AbortSignal.timeout(this.httpTimeout)]); }
   private mark(key: string, value: unknown) {
@@ -120,7 +150,8 @@ export class OpenCodeTurnObserver {
         if (response.data.some(row => row.info.role === 'user' && row.info.id === this.identity.messageID)) {
           if (!this.admitted) { this.admitted = true; this.lastProgress = this.clock(); }
         }
-        const candidates = response.data.filter(row => row.info.role === 'assistant' && row.info.parentID === this.identity.messageID)
+        this.reconcileCompactions(response.data);
+        const candidates = response.data.filter(row => row.info.role === 'assistant' && row.info.summary !== true && this.ownsParent(row.info.parentID))
           .sort((a, b) => a.info.time.created - b.info.time.created);
         this.runningTools.clear();
         for (const row of candidates) {

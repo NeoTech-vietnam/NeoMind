@@ -4,13 +4,14 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:http';
+import { DatabaseSync } from 'node:sqlite';
 import { initialize, createRecord, safePath } from '../dist/storage.js';
 import { ensureRoutingPolicy, invocationIsActive } from '../dist/routing.js';
 import { registerControlledContext } from '../dist/controlled-context.js';
 import { startNative, waitNative, shutdownNative } from '../dist/native.js';
 import { OpenCodeSession } from '../dist/opencode-session.js';
 import { OpenCodeTurnObserver } from '../dist/opencode-turn.js';
-import { reconcileOpenCodeOwner } from '../dist/opencode-engine.js';
+import { reconcileOpenCodeOwner, openCodeStorage } from '../dist/opencode-engine.js';
 import { localOpenAIProvider } from './helpers/local-openai-provider.mjs';
 
 // Real pinned engine, private gateway, native signatures and model tool loop.
@@ -249,4 +250,62 @@ for (const operation of ['session-create', 'tool-list']) test(`a lost local ${op
   const failure = fixture.traces.find(event => event.event === 'engine-failure' && event.control_operation === operation);
   assert.ok(failure); assert.equal(failure.transport_causes[1].code, 'UND_ERR_SOCKET');
   assert.doesNotMatch(JSON.stringify(failure), /Loopback control reply was lost|local-fixture|Authorization|apiKey/);
+});
+
+test('real pinned engine automatic compaction completes the original owned invocation without a false stall or prompt replay', { timeout: 90000 }, async t => {
+  let firstRequestAt;
+  observerPolicy(t, 10000, () => firstRequestAt === undefined ? 0 : performance.now() - firstRequestAt);
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    firstRequestAt ??= performance.now();
+    const chunks = []; for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8')); requests.push(body);
+    const index = requests.length - 1;
+    if (index > 5) { response.writeHead(429); response.end(); return; }
+    const output = [
+      call('project_read', { path: 'products/current.txt', max_chars: 64000, start_line: 1, start_char: 0 }),
+      { text: 'Automatic context summary: original task read products/current.txt. It was read successfully. The remaining required step is wf_assignment_report with summary and product_findings:[], then finish. No additional product changes are required.' },
+      call('assignment_report', { summary: 'Read the scoped file and retained the original assignment across actual automatic compaction.', product_findings: [] }),
+      { text: 'The bound professional result was saved.' },
+    ][index] ?? { text: 'Unexpected extra inference.' };
+    const tools = output.toolCalls?.map((tool, number) => ({ index: number, id: `call_compact_${index}_${number}`, type: 'function',
+      function: { name: tool.name, arguments: JSON.stringify(tool.arguments) } }));
+    const metadata = { id: `chatcmpl_compaction_${index}`, object: 'chat.completion.chunk', created: 1, model: body.model };
+    const usage = { prompt_tokens: index === 0 ? 120000 : 1, completion_tokens: 1, total_tokens: index === 0 ? 120001 : 2 };
+    if (body.stream === false) {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ ...metadata, object: 'chat.completion', choices: [{ index: 0,
+        message: { role: 'assistant', content: output.text ?? null, ...(tools ? { tool_calls: tools.map(({ index: _index, ...tool }) => tool) } : {}) },
+        finish_reason: tools ? 'tool_calls' : 'stop' }], usage })); return;
+    }
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    response.write(`data: ${JSON.stringify({ ...metadata, choices: [{ index: 0, delta: { role: 'assistant', ...(tools ? { tool_calls: tools } : { content: output.text }) }, finish_reason: null }] })}\n\n`);
+    response.write(`data: ${JSON.stringify({ ...metadata, choices: [{ index: 0, delta: {}, finish_reason: tools ? 'tool_calls' : 'stop' }], usage })}\n\n`);
+    response.end('data: [DONE]\n\n');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const provider = { baseURL: `http://127.0.0.1:${server.address().port}/v1`, requests,
+    close: async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); } };
+  const fixture = project(t, provider), receipt = await run(fixture);
+  if (receipt.state !== 'completed') t.diagnostic(JSON.stringify({ state: receipt.state, error: receipt.error, requests: requests.length, reports: fixture.reports.length }));
+  assert.equal(receipt.state, 'completed', receipt.error); assert.equal(receipt.inference_completed, true);
+  assert.equal(requests.length, 4); assert.equal(fixture.reports.length, 1);
+  assert.ok(fixture.traces.some(event => event.event === 'engine-prompt-admission'));
+  assert.equal(fixture.traces.some(event => event.event === 'model-progress-stalled'), false);
+  assert.match(receipt.opencode.response_message_id, /^msg_/);
+  const database = new DatabaseSync(join(openCodeStorage(fixture.root).path, `opencode-${receipt.id}`, 'data/opencode/opencode.db'), { readOnly: true });
+  try {
+    const messages = database.prepare('SELECT id, data FROM message WHERE session_id = ? ORDER BY time_created').all(receipt.native_thread_id)
+      .map(row => ({ id: row.id, ...JSON.parse(row.data) }));
+    const parts = database.prepare('SELECT message_id, data FROM part WHERE session_id = ?').all(receipt.native_thread_id)
+      .map(row => ({ message_id: row.message_id, ...JSON.parse(row.data) }));
+    assert.ok(messages.some(message => message.id === receipt.native_turn_id && message.role === 'user'), 'Original submission identity is retained.');
+    assert.equal(parts.filter(part => part.type === 'compaction' && part.auto === true).length, 1);
+    assert.equal(messages.filter(message => message.summary === true && message.finish === 'stop').length, 1);
+    const continuation = parts.find(part => part.synthetic === true && part.metadata?.compaction_continue === true);
+    assert.ok(continuation, 'The actual pinned engine, not a forged test response, created its continuation.');
+    const final = messages.find(message => message.id === receipt.opencode.response_message_id);
+    assert.equal(final.parentID, continuation.message_id);
+    assert.notEqual(final.parentID, receipt.native_turn_id);
+  } finally { database.close(); }
 });

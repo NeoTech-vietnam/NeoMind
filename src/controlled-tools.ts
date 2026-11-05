@@ -17,6 +17,7 @@ import { controlledPlanExecutionStepSubmissionSchema, controlledPlanCheckSubmiss
 import { controlledPlanRequestSchemas, controlledPlanSubmissionGuide, type ControlledPlanRequestDefaults } from './controlled-plan-request.js';
 import { controlledOperationDiagnostic, type ControlledDiagnosticPhase } from './controlled-operation-diagnostic.js';
 import { controlledFileWriteProof } from './controlled-file-write-proof.js';
+import { applyControlledFileEdits, ControlledFileEditError } from './controlled-file-edits.js';
 import { ControlledEvidenceScanTimeout } from './controlled-evidence-error.js';
 import { workforceStageResultSchema, workforceStageReport, workforceStageHandoff } from './workforce-stage-result.js';
 import { artifactChangeReadCoverage, mergeArtifactChangeReadCoverage, completeArtifactChangeReads,
@@ -250,6 +251,7 @@ export function controlledReviewInstructions(purpose: ControlledReviewPurpose): 
 /** Shared by the worker tools and runtime prompt so scope is interpreted once. */
 export const workforceCheckPipelineInstructions = 'Frozen checks run in declared order. A build output is not its producing command\'s input baseline; declare it as an input only to a later consuming command. ' +
   'Keep transient build artifacts outside checker-source roots. When correctness needs a new independent oracle, its checker may compile and run in temporary storage with the selected compiler directory on the child PATH. ' +
+  'If a Windows compiler cannot open a long existing project source path, the checker may stage exactly unchanged source bytes in a short temporary directory and compile them there. Preserve and verify source hash identity against the current baseline, the frozen check commands and the independent oracle; do not rename or modify product files or weaken checks. ' +
   'Use existing checks directly; create an oracle checker only for new independent correctness logic, not merely to wrap an existing command.';
 export function workforceScopeInstructions(stage: ControlledStage): string {
   if (stage === 'planning') return 'Before freezing scope, read root project guidance, the relevant attached instructions and representative sibling deliverables. ' +
@@ -282,6 +284,7 @@ function workforceInstructions(binding: ControlledBinding): string {
     `Available operations: ${available.join(', ')}. Identity, task, authorization, operation IDs and lifecycle are already bound. Supply professional content only.\n` +
     `${binding.artifact_revalidation ? 'Read-only product reassessment paths' : 'Producer write paths'}: ${JSON.stringify(binding.implementation_paths)}. Tester write paths: ${JSON.stringify(binding.verification_paths)}. Review/design/requirements are read-only.\n` +
     (binding.assessment_outputs?.length ? `Read all content of each actual output before reporting a successful content assessment: ${JSON.stringify(binding.assessment_outputs)}. No compilation or executed-test result is implied.\n` : '') +
+    (available.includes('task_file_write') ? 'For a small change to an existing file, prefer task_file_write with edits:[{old_text,new_text}] using unique text from project_read. Backend applies the snippets atomically and preserves unrelated content and line endings; do not reconstruct a whole README to add one link. Use content for new files or an intentional complete replacement. A saved response, including replayed:true, confirms the write: continue to a different output or save your content result rather than sending identical writes.\n' : '') +
     (available.includes('cornell_research_compile') ? 'Requested Cornell note.md/exercises.md/answers.md are compiler-owned: use cornell_research_compile with semantic research or an existing input_path, never task_file_write for those renderings.\n' : '') +
     (available.includes('task_run') ? 'task_run uses declared operations. Send the declared title and optional input_path for prepared JSON; backend builds the execution payload.\n' : '') +
     'Use runtime_context only if an execution fact is missing; its first successful snapshot suffices. Do not poll progress or ask the next stage. ' +
@@ -555,40 +558,82 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       }
       return { matches, truncated: found.truncated };
     });
-  if (controlledToolNames(binding).includes('task_file_write'))
-    register('task_file_write', 'Write complete UTF-8 content within this stage scope. Read existing files first; the backend binds their versions and records recoverable operations.',
-      z.strictObject({ path: z.string().min(1).max(1024), content: z.string().max(128 * 1024) }), false, args => {
+  if (controlledToolNames(binding).includes('task_file_write')) {
+    const fileText = z.string().max(128 * 1024);
+    const writeSchema = binding.process_contract === 'workforce/v1'
+      ? z.strictObject({ path: z.string().min(1).max(1024), content: fileText.nullish(),
+        edits: z.array(z.strictObject({ old_text: fileText.min(1), new_text: fileText })).min(1).max(32).nullish() })
+        .superRefine((value, ctx) => {
+          if ((typeof value.content === 'string') === Array.isArray(value.edits))
+            ctx.addIssue({ code: 'custom', message: 'Supply either content or edits, never both.' });
+          if (value.edits && value.edits.reduce((total, edit) => total + Buffer.byteLength(edit.old_text) + Buffer.byteLength(edit.new_text), 0) > 128 * 1024)
+            ctx.addIssue({ code: 'custom', path: ['edits'], message: 'Keep all edit snippets within 128 KiB.' });
+        })
+      : z.strictObject({ path: z.string().min(1).max(1024), content: fileText });
+    register('task_file_write', binding.process_contract === 'workforce/v1'
+      ? 'Create new files with content. For small edits to an existing file, send edits:[{old_text,new_text}] instead of reconstructing its full content. Each old_text must match once; all edits commit atomically. Read first; backend retains versions, scopes and recovery. A saved/replayed response is final: continue to different work or save your assignment result, do not send it again.'
+      : 'Write complete UTF-8 content within this stage scope. Read existing files first; the backend binds their versions and records recoverable operations.',
+      writeSchema, false, args => {
         publicTarget(root, args.path); assertWritable(binding, args.path);
         const writePolicy = binding.process_contract === 'workforce/v1' ? 'workforce-product' as const : undefined;
         if (writePolicy) {
           try { assertWorkspaceEditablePath(args.path, writePolicy); }
           catch (error) { if (error instanceof WorkspacePathPolicyError) throw new ControlledToolError('SCOPE_DENIED', error.message); throw error; }
         }
-        try { workspaceContentBytes(args.content); }
+        try { if (typeof args.content === 'string') workspaceContentBytes(args.content); }
         catch { throw new ControlledToolError('INVALID_FILE', 'Write valid UTF-8 text up to 128 KiB without binary control characters.'); }
         return locked(state => withOperationLock(root, workspacePathLockKey(args.path), () => {
           activeAtCommit();
           let current: Buffer | null;
           try { current = workspaceFileBytes(root, args.path, writePolicy); }
           catch { throw new ControlledToolError('INVALID_FILE', 'This target is not an ordinary editable UTF-8 project file.'); }
-          const currentHash = current === null ? null : hash(current), nextHash = hash(args.content);
-          const priorWrite = state.writes.findLast(item => item.path === args.path && item.sha256 === nextHash);
-          if (priorWrite && currentHash === nextHash) {
-            completeWrite(priorWrite); state.reads[key(args.path)] = nextHash; saveState(state);
+          const currentHash = current === null ? null : hash(current);
+          const replayResult = (prior: ToolState['writes'][number]) => {
+            completeWrite(prior); state.reads[key(args.path)] = prior.sha256; saveState(state);
             return { path: args.path, saved: true, replayed: true,
-              ...(binding.process_contract === 'workforce/v1' ? { sha256: nextHash, previous_sha256: priorWrite.previous_hash } : {}) };
+              ...(binding.process_contract === 'workforce/v1' ? { sha256: prior.sha256, previous_sha256: prior.previous_hash,
+                next_action: 'This edit is already saved. Continue to another assigned output, or save assignment_report when your work is ready. Do not repeat this write.' } : {}) };
+          };
+          if (Array.isArray(args.edits) && current !== null) {
+            // Recover a lost response using the immutable prior/next bytes. The
+            // same insertion must not run twice when its old_text remains in new_text.
+            for (const prior of state.writes.toReversed()) {
+              if (prior.path !== args.path || prior.sha256 !== currentHash || prior.previous_hash === null) continue;
+              try { controlledFileWriteProof(root, binding.invocation_id!, bindingHash, prior, false); }
+              catch { throw new ControlledToolError('STATE_UNCERTAIN', 'The immutable file operation history is missing or changed; runtime reconciliation is required.'); }
+              const before = readFileSync(safePath(root, `${base}/writes/${prior.operation}/previous.utf8`), 'utf8');
+              try { if (hash(applyControlledFileEdits(before, args.edits)) === currentHash) return replayResult(prior); }
+              catch (error) { if (!(error instanceof ControlledFileEditError)) throw error; }
+            }
           }
+          let content: string = args.content;
+          if (Array.isArray(args.edits)) {
+            const observed = state.reads[key(args.path)];
+            if (observed === undefined) throw new ControlledToolError('READ_REQUIRED', 'Read the existing file before editing it; its current content will be preserved.');
+            if (observed !== currentHash) throw new ControlledToolError('INPUT_CHANGED', 'This file changed after the last read. Read it again and preserve the new edits.');
+            if (current === null) throw new ControlledToolError('INVALID_FILE', 'Use content to create a missing file. Edits require an existing file.');
+            try { content = applyControlledFileEdits(current.toString('utf8'), args.edits); }
+            catch (error) { if (error instanceof ControlledFileEditError) throw new ControlledToolError('INVALID_PAYLOAD', error.message); throw error; }
+            try { workspaceContentBytes(content); }
+            catch { throw new ControlledToolError('INVALID_FILE', 'The edited result must be valid UTF-8 text up to 128 KiB without binary control characters.'); }
+          }
+          const nextHash = hash(content);
+          const priorWrite = state.writes.findLast(item => item.path === args.path && item.sha256 === nextHash);
+          if (priorWrite && currentHash === nextHash) return replayResult(priorWrite);
           const observed = state.reads[key(args.path)];
           if (observed === undefined && current !== null)
             throw new ControlledToolError('READ_REQUIRED', 'Read the existing file before editing it; its current content will be preserved.');
           if ((observed ?? null) !== currentHash)
             throw new ControlledToolError('INPUT_CHANGED', 'This file changed after the last read. Read it again and preserve the new edits.');
+          if (binding.process_contract === 'workforce/v1' && currentHash === nextHash)
+            return { path: args.path, saved: true, replayed: true, unchanged: true, sha256: nextHash, previous_sha256: currentHash,
+              next_action: 'The file already contains these bytes. Continue to another assigned output, or save assignment_report when your work is ready. Do not repeat this write.' };
           const operation = hash(JSON.stringify({ binding_hash: bindingHash, path: args.path, previous_hash: currentHash, sha256: nextHash }));
           const folder = `${base}/writes/${operation}`;
           const intent = { schema_version: 1, operation, binding_hash: bindingHash, path: args.path,
             previous_hash: currentHash, sha256: nextHash };
           for (const [path, bytes] of [[`${folder}/intent.json`, Buffer.from(`${JSON.stringify(intent, null, 2)}\n`)],
-            [`${folder}/next.utf8`, Buffer.from(args.content)],
+            [`${folder}/next.utf8`, Buffer.from(content)],
             ...(current === null ? [] : [[`${folder}/previous.utf8`, current] as const])] as const) {
             const target = safePath(root, path);
             if (existsSync(target) && !readFileSync(target).equals(bytes))
@@ -597,7 +642,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
           }
           let entry = state.writes.find(item => item.operation === operation);
           if (!entry) { entry = { operation, path: args.path, previous_hash: currentHash, sha256: nextHash, completed: false }; state.writes.push(entry); saveState(state); }
-          try { replaceWorkspaceFile(root, { path: args.path, content: args.content, expected_hash: currentHash, policy: writePolicy,
+          try { replaceWorkspaceFile(root, { path: args.path, content, expected_hash: currentHash, policy: writePolicy,
             authorize: () => { activeAtCommit(); assertWritable(binding, args.path); } }); }
           catch (error) {
             if (error instanceof ControlledToolError || error instanceof ControlledEvidenceScanTimeout) throw error;
@@ -609,6 +654,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
             ...(binding.process_contract === 'workforce/v1' ? { sha256: nextHash, previous_sha256: currentHash } : {}) };
         }));
       });
+  }
   if (binding.stage === 'planning') {
     const schema: z.ZodObject<z.ZodRawShape> = binding.process_contract === 'workforce/v1'
       ? binding.procedure_registration_required ? workforcePlanSchema.required({ procedure_candidate: true }) : workforcePlanSchema.omit({ procedure_candidate: true })

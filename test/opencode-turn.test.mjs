@@ -152,3 +152,76 @@ test('fresh failed-check evidence locators never refund identical protocol error
   assert.equal(failures[1].halt, true, 'The second unchanged input/error stops the session despite a new evidence filename.');
   assert.deepEqual(failures.slice(2), [undefined, undefined, undefined]);
 });
+
+function compactedTurn({ foreign = false, summaryComplete = true, continuationMetadata = true, continuationSynthetic = true } = {}) {
+  const anchor = assistant({ id: 'before-compaction', finish: 'tool-calls' });
+  const compaction = { info: { role: 'user', id: 'owned-compaction', sessionID: identity.sessionID,
+    model: { providerID: identity.providerID, modelID: identity.modelID } },
+    parts: [{ id: 'compact', messageID: 'owned-compaction', sessionID: identity.sessionID, type: 'compaction', auto: true }] };
+  const summary = assistant({ id: 'compact-summary', parentID: 'owned-compaction', summary: true,
+    time: { created: 2, ...(summaryComplete ? { completed: 3 } : {}) } });
+  const continuation = { info: { role: 'user', id: 'engine-continuation', sessionID: identity.sessionID,
+    model: { providerID: identity.providerID, modelID: identity.modelID } },
+    parts: [{ id: 'continue', messageID: 'engine-continuation', sessionID: identity.sessionID, type: 'text',
+      synthetic: continuationSynthetic, metadata: continuationMetadata ? { compaction_continue: true } : {},
+      text: 'Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed.' }] };
+  const other = { info: { role: 'user', id: 'unrelated-user', sessionID: identity.sessionID }, parts: [] };
+  return [user, anchor, ...(foreign ? [other] : []), compaction, summary, continuation,
+    assistant({ id: 'after-compaction', parentID: 'engine-continuation', time: { created: 4, completed: 5 } })];
+}
+
+test('actual pinned automatic compaction continuation remains the same owned turn instead of a false provider stall', { timeout: 3000 }, async t => {
+  const { observer, state } = fixture(t, { messages: () => compactedTurn() }, { model_idle_ms: 10000 });
+  const result = await observer.wait();
+  assert.equal(result.info.id, 'after-compaction'); assert.equal(result.info.parentID, 'engine-continuation');
+  assert.equal(state.aborts, 0); assert.equal(state.submissions, 0);
+});
+
+for (const scenario of [
+  ['an intervening real user', { foreign: true }],
+  ['an unfinished summary', { summaryComplete: false }],
+  ['a continuation missing engine metadata', { continuationMetadata: false }],
+  ['a nonsynthetic continuation', { continuationSynthetic: false }],
+]) test(`compaction cannot adopt ${scenario[0]} as the owned completion`, { timeout: 3000 }, async t => {
+  const { observer, state } = fixture(t, { messages: () => compactedTurn(scenario[1]) }, { model_idle_ms: 10000 });
+  await assert.rejects(observer.wait(), error => error.code === 'OPENCODE_PROVIDER_STALLED');
+  assert.equal(observer.ownsParent('engine-continuation'), false); assert.equal(state.submissions, 0);
+});
+
+test('a completed compaction summary alone cannot complete professional work', { timeout: 3000 }, async t => {
+  const { observer } = fixture(t, { messages: () => compactedTurn().slice(0, 4) }, { model_idle_ms: 10000 });
+  await assert.rejects(observer.wait(), error => error.code === 'OPENCODE_PROVIDER_STALLED');
+});
+
+test('a foreign model after valid compaction is still an identity error', { timeout: 3000 }, async t => {
+  const rows = compactedTurn(); rows.at(-1).info.modelID = 'another-model';
+  const { observer } = fixture(t, { messages: () => rows }, { model_idle_ms: 10000 });
+  await assert.rejects(observer.wait(), error => error.code === 'OPENCODE_TURN_IDENTITY');
+});
+
+for (const changed of ['sessionID', 'messageID']) test(`compaction part with foreign ${changed} cannot authorize a descendant`, { timeout: 3000 }, async t => {
+  const rows = compactedTurn(); rows[2].parts[0][changed] = 'foreign';
+  const { observer } = fixture(t, { messages: () => rows }, { model_idle_ms: 10000 });
+  await assert.rejects(observer.wait(), error => error.code === 'OPENCODE_PROVIDER_STALLED');
+});
+
+for (const changed of ['sessionID', 'messageID']) test(`synthetic continuation part with foreign ${changed} cannot authorize a descendant`, { timeout: 3000 }, async t => {
+  const rows = compactedTurn(); rows[4].parts[0][changed] = 'foreign';
+  const { observer } = fixture(t, { messages: () => rows }, { model_idle_ms: 10000 });
+  await assert.rejects(observer.wait(), error => error.code === 'OPENCODE_PROVIDER_STALLED');
+});
+
+test('successive automatic compactions keep an explicit owned chain and original submission identity', { timeout: 3000 }, async t => {
+  const rows = compactedTurn(); rows.at(-1).info.finish = 'tool-calls';
+  const next = structuredClone(compactedTurn().slice(2));
+  next[0].info.id = 'second-compaction'; next[0].parts[0].messageID = 'second-compaction';
+  next[1].info.id = 'second-summary'; next[1].info.parentID = 'second-compaction';
+  next[2].info.id = 'second-continuation'; next[2].parts[0].messageID = 'second-continuation';
+  next[3].info.id = 'final-after-two-compactions'; next[3].info.parentID = 'second-continuation'; next[3].info.time.created = 6;
+  const { observer, state } = fixture(t, { messages: () => [...rows, ...next] });
+  const result = await observer.wait();
+  assert.equal(result.info.id, 'final-after-two-compactions');
+  assert.equal(observer.identity.messageID, identity.messageID);
+  assert.equal(observer.ownsParent('engine-continuation'), true); assert.equal(observer.ownsParent('second-continuation'), true);
+  assert.equal(state.aborts, 0); assert.equal(state.submissions, 0);
+});
