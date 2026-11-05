@@ -1,6 +1,6 @@
 # Kế hoạch thiết kế lại UI NeoMind (editor web + extension Nimbalyst)
 
-Ngày: 05/11/2026. Trạng thái: **đã chốt, chưa sửa code.** Bắt đầu GĐ 0 khi session khác đang sửa `ui/` (worktree `loud-cliff`, `loud-dawn`, `narrow-moon`, `wise-summit`) đã merge.
+Ngày: 05/11/2026. Trạng thái: **đã chốt; GĐ 0 xong ngày 05/11 (kết quả ở mục 7), chưa sửa code sản phẩm.** Bắt đầu GĐ 1 khi session khác đang sửa `ui/` (worktree `loud-cliff`, `loud-dawn`, `narrow-moon`, `wise-summit`) đã merge.
 
 Đã chốt với người dùng:
 
@@ -140,7 +140,7 @@ Mockup v1 (`00`–`09`) giữ lại làm lịch sử; phần ĐỀ XUẤT cần 
 
 Mỗi giai đoạn: người dùng duyệt mockup v2 của giai đoạn đó (vẽ ghi chú trực tiếp lên mockup) rồi mới code; xong thì chụp lại ảnh, `npm test`, `npm run build:ui`, `cd extensions/nimbalyst && npm run build`, thử trong Nimbalyst cả theme sáng và tối.
 
-### GĐ 0. Spike kỹ thuật (nửa ngày, nhánh thử, bỏ đi sau)
+### GĐ 0. Spike kỹ thuật (xong 05/11/2026, xem mục 7)
 
 - Cài Tailwind v4 + một `Dialog`, một `Select`, một `Tooltip` shadcn vào panel; kiểm portal, `@property`, bundle.
 - Đọc biến theme của Nimbalyst, quyết định cách ánh xạ.
@@ -247,9 +247,21 @@ Không đưa nội dung skill vào policy của NeoMind (giống quy tắc với
 
 Mỗi giai đoạn còn phải qua: `npm test`, `npm run build:ui`, build extension, ảnh chụp trước/sau trong `docs/design/redesign/`.
 
-## 7. Quyết định (điền sau GĐ 0)
+## 7. Kết quả GĐ 0 (05/11/2026)
 
-- Biến theme Nimbalyst: …
-- Portal trong shadow root: …
-- `@property`: …
-- Font/màu sau khi kiểm bằng UI UX Pro Max: …
+Mã thử ở branch local `spike/ui-shadcn` (worktree `test_workflow_worktrees/ui-spike`): `ui/src/spike/` (CSS, component kiểu shadcn, hàm mount trong shadow root, màn tự kiểm tra) và extension thử `extensions/nimbalyst-spike` (id `local.neomind-ui-spike`, đã gỡ khỏi Nimbalyst). Kiểm ở hai nơi: trang web mount trong shadow root (Edge headless + CDP) và panel Nimbalyst thật (người dùng chụp màn hình, theme "midnight-teal" tối và theme sáng).
+
+| Rủi ro | Kết quả | Cách làm khi code |
+| --- | --- | --- |
+| Radix Portal ra ngoài shadow root | Dialog, Select, Tooltip đều nằm trong shadow root, đủ style ở hai theme (Dialog kiểm cả trong Nimbalyst) | Context `PortalContainer`; mọi component shadcn có `Portal` truyền `container`. Vùng Portal là con của lớp bọc theme |
+| **Mới:** chữ trong hộp thoại tối trên nền tối | Vùng Portal nằm cạnh app nên không thừa hưởng màu chữ, font | Đặt `bg-background text-foreground font-sans` trên lớp bọc theme (chứa cả app và vùng Portal), không đặt trên gốc app |
+| `@property` của Tailwind không có hiệu lực trong shadow root | Xác nhận: mất `shadow-*`, `ring-*` | Khi panel mount, chép 40 rule `@property` (và `@font-face`) vào `document.adoptedStyleSheets` một lần; chỉ đăng ký biến/font, không đổi giao diện Nimbalyst |
+| **Mới:** Tailwind không sinh class khi build panel | Build chạy từ `extensions/nimbalyst/`, ngoài `ui/`, nên Tailwind không quét thấy mã: panel gần như không có style | Khai báo `@source` ngay trong file CSS theme (đường dẫn tương đối tới `ui/src`) |
+| Font đóng gói không hiện trong shadow root | Xác nhận: `@font-face` trong shadow root bị bỏ qua | Cùng cách đưa ra document như `@property`. Panel: font nhúng base64 trong bundle (5 file woff2); web: file asset riêng |
+| React của Nimbalyst | Nimbalyst cấp React **19.2.7** (repo ghim 19.3.1). Radix chạy được; bundle không có `require()`, React vẫn external | Không dùng API chỉ có từ React 19.3 trong `ui/src`; ghi vào `nimbalyst-extension.md` |
+| Theo theme Nimbalyst | `<html class="dark-theme" data-theme="<id theme>">` (theme tùy biến có id riêng, vd `com.local.midnight-teal:local-midnight-teal`); `:root` có 73 biến CSS. Đổi theme trong Settings thì panel đổi theo ngay | Đoán theme: class `dark-theme`/`light-theme` → độ sáng nền `body`. Theo dõi bằng `MutationObserver` trên `<html>`, `<body>` và `<head>`, **có debounce** (một lần đổi theme bắn 20–28 thay đổi). Chỉ theo sáng/tối, dùng token của NeoMind; không phụ thuộc tên biến của Nimbalyst (chưa có tài liệu) |
+| Kích thước bundle | Panel thử 603 KB (chưa minify, gồm Radix, Tailwind CSS, font) so với panel NeoMind hiện tại 668 KB | Chấp nhận |
+
+Chưa làm: kiểm cặp font/màu bằng UI UX Pro Max (skill chưa cài). Chuyển sang đầu GĐ 1, cùng lúc cài các skill ở mục 5.
+
+GĐ 1 dùng lại từ spike: `PortalContainer` và cách truyền `container`, hàm đưa `@property`/`@font-face` ra document, `@source`, lớp bọc theme chứa vùng Portal, hàm đoán và theo dõi theme của host.
