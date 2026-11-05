@@ -72,11 +72,14 @@ Thay đường dẫn ví dụ bằng project Git thực tế:
 ```bash
 npm run neomind -- run preview /absolute/path/to/project dev
 npm run neomind -- run start /absolute/path/to/project dev "Mô tả task"
+npm run neomind -- run start /absolute/path/to/project dev --task-file task.md
 npm run neomind -- run list /absolute/path/to/project
 npm run neomind -- run show /absolute/path/to/project RUN_ID
+npm run neomind -- run plan /absolute/path/to/project RUN_ID [--out plan.md]
 npm run neomind -- run approve /absolute/path/to/project RUN_ID --plan-hash PLAN_HASH
 npm run neomind -- run resume /absolute/path/to/project RUN_ID
 npm run neomind -- run changes /absolute/path/to/project RUN_ID --plan-hash PLAN_HASH "Yêu cầu sửa kế hoạch"
+npm run neomind -- run changes /absolute/path/to/project RUN_ID --plan-hash PLAN_HASH --feedback-file feedback.md
 npm run neomind -- run retry-git /absolute/path/to/project RUN_ID
 npm run neomind -- run extend-time /absolute/path/to/project RUN_ID 600
 npm run neomind -- run start /absolute/path/to/project dev "Mô tả task" --import-dirty DIRTY_HASH
@@ -89,7 +92,11 @@ npm run neomind -- run clean /absolute/path/to/project --all [--force]
 
 `DIRTY_HASH` là `dirtyImport.baselineHash` trong `run preview`: các thay đổi chưa commit được chép vào worktree của run làm input, checkout của bạn không bị sửa, và commit chỉ chứa phần do run làm. Khi thay đổi của run không tách được khỏi thay đổi có sẵn, run dừng chờ `include-imported` (commit cả hai) hoặc bạn tự xử lý.
 
-`PLAN_HASH` lấy từ `proposedPlanHash` của `run show`. Lệnh sai cú pháp thoát với mã 2 và không mở state. Chỉ một process được sở hữu scheduler của mỗi run; không điều khiển đồng thời run đang được editor sở hữu từ CLI.
+**Task và góp ý nhiều dòng.** `--task-file` (cho `run start`) và `--feedback-file` (cho `run changes`) đọc nội dung từ file UTF-8 thay cho đối số trong ngoặc kép; nên dùng khi nội dung có nhiều dòng, vì `cmd` của Windows chỉ giữ dòng đầu của đối số. Không dùng cùng lúc file và đối số. File rỗng, hoặc góp ý dài quá 10000 ký tự, bị coi là sai cú pháp.
+
+**Đọc plan.** `run plan` in plan mới nhất (đang chờ duyệt hoặc đã duyệt) dạng Markdown: planId, phiên bản, run, phase, trạng thái duyệt, `planHash`, rồi Goal, Approach, Acceptance criteria, Checks, Risks, Scope. `--out` ghi ra file thay vì in ra màn hình. Run chưa có plan thì thoát mã 1.
+
+`PLAN_HASH` lấy từ `proposedPlanHash` của `run show` (hoặc dòng `Plan hash` của `run plan`). Lệnh sai cú pháp thoát với mã 2 và không mở state. Chỉ một process được sở hữu scheduler của mỗi run; không điều khiển đồng thời run đang được editor sở hữu từ CLI.
 
 Ctrl+C/SIGTERM (Windows: Ctrl+C, Ctrl+Break, đóng console) với `run …` hoặc `editor` sẽ tạm dừng các run mà process đó sở hữu và chỉ thoát sau khi xác nhận worker đã dừng; worker chưa xác nhận làm workspace bị quarantine. Nhấn lần nữa để thoát ngay; khi `run resume`, worker còn sót được dừng và đối chiếu trước khi chạy tiếp.
 

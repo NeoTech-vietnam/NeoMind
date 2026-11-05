@@ -6,7 +6,8 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseRunCommand } from '../src/cli/run-command.js';
+import { parseRunCommand, readRunCommandInput } from '../src/cli/run-command.js';
+import { renderPlanMarkdown } from '../src/domain/plan-markdown.js';
 import { installShutdown } from '../src/cli/shutdown.js';
 import { RunManager } from '../src/runtime/run-manager.js';
 
@@ -27,6 +28,58 @@ test('run commands are fully validated before any state is opened', () => {
   for (const invalid of [['run'], ['run', 'list', 'p', 'extra'], ['run', 'changes', 'p', 'r', '--plan-hash', 'short', 'x'], ['run', 'changes', 'p', 'r', '--plan-hash', hash, ' '],
     ['run', 'extend-time', 'p', 'r', '0'], ['run', 'extend-time', 'p', 'r', '86401'], ['run', 'extend-time', 'p', 'r', '1.5'], ['run', 'retry-git', 'p', 'r', 'x'], ['run', 'start', 'p', 'dev'], ['run', 'unknown', 'p', 'r']])
     assert.equal(parseRunCommand(invalid), undefined, invalid.join(' '));
+});
+
+test('task and feedback come from exactly one source, inline or file', () => {
+  assert.deepEqual(parseRunCommand(['run', 'start', 'p', 'dev', '--task-file', 'task.md', '--workspace', 'current']), { kind: 'start', project: 'p', flowId: 'dev', taskFile: 'task.md', workspaceMode: 'current' });
+  assert.deepEqual(parseRunCommand(['run', 'start', 'p', 'dev', '--import-dirty', hash, '--task-file', 'task.md']), { kind: 'start', project: 'p', flowId: 'dev', taskFile: 'task.md', importDirty: hash });
+  assert.deepEqual(parseRunCommand(['run', 'start', 'p', 'dev', 'Sửa lỗi', '--workspace', 'shared']), { kind: 'start', project: 'p', flowId: 'dev', task: 'Sửa lỗi', workspaceMode: 'shared' });
+  assert.deepEqual(parseRunCommand(['run', 'changes', 'p', 'r', '--plan-hash', hash, '--feedback-file', 'f.md']), { kind: 'changes', project: 'p', runId: 'r', planHash: hash, feedbackFile: 'f.md' });
+  assert.deepEqual(parseRunCommand(['run', 'plan', 'p', 'r']), { kind: 'plan', project: 'p', runId: 'r' });
+  assert.deepEqual(parseRunCommand(['run', 'plan', 'p', 'r', '--out', 'plan.md']), { kind: 'plan', project: 'p', runId: 'r', out: 'plan.md' });
+  for (const invalid of [['run', 'start', 'p', 'dev', 'task', '--task-file', 'task.md'], ['run', 'start', 'p', 'dev', '--task-file', 'a.md', '--task-file', 'b.md'],
+    ['run', 'start', 'p', 'dev', '--task-file'], ['run', 'start', 'p', 'dev', '--task-file', ' '], ['run', 'start', 'p', 'dev', '--workspace', 'current'],
+    ['run', 'preview', 'p', 'dev', '--task-file', 'task.md'], ['run', 'changes', 'p', 'r', '--plan-hash', hash, 'x', '--feedback-file', 'f.md'],
+    ['run', 'changes', 'p', 'r', '--plan-hash', hash, '--feedback-file'], ['run', 'changes', 'p', 'r', '--plan-hash', hash, 'x'.repeat(10001)],
+    ['run', 'plan', 'p', 'r', '--out'], ['run', 'plan', 'p', 'r', 'extra']])
+    assert.equal(parseRunCommand(invalid), undefined, invalid.join(' ').slice(0, 80));
+});
+
+test('a multi-line task file arrives intact; empty or oversized files are usage errors', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'neomind-cli-input-'));
+  const task = 'Sửa hàm parse:\r\n- giữ dòng hai\n\n- và dòng “ba”\n';
+  await writeFile(path.join(dir, 'task.md'), '﻿' + task, 'utf8');
+  const start = parseRunCommand(['run', 'start', 'p', 'dev', '--task-file', path.join(dir, 'task.md')])!;
+  assert.deepEqual(await readRunCommandInput(start), { kind: 'start', project: 'p', flowId: 'dev', task });
+  await writeFile(path.join(dir, 'feedback.md'), 'Dòng một\nDòng hai\n', 'utf8');
+  const changes = parseRunCommand(['run', 'changes', 'p', 'r', '--plan-hash', hash, '--feedback-file', path.join(dir, 'feedback.md')])!;
+  assert.deepEqual(await readRunCommandInput(changes), { kind: 'changes', project: 'p', runId: 'r', planHash: hash, feedback: 'Dòng một\nDòng hai\n' });
+  await writeFile(path.join(dir, 'empty.md'), ' \n\n', 'utf8'); await writeFile(path.join(dir, 'long.md'), 'x'.repeat(10001), 'utf8');
+  assert.equal(await readRunCommandInput(parseRunCommand(['run', 'start', 'p', 'dev', '--task-file', path.join(dir, 'empty.md')])!), undefined);
+  assert.equal(await readRunCommandInput(parseRunCommand(['run', 'changes', 'p', 'r', '--plan-hash', hash, '--feedback-file', path.join(dir, 'long.md')])!), undefined);
+  const inline = parseRunCommand(['run', 'show', 'p', 'r'])!;
+  assert.equal(await readRunCommandInput(inline), inline);
+});
+
+test('a task file that cannot be used exits with usage and creates no runtime state', async () => {
+  const project = await repository(), state = await mkdtemp(path.join(tmpdir(), 'neomind-cli-state-'));
+  const empty = path.join(state, 'empty.md'); await writeFile(empty, '\n', 'utf8');
+  for (const args of [['dev', 'task', '--task-file', empty], ['dev', '--task-file', empty], ['dev', '--task-file', path.join(state, 'missing.md')]]) {
+    const result = spawnSync(process.execPath, [cli, 'run', 'start', project, ...args], { encoding: 'utf8', env: { ...process.env, XDG_STATE_HOME: state } });
+    assert.equal(result.status, 2, args.join(' ')); assert.equal(existsSync(path.join(state, 'neomind')), false);
+  }
+});
+
+test('plan markdown shows identity, hash and every plan section', () => {
+  const plan = { planId: 'plan-1', version: 2, goal: 'Thêm --task-file', approach: 'Đọc file UTF-8.\nGiữ giới hạn.', acceptanceCriteria: ['Task nhiều dòng\nnguyên vẹn'], checks: ['npm test'], riskChanges: [], scope: ['src/cli/run-command.ts', 'README.md'] };
+  const markdown = renderPlanMarkdown(plan, { runId: 'run-1', phase: 'awaiting_approval', planHash: hash, approved: false });
+  assert.match(markdown, /^# Plan plan-1 \(v2\)\n/);
+  for (const text of ['- Run: `run-1`', '- Phase: awaiting_approval', '- Status: awaiting approval', `- Plan hash: \`${hash}\``, '## Goal\n\nThêm --task-file', '## Approach\n\nĐọc file UTF-8.\nGiữ giới hạn.',
+    '## Acceptance criteria\n\n- Task nhiều dòng nguyên vẹn', '## Checks\n\n- npm test', '## Risks\n\n_None_', '## Scope\n\n- src/cli/run-command.ts\n- README.md'])
+    assert.ok(markdown.includes(text), text);
+  assert.doesNotMatch(markdown, /Work packets/);
+  const parallel = renderPlanMarkdown({ ...plan, workPackets: [{ nodeId: 'writer-a', goal: 'CLI', scope: ['src/cli/'] }] }, { runId: 'run-1', planHash: hash, approved: true });
+  assert.match(parallel, /- Status: approved/); assert.match(parallel, /## Work packets\n\n### writer-a\n\nCLI\n\n- src\/cli\//);
 });
 
 test('an invalid run command exits with usage and creates no runtime state', async () => {

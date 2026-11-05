@@ -1,7 +1,9 @@
-import { access, readFile } from 'node:fs/promises';
+import { access, readFile, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
 import { compileFlow } from '../domain/compiler.js';
+import { renderPlanMarkdown } from '../domain/plan-markdown.js';
+import { hashJson } from '../domain/resolve.js';
 import { flowJsonSchema, profileJsonSchema } from '../domain/schema.js';
 import { defaultProject, templates } from '../domain/templates.js';
 import { FlowLibrary } from '../storage/flow-library.js';
@@ -9,7 +11,7 @@ import { migrateProjectDir } from '../storage/project-dir.js';
 import { readProject } from '../runtime/project.js';
 import { ProfileLibrary } from '../storage/profile-library.js';
 import { installShutdown } from './shutdown.js';
-import { parseRunCommand, runUsage } from './run-command.js';
+import { parseRunCommand, readRunCommandInput, runUsage } from './run-command.js';
 
 async function executableAvailable(name: string): Promise<boolean> {
   // Windows has no execute bit; a command resolves through PATHEXT (codex.cmd, codex.exe, ...).
@@ -25,7 +27,9 @@ async function executableAvailable(name: string): Promise<boolean> {
 
 async function main(args: string[]): Promise<number> {
   if (args[0] === 'run') {
-    const command = parseRunCommand(args);
+    const parsed = parseRunCommand(args);
+    // Input files are read before any state opens, so an empty or oversized file is a usage error like any other.
+    const command = parsed && await readRunCommandInput(parsed);
     if (!command) { console.error(runUsage); return 2; }
     const { RunManager } = await import('../runtime/run-manager.js');
     const manager = await RunManager.open(await (await import('node:fs/promises')).realpath(command.project));
@@ -38,6 +42,16 @@ async function main(args: string[]): Promise<number> {
       switch (command.kind) {
         case 'list': console.log(JSON.stringify(await manager.list(), null, 2)); return 0;
         case 'show': console.log(JSON.stringify(await manager.get(command.runId), null, 2)); return 0;
+        case 'plan': {
+          const run = await manager.get(command.runId), proposal = run.plans.at(-1);
+          if (!proposal) { console.error(`${command.runId}: chưa có plan`); return 1; }
+          const planHash = hashJson(proposal.plan);
+          const markdown = renderPlanMarkdown(proposal.plan, { runId: command.runId, phase: run.runtimeState?.phase, planHash,
+            approved: run.approvals.some(item => item.approval.decision === 'approved' && item.approval.planHash === planHash) });
+          if (command.out) { await writeFile(command.out, markdown, 'utf8'); console.log(JSON.stringify({ written: path.resolve(command.out), planHash }, null, 2)); }
+          else process.stdout.write(markdown);
+          return 0;
+        }
         case 'preview': console.log(JSON.stringify(await manager.preview(command.flowId, undefined, {}, {}, command.workspaceMode), null, 2)); return 0;
         case 'start': {
           const preview = await manager.preview(command.flowId, undefined, {}, {}, command.workspaceMode);
