@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>NeoMind · Xem session v2</title>
+<style>
+  /* Page frame */
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 28px; background: #141414; color: #e8e8e8; font-family: 'Be Vietnam Pro', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; font-size: 13px; }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -.3px; }
+  .lede { color: #9a9a9a; margin: 0 0 22px; max-width: 860px; line-height: 1.55; }
+  .compare { display: grid; grid-template-columns: repeat(3, 340px); gap: 22px; align-items: start; }
+  .col-label { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #8a8a8a; margin-bottom: 8px; display: flex; gap: 8px; align-items: center; }
+  .col-label b { color: #e8e8e8; letter-spacing: 0; text-transform: none; font-size: 13px; }
+  .tag { font-size: 10px; padding: 1px 6px; border-radius: 4px; letter-spacing: .4px; }
+  .tag.old { background: #3d2222; color: #f08a80; }
+  .tag.new { background: #1e3326; color: #86c99a; }
+  .pin { display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; background: #e5484d; color: #fff; font: 700 10px/1 'Segoe UI', sans-serif; flex: none; box-shadow: 0 0 0 2px #141414; vertical-align: middle; }
+  .pin.abs { position: absolute; z-index: 3; }
+
+  /* ===== Current UI replica (from screenshot 05/11) ===== */
+  .old-drawer { position: relative; background: #262624; border: 1px solid #3b3a36; border-radius: 10px; overflow: hidden; height: 700px; font-family: 'Segoe UI Variable Text', 'Segoe UI', sans-serif; color: #f2efe8; }
+  .od-head { padding: 12px 14px 10px; border-bottom: 1px solid #312f2c; }
+  .od-head h3 { margin: 0; font-size: 17px; }
+  .od-head small { color: #a9a499; font-size: 12px; }
+  .od-turns { display: flex; gap: 6px; padding: 10px 14px 0; }
+  .od-turns span { border: 1px solid #3b3a36; border-radius: 999px; padding: 4px 11px; font-size: 12.5px; color: #d4d0c6; }
+  .od-turns span.on { background: #3a2822; border-color: #6b3f2e; color: #e8956f; }
+  .od-src { display: flex; gap: 8px; align-items: center; padding: 10px 14px 0; }
+  .od-seg { display: inline-flex; border: 1px solid #3b3a36; border-radius: 8px; padding: 2px; background: #2d2c29; }
+  .od-seg span { padding: 3px 7px; font-size: 11.5px; font-weight: 600; color: #a9a499; border-radius: 6px; white-space: nowrap; }
+  .od-seg span.on { background: #262624; color: #e8956f; box-shadow: 0 1px 3px #0000004d; }
+  .od-seg span.on2 { outline: 2px solid #c15f3c; outline-offset: 1px; color: #e8956f; background: #2d2c29; }
+  .od-src small { color: #85817a; font-size: 10.5px; }
+  .od-stats { padding: 10px 14px 0; font-family: Consolas, monospace; font-weight: 700; font-size: 12px; color: #d4d0c6; }
+  .od-filter { padding: 10px 14px 12px; border-bottom: 1px solid #312f2c; }
+  .od-tl { list-style: none; margin: 0; padding: 8px 0 0 14px; }
+  .od-tl li { display: flex; align-items: center; gap: 8px; height: 37px; font-size: 14px; white-space: nowrap; }
+  .od-ev { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 700; border: 1px solid #3b3a36; color: #a9a499; flex: none; font-family: Consolas, monospace; }
+  .od-ev.read { color: #8db4ea; border-color: #34507a; background: #1d2a3b; }
+  .od-ev.msg { color: #e8956f; border-color: #6b3f2e; background: #3a2822; }
+  .od-ev.ok { color: #86c99a; border-color: #2f5a3c; background: #1e3326; }
+  .od-tri { font-size: 9px; color: #a9a499; }
+  .od-tl code { font-family: Consolas, monospace; font-size: 12.5px; font-weight: 700; border: 1px solid #3b3a36; background: #1f1e1d; border-radius: 4px; padding: 1px 5px; }
+  .od-meta { color: #85817a; font-size: 12px; }
+  .od-time { margin-left: auto; color: #85817a; font-size: 12px; width: 14px; overflow: hidden; }
+  .od-tl li.end { color: #a9a499; font-size: 13px; }
+
+  /* ===== Proposed drawer: tokens per theme ===== */
+  .nd.dark { color-scheme: dark; --bg: #1e1e1e; --card: #252525; --muted-bg: #2b2b2b; --border: #353535; --fg: #ececec; --fg-2: #c8c8c8; --muted: #9b9b9b; --faint: #6f6f6f; --rail: #353535;
+    --ok: #4ade80; --ok-soft: #4ade801f; --run: #60a5fa; --run-soft: #60a5fa1f; --err: #f87171; --code-bg: #191919; --hover: #2c2c2c; --shadow: 0 1px 0 #0000; }
+  .nd.light { color-scheme: light; --bg: #ffffff; --card: #fafafa; --muted-bg: #f4f4f5; --border: #e4e4e7; --fg: #18181b; --fg-2: #3f3f46; --muted: #71717a; --faint: #a1a1aa; --rail: #e4e4e7;
+    --ok: #16a34a; --ok-soft: #16a34a14; --run: #2563eb; --run-soft: #2563eb14; --err: #dc2626; --code-bg: #f4f4f5; --hover: #f4f4f5; --shadow: 0 1px 2px #0000000d; }
+  .nd { position: relative; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; height: 700px; display: flex; flex-direction: column; font-family: 'Be Vietnam Pro', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; }
+  .nd svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  .mono { font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; font-size: 12px; }
+
+  .nd-head { padding: 14px 16px 0; }
+  .nd-row1 { display: flex; align-items: center; gap: 8px; }
+  .nd-title { white-space: nowrap; font-size: 15px; font-weight: 650; letter-spacing: -.2px; }
+  .badge { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
+  .badge.ok { background: var(--ok-soft); color: var(--ok); }
+  .badge.ok i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .icon-btn { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); border: 0; background: none; cursor: pointer; padding: 0; }
+  .icon-btn:hover { background: var(--hover); color: var(--fg); }
+  .spacer { flex: 1; }
+  .nd-meta { margin-top: 6px; color: var(--muted); font-size: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; }
+  .nd-meta .dot { color: var(--faint); }
+  .turn-btn { white-space: nowrap; margin-right: 2px; display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 4px 0 7px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: var(--fg-2); font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; }
+  .turn-btn svg { width: 12px; height: 12px; }
+  .menu { position: absolute; z-index: 4; top: 62px; left: 16px; width: 168px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px #00000040; display: none; }
+  .menu.open { display: block; }
+  .menu div { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-radius: 5px; font-size: 12px; color: var(--fg-2); cursor: pointer; }
+  .menu div:hover { background: var(--hover); }
+  .menu div small { color: var(--muted); font-size: 11px; }
+  .menu div.sel { color: var(--fg); font-weight: 600; }
+
+  .tabs { display: flex; gap: 14px; padding: 0 16px; margin-top: 12px; border-bottom: 1px solid var(--border); }
+  .tab { padding: 7px 0 8px; font-size: 12.5px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; display: flex; gap: 5px; align-items: baseline; user-select: none; }
+  .tab small { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .tab.on { color: var(--fg); font-weight: 600; border-color: var(--fg); }
+  .tab.on small { color: var(--muted); }
+  .tab.zero { opacity: .5; }
+
+  .tl { flex: 1; overflow: auto; padding: 12px 16px 6px; position: relative; }
+  .item { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; column-gap: 10px; position: relative; }
+  .item::before { content: ''; position: absolute; left: 9.5px; top: 22px; bottom: -4px; width: 1px; background: var(--rail); }
+  .item:last-child::before { display: none; }
+  .item .ic { width: 20px; height: 20px; display: grid; place-items: center; color: var(--muted); background: var(--bg); position: relative; z-index: 1; margin-top: 1px; }
+  .item .ic svg { width: 14px; height: 14px; }
+  .t { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; padding-top: 3px; text-align: right; min-width: 34px; }
+  .t:hover { color: var(--muted); }
+
+  /* Milestone: prompt / result */
+  .card { border: 1px solid var(--border); background: var(--card); border-radius: 8px; padding: 9px 11px 10px; margin-bottom: 12px; box-shadow: var(--shadow); }
+  .card-h { font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .card-h small { font-weight: 400; color: var(--muted); font-size: 11.5px; }
+  .preview { margin-top: 5px; color: var(--fg-2); font-size: 12px; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .more { margin-top: 6px; font-size: 11.5px; color: var(--muted); background: none; border: 0; padding: 0; cursor: pointer; font-family: inherit; }
+  .more:hover { color: var(--fg); text-decoration: underline; }
+  .fields { margin-top: 7px; display: grid; grid-template-columns: 72px 1fr; gap: 5px 8px; font-size: 12px; line-height: 1.5; }
+  .fields dt { color: var(--muted); }
+  .fields dd { margin: 0; color: var(--fg-2); }
+  .fields .mono { font-size: 11.5px; }
+
+  /* Action rows */
+  .act { font-size: 12.5px; color: var(--fg-2); padding: 2px 0 10px; line-height: 1.45; }
+  .act b { font-weight: 500; color: var(--fg); }
+  .act .sub { color: var(--muted); font-size: 11.5px; }
+  details.group > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 5px; }
+  details.group > summary::-webkit-details-marker { display: none; }
+  details.group > summary .chev { width: 13px; height: 13px; color: var(--faint); transition: transform .15s; }
+  details.group[open] > summary .chev { transform: rotate(90deg); }
+  details.group > summary:hover b { text-decoration: underline; text-decoration-color: var(--faint); }
+  .files { margin: 6px 0 0; padding: 0; list-style: none; border-left: 1px solid var(--border); padding-left: 10px; }
+  .files li { min-width: 0; display: flex; align-items: baseline; gap: 6px; padding: 2px 0; color: var(--fg-2); }
+  .files li .sub { margin-left: auto; }
+
+  .foot-sum { margin: 2px 0 0; padding: 9px 11px; border-radius: 8px; background: var(--muted-bg); color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+  .foot-sum b { color: var(--fg-2); font-weight: 600; }
+
+  /* Legend */
+  .legend { margin-top: 26px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 32px; max-width: 1064px; }
+  .legend div { display: flex; gap: 10px; line-height: 1.5; color: #c8c8c8; }
+  .legend em { font-style: normal; color: #8a8a8a; }
+  .legend h2 { grid-column: 1 / -1; font-size: 13px; margin: 0; color: #e8e8e8; }
+  .note { grid-column: 1 / -1; color: #8a8a8a; font-size: 12px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<h1>Xem session · làm lại</h1>
+<p class="lede">Cùng một lượt "Plan" (Claude Code, 11 sự kiện) như ảnh chụp ngày 05/11. Bên trái là UI hiện tại, số đỏ đánh dấu vấn đề (giải thích ở cuối trang). Hai cột phải là đề xuất, theo theme Nimbalyst tối và sáng. Bấm được: nút "Lượt 1/3", các tab, nhóm "Đọc 7 file", "Xem đầy đủ".</p>
+
+<div class="compare">
+  <!-- ===== Current ===== -->
+  <section>
+    <div class="col-label"><span class="tag old">HIỆN TẠI</span><b>ui/src/RunActivity.tsx</b></div>
+    <div class="old-drawer">
+      <div class="od-head"><h3>Plan <span class="pin">9</span></h3><small>Claude Code · Opus 5.5 · Lập kế hoạch · session 54921466</small></div>
+      <div class="od-turns"><span class="on">Lượt 1</span><span>Lượt 2</span><span>Lượt 3</span><span class="pin">2</span></div>
+      <div class="od-src"><span class="od-seg"><span class="on">NeoMind ghi</span><span>Session gốc của runner</span></span></div>
+      <div class="od-src" style="padding-top:4px"><small>Ghi trong lúc chạy, lưu cùng run.</small></div>
+      <div class="od-stats">⏱ 1 phút 20 giây &nbsp;36k tokens <span class="pin">3</span></div>
+      <div class="od-filter"><span class="od-seg"><span class="on2">Tất cả</span><span>Tin nhắn</span><span>Sửa file</span><span>Lệnh</span></span> <span class="pin">1</span></div>
+      <ul class="od-tl">
+        <li><span class="od-ev">›</span><span class="od-tri">▸</span>Prompt gửi agent <span class="pin">4</span><span class="od-time">16:02</span></li>
+        <li><span class="od-ev read">⌕</span><span class="od-tri">▸</span>Tìm <code>**/*</code><span class="od-time">16:02</span></li>
+        <li><span class="od-ev read">≡</span><span class="od-tri">▸</span>Đọc <code>README.md</code> <span class="od-meta">· đã rút gọn</span><span class="od-time">16:02</span></li>
+        <li><span class="od-ev read">≡</span><span class="od-tri">▸</span>Đọc <code>AGENTS.md</code> <span class="pin">5</span><span class="od-time">16:02</span></li>
+        <li><span class="od-ev read">≡</span><span class="od-tri">▸</span>Đọc <code>templates/notes.md</code> <span class="pin">6</span><span class="od-time">16:02</span></li>
+        <li><span class="od-ev read">≡</span><span class="od-tri">▸</span>Đọc <code>CLAUDE.md</code><span class="od-time">16:02</span></li>
+        <li><span class="od-ev read">≡</span><span class="od-tri">▸</span>Đọc <code>.gitignore</code><span class="od-time">16:03</span></li>
+        <li><span class="od-ev read">≡</span><span class="od-tri">▸</span>Đọc <code>progress.md</code><span class="od-time">16:03</span></li>
+        <li><span class="od-ev read">≡</span><span class="od-tri">▸</span>Đọc <code>neomind/project.json</code> <span class="pin">8</span><span class="od-time">16:03</span></li>
+        <li><span class="od-ev msg">{}</span><span class="od-tri">▸</span>Kết quả có cấu trúc<span class="od-time">16:03</span></li>
+        <li class="end"><span class="od-ev ok">✓</span>Lượt kết thúc <span class="od-meta">· 36k tokens</span> <span class="pin">7</span><span class="od-time">16:03</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ===== Proposed, dark ===== -->
+  <section>
+    <div class="col-label"><span class="tag new">ĐỀ XUẤT</span><b>Theme tối</b></div>
+    <aside class="nd dark" data-drawer>
+      <div class="nd-head">
+        <div class="nd-row1">
+          <span class="nd-title">Lập kế hoạch</span>
+          <span class="badge ok"><i></i>Xong</span>
+          <span class="spacer"></span>
+          <button class="icon-btn" title="Chỉ xem. Không tiếp tục session từ đây: agent sẽ chạy ngoài journal và ngoài giới hạn quyền của run."><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
+          <button class="icon-btn" title="Nguồn: NeoMind ghi · Session gốc của runner · Sao chép session id"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+          <button class="icon-btn" title="Đóng (Esc)"><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div class="nd-meta"><button class="turn-btn" data-turn>Lượt 1/3<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><span title="Claude Code · claude-opus-5-5 · session 54921466">Opus 5.5</span><span class="dot">·</span><span>1 phút 20 giây</span><span class="dot">·</span><span>36k tokens</span></div>
+        <div class="menu" data-menu>
+          <div class="sel">Lượt 1 <small>Xong · 1:20</small></div>
+          <div>Lượt 2 <small>Xong · 0:48</small></div>
+          <div>Lượt 3 <small>Xong · 0:31</small></div>
+        </div>
+      </div>
+      <div class="tabs" data-tabs>
+        <span class="tab on">Tất cả <small>11</small></span>
+        <span class="tab zero">Tin nhắn <small>0</small></span>
+        <span class="tab zero">Sửa file <small>0</small></span>
+        <span class="tab zero">Lệnh <small>0</small></span>
+      </div>
+      <div class="tl">
+        <div class="item">
+          <span class="ic"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+          <div class="card">
+            <div class="card-h">Yêu cầu gửi agent</div>
+            <div class="preview" data-clamp>Lập kế hoạch cho: “Thêm mẫu ghi chú tuần vào templates/ và liên kết từ README”. Chỉ đọc, không sửa file. Trả về mục tiêu, cách làm, file dự kiến sửa, tiêu chí hoàn thành và checks.</div>
+            <button class="more" data-more>Xem đầy đủ</button>
+          </div>
+          <span class="t" title="16:02:04">+0:00</span>
+        </div>
+        <div class="item">
+          <span class="ic"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
+          <div class="act">Tìm <span class="mono">**/*</span> <span class="sub">· 38 file</span></div>
+          <span class="t" title="16:02:09">+0:05</span>
+        </div>
+        <div class="item">
+          <span class="ic"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg></span>
+          <details class="group act" open>
+            <summary><b>Đọc 7 file</b><svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></summary>
+            <ul class="files">
+              <li><span class="mono">README.md</span><span class="sub">đã rút gọn</span></li>
+              <li><span class="mono">AGENTS.md</span></li>
+              <li><span class="mono">templates/notes.md</span></li>
+              <li><span class="mono">CLAUDE.md</span></li>
+              <li><span class="mono">.gitignore</span></li>
+              <li><span class="mono">progress.md</span></li>
+              <li><span class="mono">neomind/project.json</span></li>
+            </ul>
+          </details>
+          <span class="t" title="16:02:11">+0:07</span>
+        </div>
+        <div class="item">
+          <span class="ic"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>
+          <div class="card">
+            <div class="card-h">Kế hoạch trả về</div>
+            <dl class="fields">
+              <dt>Mục tiêu</dt><dd>Thêm mẫu ghi chú tuần, có liên kết từ README.</dd>
+              <dt>Sẽ sửa</dt><dd><span class="mono">templates/weekly.md</span>, <span class="mono">README.md</span></dd>
+              <dt>Checks</dt><dd><span class="mono">npm test</span></dd>
+            </dl>
+            <button class="more">Xem đầy đủ · 5 mục</button>
+          </div>
+          <span class="t" title="16:03:21">+1:17</span>
+        </div>
+        <div class="item">
+          <span class="ic" style="color:var(--ok)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg></span>
+          <div class="foot-sum"><b>Lượt kết thúc</b> sau 1 phút 20 giây · đọc 7 file, không sửa file, không chạy lệnh.</div>
+          <span class="t" title="16:03:24">+1:20</span>
+        </div>
+      </div>
+    </aside>
+  </section>
+
+  <!-- ===== Proposed, light ===== -->
+  <section>
+    <div class="col-label"><span class="tag new">ĐỀ XUẤT</span><b>Theme sáng</b></div>
+    <aside class="nd light" data-drawer>
+      <div class="nd-head">
+        <div class="nd-row1">
+          <span class="nd-title">Lập kế hoạch</span>
+          <span class="badge ok"><i></i>Xong</span>
+          <span class="spacer"></span>
+          <button class="icon-btn" title="Chỉ xem"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
+          <button class="icon-btn" title="Thêm"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+          <button class="icon-btn" title="Đóng (Esc)"><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div class="nd-meta"><button class="turn-btn" data-turn>Lượt 1/3<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button><span title="Claude Code · claude-opus-5-5 · session 54921466">Opus 5.5</span><span class="dot">·</span><span>1 phút 20 giây</span><span class="dot">·</span><span>36k tokens</span></div>
+        <div class="menu" data-menu>
+          <div class="sel">Lượt 1 <small>Xong · 1:20</small></div>
+          <div>Lượt 2 <small>Xong · 0:48</small></div>
+          <div>Lượt 3 <small>Xong · 0:31</small></div>
+        </div>
+      </div>
+      <div class="tabs" data-tabs>
+        <span class="tab on">Tất cả <small>11</small></span>
+        <span class="tab zero">Tin nhắn <small>0</small></span>
+        <span class="tab zero">Sửa file <small>0</small></span>
+        <span class="tab zero">Lệnh <small>0</small></span>
+      </div>
+      <div class="tl">
+        <div class="item">
+          <span class="ic"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+          <div class="card">
+            <div class="card-h">Yêu cầu gửi agent</div>
+            <div class="preview" data-clamp>Lập kế hoạch cho: “Thêm mẫu ghi chú tuần vào templates/ và liên kết từ README”. Chỉ đọc, không sửa file. Trả về mục tiêu, cách làm, file dự kiến sửa, tiêu chí hoàn thành và checks.</div>
+            <button class="more" data-more>Xem đầy đủ</button>
+          </div>
+          <span class="t" title="16:02:04">+0:00</span>
+        </div>
+        <div class="item">
+          <span class="ic"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
+          <div class="act">Tìm <span class="mono">**/*</span> <span class="sub">· 38 file</span></div>
+          <span class="t" title="16:02:09">+0:05</span>
+        </div>
+        <div class="item">
+          <span class="ic"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg></span>
+          <details class="group act">
+            <summary><b>Đọc 7 file</b><svg class="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></summary>
+            <ul class="files">
+              <li><span class="mono">README.md</span><span class="sub">đã rút gọn</span></li>
+              <li><span class="mono">AGENTS.md</span></li>
+              <li><span class="mono">templates/notes.md</span></li>
+              <li><span class="mono">CLAUDE.md</span></li>
+              <li><span class="mono">.gitignore</span></li>
+              <li><span class="mono">progress.md</span></li>
+              <li><span class="mono">neomind/project.json</span></li>
+            </ul>
+          </details>
+          <span class="t" title="16:02:11">+0:07</span>
+        </div>
+        <div class="item">
+          <span class="ic"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>
+          <div class="card">
+            <div class="card-h">Kế hoạch trả về</div>
+            <dl class="fields">
+              <dt>Mục tiêu</dt><dd>Thêm mẫu ghi chú tuần, có liên kết từ README.</dd>
+              <dt>Sẽ sửa</dt><dd><span class="mono">templates/weekly.md</span>, <span class="mono">README.md</span></dd>
+              <dt>Checks</dt><dd><span class="mono">npm test</span></dd>
+            </dl>
+            <button class="more">Xem đầy đủ · 5 mục</button>
+          </div>
+          <span class="t" title="16:03:21">+1:17</span>
+        </div>
+        <div class="item">
+          <span class="ic" style="color:var(--ok)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg></span>
+          <div class="foot-sum"><b>Lượt kết thúc</b> sau 1 phút 20 giây · đọc 7 file, không sửa file, không chạy lệnh.</div>
+          <span class="t" title="16:03:24">+1:20</span>
+        </div>
+      </div>
+    </aside>
+  </section>
+</div>
+
+<div class="legend">
+  <h2>Vấn đề ở bản hiện tại → cách bản đề xuất xử lý</h2>
+  <div><span class="pin">1</span><span>Bốn hàng điều khiển trước nội dung. <em>→ Còn header 2 dòng + một hàng tab.</em></span></div>
+  <div><span class="pin">2</span><span>Ba kiểu nút chọn khác nhau (viên cam, khối xám, viền cam tràn). <em>→ Lượt là menu nhỏ cạnh tiêu đề; nguồn ghi vào menu "…"; lọc là tab chữ có số đếm, tab bằng 0 làm mờ.</em></span></div>
+  <div><span class="pin">3</span><span>Thống kê bằng font code in đậm + emoji. <em>→ Dòng phụ chữ thường, màu nhạt.</em></span></div>
+  <div><span class="pin">4</span><span>Đầu vào/đầu ra nặng ngang "Đọc .gitignore". <em>→ Thành thẻ có xem trước; kế hoạch hiện theo trường thay vì JSON.</em></span></div>
+  <div><span class="pin">5</span><span>Ba thứ có viền trên mỗi dòng, icon Unicode khó hiểu. <em>→ Icon nét một màu, tên file mono không đóng khung, đường dọc nối timeline.</em></span></div>
+  <div><span class="pin">6</span><span>Màu icon trùng màu trạng thái. <em>→ Icon xám; chỉ "Xong" xanh lá, lỗi đỏ, đang chạy xanh dương.</em></span></div>
+  <div><span class="pin">7</span><span>Lề trái lệch, token lặp lại ở dòng cuối. <em>→ Lưới 3 cột cố định; dòng cuối tóm tắt cả lượt.</em></span></div>
+  <div><span class="pin">8</span><span>Bảy dòng "Đọc" liên tiếp, giờ bên phải bị cắt. <em>→ Gộp "Đọc 7 file"; giờ tương đối (+0:07) trong cột cố định, giờ đầy đủ khi rê chuột.</em></span></div>
+  <div><span class="pin">9</span><span>Tiêu đề là id thô "Plan", không thấy kết quả. <em>→ "Lập kế hoạch" + badge trạng thái của lượt.</em></span></div>
+  <p class="note">Dữ liệu mẫu (nội dung prompt, kế hoạch, số file tìm thấy, giờ) là minh họa; cấu trúc lấy từ ảnh chụp thật. Font đề xuất Be Vietnam Pro / JetBrains Mono; nếu máy chưa cài, mockup dùng Segoe UI / Cascadia Mono.</p>
+</div>
+
+<script>
+/* NEOMIND PROTOTYPE SCRIPT: turn menu, tabs, prompt expand. */
+document.querySelectorAll('[data-drawer]').forEach(drawer => {
+  const menu = drawer.querySelector('[data-menu]');
+  drawer.querySelector('[data-turn]').addEventListener('click', e => { e.stopPropagation(); menu.classList.toggle('open'); });
+  menu.querySelectorAll('div').forEach((row, i) => row.addEventListener('click', () => {
+    menu.querySelectorAll('div').forEach(r => r.classList.remove('sel')); row.classList.add('sel');
+    drawer.querySelector('[data-turn]').firstChild.textContent = `Lượt ${i + 1}/3`; menu.classList.remove('open');
+  }));
+  document.addEventListener('click', () => menu.classList.remove('open'));
+  drawer.querySelectorAll('[data-tabs] .tab').forEach(tab => tab.addEventListener('click', () => {
+    drawer.querySelectorAll('[data-tabs] .tab').forEach(t => t.classList.remove('on')); tab.classList.add('on');
+  }));
+  drawer.querySelectorAll('[data-more]').forEach(btn => btn.addEventListener('click', () => {
+    const p = btn.previousElementSibling, open = p.style.webkitLineClamp === 'unset';
+    p.style.webkitLineClamp = open ? '2' : 'unset'; btn.textContent = open ? 'Xem đầy đủ' : 'Thu gọn';
+  }));
+});
+</script>
+</body>
+</html>

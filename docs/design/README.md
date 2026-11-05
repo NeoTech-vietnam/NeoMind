@@ -1,5 +1,8 @@
 # NeoMind Flow Studio · Thiết kế UI
 
+> [!NOTE]
+> **Thiết kế lại v2 (đã chốt 05/11/2026):** xem [redesign-plan.md](redesign-plan.md) và các mockup `10`–`20` có hậu tố `-v2`. Mockup `00`–`09` và design system tông clay bên dưới là v1, giữ lại làm lịch sử; bảng quyết định cuối trang vẫn áp dụng cho các phần cần backend.
+
 Tài liệu này là chỗ thảo luận và sửa thiết kế UI. Mỗi màn có một mockup `.mockup.html` trong [mockups/](mockups/); mở trong Nimbalyst để xem, vẽ ghi chú trực tiếp lên mockup, hoặc sửa HTML. Phần chưa có trong code được đánh dấu **ĐỀ XUẤT** (viền cam nét đứt).
 
 Quy trình đề xuất:

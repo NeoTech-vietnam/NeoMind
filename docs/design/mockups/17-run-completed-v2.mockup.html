@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>NeoMind · Run hoàn tất v2</title>
+<style>
+/* ==== NEOMIND V2 SHARED STYLES ====
+ * Source of truth for every *-v2.mockup.html. Each mockup inlines this block verbatim (mockups must stay standalone),
+ * then adds screen-specific rules after it. The same tokens become ui/src/theme.css in phase 1 (shadcn naming).
+ *
+ * Direction: "bảng điều khiển ca trực" — neutral surfaces that follow the Nimbalyst theme, color only for status,
+ * one primary button per screen, clay only in the NeoMind logo.
+ */
+
+/* ---------- Tokens ---------- */
+.theme-dark { color-scheme: dark;
+  --background: #1e1e1e; --card: #252525; --popover: #2a2a2a; --muted: #323232; --accent: #303030; --input: #4a4a4a; --border: #363636;
+  --foreground: #ececec; --fg-2: #c8c8c8; --muted-foreground: #9b9b9b; --faint: #6f6f6f;
+  --primary: #ececec; --primary-foreground: #1a1a1a; --ring: #ececec66; --code-bg: #191919; --shadow: 0 1px 0 #0000; --overlay: #00000080;
+  --running: #60a5fa; --running-soft: #60a5fa1c; --attention: #fbbf24; --attention-soft: #fbbf241a;
+  --danger: #f87171; --danger-soft: #f871711a; --success: #4ade80; --success-soft: #4ade801a; --idle: #8b8b8b; --idle-soft: #8b8b8b1f;
+  --diff-add: #4ade8014; --diff-del: #f8717114; --brand: #d97757;
+  --danger-solid: #dc2626; }
+.theme-light { color-scheme: light;
+  --background: #ffffff; --card: #fafafa; --popover: #ffffff; --muted: #f4f4f5; --accent: #f0f0f1; --input: #e4e4e7; --border: #e4e4e7;
+  --foreground: #18181b; --fg-2: #3f3f46; --muted-foreground: #71717a; --faint: #a1a1aa;
+  --primary: #18181b; --primary-foreground: #fafafa; --ring: #18181b40; --code-bg: #f4f4f5; --shadow: 0 1px 2px #0000000d; --overlay: #0000004d;
+  --running: #2563eb; --running-soft: #2563eb12; --attention: #b45309; --attention-soft: #f59e0b1a;
+  --danger: #dc2626; --danger-soft: #dc262612; --success: #16a34a; --success-soft: #16a34a12; --idle: #71717a; --idle-soft: #71717a14;
+  --diff-add: #16a34a12; --diff-del: #dc262610; --brand: #c15f3c;
+  --danger-solid: #dc2626; }
+
+/* ---------- Base ---------- */
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--background); color: var(--foreground); font-family: 'Be Vietnam Pro', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+h1, h2, h3, h4, p { margin: 0; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+.mono, code, pre, kbd { font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; font-size: 12px; }
+.muted { color: var(--muted-foreground); }
+.faint { color: var(--faint); }
+.num { font-variant-numeric: tabular-nums; }
+svg.i { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+svg.i.sm { width: 13px; height: 13px; }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.row { display: flex; align-items: center; gap: 8px; }
+.spacer { flex: 1; }
+.stack > * + * { margin-top: 12px; }
+.sep { height: 1px; background: var(--border); border: 0; margin: 0; }
+
+/* Type scale: 24 / 20 / 16 / 14 / 13 / 12 / 11 */
+.h-page { font-size: 20px; font-weight: 650; letter-spacing: -.3px; }
+.h-section { font-size: 14px; font-weight: 600; }
+.h-label { font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--muted-foreground); }
+.sub { font-size: 12px; color: var(--muted-foreground); }
+
+/* ---------- App shell: web ---------- */
+.app { min-height: 100vh; display: grid; grid-template-columns: 216px minmax(0, 1fr); grid-template-rows: 48px minmax(0, 1fr); }
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+.logo { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 14px; letter-spacing: -.2px; }
+.logo-mark { width: 22px; height: 22px; border-radius: 6px; background: var(--brand); color: #fff; display: grid; place-items: center; font-size: 13px; }
+.project-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; color: var(--fg-2); }
+.project-chip .faint { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar { border-right: 1px solid var(--border); padding: 10px 8px; display: flex; flex-direction: column; gap: 1px; }
+.nav { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 9px; border-radius: 6px; color: var(--fg-2); font-size: 13px; text-decoration: none; border: 0; background: none; width: 100%; text-align: left; }
+.nav:hover { background: var(--accent); color: var(--foreground); }
+.nav.on { background: var(--accent); color: var(--foreground); font-weight: 600; }
+.nav svg.i { color: var(--muted-foreground); }
+.nav .count { margin-left: auto; font-size: 11px; color: var(--muted-foreground); }
+.nav .count.attn { color: var(--attention); background: var(--attention-soft); padding: 0 6px; border-radius: 999px; font-weight: 600; }
+.nav-group { margin-top: 14px; padding: 0 9px 4px; }
+.main { min-width: 0; padding: 20px 28px 32px; }
+.page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 18px; }
+.page-head .sub { margin-top: 3px; }
+
+/* ---------- App shell: Nimbalyst panel (no logo, no sidebar) ---------- */
+.panel-tabs { display: none; height: 40px; align-items: stretch; gap: 18px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+.panel-tab { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted-foreground); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.panel-tab.on { color: var(--foreground); font-weight: 600; border-color: var(--foreground); }
+.shell-panel .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: 40px minmax(0, 1fr); }
+.shell-panel .topbar, .shell-panel .sidebar { display: none; }
+.shell-panel .panel-tabs { display: flex; }
+.shell-panel .main { padding: 16px 20px 28px; }
+
+/* ---------- Buttons ---------- */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 6px; font-size: 12.5px; font-weight: 550;
+  border: 1px solid var(--border); background: var(--background); color: var(--foreground); white-space: nowrap; }
+.btn:hover { background: var(--accent); }
+.btn.primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+.btn.primary:hover { opacity: .9; }
+.btn.ghost { border-color: transparent; background: none; color: var(--fg-2); }
+.btn.ghost:hover { background: var(--accent); color: var(--foreground); }
+.btn.danger { color: var(--danger); }
+.btn.danger.solid { background: var(--danger-solid); border-color: var(--danger-solid); color: #fff; }
+.btn.lg { height: 36px; padding: 0 16px; font-size: 13px; }
+.btn.sm { height: 24px; padding: 0 8px; font-size: 11.5px; }
+.btn.icon { width: 30px; padding: 0; }
+.btn.icon.sm { width: 24px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; font-size: 10.5px; color: var(--muted-foreground); }
+
+/* ---------- Status badge + dot (the only colored elements) ---------- */
+.badge { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap;
+  background: var(--idle-soft); color: var(--idle); }
+.badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.badge.plain::before { display: none; }
+.s-running { --s: var(--running); --s-soft: var(--running-soft); }
+.s-attention { --s: var(--attention); --s-soft: var(--attention-soft); }
+.s-danger { --s: var(--danger); --s-soft: var(--danger-soft); }
+.s-success { --s: var(--success); --s-soft: var(--success-soft); }
+.s-idle { --s: var(--idle); --s-soft: var(--idle-soft); }
+.badge[class*="s-"] { background: var(--s-soft); color: var(--s); }
+.badge.s-running::before, .dot.s-running { animation: pulse 1.4s ease-in-out infinite; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--s, var(--idle)); flex: none; }
+@keyframes pulse { 50% { opacity: .3; } }
+.tag { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border-radius: 4px; background: var(--muted); color: var(--fg-2); font-size: 11.5px; white-space: nowrap; }
+
+/* ---------- Tabs (the one selection control for "pick one view") ---------- */
+.tabs { display: flex; gap: 16px; border-bottom: 1px solid var(--border); }
+.tab { padding: 7px 0 8px; font-size: 12.5px; color: var(--muted-foreground); border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; display: flex; gap: 5px; align-items: baseline; user-select: none; }
+.tab small { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.tab.on { color: var(--foreground); font-weight: 600; border-color: var(--foreground); }
+.tab.zero { opacity: .5; }
+/* Segmented: only for small binary/ternary *settings* inside forms (runner, theme), never for navigation */
+.seg { display: inline-flex; padding: 2px; border-radius: 7px; background: var(--muted); }
+.seg button { border: 0; background: none; height: 24px; padding: 0 10px; border-radius: 5px; font-size: 12px; color: var(--muted-foreground); }
+.seg button.on { background: var(--background); color: var(--foreground); font-weight: 600; box-shadow: 0 1px 2px #00000026; }
+
+/* ---------- Form controls ---------- */
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field > label, .label { font-size: 12px; font-weight: 550; color: var(--fg-2); }
+.field .help { font-size: 11.5px; color: var(--muted-foreground); }
+.input, .select, .textarea { height: 32px; padding: 0 10px; border: 1px solid var(--input); border-radius: 6px; background: var(--background); font-size: 13px; width: 100%; }
+.select { appearance: none; padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%), linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 10px) 50%; background-size: 4px 4px; background-repeat: no-repeat; }
+.select.sm, .input.sm { height: 26px; font-size: 12px; }
+.textarea { height: auto; min-height: 84px; padding: 8px 10px; line-height: 1.5; resize: vertical; }
+.input::placeholder, .textarea::placeholder { color: var(--faint); }
+.switch { width: 28px; height: 16px; border-radius: 999px; background: var(--input); position: relative; flex: none; border: 0; padding: 0; }
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--background); transition: left .15s; }
+.switch.on { background: var(--primary); }
+.switch.on::after { left: 14px; }
+.check { width: 14px; height: 14px; border: 1px solid var(--input); border-radius: 4px; display: inline-grid; place-items: center; flex: none; }
+.check.on { background: var(--primary); border-color: var(--primary); }
+
+/* ---------- Surfaces ---------- */
+.card { border: 1px solid var(--border); background: var(--card); border-radius: 8px; box-shadow: var(--shadow); }
+.card-pad { padding: 14px 16px; }
+.card-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.card.attention { border-color: color-mix(in srgb, var(--attention) 45%, var(--border)); }
+.card.danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.list { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.list > * + * { border-top: 1px solid var(--border); }
+.list-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; }
+.list-row:hover { background: var(--accent); }
+.list-row.on { background: var(--accent); }
+
+/* Callout: hint (neutral, has an action) / attention / danger / success. Never red for "a step you have not done yet". */
+.callout { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--muted); font-size: 12.5px; color: var(--fg-2); }
+.callout > svg.i { margin-top: 1px; color: var(--muted-foreground); }
+.callout.attention { background: var(--attention-soft); border-color: transparent; }
+.callout.attention > svg.i, .callout.attention b { color: var(--attention); }
+.callout.danger { background: var(--danger-soft); border-color: transparent; }
+.callout.danger > svg.i, .callout.danger b { color: var(--danger); }
+.callout.success { background: var(--success-soft); border-color: transparent; }
+.callout.success > svg.i { color: var(--success); }
+
+/* Table */
+.table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.table th { text-align: left; font-weight: 550; font-size: 11.5px; color: var(--muted-foreground); padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tr:last-child td { border-bottom: 0; }
+
+/* Code / terminal / diff */
+.code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 11.5px; line-height: 1.6; white-space: pre-wrap; overflow: auto; color: var(--fg-2); }
+.diff { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; font-size: 11.5px; line-height: 1.65; }
+.diff .ln { padding: 0 10px; white-space: pre; font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; }
+.diff .add { background: var(--diff-add); }
+.diff .add::first-letter { color: var(--success); }
+.diff .del { background: var(--diff-del); }
+.diff .del::first-letter { color: var(--danger); }
+.diff .hunk { color: var(--muted-foreground); background: var(--muted); }
+
+/* Stepper: horizontal run progress; color comes from the s-* class */
+.stepper { display: flex; gap: 4px; }
+.step { flex: 1; min-width: 0; }
+.step .bar { height: 3px; border-radius: 2px; background: var(--s, var(--border)); opacity: .9; }
+.step.s-idle .bar { background: var(--border); }
+.step .name { margin-top: 7px; font-size: 12px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 5px; }
+.step .meta { font-size: 11px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step.s-idle .name { color: var(--muted-foreground); font-weight: 450; }
+
+/* Timeline (same as 10-session-viewer-v2) */
+.tl-item { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; column-gap: 10px; position: relative; }
+.tl-item::before { content: ''; position: absolute; left: 9.5px; top: 22px; bottom: -4px; width: 1px; background: var(--border); }
+.tl-item:last-child::before { display: none; }
+.tl-ic { width: 20px; height: 20px; display: grid; place-items: center; color: var(--muted-foreground); background: var(--background); position: relative; z-index: 1; margin-top: 1px; }
+.tl-ic svg.i { width: 14px; height: 14px; }
+.tl-body { font-size: 12.5px; color: var(--fg-2); padding: 2px 0 10px; min-width: 0; }
+.tl-t { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; padding-top: 3px; text-align: right; min-width: 34px; }
+
+/* Overlays */
+.sheet { position: fixed; top: 0; right: 0; bottom: 0; width: 420px; background: var(--background); border-left: 1px solid var(--border); box-shadow: -12px 0 32px #00000033; display: flex; flex-direction: column; z-index: 20; }
+.dialog { width: 440px; background: var(--popover); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 16px 48px #00000059; padding: 18px; }
+.menu { min-width: 180px; background: var(--popover); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px #00000040; }
+.menu-item { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 5px; font-size: 12.5px; color: var(--fg-2); }
+.menu-item:hover { background: var(--accent); color: var(--foreground); }
+.menu-item kbd { margin-left: auto; }
+.empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 48px 24px; color: var(--muted-foreground); }
+.empty .h-section { color: var(--foreground); }
+.skeleton { background: var(--muted); border-radius: 4px; height: 10px; }
+
+/* ---------- Mockup chrome (not part of the product) ---------- */
+.mock-bar { position: fixed; right: 12px; bottom: 12px; z-index: 100; display: flex; gap: 6px; padding: 5px; border-radius: 9px; background: #111; border: 1px solid #333; box-shadow: 0 6px 20px #0006; font-family: 'Segoe UI', sans-serif; }
+.mock-bar button { border: 0; border-radius: 6px; background: #222; color: #ddd; font-size: 11.5px; height: 26px; padding: 0 10px; }
+.mock-bar button.on { background: #ddd; color: #111; }
+.mock-note { border: 1px dashed #2dd4bf; color: #2dd4bf; background: #2dd4bf10; border-radius: 6px; padding: 6px 9px; font-size: 11.5px; }
+/* ==== END NEOMIND V2 SHARED STYLES ==== */
+</style>
+<style>
+/* ---------- Runs two-pane layout (shared by run screens) ---------- */
+[hidden] { display: none !important; }
+.main.runs { padding: 0; display: grid; grid-template-columns: 288px minmax(0, 1fr); }
+.shell-panel .main.runs { padding: 0; grid-template-columns: 240px minmax(0, 1fr); }
+.rl { border-right: 1px solid var(--border); padding: 12px 10px 24px; min-width: 0; }
+.rl-top { display: flex; gap: 6px; }
+.rl-top .btn { flex: none; }
+.search { position: relative; flex: 1; min-width: 0; }
+.search svg.i { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: var(--faint); width: 13px; height: 13px; }
+.search .input { height: 30px; padding-left: 27px; font-size: 12.5px; }
+.rl-group { display: flex; align-items: center; gap: 6px; margin: 16px 8px 4px; }
+.rl-group .num { font-size: 11px; color: var(--faint); }
+.rl-item { display: grid; grid-template-columns: 8px minmax(0, 1fr); column-gap: 9px; padding: 7px 8px; border-radius: 6px; cursor: pointer; }
+.rl-item:hover, .rl-item.on { background: var(--accent); }
+.rl-item .dot { margin-top: 5px; }
+.rl-item .t { font-size: 12.5px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rl-item.on .t { color: var(--foreground); font-weight: 550; }
+.rl-item .sub { font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rd { padding: 18px 28px 64px; min-width: 0; max-width: 1000px; }
+.shell-panel .rd { padding: 14px 18px 64px; }
+.rd-head { display: flex; align-items: flex-start; gap: 12px; }
+.rd-head .title { font-size: 16px; font-weight: 600; letter-spacing: -.1px; margin-top: 7px; }
+.rd-head .sub { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 0 6px; }
+.rd-head .sub .sep-dot { color: var(--faint); }
+.rd-head .actions { display: flex; gap: 6px; flex: none; }
+.rd .stepper { margin: 16px 0 20px; }
+.rd .step .name { display: block; }
+.step .name svg.i { vertical-align: -1px; margin-right: 4px; width: 12px; height: 12px; color: var(--s, var(--muted-foreground)); stroke-width: 2.2; }
+.blocks > * + * { margin-top: 14px; }
+.top-tip { display: inline-flex; }
+
+/* ---------- Shared run-detail pieces ---------- */
+.card-head .h-section { margin-right: 2px; }
+.card-head .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12px; color: var(--muted-foreground); }
+.facts span { display: inline-flex; align-items: center; gap: 5px; }
+.facts svg.i { width: 13px; height: 13px; }
+.facts b { color: var(--fg-2); font-weight: 550; }
+.lead { font-size: 13.5px; line-height: 1.6; color: var(--foreground); max-width: 760px; }
+.lead code, .p code, .crit code, .finding code { font-size: 11.5px; background: var(--muted); padding: 0 4px; border-radius: 4px; }
+details.tech { margin-top: 10px; }
+details.tech > summary, details.fold > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted-foreground); user-select: none; }
+details.tech > summary::-webkit-details-marker, details.fold > summary::-webkit-details-marker { display: none; }
+details.tech > summary:hover, details.fold > summary:hover { color: var(--foreground); }
+details > summary .chev { width: 13px; height: 13px; transition: transform .15s; }
+details[open] > summary .chev { transform: rotate(90deg); }
+details.tech .code { margin-top: 8px; }
+.add-n { color: var(--success); font-variant-numeric: tabular-nums; }
+.del-n { color: var(--danger); font-variant-numeric: tabular-nums; }
+
+/* Diff with line-number gutters */
+.file-tabs { padding: 0 16px; }
+.file-tabs .tab { align-items: center; }
+.file-tabs .tab .mono { font-size: 12px; }
+.file-tabs .tab small { margin-left: 2px; }
+.diff-wrap { padding: 12px 16px 14px; }
+.diff .dl { display: grid; grid-template-columns: 36px 36px 16px minmax(0, 1fr); font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; }
+.diff .dl i { font-style: normal; color: var(--faint); text-align: right; padding-right: 8px; user-select: none; }
+.diff .dl b { font-weight: 400; color: var(--faint); text-align: center; }
+.diff .dl span { white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 1.5ch; text-indent: -1.5ch; color: var(--fg-2); }
+.diff .dl.add { background: var(--diff-add); }
+.diff .dl.add b { color: var(--success); }
+.diff .dl.del { background: var(--diff-del); }
+.diff .dl.del b { color: var(--danger); }
+.diff .ln.hunk { padding-left: 88px; }
+.diff-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 11.5px; color: var(--muted-foreground); }
+
+/* ---------- Completed: summary ---------- */
+.sum { padding: 12px 16px; border-radius: 8px; background: var(--success-soft); }
+.sum > div { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 18px; }
+.sum > div + div { margin-top: 6px; padding-left: 22px; }
+.sum .ok { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; }
+.sum .ok svg.i { color: var(--success); }
+.sum .it { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--fg-2); }
+.sum .it svg.i { width: 13px; height: 13px; color: var(--muted-foreground); }
+.sum .it .mono { color: var(--foreground); }
+.sum .it.pass svg.i { color: var(--success); }
+.sum .btn.icon.sm svg.i { color: var(--muted-foreground); }
+
+/* ---------- Completed: apply ---------- */
+.apply { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 24px; align-items: start; }
+.apply .p { max-width: 560px; }
+.conds { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12px; color: var(--fg-2); }
+.conds span { display: inline-flex; align-items: center; gap: 6px; }
+.apply-act { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.split { display: inline-flex; position: relative; }
+.split > .btn.primary:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.split > .btn.primary.caret { width: 30px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 1px solid var(--primary-foreground); }
+.split .menu { position: absolute; right: 0; top: 40px; z-index: 5; width: 290px; }
+.split .menu-item { height: auto; padding: 7px 8px; align-items: flex-start; }
+.split .menu-item small { display: block; color: var(--muted-foreground); font-size: 11.5px; }
+.safe { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted-foreground); grid-column: 1 / -1; padding-top: 12px; border-top: 1px solid var(--border); }
+.safe svg.i { width: 13px; height: 13px; }
+.blocked-why { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted-foreground); }
+
+/* ---------- Completed: cost table ---------- */
+.table .r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.table td.step-n { font-weight: 550; white-space: nowrap; }
+.table td .muted { font-size: 12px; }
+.table tr.total td { font-weight: 600; border-top: 1px solid var(--border); background: var(--muted); }
+.table-wrap { padding: 4px 6px 6px; overflow-x: auto; }
+.cost-note { padding: 0 16px 12px; font-size: 11.5px; color: var(--muted-foreground); }
+
+/* ---------- Completed: lessons queue ---------- */
+.lesson { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 4px 10px; padding: 12px 16px; align-items: start; }
+.lesson + .lesson { border-top: 1px solid var(--border); }
+.lesson > svg.i { margin-top: 2px; color: var(--muted-foreground); }
+.lesson .body { font-size: 12.5px; line-height: 1.55; color: var(--foreground); }
+.lesson .body code { font-size: 11.5px; background: var(--muted); padding: 0 4px; border-radius: 4px; }
+.lesson .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 5px; font-size: 11.5px; color: var(--muted-foreground); }
+.lesson .acts { display: flex; gap: 4px; }
+.shell-panel .lesson { grid-template-columns: 16px minmax(0, 1fr); }
+.shell-panel .lesson .acts { grid-column: 2; margin-top: 4px; }
+.lesson.done { opacity: .6; }
+
+.more-rows { border-top: 1px solid var(--border); }
+.more-rows details.fold { display: block; padding: 0 16px; }
+.more-rows details.fold + details.fold { border-top: 1px solid var(--border); }
+.more-rows details.fold > summary { padding: 10px 0; font-size: 12.5px; color: var(--fg-2); display: flex; }
+.more-rows details.fold > summary .sub { margin-left: auto; }
+.diff-more { padding: 3px 0 3px 88px; font-size: 11.5px; color: var(--muted-foreground); background: var(--muted); font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; }
+.mock-bar .gap { margin-left: 8px; }
+.panel-tab .count { font-size: 11px; color: var(--attention); background: var(--attention-soft); padding: 0 6px; border-radius: 999px; font-weight: 600; }
+.shell-panel .hide-panel { display: none; }
+.shell-panel .apply { grid-template-columns: minmax(0, 1fr); }
+.shell-panel .apply-act { align-items: flex-start; }
+.shell-panel .split .menu { left: 0; right: auto; }
+</style>
+</head>
+<body class="theme-dark shell-web">
+<div class="app">
+  <header class="topbar">
+    <div class="logo"><span class="logo-mark"><svg class="i sm" viewBox="0 0 24 24"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/></svg></span>NeoMind</div>
+    <span class="project-chip"><svg class="i sm" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>neomind-demo <span class="faint">W:\projects\neomind-demo</span></span>
+    <span class="spacer"></span>
+    <button class="btn ghost"><svg class="i sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Tìm <kbd>Ctrl K</kbd></button>
+    <button class="btn ghost icon" title="Đổi theme"><svg class="i" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+  </header>
+  <nav class="panel-tabs">
+    <span class="panel-tab on">Runs <span class="count">2</span></span><span class="panel-tab">Flows</span><span class="panel-tab">Profiles</span><span class="panel-tab">Memory</span>
+  </nav>
+  <aside class="sidebar">
+    <a class="nav on"><svg class="i" viewBox="0 0 24 24"><path d="M6 4l13 8-13 8z"/></svg>Runs<span class="count attn">2</span></a>
+    <a class="nav"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><path d="M10 6.5h4a3 3 0 0 1 3 3V14"/></svg>Flows</a>
+    <a class="nav"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Profiles</a>
+    <a class="nav"><svg class="i" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></svg>Memory</a>
+    <div class="nav-group h-label">Flows</div>
+    <a class="nav">Dev<span class="count">v3</span></a>
+    <a class="nav">Dev song song<span class="count">v1</span></a>
+    <a class="nav">Fast<span class="count">mẫu</span></a>
+    <a class="nav">Research<span class="count">mẫu</span></a>
+  </aside>
+
+  <main class="main runs">
+    <section class="rl">
+      <div class="rl-top">
+        <button class="btn"><svg class="i sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Run mới</button>
+        <label class="search"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input class="input" placeholder="Tìm run"></label>
+      </div>
+      <div class="rl-group"><span class="h-label">Cần bạn</span><span class="num">2</span></div>
+      <div class="rl-item"><span class="dot s-attention"></span><div><div class="t">Thêm hàm power(a, b) vào calc.js và viết test</div><div class="sub">Dev · 2 phút trước</div></div></div>
+      <div class="rl-item"><span class="dot s-attention"></span><div><div class="t">Sửa lỗi chia cho 0 trong divide()</div><div class="sub">Dev · 8 phút trước</div></div></div>
+      <div class="rl-group"><span class="h-label">Đang chạy</span><span class="num">1</span></div>
+      <div class="rl-item"><span class="dot s-running"></span><div><div class="t">Viết lại phần cài đặt trong README</div><div class="sub">Dev song song · 3 phút</div></div></div>
+      <div class="rl-group"><span class="h-label">Gần đây</span></div>
+      <div class="rl-item on"><span class="dot s-success"></span><div><div class="t">Thêm cờ --precision cho CLI</div><div class="sub">Dev · 25 phút trước</div></div></div>
+      <div class="rl-item"><span class="dot s-danger"></span><div><div class="t">Tách module parser</div><div class="sub">Fast · 1 giờ trước</div></div></div>
+      <div class="rl-item"><span class="dot s-idle"></span><div><div class="t">Dọn test cũ</div><div class="sub">Fast · hôm qua</div></div></div>
+    </section>
+
+    <section class="rd">
+      <div class="rd-head">
+        <div style="min-width:0;flex:1">
+          <span class="badge s-success" data-show="ready dirty">Xong</span>
+          <span class="badge s-success" data-show="applied">Xong · đã áp dụng vào main</span>
+          <h1 class="title">Thêm cờ --precision cho CLI</h1>
+          <div class="sub"><span>Dev v3</span><span class="sep-dot">·</span><span>worktree riêng</span><span class="sep-dot">·</span><span class="num">4 phút 32 giây</span><span class="sep-dot">·</span><span class="num">167k tokens</span></div>
+        </div>
+        <div class="actions">
+          <button class="btn"><svg class="i sm" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Xem session</button>
+          <button class="btn icon" title="Thêm: chép run id, mở worktree, dọn worktree"><svg class="i" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+        </div>
+      </div>
+
+      <ol class="stepper" style="padding:0;list-style:none">
+        <li class="step s-success"><div class="bar"></div><div class="name"><svg class="i" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></svg>Lập kế hoạch</div><div class="meta">58 giây</div></li>
+        <li class="step s-success"><div class="bar"></div><div class="name"><svg class="i" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></svg>Duyệt kế hoạch</div><div class="meta">Bạn duyệt</div></li>
+        <li class="step s-success"><div class="bar"></div><div class="name"><svg class="i" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></svg>Thực hiện</div><div class="meta">2 phút 31 giây</div></li>
+        <li class="step s-success"><div class="bar"></div><div class="name"><svg class="i" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></svg>Review độc lập</div><div class="meta">Đạt · 47 giây</div></li>
+        <li class="step s-success"><div class="bar"></div><div class="name"><svg class="i" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></svg>Vòng sửa</div><div class="meta">Không cần · 0/2</div></li>
+        <li class="step s-success"><div class="bar"></div><div class="name"><svg class="i" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></svg>Commit local</div><div class="meta">2 giây</div></li>
+      </ol>
+
+      <div class="blocks">
+        <!-- Summary -->
+        <div class="sum">
+          <div><span class="ok"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>Đã commit local</span>
+          <span class="it"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M3 12h6M15 12h6"/></svg><span class="mono">a1b2c3d</span><button class="btn ghost icon sm" title="Sao chép mã commit đầy đủ" data-copy><svg class="i sm" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></span>
+          <span class="it"><svg class="i" viewBox="0 0 24 24"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><span class="mono">neomind/run-7f2c</span></span>
+          </div>
+          <div><span class="it"><svg class="i" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>3 file đã đổi <span class="add-n">+46</span><span class="del-n">−5</span></span>
+          <span class="it pass"><svg class="i" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></svg>Checks đạt</span>
+          <span class="it pass"><svg class="i" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></svg>Review đạt</span></div>
+        </div>
+
+        <!-- Apply: ready / dirty -->
+        <div class="card card-pad apply" data-show="ready dirty">
+          <div>
+            <h2 class="h-section">Đưa commit vào main</h2>
+            <p class="p">Commit đang nằm ở branch của worktree run, chưa vào main. NeoMind sẽ cherry-pick nó vào checkout hiện tại.</p>
+            <div class="conds" data-show="ready">
+              <span><span class="dot s-success"></span>Checkout: <span class="mono">main</span></span>
+              <span><span class="dot s-success"></span>Không có file chưa commit</span>
+              <span><span class="dot s-success"></span>Không dự kiến conflict</span>
+            </div>
+            <div class="conds" data-show="dirty">
+              <span><span class="dot s-success"></span>Checkout: <span class="mono">main</span></span>
+              <span><span class="dot s-attention"></span>2 file chưa commit: <span class="mono">README.md</span>, <span class="mono">package.json</span></span>
+            </div>
+          </div>
+          <div class="apply-act">
+            <div class="split">
+              <button class="btn primary lg" data-apply>Áp dụng vào main</button><button class="btn primary lg caret" title="Cách khác" data-caret><svg class="i sm" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
+              <div class="menu" data-menu hidden>
+                <div class="menu-item"><svg class="i sm" viewBox="0 0 24 24"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><div>Tạo branch mới từ commit này<small>neomind/them-co-precision · không đổi checkout</small></div></div>
+              </div>
+            </div>
+            <button class="btn"><svg class="i sm" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Sao chép lệnh git cherry-pick</button>
+          </div>
+          <div class="safe" data-show="ready"><svg class="i" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Nếu có conflict, NeoMind hủy an toàn và không đổi main.</div>
+          <div class="safe" data-show="dirty"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg><span>Chưa áp dụng được: <b style="color:var(--fg-2);font-weight:550">main có 2 file chưa commit</b>. Commit hoặc stash chúng rồi kiểm tra lại. Tạo branch mới vẫn dùng được.</span><span class="spacer"></span><button class="btn sm"><svg class="i sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>Kiểm tra lại</button></div>
+        </div>
+
+        <!-- Apply: applied -->
+        <div class="callout success" data-show="applied">
+          <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>
+          <div style="flex:1;min-width:0">
+            <div style="color:var(--foreground);font-weight:600">Đã cherry-pick vào main · <span class="mono">d4e5f6a</span></div>
+            <div class="sub" style="margin-top:2px">10:42 hôm nay · main giờ có 3 file thay đổi từ run này. Worktree của run không còn cần thiết.</div>
+          </div>
+          <button class="btn sm">Dọn worktree</button>
+        </div>
+
+        <!-- Changes -->
+        <div class="card">
+          <div class="card-head"><h2 class="h-section">Thay đổi</h2><span class="sub">3 file · <span class="add-n">+46</span> <span class="del-n">−5</span> · commit a1b2c3d</span><span class="spacer"></span>
+            <button class="btn ghost sm"><svg class="i sm" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>Mở trong editor</button></div>
+          <div class="tabs file-tabs" data-filetabs>
+            <span class="tab on" data-file="cli"><span class="mono">cli.js</span><small class="add-n">+15</small><small class="del-n">−4</small></span>
+            <span class="tab" data-file="calc"><span class="mono">calc.js</span><small class="add-n">+7</small><small class="del-n">−1</small></span>
+            <span class="tab" data-file="test"><span class="mono">calc.test.js</span><small class="add-n">+24</small></span>
+          </div>
+          <div class="diff-wrap">
+            <div class="diff" data-diff="cli">
+              <div class="ln hunk">@@ -1,10 +1,21 @@</div>
+              <div class="dl"><i>1</i><i>1</i><b></b><span>#!/usr/bin/env node</span></div>
+              <div class="dl del"><i>2</i><i></i><b>−</b><span>// usage: calc &lt;op&gt; &lt;a&gt; &lt;b&gt;</span></div>
+              <div class="dl del"><i>3</i><i></i><b>−</b><span>const { add, subtract, multiply, divide } = require('./calc');</span></div>
+              <div class="dl add"><i></i><i>2</i><b>+</b><span>// usage: calc &lt;op&gt; &lt;a&gt; &lt;b&gt; [--precision N]</span></div>
+              <div class="dl add"><i></i><i>3</i><b>+</b><span>const { parseArgs } = require('node:util');</span></div>
+              <div class="dl add"><i></i><i>4</i><b>+</b><span>const { add, subtract, multiply, divide, round } = require('./calc');</span></div>
+              <div class="dl"><i>4</i><i>5</i><b></b><span></span></div>
+              <div class="dl del"><i>5</i><i></i><b>−</b><span>const [op, a, b] = process.argv.slice(2);</span></div>
+              <div class="dl add"><i></i><i>6</i><b>+</b><span>const { values, positionals } = parseArgs({</span></div>
+              <div class="dl add"><i></i><i>7</i><b>+</b><span>  allowPositionals: true,</span></div>
+              <div class="dl add"><i></i><i>8</i><b>+</b><span>  options: { precision: { type: 'string', short: 'p' } },</span></div>
+              <div class="dl add"><i></i><i>9</i><b>+</b><span>});</span></div>
+              <div class="dl add"><i></i><i>10</i><b>+</b><span>const [op, a, b] = positionals;</span></div>
+              <div class="dl add"><i></i><i>11</i><b>+</b><span>const precision = values.precision === undefined ? null : Number(values.precision);</span></div>
+              <div class="dl add"><i></i><i>12</i><b>+</b><span>if (precision !== null &amp;&amp; !(Number.isInteger(precision) &amp;&amp; precision &gt;= 0 &amp;&amp; precision &lt;= 12)) {</span></div>
+              <div class="dl add"><i></i><i>13</i><b>+</b><span>  console.error('--precision must be an integer from 0 to 12');</span></div>
+              <div class="dl add"><i></i><i>14</i><b>+</b><span>  process.exit(2);</span></div>
+              <div class="dl add"><i></i><i>15</i><b>+</b><span>}</span></div>
+              <div class="dl add"><i></i><i>16</i><b>+</b><span></span></div>
+              <div class="dl"><i>6</i><i>17</i><b></b><span>const ops = { add, subtract, multiply, divide };</span></div>
+              <div class="dl"><i>7</i><i>18</i><b></b><span>const result = ops[op](Number(a), Number(b));</span></div>
+              <div class="dl del"><i>8</i><i></i><b>−</b><span>console.log(result);</span></div>
+              <div class="dl add"><i></i><i>19</i><b>+</b><span>console.log(precision === null ? result : round(result, precision));</span></div>
+            </div>
+            <div class="diff" data-diff="calc" hidden>
+              <div class="ln hunk">@@ -21,4 +21,10 @@</div>
+              <div class="dl"><i>21</i><i>21</i><b></b><span>  return a / b;</span></div>
+              <div class="dl"><i>22</i><i>22</i><b></b><span>}</span></div>
+              <div class="dl"><i>23</i><i>23</i><b></b><span></span></div>
+              <div class="dl del"><i>24</i><i></i><b>−</b><span>module.exports = { add, subtract, multiply, divide };</span></div>
+              <div class="dl add"><i></i><i>24</i><b>+</b><span>/** Round half away from zero; toFixed alone rounds 1.005 down. */</span></div>
+              <div class="dl add"><i></i><i>25</i><b>+</b><span>function round(value, digits) {</span></div>
+              <div class="dl add"><i></i><i>26</i><b>+</b><span>  const factor = 10 ** digits;</span></div>
+              <div class="dl add"><i></i><i>27</i><b>+</b><span>  return Math.sign(value) * Math.round(Math.abs(value) * factor) / factor;</span></div>
+              <div class="dl add"><i></i><i>28</i><b>+</b><span>}</span></div>
+              <div class="dl add"><i></i><i>29</i><b>+</b><span></span></div>
+              <div class="dl add"><i></i><i>30</i><b>+</b><span>module.exports = { add, subtract, multiply, divide, round };</span></div>
+            </div>
+            <div class="diff" data-diff="test" hidden>
+              <div class="ln hunk">@@ -30,3 +30,27 @@</div>
+              <div class="dl"><i>30</i><i>30</i><b></b><span>test('divide by zero throws', () => {</span></div>
+              <div class="dl"><i>31</i><i>31</i><b></b><span>  assert.throws(() => divide(1, 0), RangeError);</span></div>
+              <div class="dl"><i>32</i><i>32</i><b></b><span>});</span></div>
+              <div class="dl add"><i></i><i>33</i><b>+</b><span></span></div>
+              <div class="dl add"><i></i><i>34</i><b>+</b><span>test('round keeps the requested digits', () => {</span></div>
+              <div class="dl add"><i></i><i>35</i><b>+</b><span>  assert.strictEqual(round(1.005, 2), 1.01);</span></div>
+              <div class="dl add"><i></i><i>36</i><b>+</b><span>  assert.strictEqual(round(-2.5, 0), -3);</span></div>
+              <div class="dl add"><i></i><i>37</i><b>+</b><span>});</span></div>
+              <div class="diff-more">… 19 dòng thêm: test CLI với --precision 0, 2 và giá trị sai</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cost per step -->
+        <div class="card">
+          <div class="card-head"><h2 class="h-section">Chi phí theo bước</h2><span class="sub">thời gian chờ bạn duyệt không tính</span></div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Bước</th><th>Agent</th><th class="r">Thời gian</th><th class="r">Token vào</th><th class="r">Token ra</th></tr></thead>
+              <tbody>
+                <tr><td class="step-n">Lập kế hoạch</td><td>Claude Code · Opus 5.5</td><td class="r">58 giây</td><td class="r">38,2k</td><td class="r">3,1k</td></tr>
+                <tr><td class="step-n">Duyệt kế hoạch</td><td><span class="muted">Bạn · chờ 1 phút 40 giây</span></td><td class="r muted">—</td><td class="r muted">—</td><td class="r muted">—</td></tr>
+                <tr><td class="step-n">Thực hiện</td><td>Claude Code · Sonnet 5.5</td><td class="r">2 phút 31 giây</td><td class="r">74,0k</td><td class="r">9,8k</td></tr>
+                <tr><td class="step-n">Checks</td><td><span class="mono">npm test</span> <span class="muted">· sandbox Codex</span></td><td class="r">14 giây</td><td class="r muted">—</td><td class="r muted">—</td></tr>
+                <tr><td class="step-n">Review độc lập</td><td>Codex · GPT-6.1 Sol</td><td class="r">47 giây</td><td class="r">39,1k</td><td class="r">2,4k</td></tr>
+                <tr><td class="step-n">Vòng sửa</td><td><span class="muted">Không cần</span></td><td class="r muted">—</td><td class="r muted">—</td><td class="r muted">—</td></tr>
+                <tr><td class="step-n">Commit local</td><td><span class="muted">git</span></td><td class="r">2 giây</td><td class="r muted">—</td><td class="r muted">—</td></tr>
+                <tr class="total"><td>Tổng</td><td></td><td class="r">4 phút 32 giây</td><td class="r">151,3k</td><td class="r">15,3k</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Lessons -->
+        <div class="card">
+          <div class="card-head"><h2 class="h-section">Lesson đề xuất</h2><span class="sub">2 chờ duyệt · chỉ bản bạn duyệt mới vào memory dùng chung</span><span class="spacer"></span><button class="btn ghost sm hide-panel">Mở Memory</button></div>
+          <div class="lesson" data-lesson>
+            <svg class="i" viewBox="0 0 24 24"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>
+            <div>
+              <div class="body">CLI đọc cờ bằng <code>parseArgs</code> của <code>node:util</code>; thêm cờ mới vào <code>options</code> và kiểm tra giá trị ngay sau khi parse, thoát mã 2 khi sai.</div>
+              <div class="meta"><span class="tag">Quy ước code</span><span>Nguồn: Thực hiện · <span class="mono">cli.js</span></span></div>
+            </div>
+            <div class="acts"><button class="btn sm" data-ok>Duyệt</button><button class="btn ghost sm">Sửa rồi duyệt</button><button class="btn ghost sm" data-skip>Bỏ qua</button></div>
+          </div>
+          <div class="lesson" data-lesson>
+            <svg class="i" viewBox="0 0 24 24"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>
+            <div>
+              <div class="body">Làm tròn bằng <code>round()</code> trong <code>calc.js</code>, không dùng <code>toFixed</code>: <code>toFixed</code> làm tròn sai với 1.005 và trả về chuỗi.</div>
+              <div class="meta"><span class="tag">Bẫy đã gặp</span><span>Nguồn: Review · <span class="mono">calc.test.js:35</span></span></div>
+            </div>
+            <div class="acts"><button class="btn sm" data-ok>Duyệt</button><button class="btn ghost sm">Sửa rồi duyệt</button><button class="btn ghost sm" data-skip>Bỏ qua</button></div>
+          </div>
+        </div>
+
+        <div class="card more-rows">
+          <details class="fold"><summary><svg class="i chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>Kế hoạch đã duyệt<span class="sub">phiên bản 1 · bạn duyệt</span></summary><p class="p" style="padding-bottom:12px">Thêm cờ --precision (0–12) cho cli.js bằng parseArgs; thêm round() vào calc.js; test cho làm tròn và cờ sai.</p></details>
+          <details class="fold"><summary><svg class="i chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>Kiểm tra<span class="sub">npm test 12/12 · review 6/6 tiêu chí</span></summary></details>
+          <details class="fold"><summary><svg class="i chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>Logs và output<span class="sub">9</span></summary></details>
+          <details class="fold"><summary><svg class="i chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>Chi tiết kỹ thuật<span class="sub">run 7f2c · worktree</span></summary></details>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="mock-bar">
+  <button data-theme="dark" class="on">Tối</button><button data-theme="light">Sáng</button>
+  <button data-shell="web" class="on">Web</button><button data-shell="panel">Panel Nimbalyst</button>
+  <button data-st="ready" class="on gap">Sẵn sàng áp dụng</button><button data-st="dirty">Checkout bẩn</button><button data-st="applied">Đã áp dụng</button>
+</div>
+<script>
+/* NEOMIND V2 MOCK SCRIPT */
+(() => {
+  const body = document.body, set = (kind, value) => {
+    body.classList.remove(`${kind}-dark`, `${kind}-light`, `${kind}-web`, `${kind}-panel`);
+    body.classList.add(`${kind}-${value}`);
+    document.querySelectorAll(`[data-${kind}]`).forEach(b => b.classList.toggle('on', b.dataset[kind] === value));
+  };
+  document.querySelectorAll('[data-theme]').forEach(b => b.addEventListener('click', () => set('theme', b.dataset.theme)));
+  document.querySelectorAll('[data-shell]').forEach(b => b.addEventListener('click', () => set('shell', b.dataset.shell)));
+  const hash = location.hash.slice(1).split(',');
+  if (hash.includes('light')) set('theme', 'light');
+  if (hash.includes('panel')) set('shell', 'panel');
+})();
+</script>
+<script>
+/* Screen states (hash keys: dirty, applied, menu), split menu, file tabs, copy, lesson queue. */
+(() => {
+  const keys = location.hash.slice(1).split(',');
+  const show = state => {
+    document.querySelectorAll('[data-show]').forEach(el => { el.hidden = !el.dataset.show.split(' ').includes(state); });
+    document.querySelectorAll('[data-st]').forEach(b => b.classList.toggle('on', b.dataset.st === state));
+    document.querySelector('[data-apply]').disabled = state === 'dirty';
+    document.querySelector('[data-apply]').title = state === 'dirty' ? 'main có 2 file chưa commit' : '';
+  };
+  document.querySelectorAll('[data-st]').forEach(b => b.addEventListener('click', () => show(b.dataset.st)));
+  show(['dirty', 'applied'].find(s => keys.includes(s)) || 'ready');
+
+  const menu = document.querySelector('[data-menu]');
+  document.querySelector('[data-caret]').addEventListener('click', e => { e.stopPropagation(); menu.hidden = !menu.hidden; });
+  document.addEventListener('click', () => { menu.hidden = true; });
+  if (keys.includes('menu')) menu.hidden = false;
+
+  document.querySelectorAll('[data-filetabs] .tab').forEach(tab => tab.addEventListener('click', () => {
+    tab.parentElement.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t === tab));
+    tab.closest('.card').querySelectorAll('[data-diff]').forEach(d => { d.hidden = d.dataset.diff !== tab.dataset.file; });
+  }));
+  document.querySelectorAll('[data-copy]').forEach(btn => btn.addEventListener('click', () => {
+    const old = btn.innerHTML; btn.innerHTML = '<svg class="i sm" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></svg>';
+    setTimeout(() => { btn.innerHTML = old; }, 1300);
+  }));
+  // Approved or skipped lessons leave the queue as a dimmed one-line receipt.
+  document.querySelectorAll('[data-lesson]').forEach(row => row.querySelectorAll('[data-ok], [data-skip]').forEach(btn => btn.addEventListener('click', () => {
+    row.classList.add('done');
+    row.querySelector('.acts').innerHTML = `<span class="sub">${btn.hasAttribute('data-ok') ? 'Đã lưu vào memory' : 'Đã bỏ qua, sẽ không đề xuất lại'}</span>`;
+  })));
+})();
+</script>
+</body>
+</html>

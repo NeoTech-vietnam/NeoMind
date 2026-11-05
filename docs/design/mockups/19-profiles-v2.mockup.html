@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>NeoMind · Profiles v2</title>
+<style>
+/* ==== NEOMIND V2 SHARED STYLES ====
+ * Source of truth for every *-v2.mockup.html. Each mockup inlines this block verbatim (mockups must stay standalone),
+ * then adds screen-specific rules after it. The same tokens become ui/src/theme.css in phase 1 (shadcn naming).
+ *
+ * Direction: "bảng điều khiển ca trực" — neutral surfaces that follow the Nimbalyst theme, color only for status,
+ * one primary button per screen, clay only in the NeoMind logo.
+ */
+
+/* ---------- Tokens ---------- */
+.theme-dark { color-scheme: dark;
+  --background: #1e1e1e; --card: #252525; --popover: #2a2a2a; --muted: #323232; --accent: #303030; --input: #4a4a4a; --border: #363636;
+  --foreground: #ececec; --fg-2: #c8c8c8; --muted-foreground: #9b9b9b; --faint: #6f6f6f;
+  --primary: #ececec; --primary-foreground: #1a1a1a; --ring: #ececec66; --code-bg: #191919; --shadow: 0 1px 0 #0000; --overlay: #00000080;
+  --running: #60a5fa; --running-soft: #60a5fa1c; --attention: #fbbf24; --attention-soft: #fbbf241a;
+  --danger: #f87171; --danger-soft: #f871711a; --success: #4ade80; --success-soft: #4ade801a; --idle: #8b8b8b; --idle-soft: #8b8b8b1f;
+  --diff-add: #4ade8014; --diff-del: #f8717114; --brand: #d97757;
+  --danger-solid: #dc2626; }
+.theme-light { color-scheme: light;
+  --background: #ffffff; --card: #fafafa; --popover: #ffffff; --muted: #f4f4f5; --accent: #f0f0f1; --input: #e4e4e7; --border: #e4e4e7;
+  --foreground: #18181b; --fg-2: #3f3f46; --muted-foreground: #71717a; --faint: #a1a1aa;
+  --primary: #18181b; --primary-foreground: #fafafa; --ring: #18181b40; --code-bg: #f4f4f5; --shadow: 0 1px 2px #0000000d; --overlay: #0000004d;
+  --running: #2563eb; --running-soft: #2563eb12; --attention: #b45309; --attention-soft: #f59e0b1a;
+  --danger: #dc2626; --danger-soft: #dc262612; --success: #16a34a; --success-soft: #16a34a12; --idle: #71717a; --idle-soft: #71717a14;
+  --diff-add: #16a34a12; --diff-del: #dc262610; --brand: #c15f3c;
+  --danger-solid: #dc2626; }
+
+/* ---------- Base ---------- */
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--background); color: var(--foreground); font-family: 'Be Vietnam Pro', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+h1, h2, h3, h4, p { margin: 0; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+.mono, code, pre, kbd { font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; font-size: 12px; }
+.muted { color: var(--muted-foreground); }
+.faint { color: var(--faint); }
+.num { font-variant-numeric: tabular-nums; }
+svg.i { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+svg.i.sm { width: 13px; height: 13px; }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.row { display: flex; align-items: center; gap: 8px; }
+.spacer { flex: 1; }
+.stack > * + * { margin-top: 12px; }
+.sep { height: 1px; background: var(--border); border: 0; margin: 0; }
+
+/* Type scale: 24 / 20 / 16 / 14 / 13 / 12 / 11 */
+.h-page { font-size: 20px; font-weight: 650; letter-spacing: -.3px; }
+.h-section { font-size: 14px; font-weight: 600; }
+.h-label { font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--muted-foreground); }
+.sub { font-size: 12px; color: var(--muted-foreground); }
+
+/* ---------- App shell: web ---------- */
+.app { min-height: 100vh; display: grid; grid-template-columns: 216px minmax(0, 1fr); grid-template-rows: 48px minmax(0, 1fr); }
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+.logo { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 14px; letter-spacing: -.2px; }
+.logo-mark { width: 22px; height: 22px; border-radius: 6px; background: var(--brand); color: #fff; display: grid; place-items: center; font-size: 13px; }
+.project-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; color: var(--fg-2); }
+.project-chip .faint { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar { border-right: 1px solid var(--border); padding: 10px 8px; display: flex; flex-direction: column; gap: 1px; }
+.nav { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 9px; border-radius: 6px; color: var(--fg-2); font-size: 13px; text-decoration: none; border: 0; background: none; width: 100%; text-align: left; }
+.nav:hover { background: var(--accent); color: var(--foreground); }
+.nav.on { background: var(--accent); color: var(--foreground); font-weight: 600; }
+.nav svg.i { color: var(--muted-foreground); }
+.nav .count { margin-left: auto; font-size: 11px; color: var(--muted-foreground); }
+.nav .count.attn { color: var(--attention); background: var(--attention-soft); padding: 0 6px; border-radius: 999px; font-weight: 600; }
+.nav-group { margin-top: 14px; padding: 0 9px 4px; }
+.main { min-width: 0; padding: 20px 28px 32px; }
+.page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 18px; }
+.page-head .sub { margin-top: 3px; }
+
+/* ---------- App shell: Nimbalyst panel (no logo, no sidebar) ---------- */
+.panel-tabs { display: none; height: 40px; align-items: stretch; gap: 18px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+.panel-tab { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted-foreground); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.panel-tab.on { color: var(--foreground); font-weight: 600; border-color: var(--foreground); }
+.shell-panel .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: 40px minmax(0, 1fr); }
+.shell-panel .topbar, .shell-panel .sidebar { display: none; }
+.shell-panel .panel-tabs { display: flex; }
+.shell-panel .main { padding: 16px 20px 28px; }
+
+/* ---------- Buttons ---------- */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 6px; font-size: 12.5px; font-weight: 550;
+  border: 1px solid var(--border); background: var(--background); color: var(--foreground); white-space: nowrap; }
+.btn:hover { background: var(--accent); }
+.btn.primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+.btn.primary:hover { opacity: .9; }
+.btn.ghost { border-color: transparent; background: none; color: var(--fg-2); }
+.btn.ghost:hover { background: var(--accent); color: var(--foreground); }
+.btn.danger { color: var(--danger); }
+.btn.danger.solid { background: var(--danger-solid); border-color: var(--danger-solid); color: #fff; }
+.btn.lg { height: 36px; padding: 0 16px; font-size: 13px; }
+.btn.sm { height: 24px; padding: 0 8px; font-size: 11.5px; }
+.btn.icon { width: 30px; padding: 0; }
+.btn.icon.sm { width: 24px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; font-size: 10.5px; color: var(--muted-foreground); }
+
+/* ---------- Status badge + dot (the only colored elements) ---------- */
+.badge { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap;
+  background: var(--idle-soft); color: var(--idle); }
+.badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.badge.plain::before { display: none; }
+.s-running { --s: var(--running); --s-soft: var(--running-soft); }
+.s-attention { --s: var(--attention); --s-soft: var(--attention-soft); }
+.s-danger { --s: var(--danger); --s-soft: var(--danger-soft); }
+.s-success { --s: var(--success); --s-soft: var(--success-soft); }
+.s-idle { --s: var(--idle); --s-soft: var(--idle-soft); }
+.badge[class*="s-"] { background: var(--s-soft); color: var(--s); }
+.badge.s-running::before, .dot.s-running { animation: pulse 1.4s ease-in-out infinite; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--s, var(--idle)); flex: none; }
+@keyframes pulse { 50% { opacity: .3; } }
+.tag { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border-radius: 4px; background: var(--muted); color: var(--fg-2); font-size: 11.5px; white-space: nowrap; }
+
+/* ---------- Tabs (the one selection control for "pick one view") ---------- */
+.tabs { display: flex; gap: 16px; border-bottom: 1px solid var(--border); }
+.tab { padding: 7px 0 8px; font-size: 12.5px; color: var(--muted-foreground); border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; display: flex; gap: 5px; align-items: baseline; user-select: none; }
+.tab small { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.tab.on { color: var(--foreground); font-weight: 600; border-color: var(--foreground); }
+.tab.zero { opacity: .5; }
+/* Segmented: only for small binary/ternary *settings* inside forms (runner, theme), never for navigation */
+.seg { display: inline-flex; padding: 2px; border-radius: 7px; background: var(--muted); }
+.seg button { border: 0; background: none; height: 24px; padding: 0 10px; border-radius: 5px; font-size: 12px; color: var(--muted-foreground); }
+.seg button.on { background: var(--background); color: var(--foreground); font-weight: 600; box-shadow: 0 1px 2px #00000026; }
+
+/* ---------- Form controls ---------- */
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field > label, .label { font-size: 12px; font-weight: 550; color: var(--fg-2); }
+.field .help { font-size: 11.5px; color: var(--muted-foreground); }
+.input, .select, .textarea { height: 32px; padding: 0 10px; border: 1px solid var(--input); border-radius: 6px; background: var(--background); font-size: 13px; width: 100%; }
+.select { appearance: none; padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%), linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 10px) 50%; background-size: 4px 4px; background-repeat: no-repeat; }
+.select.sm, .input.sm { height: 26px; font-size: 12px; }
+.textarea { height: auto; min-height: 84px; padding: 8px 10px; line-height: 1.5; resize: vertical; }
+.input::placeholder, .textarea::placeholder { color: var(--faint); }
+.switch { width: 28px; height: 16px; border-radius: 999px; background: var(--input); position: relative; flex: none; border: 0; padding: 0; }
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--background); transition: left .15s; }
+.switch.on { background: var(--primary); }
+.switch.on::after { left: 14px; }
+.check { width: 14px; height: 14px; border: 1px solid var(--input); border-radius: 4px; display: inline-grid; place-items: center; flex: none; }
+.check.on { background: var(--primary); border-color: var(--primary); }
+
+/* ---------- Surfaces ---------- */
+.card { border: 1px solid var(--border); background: var(--card); border-radius: 8px; box-shadow: var(--shadow); }
+.card-pad { padding: 14px 16px; }
+.card-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.card.attention { border-color: color-mix(in srgb, var(--attention) 45%, var(--border)); }
+.card.danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.list { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.list > * + * { border-top: 1px solid var(--border); }
+.list-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; }
+.list-row:hover { background: var(--accent); }
+.list-row.on { background: var(--accent); }
+
+/* Callout: hint (neutral, has an action) / attention / danger / success. Never red for "a step you have not done yet". */
+.callout { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--muted); font-size: 12.5px; color: var(--fg-2); }
+.callout > svg.i { margin-top: 1px; color: var(--muted-foreground); }
+.callout.attention { background: var(--attention-soft); border-color: transparent; }
+.callout.attention > svg.i, .callout.attention b { color: var(--attention); }
+.callout.danger { background: var(--danger-soft); border-color: transparent; }
+.callout.danger > svg.i, .callout.danger b { color: var(--danger); }
+.callout.success { background: var(--success-soft); border-color: transparent; }
+.callout.success > svg.i { color: var(--success); }
+
+/* Table */
+.table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.table th { text-align: left; font-weight: 550; font-size: 11.5px; color: var(--muted-foreground); padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tr:last-child td { border-bottom: 0; }
+
+/* Code / terminal / diff */
+.code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 11.5px; line-height: 1.6; white-space: pre-wrap; overflow: auto; color: var(--fg-2); }
+.diff { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; font-size: 11.5px; line-height: 1.65; }
+.diff .ln { padding: 0 10px; white-space: pre; font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; }
+.diff .add { background: var(--diff-add); }
+.diff .add::first-letter { color: var(--success); }
+.diff .del { background: var(--diff-del); }
+.diff .del::first-letter { color: var(--danger); }
+.diff .hunk { color: var(--muted-foreground); background: var(--muted); }
+
+/* Stepper: horizontal run progress; color comes from the s-* class */
+.stepper { display: flex; gap: 4px; }
+.step { flex: 1; min-width: 0; }
+.step .bar { height: 3px; border-radius: 2px; background: var(--s, var(--border)); opacity: .9; }
+.step.s-idle .bar { background: var(--border); }
+.step .name { margin-top: 7px; font-size: 12px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 5px; }
+.step .meta { font-size: 11px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step.s-idle .name { color: var(--muted-foreground); font-weight: 450; }
+
+/* Timeline (same as 10-session-viewer-v2) */
+.tl-item { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; column-gap: 10px; position: relative; }
+.tl-item::before { content: ''; position: absolute; left: 9.5px; top: 22px; bottom: -4px; width: 1px; background: var(--border); }
+.tl-item:last-child::before { display: none; }
+.tl-ic { width: 20px; height: 20px; display: grid; place-items: center; color: var(--muted-foreground); background: var(--background); position: relative; z-index: 1; margin-top: 1px; }
+.tl-ic svg.i { width: 14px; height: 14px; }
+.tl-body { font-size: 12.5px; color: var(--fg-2); padding: 2px 0 10px; min-width: 0; }
+.tl-t { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; padding-top: 3px; text-align: right; min-width: 34px; }
+
+/* Overlays */
+.sheet { position: fixed; top: 0; right: 0; bottom: 0; width: 420px; background: var(--background); border-left: 1px solid var(--border); box-shadow: -12px 0 32px #00000033; display: flex; flex-direction: column; z-index: 20; }
+.dialog { width: 440px; background: var(--popover); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 16px 48px #00000059; padding: 18px; }
+.menu { min-width: 180px; background: var(--popover); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px #00000040; }
+.menu-item { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 5px; font-size: 12.5px; color: var(--fg-2); }
+.menu-item:hover { background: var(--accent); color: var(--foreground); }
+.menu-item kbd { margin-left: auto; }
+.empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 48px 24px; color: var(--muted-foreground); }
+.empty .h-section { color: var(--foreground); }
+.skeleton { background: var(--muted); border-radius: 4px; height: 10px; }
+
+/* ---------- Mockup chrome (not part of the product) ---------- */
+.mock-bar { position: fixed; right: 12px; bottom: 12px; z-index: 100; display: flex; gap: 6px; padding: 5px; border-radius: 9px; background: #111; border: 1px solid #333; box-shadow: 0 6px 20px #0006; font-family: 'Segoe UI', sans-serif; }
+.mock-bar button { border: 0; border-radius: 6px; background: #222; color: #ddd; font-size: 11.5px; height: 26px; padding: 0 10px; }
+.mock-bar button.on { background: #ddd; color: #111; }
+.mock-note { border: 1px dashed #2dd4bf; color: #2dd4bf; background: #2dd4bf10; border-radius: 6px; padding: 6px 9px; font-size: 11.5px; }
+/* ==== END NEOMIND V2 SHARED STYLES ==== */
+</style>
+<style>
+/* ---------- Profiles screen ---------- */
+.pt-count { font-size: 11px; color: var(--attention); background: var(--attention-soft); padding: 0 6px; border-radius: 999px; font-weight: 600; }
+.main.two { padding: 0; display: grid; grid-template-columns: 288px minmax(0, 1fr); align-items: start; }
+.shell-panel .main.two { padding: 0; grid-template-columns: 240px minmax(0, 1fr); }
+.pane-list { border-right: 1px solid var(--border); padding: 14px 10px; min-height: calc(100vh - 48px); }
+.shell-panel .pane-list { min-height: calc(100vh - 40px); padding: 12px 8px; }
+.pane-head { display: flex; align-items: center; gap: 8px; padding: 2px 6px 10px; }
+.pane-search { margin: 0 6px 6px; width: calc(100% - 12px); }
+.grp { display: flex; align-items: center; gap: 6px; padding: 12px 8px 5px; }
+.grp .faint { font-size: 11px; }
+.prow { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; column-gap: 10px; align-items: center; padding: 7px 8px; border-radius: 6px; cursor: pointer; }
+.prow:hover, .prow.on { background: var(--accent); }
+.prow .av { grid-row: span 2; width: 28px; height: 28px; border-radius: 6px; background: var(--muted); color: var(--muted-foreground); display: grid; place-items: center; }
+.prow.on .av { background: var(--background); }
+.prow .nm { font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prow .meta { grid-column: 2 / 4; font-size: 11.5px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 5px; }
+.prow .meta.warn { color: var(--attention); }
+.prow .av { align-self: start; }
+.ver { font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; font-size: 11px; color: var(--muted-foreground); }
+.archived { display: flex; align-items: center; gap: 6px; padding: 10px 8px 0; margin-top: 8px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted-foreground); cursor: pointer; }
+.archived .faint { margin-left: auto; }
+.list-note { margin: 14px 8px 0; font-size: 11.5px; color: var(--faint); line-height: 1.5; }
+
+.pane-detail { min-width: 0; padding: 20px 28px 40px; }
+.shell-panel .pane-detail { padding: 16px 20px 40px; }
+.d-title-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.d-title-row .h-page { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.vwrap { position: relative; flex: none; }
+.vchip { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 6px 0 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: var(--fg-2); font-size: 12px; font-weight: 600; }
+.vchip:hover { background: var(--accent); }
+.vmenu { position: absolute; top: 30px; left: 0; width: 320px; z-index: 15; display: none; }
+.vmenu.open { display: block; }
+.vitem { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 0 8px; padding: 7px 8px; border-radius: 5px; cursor: pointer; }
+.vitem:hover { background: var(--accent); }
+.vitem .ck { color: var(--foreground); margin-top: 2px; visibility: hidden; }
+.vitem.sel .ck { visibility: visible; }
+.vitem b { font-weight: 600; font-size: 12.5px; }
+.vitem .faint, .vitem .muted { font-size: 11.5px; }
+.vitem .uses { grid-column: 2; font-size: 11.5px; color: var(--muted-foreground); margin-top: 1px; }
+.menu-sep { height: 1px; background: var(--border); margin: 4px 0; }
+.menu-foot { padding: 6px 8px 4px; font-size: 11px; color: var(--faint); }
+.shell-panel.st-edited .d-actions .lbl { display: none; }
+.d-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; flex: none; }
+.d-sub { margin-top: 5px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 7px; font-size: 12px; color: var(--muted-foreground); }
+.d-sub .mono { font-size: 11.5px; color: var(--fg-2); }
+.dirty { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 999px; background: var(--muted); color: var(--fg-2); font-size: 11.5px; font-weight: 550; white-space: nowrap; flex: none; }
+.dirty svg.i { width: 12px; height: 12px; }
+.more-wrap { position: relative; }
+.more-menu { position: absolute; right: 0; top: 34px; z-index: 15; display: none; }
+.more-menu.open { display: block; }
+.menu-item.danger { color: var(--danger); }
+.menu-item .faint { margin-left: auto; font-size: 11px; }
+
+.tabs.d-tabs { margin-top: 16px; }
+.tdot { width: 6px; height: 6px; border-radius: 50%; background: var(--attention); align-self: center; }
+.tp { display: none; padding-top: 16px; }
+.tp.on { display: block; }
+.tp-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.tp-head .sub { margin-left: auto; text-align: right; }
+
+.instr { min-height: 300px; font-size: 13px; line-height: 1.6; }
+.ta-foot { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 11.5px; color: var(--muted-foreground); }
+.ta-foot a { color: var(--fg-2); text-decoration: underline; text-decoration-color: var(--faint); cursor: pointer; }
+details.adv { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px; }
+details.adv > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 550; color: var(--fg-2); }
+details.adv > summary::-webkit-details-marker { display: none; }
+details.adv > summary .chev { color: var(--faint); transition: transform .15s; }
+details.adv[open] > summary .chev { transform: rotate(90deg); }
+details.adv .code { margin-top: 10px; }
+
+.perm { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto auto; align-items: center; gap: 0 12px; padding: 12px 14px; }
+.perm:hover { background: none; }
+.pic { width: 30px; height: 30px; border-radius: 7px; background: var(--muted); color: var(--muted-foreground); display: grid; place-items: center; }
+.pt { font-weight: 600; }
+.pd { font-size: 12px; color: var(--muted-foreground); margin-top: 2px; line-height: 1.5; }
+.pstate { font-size: 11.5px; color: var(--muted-foreground); min-width: 42px; text-align: right; }
+.switch:disabled { opacity: .5; cursor: not-allowed; }
+.perm-list { margin-top: 12px; }
+
+.skill-id { font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; font-size: 12px; color: var(--foreground); }
+.skill-path { font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; font-size: 11px; color: var(--muted-foreground); margin-top: 2px; }
+.hash { font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; font-size: 11.5px; color: var(--fg-2); }
+.table td.act { text-align: right; white-space: nowrap; width: 1%; }
+.table tr.warn td { background: var(--attention-soft); }
+.table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.add-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+
+.use { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; padding: 10px 14px; cursor: pointer; }
+.use .path { display: flex; align-items: center; gap: 6px; font-weight: 550; min-width: 0; }
+.use .path svg.i { color: var(--faint); }
+.use .sub { grid-column: 1; }
+.use .right { grid-row: 1 / 3; grid-column: 2; display: flex; align-items: center; gap: 8px; }
+.run-pin { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--muted-foreground); }
+.run-pin b { color: var(--fg-2); font-weight: 550; }
+
+/* State switches (mockup only) */
+body:not(.st-edited) .only-edited { display: none !important; }
+body.st-edited .only-clean { display: none !important; }
+.overlay { position: fixed; inset: 0; background: var(--overlay); display: none; place-items: center; z-index: 40; padding: 24px; }
+body.st-create .ov-create, body.st-publish .ov-publish { display: grid; }
+.dialog h2 { font-size: 16px; font-weight: 650; letter-spacing: -.2px; }
+.dialog .lead { margin-top: 4px; font-size: 12.5px; color: var(--muted-foreground); line-height: 1.5; }
+.dialog .stack { margin-top: 16px; }
+.dialog-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.choice { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 2px 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; cursor: pointer; align-items: start; }
+.choice + .choice { margin-top: 6px; }
+.choice.on { border-color: var(--foreground); }
+.radio { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--input); margin-top: 2px; display: grid; place-items: center; }
+.choice.on .radio { border-color: var(--primary); }
+.choice.on .radio::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }
+.choice b { font-weight: 600; }
+.choice .sub { grid-column: 2; }
+.mv-list { margin-top: 8px; }
+.mv { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 0 10px; align-items: center; padding: 9px 12px; cursor: pointer; }
+.mv .check svg.i { width: 10px; height: 10px; color: var(--primary-foreground); stroke-width: 3; visibility: hidden; }
+.mv .check.on svg.i { visibility: visible; }
+.mv .path { display: flex; gap: 6px; align-items: center; font-weight: 550; min-width: 0; }
+.mv .path svg.i { color: var(--faint); }
+.dialog .help { margin-top: 8px; font-size: 11.5px; color: var(--muted-foreground); line-height: 1.5; }
+.dialog.wide { width: 480px; }
+</style>
+</head>
+<body class="theme-dark shell-web">
+<div class="app">
+  <header class="topbar">
+    <div class="logo"><span class="logo-mark"><svg class="i sm" viewBox="0 0 24 24"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/></svg></span>NeoMind</div>
+    <span class="project-chip" title="W:\projects\neomind-demo"><svg class="i sm" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>neomind-demo <span class="faint">W:\projects\neomind-demo</span></span>
+    <span class="spacer"></span>
+    <button class="btn ghost"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Tìm <kbd>Ctrl K</kbd></button>
+    <button class="btn ghost icon" title="Đổi theme"><svg class="i" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg></button>
+  </header>
+
+  <nav class="panel-tabs">
+    <span class="panel-tab">Runs <span class="pt-count">2</span></span>
+    <span class="panel-tab">Flows</span>
+    <span class="panel-tab on">Profiles</span>
+    <span class="panel-tab">Memory</span>
+  </nav>
+
+  <aside class="sidebar">
+    <button class="nav"><svg class="i" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></svg>Runs<span class="count attn">2</span></button>
+    <button class="nav"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect x="13" y="13" width="8" height="8" rx="2"/></svg>Flows</button>
+    <button class="nav on"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Profiles</button>
+    <button class="nav"><svg class="i" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>Memory</button>
+    <div class="nav-group h-label">Flows</div>
+    <button class="nav">Dev<span class="count">v3</span></button>
+    <button class="nav">Dev song song<span class="count">v1</span></button>
+    <button class="nav">Fast<span class="count">mẫu</span></button>
+    <button class="nav">Research<span class="count">mẫu</span></button>
+  </aside>
+
+  <main class="main two">
+    <!-- ===== Profile list ===== -->
+    <section class="pane-list">
+      <div class="pane-head">
+        <h2 class="h-section">Profiles</h2>
+        <span class="spacer"></span>
+        <button class="btn sm" data-open="create"><svg class="i sm" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Tạo profile</button>
+      </div>
+      <input class="input sm pane-search" placeholder="Tìm theo tên hoặc ID">
+
+      <div class="grp"><span class="h-label">Có sẵn</span><span class="faint">2</span></div>
+      <div class="prow" data-row>
+        <span class="av"><svg class="i" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+        <span class="nm">Implementer</span><span class="ver">v1</span>
+        <span class="meta" title="Có sẵn, không sửa được"><svg class="i sm" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>dùng ở 4 bước</span>
+      </div>
+      <div class="prow" data-row>
+        <span class="av"><svg class="i" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
+        <span class="nm">Verifier</span><span class="ver">v1</span>
+        <span class="meta" title="Có sẵn, không sửa được"><svg class="i sm" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>dùng ở 2 bước</span>
+      </div>
+
+      <div class="grp"><span class="h-label">Của project</span><span class="faint">2</span></div>
+      <div class="prow on" data-row>
+        <span class="av"><svg class="i" viewBox="0 0 24 24"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg></span>
+        <span class="nm">Implementer · TypeScript strict</span><span class="ver">v2</span>
+        <span class="meta">dùng ở 3 bước</span>
+        <span class="meta warn"><svg class="i sm" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>1 skill cần ghim lại</span>
+      </div>
+      <div class="prow" data-row>
+        <span class="av"><svg class="i" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
+        <span class="nm">Reviewer bảo mật</span><span class="ver">v1</span>
+        <span class="meta">dùng ở 1 bước</span>
+      </div>
+      <div class="archived"><svg class="i sm" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>Đã lưu trữ<span class="faint">1</span></div>
+      <p class="list-note">Profile có sẵn không sửa được. Nhân bản để có bản riêng của project, có phiên bản.</p>
+    </section>
+
+    <!-- ===== Profile detail ===== -->
+    <section class="pane-detail">
+      <div class="d-title-row">
+        <h1 class="h-page">Implementer · TypeScript strict</h1>
+        <div class="vwrap">
+          <button class="vchip" data-vmenu-btn>v2<svg class="i sm" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
+          <div class="menu vmenu" data-vmenu>
+            <div class="vitem only-edited"><svg class="i sm ck" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span><b>Bản nháp</b> <span class="muted">· chưa lưu</span></span><span class="uses">Chưa bước nào dùng</span></div>
+            <div class="vitem sel"><svg class="i sm ck" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span><b>v2</b> <span class="muted">· mới nhất · 04/11 10:31</span></span><span class="uses">Dev › Thực hiện, Dev › Vòng sửa</span></div>
+            <div class="vitem"><svg class="i sm ck" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span><b>v1</b> <span class="muted">· 28/10 16:05</span></span><span class="uses">Dev song song › Thực hiện · 1 run đang chạy</span></div>
+            <div class="menu-sep"></div>
+            <div class="menu-foot">Phiên bản đã lưu không đổi. Run giữ phiên bản lúc bắt đầu.</div>
+          </div>
+        </div>
+        <div class="d-actions">
+          <button class="btn" title="Nhân bản thành profile mới"><svg class="i" viewBox="0 0 24 24"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg><span class="lbl">Nhân bản</span></button>
+          <div class="more-wrap">
+            <button class="btn icon" title="Thêm" data-more-btn><svg class="i" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+            <div class="menu more-menu" data-more>
+              <div class="menu-item">Đổi tên<kbd>F2</kbd></div>
+              <div class="menu-item">Lưu trữ<span class="faint">ẩn khỏi bước mới</span></div>
+              <div class="menu-sep"></div>
+              <div class="menu-item danger">Xóa vĩnh viễn…</div>
+            </div>
+          </div>
+          <button class="btn primary only-edited" data-open="publish">Lưu phiên bản mới</button>
+        </div>
+      </div>
+      <div class="d-sub"><span class="dirty only-edited"><svg class="i" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>Đã sửa, chưa lưu</span><span class="mono">ts-strict-implementer</span><span class="faint">·</span><span>Tạo từ mẫu Implementer</span><span class="faint">·</span><span>v2 lưu lúc 10:31 hôm qua</span></div>
+
+      <div class="tabs d-tabs" data-tabs>
+        <span class="tab on" data-tab="instr">Hướng dẫn</span>
+        <span class="tab" data-tab="perm">Quyền <small>3/4</small></span>
+        <span class="tab" data-tab="skills">Skills <small>3</small><span class="tdot" title="1 skill cần ghim lại"></span></span>
+        <span class="tab" data-tab="usage">Được dùng ở <small>3</small></span>
+      </div>
+
+      <!-- Hướng dẫn -->
+      <div class="tp on" data-tp="instr">
+        <div class="tp-head"><span class="label">Gửi kèm mỗi bước dùng profile này</span><span class="sub">Bước trong flow có thể ghi đè ở mục Nâng cao.</span></div>
+        <textarea class="textarea instr" data-instr>Bạn thực hiện kế hoạch đã được duyệt cho project TypeScript này. Chỉ sửa các file kế hoạch nêu; cần sửa thêm file nào thì ghi lý do trong kết quả.
+
+Quy tắc:
+- Bật strict trong tsconfig; không dùng any, không dùng ! để bỏ qua null. Thiếu kiểu thì khai báo type rõ ràng.
+- Hàm mới phải có test cạnh file nguồn (*.test.ts), gồm ít nhất một ca lỗi.
+- Không đổi API công khai nếu kế hoạch không nói.
+- Chạy npm test trước khi trả kết quả; checks lỗi thì sửa, không tắt test.
+
+Kết quả trả về: danh sách file đã sửa, tóm tắt thay đổi, checks đã chạy và những gì còn chưa chắc.</textarea>
+        <div class="ta-foot"><span>Markdown · 548 ký tự</span><span class="spacer"></span><span class="only-edited">Đã sửa so với v2 · <a>Xem khác biệt</a></span></div>
+        <details class="adv">
+          <summary><svg class="i sm chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>Output mặc định<span class="sub" style="font-weight:400">· dùng khi bước không khai báo output contract riêng</span></summary>
+          <pre class="code">{
+  "format": "json",
+  "fields": ["changedFiles", "summary", "checks", "openQuestions"]
+}</pre>
+        </details>
+      </div>
+
+      <!-- Quyền -->
+      <div class="tp" data-tp="perm">
+        <div class="callout"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg><span>Đây là quyền <b style="color:var(--foreground);font-weight:600">tối đa</b> của profile. Bước trong flow chỉ thu hẹp được, không mở rộng quá giới hạn này. Run đang chạy giữ quyền của phiên bản lúc bắt đầu.</span></div>
+        <div class="list perm-list">
+          <div class="perm list-row">
+            <span class="pic"><svg class="i" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
+            <div><div class="pt">Đọc file</div><div class="pd">Đọc mã nguồn trong worktree của run. Mọi agent đều cần, nên luôn bật.</div></div>
+            <span class="pstate">Luôn bật</span><button class="switch on" disabled aria-label="Đọc file"></button>
+          </div>
+          <div class="perm list-row">
+            <span class="pic"><svg class="i" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+            <div><div class="pt">Sửa file</div><div class="pd">Tạo, sửa, xóa file trong worktree của run. Không chạm vào checkout chính của bạn.</div></div>
+            <span class="pstate" data-state-label>Bật</span><button class="switch on" data-switch aria-label="Sửa file"></button>
+          </div>
+          <div class="perm list-row">
+            <span class="pic"><svg class="i" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg></span>
+            <div><div class="pt">Chạy checks</div><div class="pd">Chạy lệnh kiểm tra như <span class="mono">npm test</span>. Checks luôn chạy qua sandbox Codex, kể cả khi agent là Claude Code.</div></div>
+            <span class="pstate" data-state-label>Bật</span><button class="switch on" data-switch aria-label="Chạy checks"></button>
+          </div>
+          <div class="perm list-row">
+            <span class="pic"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M3 12h6M15 12h6"/></svg></span>
+            <div><div class="pt">Commit local</div><div class="pd">Để agent tự tạo commit trong worktree. Thường để tắt: bước Commit local của flow đã làm việc này sau review.</div></div>
+            <span class="pstate" data-state-label>Tắt</span><button class="switch" data-switch aria-label="Commit local"></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Skills -->
+      <div class="tp" data-tp="skills">
+        <div class="callout attention" style="margin-bottom:12px"><svg class="i" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg><span><b>1 skill đã đổi sau khi ghim.</b> Run mới dùng profile này sẽ không nạp được skill đó cho tới khi bạn ghim lại hash hoặc trả file về như cũ.</span></div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Skill</th><th>Hash ghim</th><th>Trạng thái</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td><div class="skill-id">ts-strict-rules</div><div class="skill-path">.neomind/skills/ts-strict-rules.md</div></td>
+                <td class="hash" title="sha256 3f9a1c…">3f9a1c…e21b</td>
+                <td><span class="badge s-success">Khớp</span></td>
+                <td class="act"><button class="btn ghost icon sm" title="Bỏ skill"><svg class="i sm" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg></button></td>
+              </tr>
+              <tr class="warn">
+                <td><div class="skill-id">vitest-patterns</div><div class="skill-path">.neomind/skills/vitest-patterns.md</div></td>
+                <td class="hash">a07d44…9c10<div class="skill-path">file hiện tại 5be2f0…77a1</div></td>
+                <td><span class="badge s-attention">File đã đổi sau khi ghim</span></td>
+                <td class="act"><button class="btn sm" data-repin><svg class="i sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>Ghim lại</button></td>
+              </tr>
+              <tr>
+                <td><div class="skill-id">repo-conventions</div><div class="skill-path">docs/conventions.md</div></td>
+                <td class="hash">c5e870…41d2</td>
+                <td><span class="badge s-success">Khớp</span></td>
+                <td class="act"><button class="btn ghost icon sm" title="Bỏ skill"><svg class="i sm" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg></button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="add-row"><button class="btn"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Thêm skill từ file</button><span class="sub">Chọn file trong project; ID và sha256 tự điền. Ghim lại hoặc thêm skill là sửa bản nháp, cần lưu phiên bản mới.</span></div>
+      </div>
+
+      <!-- Được dùng ở -->
+      <div class="tp" data-tp="usage">
+        <div class="list">
+          <div class="use list-row">
+            <span class="path">Dev <span class="faint">v3</span><svg class="i sm" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>Thực hiện</span>
+            <span class="sub">Claude Code · Sonnet 5.5 · được sửa file, chạy checks</span>
+            <span class="right"><span class="tag">v2</span><svg class="i sm faint" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg></span>
+          </div>
+          <div class="use list-row">
+            <span class="path">Dev <span class="faint">v3</span><svg class="i sm" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>Vòng sửa</span>
+            <span class="sub">Claude Code · Sonnet 5.5 · tối đa 2 vòng</span>
+            <span class="right"><span class="tag">v2</span><svg class="i sm faint" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg></span>
+          </div>
+          <div class="use list-row">
+            <span class="path">Dev song song <span class="faint">v1</span><svg class="i sm" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>Thực hiện</span>
+            <span class="sub">Claude Code · Sonnet 5.5 · quyền thu hẹp: không chạy checks</span>
+            <span class="right"><span class="tag">v1 · có bản mới hơn</span><svg class="i sm faint" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg></span>
+          </div>
+        </div>
+        <div class="run-pin"><span class="dot s-running"></span><span><b>1 run đang chạy</b> giữ v1 tới khi kết thúc: “Viết lại phần cài đặt trong README”.</span></div>
+        <p class="sub" style="margin-top:8px">Lưu phiên bản mới không tự đổi các bước trên. Khi lưu, NeoMind hỏi bạn có muốn chuyển bước nào sang không.</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ===== Dialog: Tạo profile ===== -->
+<div class="overlay ov-create" data-overlay>
+  <div class="dialog" role="dialog" aria-labelledby="dlg-create">
+    <h2 id="dlg-create">Tạo profile</h2>
+    <p class="lead">Bắt đầu từ một mẫu có sẵn. Profile mới là bản nháp; bước nào dùng được nó sau khi bạn lưu phiên bản đầu tiên.</p>
+    <div class="stack">
+      <div class="field"><label>ID</label><input class="input mono" value="reviewer-hieu-nang"><span class="help">Chữ, số, dấu chấm, gạch dưới, gạch ngang. Không đổi được sau khi tạo.</span></div>
+      <div class="field"><label>Tên</label><input class="input" value="Reviewer hiệu năng"></div>
+      <div class="field"><label>Mẫu</label>
+        <div data-choices>
+          <div class="choice"><span class="radio"></span><b>Implementer</b><span class="sub">Được sửa file và chạy checks. Dùng cho bước Thực hiện, Vòng sửa.</span></div>
+          <div class="choice on"><span class="radio"></span><b>Verifier</b><span class="sub">Chỉ đọc và chạy checks. Dùng cho bước Review độc lập.</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="dialog-foot"><button class="btn ghost" data-close>Hủy</button><button class="btn primary" data-close>Tạo bản nháp</button></div>
+  </div>
+</div>
+
+<!-- ===== Dialog: Lưu phiên bản mới ===== -->
+<div class="overlay ov-publish" data-overlay>
+  <div class="dialog wide" role="dialog" aria-labelledby="dlg-pub">
+    <h2 id="dlg-pub">Lưu v3 của “Implementer · TypeScript strict”</h2>
+    <p class="lead">Thay đổi so với v2: Hướng dẫn (+2 dòng). Phiên bản đã lưu không sửa được nữa.</p>
+    <div class="stack">
+      <div>
+        <div class="label">Chuyển bước sang v3 luôn? <span class="muted" style="font-weight:400">Không bắt buộc</span></div>
+        <div class="list mv-list" data-checks>
+          <div class="mv list-row"><span class="check"><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span><span class="path">Dev<svg class="i sm" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>Thực hiện</span><span class="tag">đang dùng v2</span></div>
+          <div class="mv list-row"><span class="check"><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span><span class="path">Dev<svg class="i sm" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>Vòng sửa</span><span class="tag">đang dùng v2</span></div>
+          <div class="mv list-row"><span class="check"><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span><span class="path">Dev song song<svg class="i sm" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>Thực hiện</span><span class="tag">đang dùng v1</span></div>
+        </div>
+        <p class="help">Bước không chọn giữ phiên bản cũ. Bước được chọn đổi trong bản nháp của flow; flow chỉ đổi khi bạn lưu flow. Run đang chạy không bị ảnh hưởng.</p>
+      </div>
+    </div>
+    <div class="dialog-foot"><button class="btn ghost" data-close>Hủy</button><button class="btn primary" data-close>Lưu v3</button></div>
+  </div>
+</div>
+
+<div class="mock-bar">
+  <button data-theme="dark" class="on">Tối</button><button data-theme="light">Sáng</button>
+  <button data-shell="web" class="on">Web</button><button data-shell="panel">Panel Nimbalyst</button>
+  <button data-st="view" class="on">Xem</button><button data-st="edited">Đã sửa</button><button data-st="create">Tạo profile</button><button data-st="publish">Lưu bản mới</button>
+</div>
+<script>
+/* NEOMIND V2 MOCK SCRIPT */
+(() => {
+  const body = document.body, set = (kind, value) => {
+    body.classList.remove(`${kind}-dark`, `${kind}-light`, `${kind}-web`, `${kind}-panel`);
+    body.classList.add(`${kind}-${value}`);
+    document.querySelectorAll(`[data-${kind}]`).forEach(b => b.classList.toggle('on', b.dataset[kind] === value));
+  };
+  document.querySelectorAll('[data-theme]').forEach(b => b.addEventListener('click', () => set('theme', b.dataset.theme)));
+  document.querySelectorAll('[data-shell]').forEach(b => b.addEventListener('click', () => set('shell', b.dataset.shell)));
+  const hash = location.hash.slice(1).split(',');
+  if (hash.includes('light')) set('theme', 'light');
+  if (hash.includes('panel')) set('shell', 'panel');
+})();
+</script>
+<script>
+/* Screen states for this mockup: view / edited / create dialog / publish dialog; tabs, menus, switches. */
+(() => {
+  const body = document.body, hash = location.hash.slice(1).split(',');
+  const state = name => {
+    body.classList.remove('st-edited', 'st-create', 'st-publish');
+    if (name === 'edited' || name === 'publish') body.classList.add('st-edited');
+    if (name === 'create' || name === 'publish') body.classList.add(`st-${name}`);
+    document.querySelectorAll('[data-st]').forEach(b => b.classList.toggle('on', b.dataset.st === name));
+  };
+  let current = 'view';
+  const go = name => { current = name; state(name); };
+  document.querySelectorAll('[data-st]').forEach(b => b.addEventListener('click', () => go(b.dataset.st)));
+  document.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); go(b.dataset.open); }));
+  document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => go(current === 'publish' ? 'view' : body.classList.contains('st-edited') ? 'edited' : 'view')));
+  document.querySelectorAll('[data-overlay]').forEach(o => o.addEventListener('click', e => { if (e.target === o) go(body.classList.contains('st-edited') && current !== 'publish' ? 'edited' : 'view'); }));
+  const markEdited = () => { if (current === 'view') go('edited'); };
+
+  const tabs = [...document.querySelectorAll('[data-tab]')];
+  const showTab = id => {
+    tabs.forEach(t => t.classList.toggle('on', t.dataset.tab === id));
+    document.querySelectorAll('[data-tp]').forEach(p => p.classList.toggle('on', p.dataset.tp === id));
+  };
+  tabs.forEach(t => t.addEventListener('click', () => showTab(t.dataset.tab)));
+
+  const vmenu = document.querySelector('[data-vmenu]'), more = document.querySelector('[data-more]');
+  document.querySelector('[data-vmenu-btn]').addEventListener('click', e => { e.stopPropagation(); more.classList.remove('open'); vmenu.classList.toggle('open'); });
+  document.querySelector('[data-more-btn]').addEventListener('click', e => { e.stopPropagation(); vmenu.classList.remove('open'); more.classList.toggle('open'); });
+  document.addEventListener('click', () => { vmenu.classList.remove('open'); more.classList.remove('open'); });
+
+  document.querySelectorAll('[data-switch]').forEach(s => s.addEventListener('click', () => {
+    s.classList.toggle('on'); s.previousElementSibling.textContent = s.classList.contains('on') ? 'Bật' : 'Tắt'; markEdited();
+  }));
+  document.querySelector('[data-instr]').addEventListener('input', markEdited);
+  document.querySelector('[data-repin]').addEventListener('click', e => {
+    const row = e.target.closest('tr'); row.classList.remove('warn');
+    row.querySelector('.badge').className = 'badge s-success'; row.querySelector('.badge').textContent = 'Đã ghim lại';
+    row.querySelector('.hash').textContent = '5be2f0…77a1'; e.target.closest('button').remove();
+    document.querySelector('.tdot').remove(); document.querySelector('[data-tp="skills"] .callout').remove(); markEdited();
+  });
+  document.querySelectorAll('[data-row]').forEach(r => r.addEventListener('click', () => {
+    document.querySelectorAll('[data-row]').forEach(x => x.classList.toggle('on', x === r));
+  }));
+  document.querySelectorAll('[data-choices] .choice').forEach(c => c.addEventListener('click', () => {
+    c.parentElement.querySelectorAll('.choice').forEach(x => x.classList.toggle('on', x === c));
+  }));
+  document.querySelectorAll('[data-checks] .mv').forEach(r => r.addEventListener('click', () => r.querySelector('.check').classList.toggle('on')));
+
+  for (const name of ['edited', 'create', 'publish']) if (hash.includes(name)) go(name);
+  for (const id of ['perm', 'skills', 'usage']) if (hash.includes(id)) showTab(id);
+  if (hash.includes('versions')) vmenu.classList.add('open');
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>NeoMind · Hệ thiết kế v2</title>
+<style>
+/* ==== NEOMIND V2 SHARED STYLES ====
+ * Source of truth for every *-v2.mockup.html. Each mockup inlines this block verbatim (mockups must stay standalone),
+ * then adds screen-specific rules after it. The same tokens become ui/src/theme.css in phase 1 (shadcn naming).
+ *
+ * Direction: "bảng điều khiển ca trực" — neutral surfaces that follow the Nimbalyst theme, color only for status,
+ * one primary button per screen, clay only in the NeoMind logo.
+ */
+
+/* ---------- Tokens ---------- */
+.theme-dark { color-scheme: dark;
+  --background: #1e1e1e; --card: #252525; --popover: #2a2a2a; --muted: #323232; --accent: #303030; --input: #4a4a4a; --border: #363636;
+  --foreground: #ececec; --fg-2: #c8c8c8; --muted-foreground: #9b9b9b; --faint: #6f6f6f;
+  --primary: #ececec; --primary-foreground: #1a1a1a; --ring: #ececec66; --code-bg: #191919; --shadow: 0 1px 0 #0000; --overlay: #00000080;
+  --running: #60a5fa; --running-soft: #60a5fa1c; --attention: #fbbf24; --attention-soft: #fbbf241a;
+  --danger: #f87171; --danger-soft: #f871711a; --success: #4ade80; --success-soft: #4ade801a; --idle: #8b8b8b; --idle-soft: #8b8b8b1f;
+  --diff-add: #4ade8014; --diff-del: #f8717114; --brand: #d97757;
+  --danger-solid: #dc2626; }
+.theme-light { color-scheme: light;
+  --background: #ffffff; --card: #fafafa; --popover: #ffffff; --muted: #f4f4f5; --accent: #f0f0f1; --input: #e4e4e7; --border: #e4e4e7;
+  --foreground: #18181b; --fg-2: #3f3f46; --muted-foreground: #71717a; --faint: #a1a1aa;
+  --primary: #18181b; --primary-foreground: #fafafa; --ring: #18181b40; --code-bg: #f4f4f5; --shadow: 0 1px 2px #0000000d; --overlay: #0000004d;
+  --running: #2563eb; --running-soft: #2563eb12; --attention: #b45309; --attention-soft: #f59e0b1a;
+  --danger: #dc2626; --danger-soft: #dc262612; --success: #16a34a; --success-soft: #16a34a12; --idle: #71717a; --idle-soft: #71717a14;
+  --diff-add: #16a34a12; --diff-del: #dc262610; --brand: #c15f3c;
+  --danger-solid: #dc2626; }
+
+/* ---------- Base ---------- */
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--background); color: var(--foreground); font-family: 'Be Vietnam Pro', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+h1, h2, h3, h4, p { margin: 0; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+.mono, code, pre, kbd { font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; font-size: 12px; }
+.muted { color: var(--muted-foreground); }
+.faint { color: var(--faint); }
+.num { font-variant-numeric: tabular-nums; }
+svg.i { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+svg.i.sm { width: 13px; height: 13px; }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.row { display: flex; align-items: center; gap: 8px; }
+.spacer { flex: 1; }
+.stack > * + * { margin-top: 12px; }
+.sep { height: 1px; background: var(--border); border: 0; margin: 0; }
+
+/* Type scale: 24 / 20 / 16 / 14 / 13 / 12 / 11 */
+.h-page { font-size: 20px; font-weight: 650; letter-spacing: -.3px; }
+.h-section { font-size: 14px; font-weight: 600; }
+.h-label { font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--muted-foreground); }
+.sub { font-size: 12px; color: var(--muted-foreground); }
+
+/* ---------- App shell: web ---------- */
+.app { min-height: 100vh; display: grid; grid-template-columns: 216px minmax(0, 1fr); grid-template-rows: 48px minmax(0, 1fr); }
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+.logo { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 14px; letter-spacing: -.2px; }
+.logo-mark { width: 22px; height: 22px; border-radius: 6px; background: var(--brand); color: #fff; display: grid; place-items: center; font-size: 13px; }
+.project-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; color: var(--fg-2); }
+.project-chip .faint { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar { border-right: 1px solid var(--border); padding: 10px 8px; display: flex; flex-direction: column; gap: 1px; }
+.nav { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 9px; border-radius: 6px; color: var(--fg-2); font-size: 13px; text-decoration: none; border: 0; background: none; width: 100%; text-align: left; }
+.nav:hover { background: var(--accent); color: var(--foreground); }
+.nav.on { background: var(--accent); color: var(--foreground); font-weight: 600; }
+.nav svg.i { color: var(--muted-foreground); }
+.nav .count { margin-left: auto; font-size: 11px; color: var(--muted-foreground); }
+.nav .count.attn { color: var(--attention); background: var(--attention-soft); padding: 0 6px; border-radius: 999px; font-weight: 600; }
+.nav-group { margin-top: 14px; padding: 0 9px 4px; }
+.main { min-width: 0; padding: 20px 28px 32px; }
+.page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 18px; }
+.page-head .sub { margin-top: 3px; }
+
+/* ---------- App shell: Nimbalyst panel (no logo, no sidebar) ---------- */
+.panel-tabs { display: none; height: 40px; align-items: stretch; gap: 18px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+.panel-tab { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted-foreground); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.panel-tab.on { color: var(--foreground); font-weight: 600; border-color: var(--foreground); }
+.shell-panel .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: 40px minmax(0, 1fr); }
+.shell-panel .topbar, .shell-panel .sidebar { display: none; }
+.shell-panel .panel-tabs { display: flex; }
+.shell-panel .main { padding: 16px 20px 28px; }
+
+/* ---------- Buttons ---------- */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 6px; font-size: 12.5px; font-weight: 550;
+  border: 1px solid var(--border); background: var(--background); color: var(--foreground); white-space: nowrap; }
+.btn:hover { background: var(--accent); }
+.btn.primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+.btn.primary:hover { opacity: .9; }
+.btn.ghost { border-color: transparent; background: none; color: var(--fg-2); }
+.btn.ghost:hover { background: var(--accent); color: var(--foreground); }
+.btn.danger { color: var(--danger); }
+.btn.danger.solid { background: var(--danger-solid); border-color: var(--danger-solid); color: #fff; }
+.btn.lg { height: 36px; padding: 0 16px; font-size: 13px; }
+.btn.sm { height: 24px; padding: 0 8px; font-size: 11.5px; }
+.btn.icon { width: 30px; padding: 0; }
+.btn.icon.sm { width: 24px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; font-size: 10.5px; color: var(--muted-foreground); }
+
+/* ---------- Status badge + dot (the only colored elements) ---------- */
+.badge { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap;
+  background: var(--idle-soft); color: var(--idle); }
+.badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.badge.plain::before { display: none; }
+.s-running { --s: var(--running); --s-soft: var(--running-soft); }
+.s-attention { --s: var(--attention); --s-soft: var(--attention-soft); }
+.s-danger { --s: var(--danger); --s-soft: var(--danger-soft); }
+.s-success { --s: var(--success); --s-soft: var(--success-soft); }
+.s-idle { --s: var(--idle); --s-soft: var(--idle-soft); }
+.badge[class*="s-"] { background: var(--s-soft); color: var(--s); }
+.badge.s-running::before, .dot.s-running { animation: pulse 1.4s ease-in-out infinite; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--s, var(--idle)); flex: none; }
+@keyframes pulse { 50% { opacity: .3; } }
+.tag { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border-radius: 4px; background: var(--muted); color: var(--fg-2); font-size: 11.5px; white-space: nowrap; }
+
+/* ---------- Tabs (the one selection control for "pick one view") ---------- */
+.tabs { display: flex; gap: 16px; border-bottom: 1px solid var(--border); }
+.tab { padding: 7px 0 8px; font-size: 12.5px; color: var(--muted-foreground); border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; display: flex; gap: 5px; align-items: baseline; user-select: none; }
+.tab small { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.tab.on { color: var(--foreground); font-weight: 600; border-color: var(--foreground); }
+.tab.zero { opacity: .5; }
+/* Segmented: only for small binary/ternary *settings* inside forms (runner, theme), never for navigation */
+.seg { display: inline-flex; padding: 2px; border-radius: 7px; background: var(--muted); }
+.seg button { border: 0; background: none; height: 24px; padding: 0 10px; border-radius: 5px; font-size: 12px; color: var(--muted-foreground); }
+.seg button.on { background: var(--background); color: var(--foreground); font-weight: 600; box-shadow: 0 1px 2px #00000026; }
+
+/* ---------- Form controls ---------- */
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field > label, .label { font-size: 12px; font-weight: 550; color: var(--fg-2); }
+.field .help { font-size: 11.5px; color: var(--muted-foreground); }
+.input, .select, .textarea { height: 32px; padding: 0 10px; border: 1px solid var(--input); border-radius: 6px; background: var(--background); font-size: 13px; width: 100%; }
+.select { appearance: none; padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%), linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 10px) 50%; background-size: 4px 4px; background-repeat: no-repeat; }
+.select.sm, .input.sm { height: 26px; font-size: 12px; }
+.textarea { height: auto; min-height: 84px; padding: 8px 10px; line-height: 1.5; resize: vertical; }
+.input::placeholder, .textarea::placeholder { color: var(--faint); }
+.switch { width: 28px; height: 16px; border-radius: 999px; background: var(--input); position: relative; flex: none; border: 0; padding: 0; }
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--background); transition: left .15s; }
+.switch.on { background: var(--primary); }
+.switch.on::after { left: 14px; }
+.check { width: 14px; height: 14px; border: 1px solid var(--input); border-radius: 4px; display: inline-grid; place-items: center; flex: none; }
+.check.on { background: var(--primary); border-color: var(--primary); }
+
+/* ---------- Surfaces ---------- */
+.card { border: 1px solid var(--border); background: var(--card); border-radius: 8px; box-shadow: var(--shadow); }
+.card-pad { padding: 14px 16px; }
+.card-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.card.attention { border-color: color-mix(in srgb, var(--attention) 45%, var(--border)); }
+.card.danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.list { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.list > * + * { border-top: 1px solid var(--border); }
+.list-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; }
+.list-row:hover { background: var(--accent); }
+.list-row.on { background: var(--accent); }
+
+/* Callout: hint (neutral, has an action) / attention / danger / success. Never red for "a step you have not done yet". */
+.callout { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--muted); font-size: 12.5px; color: var(--fg-2); }
+.callout > svg.i { margin-top: 1px; color: var(--muted-foreground); }
+.callout.attention { background: var(--attention-soft); border-color: transparent; }
+.callout.attention > svg.i, .callout.attention b { color: var(--attention); }
+.callout.danger { background: var(--danger-soft); border-color: transparent; }
+.callout.danger > svg.i, .callout.danger b { color: var(--danger); }
+.callout.success { background: var(--success-soft); border-color: transparent; }
+.callout.success > svg.i { color: var(--success); }
+
+/* Table */
+.table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.table th { text-align: left; font-weight: 550; font-size: 11.5px; color: var(--muted-foreground); padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tr:last-child td { border-bottom: 0; }
+
+/* Code / terminal / diff */
+.code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 11.5px; line-height: 1.6; white-space: pre-wrap; overflow: auto; color: var(--fg-2); }
+.diff { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; font-size: 11.5px; line-height: 1.65; }
+.diff .ln { padding: 0 10px; white-space: pre; font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; }
+.diff .add { background: var(--diff-add); }
+.diff .add::first-letter { color: var(--success); }
+.diff .del { background: var(--diff-del); }
+.diff .del::first-letter { color: var(--danger); }
+.diff .hunk { color: var(--muted-foreground); background: var(--muted); }
+
+/* Stepper: horizontal run progress; color comes from the s-* class */
+.stepper { display: flex; gap: 4px; }
+.step { flex: 1; min-width: 0; }
+.step .bar { height: 3px; border-radius: 2px; background: var(--s, var(--border)); opacity: .9; }
+.step.s-idle .bar { background: var(--border); }
+.step .name { margin-top: 7px; font-size: 12px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 5px; }
+.step .meta { font-size: 11px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step.s-idle .name { color: var(--muted-foreground); font-weight: 450; }
+
+/* Timeline (same as 10-session-viewer-v2) */
+.tl-item { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; column-gap: 10px; position: relative; }
+.tl-item::before { content: ''; position: absolute; left: 9.5px; top: 22px; bottom: -4px; width: 1px; background: var(--border); }
+.tl-item:last-child::before { display: none; }
+.tl-ic { width: 20px; height: 20px; display: grid; place-items: center; color: var(--muted-foreground); background: var(--background); position: relative; z-index: 1; margin-top: 1px; }
+.tl-ic svg.i { width: 14px; height: 14px; }
+.tl-body { font-size: 12.5px; color: var(--fg-2); padding: 2px 0 10px; min-width: 0; }
+.tl-t { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; padding-top: 3px; text-align: right; min-width: 34px; }
+
+/* Overlays */
+.sheet { position: fixed; top: 0; right: 0; bottom: 0; width: 420px; background: var(--background); border-left: 1px solid var(--border); box-shadow: -12px 0 32px #00000033; display: flex; flex-direction: column; z-index: 20; }
+.dialog { width: 440px; background: var(--popover); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 16px 48px #00000059; padding: 18px; }
+.menu { min-width: 180px; background: var(--popover); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px #00000040; }
+.menu-item { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 5px; font-size: 12.5px; color: var(--fg-2); }
+.menu-item:hover { background: var(--accent); color: var(--foreground); }
+.menu-item kbd { margin-left: auto; }
+.empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 48px 24px; color: var(--muted-foreground); }
+.empty .h-section { color: var(--foreground); }
+.skeleton { background: var(--muted); border-radius: 4px; height: 10px; }
+
+/* ---------- Mockup chrome (not part of the product) ---------- */
+.mock-bar { position: fixed; right: 12px; bottom: 12px; z-index: 100; display: flex; gap: 6px; padding: 5px; border-radius: 9px; background: #111; border: 1px solid #333; box-shadow: 0 6px 20px #0006; font-family: 'Segoe UI', sans-serif; }
+.mock-bar button { border: 0; border-radius: 6px; background: #222; color: #ddd; font-size: 11.5px; height: 26px; padding: 0 10px; }
+.mock-bar button.on { background: #ddd; color: #111; }
+.mock-note { border: 1px dashed #2dd4bf; color: #2dd4bf; background: #2dd4bf10; border-radius: 6px; padding: 6px 9px; font-size: 11.5px; }
+/* ==== END NEOMIND V2 SHARED STYLES ==== */
+</style>
+<style>
+/* ---------- Design system page (screen-specific, tokens only) ---------- */
+/* Cascadia Mono fallback turns "--" into a dash; token names must read literally */
+.mono, code, kbd { font-variant-ligatures: none; }
+.ds { max-width: 1140px; margin: 0 auto; padding: 36px 32px 110px; }
+.ds-head p { max-width: 760px; margin-top: 6px; color: var(--muted-foreground); line-height: 1.55; }
+.toc { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 14px; font-size: 12px; }
+.toc a { color: var(--muted-foreground); text-decoration: none; }
+.toc a:hover { color: var(--foreground); }
+.ds-sec { padding: 28px 0; border-top: 1px solid var(--border); display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 32px; }
+.ds-head + .ds-sec { margin-top: 26px; }
+.sec-intro h2 { font-size: 16px; font-weight: 600; letter-spacing: -.1px; margin-top: 4px; }
+.sec-intro p { margin-top: 6px; font-size: 12px; color: var(--muted-foreground); line-height: 1.55; }
+.sec-intro p code { font-size: 11px; color: var(--fg-2); }
+.demo > * + * { margin-top: 18px; }
+.demo.tl > * + *, .demo.grid2 > * + * { margin-top: 0; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.sub-h { font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--muted-foreground); margin-bottom: 8px; }
+.wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cap { font-size: 11.5px; color: var(--muted-foreground); margin-top: 8px; line-height: 1.5; }
+
+/* Do / don't */
+.verdict { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; margin-bottom: 8px; }
+.verdict.no { color: var(--danger); }
+.verdict.ok { color: var(--success); }
+.verdict svg.i { width: 13px; height: 13px; }
+.board { border: 1px solid var(--border); border-radius: 8px; padding: 14px; background: var(--background); }
+.board.no { border-style: dashed; }
+
+/* Principles */
+.pr { padding: 12px 14px; }
+.pr .n { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.pr h3 { font-size: 13px; font-weight: 600; margin-top: 2px; }
+.pr p { font-size: 12px; color: var(--muted-foreground); margin-top: 4px; line-height: 1.5; }
+
+/* Color swatches: each panel carries its own theme class */
+.theme-panel { background: var(--background); color: var(--foreground); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.theme-panel > * + * { margin-top: 14px; }
+.tp-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; }
+.sw-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.sw .chip { height: 34px; border-radius: 6px; border: 1px solid var(--border); }
+.sw .nm { margin-top: 4px; font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; font-size: 10.5px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sw .hx { font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace; font-size: 10px; color: var(--faint); }
+.txt-row { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; padding: 3px 0; }
+.txt-row .mono { font-size: 10.5px; color: var(--faint); margin-left: auto; }
+.st-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.st-row .mono { font-size: 10.5px; color: var(--faint); margin-left: auto; }
+.brand-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted-foreground); }
+
+/* Type scale */
+.type-row { display: grid; grid-template-columns: 92px minmax(0, 1fr) 210px; gap: 16px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.type-row:last-child { border-bottom: 0; }
+.type-row .spec { font-size: 11px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.type-row .use { font-size: 11.5px; color: var(--muted-foreground); }
+.font-card { padding: 14px 16px; }
+.font-card .big { font-size: 26px; font-weight: 600; letter-spacing: -.4px; margin: 6px 0 2px; }
+.font-card .big.mono { font-size: 22px; font-weight: 500; letter-spacing: 0; }
+
+/* Old-style replicas (what we are removing). Clay = --brand to stay on tokens. */
+.old-pills { display: flex; gap: 6px; }
+.old-pills span { border: 1px solid var(--border); border-radius: 999px; padding: 3px 11px; font-size: 12px; color: var(--fg-2); }
+.old-pills span.on { background: color-mix(in srgb, var(--brand) 18%, transparent); border-color: color-mix(in srgb, var(--brand) 55%, transparent); color: var(--brand); }
+.old-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; padding: 2px; background: var(--muted); }
+.old-seg span { padding: 3px 8px; font-size: 11.5px; font-weight: 600; color: var(--muted-foreground); border-radius: 6px; white-space: nowrap; }
+.old-seg span.on { background: var(--background); color: var(--brand); }
+.old-seg.outlined span.on { outline: 2px solid var(--brand); outline-offset: 1px; background: var(--muted); }
+.btn.old-clay { background: var(--brand); border-color: var(--brand); color: var(--primary-foreground); }
+.old-err { display: flex; gap: 10px; align-items: center; padding: 14px 16px; border-radius: 8px; border: 1px solid var(--danger); background: var(--danger-soft); color: var(--danger); font-weight: 600; font-size: 14px; }
+.old-err svg.i { width: 18px; height: 18px; }
+
+/* Forms */
+.input.invalid { border-color: var(--danger); }
+.field .err { font-size: 11.5px; color: var(--danger); display: flex; align-items: center; gap: 5px; }
+.field .err svg.i { width: 13px; height: 13px; }
+.check svg.i { width: 10px; height: 10px; stroke-width: 3; color: var(--primary-foreground); }
+.opt-row { display: flex; align-items: flex-start; gap: 10px; }
+.opt-row .switch, .opt-row .check { margin-top: 2px; }
+.opt-row .t { font-size: 12.5px; color: var(--foreground); }
+.opt-row .help { font-size: 11.5px; color: var(--muted-foreground); }
+
+/* Callouts with trailing action */
+.callout > .txt { flex: 1; min-width: 0; line-height: 1.5; }
+.callout > .btn { margin: -3px -2px -3px 0; }
+.arrow-down { display: flex; justify-content: center; color: var(--faint); margin: 8px 0; }
+
+/* Card / list */
+.fields { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 6px 10px; font-size: 12.5px; }
+.fields dt { color: var(--muted-foreground); }
+.fields dd { margin: 0; color: var(--fg-2); }
+.lr-main { flex: 1; min-width: 0; }
+.lr-title { font-size: 12.5px; color: var(--foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lr-sub { font-size: 11.5px; color: var(--muted-foreground); }
+
+/* Stepper examples */
+.step-ex + .step-ex { margin-top: 18px; }
+.step-ex .sub-h { margin-bottom: 10px; }
+.step .name svg.i { width: 12px; height: 12px; color: var(--s, var(--muted-foreground)); }
+
+/* Timeline */
+.tl { padding-top: 2px; }
+.tl-body b { font-weight: 500; color: var(--foreground); }
+.tl-body .sub { font-size: 11.5px; }
+.foot-sum { padding: 8px 11px; border-radius: 8px; background: var(--muted); color: var(--muted-foreground); font-size: 11.5px; line-height: 1.5; margin-bottom: 4px; }
+.foot-sum b { color: var(--fg-2); font-weight: 600; }
+
+/* Overlays shown in place */
+.menu .sepline { height: 1px; background: var(--border); margin: 4px -4px; }
+.menu-item svg.i { color: var(--muted-foreground); width: 14px; height: 14px; }
+.menu-item.danger, .menu-item.danger svg.i { color: var(--danger); }
+.backdrop { background: var(--overlay); border-radius: 8px; padding: 26px 20px; display: grid; place-items: center; }
+.dialog h3 { font-size: 16px; font-weight: 600; }
+.dialog p { margin-top: 8px; color: var(--fg-2); font-size: 12.5px; line-height: 1.55; }
+.dialog .foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.sheet-frame { position: relative; height: 330px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--background); }
+.sheet-frame .ghost-page { padding: 16px; }
+.sheet-frame .ghost-page .skeleton + .skeleton { margin-top: 10px; }
+.sheet-frame .scrim { position: absolute; inset: 0; background: var(--overlay); }
+.sheet-frame .sheet { position: absolute; width: 330px; }
+.sheet-head { padding: 14px 16px 0; }
+.sheet-head .row { gap: 8px; }
+.sheet-head .t { font-size: 14px; font-weight: 600; }
+.sheet .tabs { padding: 0 16px; margin-top: 10px; }
+.sheet .tl { padding: 12px 16px; }
+
+/* Empty + skeleton */
+.empty-ic { width: 40px; height: 40px; border-radius: 10px; background: var(--muted); display: grid; place-items: center; color: var(--muted-foreground); margin-bottom: 6px; }
+.empty-ic svg.i { width: 18px; height: 18px; }
+.empty .sub { max-width: 280px; line-height: 1.5; }
+.empty .btn { margin-top: 10px; }
+.sk-row { display: flex; align-items: center; gap: 10px; padding: 11px 12px; }
+.sk-row .skeleton.round { width: 8px; height: 8px; border-radius: 50%; }
+.sk-col { flex: 1; }
+.sk-col .skeleton + .skeleton { margin-top: 7px; }
+</style>
+</head>
+<body class="theme-dark shell-web">
+
+<div class="ds">
+  <header class="ds-head">
+    <div class="row" style="gap:10px">
+      <span class="logo-mark"><svg class="i sm" viewBox="0 0 24 24"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/></svg></span>
+      <h1 class="h-page">Hệ thiết kế NeoMind v2</h1>
+    </div>
+    <p>“Bảng điều khiển ca trực”: bề mặt xám trung tính theo theme Nimbalyst, màu chỉ để báo trạng thái, mỗi màn một việc chính. Mọi màu ở trang này lấy từ token trong <span class="mono">v2-shared.css</span>; giai đoạn 1 chuyển thành <span class="mono">ui/src/theme.css</span> và component shadcn/ui. Bấm “Tối / Sáng” ở góc phải dưới để đổi theme.</p>
+    <nav class="toc">
+      <a href="#nguyen-tac">Nguyên tắc</a><a href="#mau">Màu</a><a href="#chu">Chữ</a><a href="#nut">Nút</a><a href="#trang-thai">Trạng thái</a><a href="#tabs">Tabs và seg</a><a href="#form">Form</a><a href="#callout">Callout</a><a href="#be-mat">Card, list, bảng</a><a href="#stepper">Stepper</a><a href="#timeline">Timeline</a><a href="#overlay">Overlay</a><a href="#trong">Màn trống, skeleton</a>
+    </nav>
+  </header>
+
+  <!-- ===== 1. Principles ===== -->
+  <section class="ds-sec" id="nguyen-tac">
+    <div class="sec-intro"><div class="h-label">01</div><h2>Nguyên tắc</h2><p>Năm quy tắc áp cho mọi màn, web lẫn panel trong Nimbalyst.</p></div>
+    <div class="demo">
+      <div class="grid3">
+        <div class="card pr"><div class="n">1</div><h3>Một việc chính mỗi màn</h3><p>Tối đa một nút nền đậm. Còn lại là nút viền hoặc nút chữ.</p></div>
+        <div class="card pr"><div class="n">2</div><h3>Màu = trạng thái</h3><p>Năm màu: đang chạy, cần bạn, lỗi, xong, chờ. Mọi thứ khác là xám.</p></div>
+        <div class="card pr"><div class="n">3</div><h3>Clay chỉ ở logo</h3><p>Mục đang chọn, link, focus dùng màu trung tính của theme.</p></div>
+        <div class="card pr"><div class="n">4</div><h3>Lỗi theo mức độ</h3><p>Bước chưa làm là gợi ý xám có nút hành động. Đỏ chỉ cho lỗi thật.</p></div>
+        <div class="card pr"><div class="n">5</div><h3>Không dùng hộp thoại trình duyệt</h3><p>Mọi xác nhận là dialog trong app, nói rõ hậu quả.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 2. Color ===== -->
+  <section class="ds-sec" id="mau">
+    <div class="sec-intro"><div class="h-label">02</div><h2>Màu</h2><p>Tên token theo shadcn. Panel trong Nimbalyst lấy <code>--background</code>, <code>--foreground</code>, <code>--border</code>, <code>--ring</code> từ host nếu có. Năm cặp màu trạng thái (đậm + nền nhạt) giữ nguyên ở cả hai shell.</p></div>
+    <div class="demo">
+      <div class="grid2">
+        <div class="theme-panel theme-dark">
+          <div class="tp-head"><svg class="i" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>Tối</div>
+          <div>
+            <div class="sub-h">Bề mặt</div>
+            <div class="sw-grid">
+              <div class="sw"><div class="chip" style="background:var(--background)"></div><div class="nm">background</div><div class="hx">#1e1e1e</div></div>
+              <div class="sw"><div class="chip" style="background:var(--card)"></div><div class="nm">card</div><div class="hx">#252525</div></div>
+              <div class="sw"><div class="chip" style="background:var(--popover)"></div><div class="nm">popover</div><div class="hx">#2a2a2a</div></div>
+              <div class="sw"><div class="chip" style="background:var(--muted)"></div><div class="nm">muted</div><div class="hx">#323232</div></div>
+              <div class="sw"><div class="chip" style="background:var(--accent)"></div><div class="nm">accent</div><div class="hx">#303030</div></div>
+              <div class="sw"><div class="chip" style="background:var(--border)"></div><div class="nm">border</div><div class="hx">#363636</div></div>
+              <div class="sw"><div class="chip" style="background:var(--input)"></div><div class="nm">input</div><div class="hx">#4a4a4a</div></div>
+              <div class="sw"><div class="chip" style="background:var(--primary)"></div><div class="nm">primary</div><div class="hx">#ececec</div></div>
+            </div>
+          </div>
+          <div>
+            <div class="sub-h">Chữ</div>
+            <div class="txt-row" style="color:var(--foreground)">Thêm hàm power(a, b) <span class="mono">foreground</span></div>
+            <div class="txt-row" style="color:var(--fg-2)">Nội dung phụ, giá trị <span class="mono">fg-2</span></div>
+            <div class="txt-row" style="color:var(--muted-foreground)">Dev · 12 phút trước <span class="mono">muted-foreground</span></div>
+            <div class="txt-row" style="color:var(--faint)">Placeholder, giờ <span class="mono">faint</span></div>
+          </div>
+          <div>
+            <div class="sub-h">Trạng thái</div>
+            <div class="st-row"><span class="badge s-running">Đang chạy</span><span class="mono">running</span></div>
+            <div class="st-row"><span class="badge s-attention">Cần bạn</span><span class="mono">attention</span></div>
+            <div class="st-row"><span class="badge s-danger">Lỗi</span><span class="mono">danger</span></div>
+            <div class="st-row"><span class="badge s-success">Xong</span><span class="mono">success</span></div>
+            <div class="st-row"><span class="badge s-idle">Chờ</span><span class="mono">idle</span></div>
+          </div>
+          <div class="brand-row"><span class="logo-mark"><svg class="i sm" viewBox="0 0 24 24"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/></svg></span><span><span class="mono">brand</span> #d97757 · chỉ dùng cho logo</span></div>
+        </div>
+
+        <div class="theme-panel theme-light">
+          <div class="tp-head"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>Sáng</div>
+          <div>
+            <div class="sub-h">Bề mặt</div>
+            <div class="sw-grid">
+              <div class="sw"><div class="chip" style="background:var(--background)"></div><div class="nm">background</div><div class="hx">#ffffff</div></div>
+              <div class="sw"><div class="chip" style="background:var(--card)"></div><div class="nm">card</div><div class="hx">#fafafa</div></div>
+              <div class="sw"><div class="chip" style="background:var(--popover)"></div><div class="nm">popover</div><div class="hx">#ffffff</div></div>
+              <div class="sw"><div class="chip" style="background:var(--muted)"></div><div class="nm">muted</div><div class="hx">#f4f4f5</div></div>
+              <div class="sw"><div class="chip" style="background:var(--accent)"></div><div class="nm">accent</div><div class="hx">#f0f0f1</div></div>
+              <div class="sw"><div class="chip" style="background:var(--border)"></div><div class="nm">border</div><div class="hx">#e4e4e7</div></div>
+              <div class="sw"><div class="chip" style="background:var(--input)"></div><div class="nm">input</div><div class="hx">#e4e4e7</div></div>
+              <div class="sw"><div class="chip" style="background:var(--primary)"></div><div class="nm">primary</div><div class="hx">#18181b</div></div>
+            </div>
+          </div>
+          <div>
+            <div class="sub-h">Chữ</div>
+            <div class="txt-row" style="color:var(--foreground)">Thêm hàm power(a, b) <span class="mono">foreground</span></div>
+            <div class="txt-row" style="color:var(--fg-2)">Nội dung phụ, giá trị <span class="mono">fg-2</span></div>
+            <div class="txt-row" style="color:var(--muted-foreground)">Dev · 12 phút trước <span class="mono">muted-foreground</span></div>
+            <div class="txt-row" style="color:var(--faint)">Placeholder, giờ <span class="mono">faint</span></div>
+          </div>
+          <div>
+            <div class="sub-h">Trạng thái</div>
+            <div class="st-row"><span class="badge s-running">Đang chạy</span><span class="mono">running</span></div>
+            <div class="st-row"><span class="badge s-attention">Cần bạn</span><span class="mono">attention</span></div>
+            <div class="st-row"><span class="badge s-danger">Lỗi</span><span class="mono">danger</span></div>
+            <div class="st-row"><span class="badge s-success">Xong</span><span class="mono">success</span></div>
+            <div class="st-row"><span class="badge s-idle">Chờ</span><span class="mono">idle</span></div>
+          </div>
+          <div class="brand-row"><span class="logo-mark"><svg class="i sm" viewBox="0 0 24 24"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/></svg></span><span><span class="mono">brand</span> #c15f3c · chỉ dùng cho logo</span></div>
+        </div>
+      </div>
+
+      <table class="table">
+        <thead><tr><th>Trạng thái</th><th>Token</th><th>Dùng cho</th><th>Ví dụ</th></tr></thead>
+        <tbody>
+          <tr><td><span class="row"><span class="dot s-running"></span>Đang chạy</span></td><td class="mono">--running</td><td>Run hoặc bước đang chạy; chấm nhấp nháy</td><td class="muted">Viết lại phần cài đặt trong README</td></tr>
+          <tr><td><span class="row"><span class="dot s-attention"></span>Cần bạn</span></td><td class="mono">--attention</td><td>Chờ duyệt kế hoạch, bị chặn cần quyết định</td><td class="muted">Sửa lỗi chia cho 0 trong divide()</td></tr>
+          <tr><td><span class="row"><span class="dot s-danger"></span>Lỗi</span></td><td class="mono">--danger</td><td>Thất bại, finding bắt buộc chưa đạt</td><td class="muted">Tách module parser: checks thất bại</td></tr>
+          <tr><td><span class="row"><span class="dot s-success"></span>Xong</span></td><td class="mono">--success</td><td>Hoàn tất, review đạt, đã commit</td><td class="muted">Commit <span class="mono">a1b2c3d</span></td></tr>
+          <tr><td><span class="row"><span class="dot s-idle"></span>Chờ / tắt</span></td><td class="mono">--idle</td><td>Bước chưa chạy, run đã hủy</td><td class="muted">Dọn test cũ: đã hủy</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===== 3. Type ===== -->
+  <section class="ds-sec" id="chu">
+    <div class="sec-intro"><div class="h-label">03</div><h2>Chữ</h2><p>Đóng gói font cùng bundle (<code>@fontsource</code>), chạy offline. Trong panel, thân bài có thể dùng font của Nimbalyst; font mono giữ riêng. Mockup dùng Segoe UI / Cascadia Mono nếu máy chưa cài.</p></div>
+    <div class="demo">
+      <div class="grid2">
+        <div class="card font-card"><div class="h-label">Giao diện</div><div class="big">Be Vietnam Pro</div><div class="sub">Thiết kế cho tiếng Việt: dấu không chồng ở cỡ nhỏ. Ặ ẫ ộ ữ ỹ ợ ể</div></div>
+        <div class="card font-card"><div class="h-label">Code, hash, đường dẫn</div><div class="big mono">JetBrains Mono</div><div class="sub"><span class="mono">a1b2c3d · calc.test.js · npm test</span></div></div>
+      </div>
+      <div class="card" style="padding:4px 16px">
+        <div class="type-row"><span class="spec">20 · 650</span><span style="font-size:20px;font-weight:650;letter-spacing:-.3px">Runs</span><span class="use">Tiêu đề trang (<span class="mono">.h-page</span>)</span></div>
+        <div class="type-row"><span class="spec">16 · 600</span><span style="font-size:16px;font-weight:600">Thêm hàm power(a, b) vào calc.js</span><span class="use">Yêu cầu ở chi tiết run, tiêu đề dialog</span></div>
+        <div class="type-row"><span class="spec">14 · 600</span><span style="font-size:14px;font-weight:600">Kế hoạch đề xuất</span><span class="use">Tiêu đề mục, thẻ (<span class="mono">.h-section</span>)</span></div>
+        <div class="type-row"><span class="spec">13 · 400</span><span style="font-size:13px">Agent sẽ sửa calc.js và thêm test cho số mũ âm.</span><span class="use">Thân bài, ô nhập, danh sách</span></div>
+        <div class="type-row"><span class="spec">12 · 400</span><span style="font-size:12px;color:var(--muted-foreground)">Dev v3 · worktree riêng · 4 phút 12 giây · 182k tokens</span><span class="use">Dòng phụ, nhãn form, nút nhỏ</span></div>
+        <div class="type-row"><span class="spec">11 · 600 · hoa</span><span class="h-label">Cần bạn</span><span class="use">Nhãn nhóm (<span class="mono">.h-label</span>), giờ timeline</span></div>
+        <div class="type-row"><span class="spec">12 · mono</span><span class="mono">git commit -m "feat: add power()" · a1b2c3d</span><span class="use">Lệnh, hash, tên file</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 4. Buttons ===== -->
+  <section class="ds-sec" id="nut">
+    <div class="sec-intro"><div class="h-label">04</div><h2>Nút</h2><p>Nút chính (nền đậm) là việc người dùng nên làm tiếp. Nút viền cho hành động phụ, nút chữ cho thao tác nhẹ. <code>danger</code> chữ đỏ; nền đỏ chỉ ở nút xác nhận trong dialog.</p></div>
+    <div class="demo">
+      <div class="card card-pad">
+        <div class="sub-h">Kiểu</div>
+        <div class="wrap">
+          <button class="btn primary">Duyệt kế hoạch</button>
+          <button class="btn">Yêu cầu sửa</button>
+          <button class="btn ghost">Xem session</button>
+          <button class="btn danger">Hủy run</button>
+          <button class="btn danger solid">Hủy run</button>
+        </div>
+        <div class="cap">primary · secondary (mặc định) · ghost · danger · danger solid (chỉ trong dialog)</div>
+        <div class="grid2" style="margin-top:18px">
+          <div>
+            <div class="sub-h">Cỡ</div>
+            <div class="wrap"><button class="btn lg">Lớn 36</button><button class="btn">Vừa 30</button><button class="btn sm">Nhỏ 24</button></div>
+          </div>
+          <div>
+            <div class="sub-h">Có icon, chỉ icon, tắt</div>
+            <div class="wrap">
+              <button class="btn"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Run mới</button>
+              <button class="btn icon" title="Thêm"><svg class="i" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+              <button class="btn icon ghost" title="Đóng (Esc)"><svg class="i" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+              <button class="btn primary" disabled>Commit</button>
+            </div>
+          </div>
+        </div>
+        <div class="cap">Nút chỉ có icon luôn có <span class="mono">title</span>/tooltip. Nút tắt kèm lý do ở tooltip hoặc dòng phụ (“Chờ checks xong”).</div>
+      </div>
+
+      <div class="grid2">
+        <div>
+          <div class="verdict no"><svg class="i" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>Không: hai nút cùng màu nhấn</div>
+          <div class="board no">
+            <div class="row"><span class="h-section">Runs</span><span class="spacer"></span><button class="btn old-clay"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Run mới</button><button class="btn old-clay">Bắt đầu</button></div>
+            <div class="cap">Bản hiện tại: không rõ nút nào là việc chính.</div>
+          </div>
+        </div>
+        <div>
+          <div class="verdict ok"><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Nên: một nút chính mỗi màn</div>
+          <div class="board">
+            <div class="row"><span class="h-section">Runs</span><span class="spacer"></span><button class="btn"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Run mới</button><button class="btn primary">Bắt đầu run</button></div>
+            <div class="cap">“Run mới” là nút viền; “Bắt đầu run” là việc chính của form.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 5. Status ===== -->
+  <section class="ds-sec" id="trang-thai">
+    <div class="sec-intro"><div class="h-label">05</div><h2>Badge trạng thái và chấm</h2><p>Màu cho biết loại trạng thái, chữ nói chính xác điều gì. Chấm dùng trong danh sách và sidebar; đang chạy thì nhấp nháy. <code>.tag</code> xám cho thông tin không phải trạng thái.</p></div>
+    <div class="demo">
+      <div class="card card-pad">
+        <div class="sub-h">Badge</div>
+        <div class="wrap">
+          <span class="badge s-running">Đang chạy</span>
+          <span class="badge s-attention">Chờ duyệt kế hoạch</span>
+          <span class="badge s-attention">Bị chặn</span>
+          <span class="badge s-danger">Checks thất bại</span>
+          <span class="badge s-success">Đã commit</span>
+          <span class="badge s-idle">Đã hủy</span>
+        </div>
+        <div class="sub-h" style="margin-top:16px">Chấm</div>
+        <div class="wrap" style="gap:16px">
+          <span class="row"><span class="dot s-running"></span>Đang chạy</span>
+          <span class="row"><span class="dot s-attention"></span>Cần bạn</span>
+          <span class="row"><span class="dot s-danger"></span>Lỗi</span>
+          <span class="row"><span class="dot s-success"></span>Xong</span>
+          <span class="row"><span class="dot s-idle"></span>Chờ / đã hủy</span>
+        </div>
+        <div class="sub-h" style="margin-top:16px">Tag (không mang trạng thái)</div>
+        <div class="wrap"><span class="tag">Dev v3</span><span class="tag">worktree riêng</span><span class="tag">mẫu có sẵn</span><span class="tag mono">main</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 6. Tabs vs seg ===== -->
+  <section class="ds-sec" id="tabs">
+    <div class="sec-intro"><div class="h-label">06</div><h2>Tabs và seg</h2><p><b>Tabs</b>: chọn một view của cùng nội dung (Tổng quan, Diff, Checks). Có số đếm; tab bằng 0 làm mờ. <b>Seg</b>: chọn một giá trị cài đặt nhỏ trong form (runner, theme), 2–3 lựa chọn. Không dùng pill.</p></div>
+    <div class="demo">
+      <div class="grid2">
+        <div>
+          <div class="verdict no"><svg class="i" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>Không: ba kiểu chọn trên cùng một drawer</div>
+          <div class="board no">
+            <div class="old-pills"><span class="on">Lượt 1</span><span>Lượt 2</span><span>Lượt 3</span></div>
+            <div style="margin-top:10px"><span class="old-seg"><span class="on">NeoMind ghi</span><span>Session gốc của runner</span></span></div>
+            <div style="margin-top:10px"><span class="old-seg outlined"><span class="on">Tất cả</span><span>Tin nhắn</span><span>Sửa file</span><span>Lệnh</span></span></div>
+            <div class="cap">Viên clay, khối xám, viền clay tràn: ba control cho cùng một việc “chọn một”.</div>
+          </div>
+        </div>
+        <div>
+          <div class="verdict ok"><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Nên: tabs cho view, seg cho cài đặt</div>
+          <div class="board">
+            <div class="tabs">
+              <span class="tab on">Tổng quan</span><span class="tab">Diff <small>3</small></span><span class="tab">Checks <small>1</small></span><span class="tab zero">Lesson <small>0</small></span>
+            </div>
+            <div class="field" style="margin-top:16px">
+              <label>Runner</label>
+              <div><span class="seg"><button>Codex</button><button class="on">Claude Code</button></span></div>
+              <span class="help">Lượt chọn session (Lượt 1/3) là menu nhỏ cạnh tiêu đề, không phải hàng nút.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 7. Forms ===== -->
+  <section class="ds-sec" id="form">
+    <div class="sec-intro"><div class="h-label">07</div><h2>Form</h2><p>Nhãn trên, gợi ý dưới, lỗi thay chỗ gợi ý. Cùng một kiểu ô cho input, select, textarea: không còn <code>select</code> mặc định của trình duyệt.</p></div>
+    <div class="demo">
+      <div class="card card-pad">
+        <div class="grid2" style="gap:18px 24px">
+          <div class="field" style="grid-column:1 / -1">
+            <label for="f-req">Yêu cầu</label>
+            <textarea id="f-req" class="textarea" placeholder="Mô tả việc agent cần làm…">Thêm hàm power(a, b) vào calc.js và viết test</textarea>
+            <span class="help">Một việc mỗi run. Agent sẽ lập kế hoạch để bạn duyệt trước khi sửa file.</span>
+          </div>
+          <div class="field">
+            <label for="f-flow">Flow</label>
+            <select id="f-flow" class="select"><option>Dev · v3</option><option>Dev song song · v1</option><option>Fast</option><option>Research</option></select>
+          </div>
+          <div class="field">
+            <label for="f-model">Model thực hiện</label>
+            <select id="f-model" class="select"><option>Claude Code · Sonnet 5.5</option><option>Claude Code · Opus 5.5</option><option>Codex · GPT-6.1 Sol</option></select>
+            <span class="help">Ghi đè profile cho run này.</span>
+          </div>
+          <div class="field">
+            <label for="f-name">Tên profile</label>
+            <input id="f-name" class="input" placeholder="vd. reviewer-chặt">
+            <span class="help">Chữ thường, không dấu cách.</span>
+          </div>
+          <div class="field">
+            <label for="f-time">Thời gian tối đa (phút)</label>
+            <input id="f-time" class="input invalid" value="0">
+            <span class="err"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>Phải lớn hơn 0.</span>
+          </div>
+          <div class="opt-row">
+            <button class="switch on" aria-label="Bật"></button>
+            <div><div class="t">Dùng worktree riêng</div><div class="help">Agent sửa trong bản sao, không đụng checkout của bạn.</div></div>
+          </div>
+          <div class="opt-row">
+            <button class="switch" aria-label="Tắt"></button>
+            <div><div class="t">Tự duyệt kế hoạch</div><div class="help">Chỉ flow khai báo <span class="mono">approval.mode: auto</span>.</div></div>
+          </div>
+          <div class="opt-row">
+            <span class="check on"><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <div><div class="t">Chạy <span class="mono">npm test</span> sau khi sửa</div></div>
+          </div>
+          <div class="opt-row">
+            <span class="check"></span>
+            <div><div class="t">Cho phép sửa <span class="mono">package.json</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 8. Callout ===== -->
+  <section class="ds-sec" id="callout">
+    <div class="sec-intro"><div class="h-label">08</div><h2>Callout</h2><p>Gợi ý xám có nút hành động cho bước chưa làm. Hổ phách khi cần bạn quyết định. Đỏ chỉ khi có thứ thật sự hỏng. Thông báo lỗi API luôn được dịch sang tiếng Việt.</p></div>
+    <div class="demo">
+      <div>
+        <div class="verdict no"><svg class="i" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>Trước: bước chưa làm hiện thành lỗi đỏ, tiếng Anh, không có lối ra</div>
+        <div class="old-err"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6M9 9l6 6"/></svg>Publish the flow before starting a run</div>
+        <div class="arrow-down"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M19 12l-7 7-7-7"/></svg></div>
+        <div class="verdict ok"><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Sau: gợi ý trung tính, nút làm luôn bước còn thiếu</div>
+        <div class="callout">
+          <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <div class="txt">Flow <b style="font-weight:600;color:var(--foreground)">Dev</b> chưa có phiên bản publish. Publish để bắt đầu run với flow này.</div>
+          <button class="btn sm"><svg class="i sm" viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>Publish flow</button>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="callout attention">
+          <svg class="i" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+          <div class="txt"><b>Review cần bạn quyết định.</b> 1 finding bắt buộc chưa đạt sau 2 vòng sửa.</div>
+          <button class="btn sm">Xem finding</button>
+        </div>
+        <div class="callout danger">
+          <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6M9 9l6 6"/></svg>
+          <div class="txt"><b>Checks thất bại.</b> <span class="mono">npm test</span>: 2 test lỗi trong <span class="mono">calc.test.js</span>.</div>
+          <button class="btn sm">Xem log</button>
+        </div>
+        <div class="callout success">
+          <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg>
+          <div class="txt">Đã commit <span class="mono">a1b2c3d</span> lên <span class="mono">main</span>.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 9. Card / list / table ===== -->
+  <section class="ds-sec" id="be-mat">
+    <div class="sec-intro"><div class="h-label">09</div><h2>Card, list, bảng</h2><p>Card cho một khối có tiêu đề và hành động. List cho tập đối tượng chọn được (run, flow). Bảng khi cần so sánh theo cột. Viền màu chỉ khi card mang trạng thái cần bạn hoặc lỗi.</p></div>
+    <div class="demo">
+      <div class="grid2">
+        <div class="card attention">
+          <div class="card-head"><span class="h-section">Kế hoạch</span><span class="badge s-attention">Chờ duyệt</span><span class="spacer"></span><button class="btn ghost sm">Xem đầy đủ</button></div>
+          <div class="card-pad">
+            <dl class="fields" style="margin:0">
+              <dt>Mục tiêu</dt><dd>Thêm <span class="mono">power(a, b)</span>, xử lý số mũ âm.</dd>
+              <dt>Sẽ sửa</dt><dd><span class="mono">calc.js</span>, <span class="mono">calc.test.js</span></dd>
+              <dt>Checks</dt><dd><span class="mono">npm test</span></dd>
+            </dl>
+          </div>
+        </div>
+        <div class="list">
+          <div class="list-row on"><span class="dot s-attention"></span><div class="lr-main"><div class="lr-title">Thêm hàm power(a, b) vào calc.js và viết test</div><div class="lr-sub">Dev · 12 phút trước</div></div></div>
+          <div class="list-row"><span class="dot s-running"></span><div class="lr-main"><div class="lr-title">Viết lại phần cài đặt trong README</div><div class="lr-sub">Dev song song · 4 phút trước</div></div></div>
+          <div class="list-row"><span class="dot s-success"></span><div class="lr-main"><div class="lr-title">Thêm cờ --precision cho CLI</div><div class="lr-sub">Dev · hôm qua</div></div></div>
+        </div>
+      </div>
+      <div class="card" style="overflow:hidden">
+        <table class="table">
+          <thead><tr><th>Flow</th><th>Phiên bản</th><th>Bước</th><th>Run gần nhất</th><th style="text-align:right">Cập nhật</th></tr></thead>
+          <tbody>
+            <tr><td><b style="font-weight:600">Dev</b></td><td class="num">v3</td><td class="num">6</td><td><span class="row"><span class="dot s-attention"></span>Chờ duyệt kế hoạch</span></td><td class="muted num" style="text-align:right">12 phút trước</td></tr>
+            <tr><td><b style="font-weight:600">Dev song song</b></td><td class="num">v1</td><td class="num">8</td><td><span class="row"><span class="dot s-running"></span>Đang chạy</span></td><td class="muted num" style="text-align:right">hôm qua</td></tr>
+            <tr><td><b style="font-weight:600">Fast</b> <span class="tag">mẫu có sẵn</span></td><td class="num">v1</td><td class="num">3</td><td><span class="row"><span class="dot s-danger"></span>Checks thất bại</span></td><td class="muted num" style="text-align:right">—</td></tr>
+            <tr><td><b style="font-weight:600">Research</b> <span class="tag">mẫu có sẵn</span></td><td class="num">v1</td><td class="num">3</td><td class="muted">Chưa có run</td><td class="muted num" style="text-align:right">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 10. Stepper ===== -->
+  <section class="ds-sec" id="stepper">
+    <div class="sec-intro"><div class="h-label">10</div><h2>Stepper</h2><p>Tiến độ run theo các bước của flow. Thanh và icon lấy màu từ trạng thái của bước; bước chưa chạy giữ xám. Dòng phụ: agent và thời gian, hoặc điều đang chờ.</p></div>
+    <div class="demo card card-pad">
+      <div class="step-ex">
+        <div class="sub-h">Đang chạy review</div>
+        <div class="stepper">
+          <div class="step s-success"><div class="bar"></div><div class="name"><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Lập kế hoạch</div><div class="meta">Opus 5.5 · 1:20</div></div>
+          <div class="step s-success"><div class="bar"></div><div class="name"><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Duyệt kế hoạch</div><div class="meta">Bạn · 16:04</div></div>
+          <div class="step s-success"><div class="bar"></div><div class="name"><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Thực hiện</div><div class="meta">Sonnet 5.5 · 4:12</div></div>
+          <div class="step s-running"><div class="bar"></div><div class="name"><svg class="i" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg>Review độc lập</div><div class="meta">GPT-6.1 Sol · 0:48</div></div>
+          <div class="step s-idle"><div class="bar"></div><div class="name">Vòng sửa</div><div class="meta">tối đa 2</div></div>
+          <div class="step s-idle"><div class="bar"></div><div class="name">Commit local</div><div class="meta">—</div></div>
+        </div>
+      </div>
+      <div class="step-ex">
+        <div class="sub-h">Bị chặn, cần bạn</div>
+        <div class="stepper">
+          <div class="step s-success"><div class="bar"></div><div class="name"><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Lập kế hoạch</div><div class="meta">Opus 5.5 · 1:05</div></div>
+          <div class="step s-success"><div class="bar"></div><div class="name"><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Duyệt kế hoạch</div><div class="meta">Bạn · 15:31</div></div>
+          <div class="step s-success"><div class="bar"></div><div class="name"><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Thực hiện</div><div class="meta">Sonnet 5.5 · 3:40</div></div>
+          <div class="step s-danger"><div class="bar"></div><div class="name"><svg class="i" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>Review độc lập</div><div class="meta">1 finding bắt buộc</div></div>
+          <div class="step s-attention"><div class="bar"></div><div class="name"><svg class="i" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>Vòng sửa</div><div class="meta">2/2 · cần quyết định</div></div>
+          <div class="step s-idle"><div class="bar"></div><div class="name">Commit local</div><div class="meta">—</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 11. Timeline ===== -->
+  <section class="ds-sec" id="timeline">
+    <div class="sec-intro"><div class="h-label">11</div><h2>Timeline</h2><p>Dòng sự kiện của một lượt agent (như mockup 10). Icon xám một màu, đường dọc nối, giờ tương đối ở cột phải; giờ đầy đủ khi rê chuột. Thao tác lặp được gộp.</p></div>
+    <div class="demo card card-pad tl">
+      <div class="tl-item"><span class="tl-ic"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span><div class="tl-body">Tìm <span class="mono">**/*.js</span> <span class="sub">· 3 file</span></div><span class="tl-t" title="16:05:02">+0:00</span></div>
+      <div class="tl-item"><span class="tl-ic"><svg class="i" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg></span><div class="tl-body"><b>Đọc 3 file</b> <span class="sub">· calc.js, calc.test.js, package.json</span></div><span class="tl-t">+0:04</span></div>
+      <div class="tl-item"><span class="tl-ic"><svg class="i" viewBox="0 0 24 24"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></span><div class="tl-body">Sửa <span class="mono">calc.js</span> <span class="sub">· +14 −0</span></div><span class="tl-t">+1:12</span></div>
+      <div class="tl-item"><span class="tl-ic"><svg class="i" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6M12 19h8"/></svg></span><div class="tl-body">Chạy <span class="mono">npm test</span> <span class="sub">· 9 test đạt</span></div><span class="tl-t">+3:58</span></div>
+      <div class="tl-item"><span class="tl-ic" style="color:var(--success)"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg></span><div class="foot-sum"><b>Lượt kết thúc</b> sau 4 phút 12 giây · sửa 2 file, chạy 1 lệnh.</div><span class="tl-t">+4:12</span></div>
+    </div>
+  </section>
+
+  <!-- ===== 12. Overlays ===== -->
+  <section class="ds-sec" id="overlay">
+    <div class="sec-intro"><div class="h-label">12</div><h2>Overlay</h2><p><b>Menu</b>: hành động phụ, có phím tắt. <b>Dialog</b>: thay mọi <code>window.confirm</code>, nói hậu quả, nút xác nhận ghi đúng hành động. <b>Sheet</b>: xem chi tiết bên phải mà không rời màn (session, finding).</p></div>
+    <div class="demo">
+      <div style="display:grid;grid-template-columns:220px minmax(0,1fr);gap:16px;align-items:start">
+        <div>
+          <div class="sub-h">Menu</div>
+          <button class="btn icon" title="Thêm"><svg class="i" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+          <div class="menu" style="margin-top:6px">
+            <div class="menu-item"><svg class="i" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>Xem session<kbd>S</kbd></div>
+            <div class="menu-item"><svg class="i" viewBox="0 0 24 24"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2z"/></svg>Mở worktree<kbd>O</kbd></div>
+            <div class="menu-item"><svg class="i" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Sao chép run id<kbd>C</kbd></div>
+            <div class="sepline"></div>
+            <div class="menu-item"><svg class="i" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>Tạm dừng<kbd>P</kbd></div>
+            <div class="menu-item danger"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6M9 9l6 6"/></svg>Hủy run…</div>
+          </div>
+        </div>
+        <div>
+          <div class="sub-h">Dialog</div>
+          <div class="backdrop">
+            <div class="dialog" role="alertdialog">
+              <h3>Hủy run?</h3>
+              <p>Agent đang ở bước <b style="font-weight:600;color:var(--foreground)">Thực hiện</b> sẽ dừng ngay. Thay đổi trong worktree <span class="mono">neomind/run-7f3a</span> được giữ lại: bạn vẫn xem được diff, hoặc xóa ở mục Dọn dẹp.</p>
+              <div class="foot"><button class="btn">Tiếp tục chạy</button><button class="btn danger solid">Hủy run</button></div>
+            </div>
+          </div>
+          <div class="cap">Thay cho <span class="mono">window.confirm("Cancel this run?")</span>: không nói hậu quả, không theo theme, chặn cả trang. Esc = “Tiếp tục chạy”.</div>
+        </div>
+      </div>
+      <div>
+        <div class="sub-h">Sheet</div>
+        <div class="sheet-frame">
+          <div class="ghost-page">
+            <div class="skeleton" style="width:30%;height:14px"></div>
+            <div class="skeleton" style="width:55%"></div>
+            <div class="skeleton" style="width:90%;height:3px;margin-top:22px"></div>
+            <div class="skeleton" style="width:70%;height:60px;margin-top:22px"></div>
+            <div class="skeleton" style="width:70%;height:60px"></div>
+          </div>
+          <div class="scrim"></div>
+          <aside class="sheet">
+            <div class="sheet-head">
+              <div class="row"><span class="t">Thực hiện</span><span class="badge s-running">Đang chạy</span><span class="spacer"></span><button class="btn icon sm ghost" title="Đóng (Esc)"><svg class="i sm" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+              <div class="sub" style="margin-top:4px">Sonnet 5.5 · 2 phút 05 giây · 61k tokens</div>
+            </div>
+            <div class="tabs"><span class="tab on">Tất cả <small>6</small></span><span class="tab">Sửa file <small>1</small></span><span class="tab">Lệnh <small>1</small></span></div>
+            <div class="tl">
+              <div class="tl-item"><span class="tl-ic"><svg class="i" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg></span><div class="tl-body"><b>Đọc 3 file</b></div><span class="tl-t">+0:04</span></div>
+              <div class="tl-item"><span class="tl-ic"><svg class="i" viewBox="0 0 24 24"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></span><div class="tl-body">Sửa <span class="mono">calc.js</span> <span class="sub">· +14 −0</span></div><span class="tl-t">+1:12</span></div>
+              <div class="tl-item"><span class="tl-ic" style="color:var(--running)"><svg class="i" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6M12 19h8"/></svg></span><div class="tl-body">Đang chạy <span class="mono">npm test</span>…</div><span class="tl-t">+2:01</span></div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 13. Empty + skeleton ===== -->
+  <section class="ds-sec" id="trong">
+    <div class="sec-intro"><div class="h-label">13</div><h2>Màn trống và skeleton</h2><p>Màn trống: icon nhỏ phía trên (không đè chữ), một câu nói vì sao trống, một hành động. Chỉ hiện khi thật sự trống. Skeleton giữ đúng bố cục thật, không dùng spinner che cả màn.</p></div>
+    <div class="demo grid2">
+      <div class="card">
+        <div class="empty">
+          <span class="empty-ic"><svg class="i" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/></svg></span>
+          <div class="h-section">Chưa có run nào</div>
+          <div class="sub">Run là một lần giao việc cho agent theo một flow. Bạn duyệt kế hoạch trước khi agent sửa file.</div>
+          <button class="btn"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Run mới</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div class="skeleton" style="width:90px;height:12px"></div><span class="spacer"></span><div class="skeleton" style="width:60px;height:20px;border-radius:999px"></div></div>
+        <div class="sk-row"><span class="skeleton round"></span><div class="sk-col"><div class="skeleton" style="width:82%"></div><div class="skeleton" style="width:38%;height:8px"></div></div></div>
+        <div class="sk-row"><span class="skeleton round"></span><div class="sk-col"><div class="skeleton" style="width:64%"></div><div class="skeleton" style="width:30%;height:8px"></div></div></div>
+        <div class="sk-row"><span class="skeleton round"></span><div class="sk-col"><div class="skeleton" style="width:74%"></div><div class="skeleton" style="width:42%;height:8px"></div></div></div>
+        <div class="sk-row"><span class="skeleton round"></span><div class="sk-col"><div class="skeleton" style="width:56%"></div><div class="skeleton" style="width:34%;height:8px"></div></div></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="mock-bar">
+  <button data-theme="dark" class="on">Tối</button><button data-theme="light">Sáng</button>
+</div>
+<script>
+/* NEOMIND V2 MOCK SCRIPT */
+(() => {
+  const body = document.body, set = (kind, value) => {
+    body.classList.remove(`${kind}-dark`, `${kind}-light`, `${kind}-web`, `${kind}-panel`);
+    body.classList.add(`${kind}-${value}`);
+    document.querySelectorAll(`[data-${kind}]`).forEach(b => b.classList.toggle('on', b.dataset[kind] === value));
+  };
+  document.querySelectorAll('[data-theme]').forEach(b => b.addEventListener('click', () => set('theme', b.dataset.theme)));
+  document.querySelectorAll('[data-shell]').forEach(b => b.addEventListener('click', () => set('shell', b.dataset.shell)));
+  const hash = location.hash.slice(1).split(',');
+  if (hash.includes('light')) set('theme', 'light');
+  if (hash.includes('panel')) set('shell', 'panel');
+})();
+</script>
+</body>
+</html>
