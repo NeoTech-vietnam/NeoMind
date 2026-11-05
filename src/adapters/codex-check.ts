@@ -27,6 +27,8 @@ export class CodexCheckExecutor {
     try {
       response = responseSchema.parse(await this.transport.request('command/exec', { command, cwd,
         timeoutMs: spec.timeoutMs, outputBytesCap: 1024 * 1024,
+        // Import-time bytecode caches would otherwise land in the worktree and change the reviewed baseline.
+        env: { PYTHONDONTWRITEBYTECODE: '1' },
         sandboxPolicy: { type: 'workspaceWrite', writableRoots: [workspace], networkAccess: false, excludeSlashTmp: true, excludeTmpdirEnvVar: true },
       }, spec.timeoutMs + 5000));
     } catch (error) {
