@@ -1,6 +1,6 @@
 # Kế hoạch sửa sau lần dùng thật đầu tiên — 05/11/2026
 
-Trạng thái: **chờ người dùng duyệt**. Nguồn: run `run-0f7e84e0…` trên `leetcode-practice` (xem mục đầu [implementation-status](implementation-status.md)). Base: `a8773d3` trên `codex/temporary-workflow-memory`.
+Trạng thái: **đã duyệt và thực hiện 05/11/2026**; kết quả trong [implementation-status](implementation-status.md). Nguồn: run `run-0f7e84e0…` trên `leetcode-practice` (xem mục đầu [implementation-status](implementation-status.md)). Base: `a8773d3` trên `codex/temporary-workflow-memory`.
 
 ## Cách chia việc
 

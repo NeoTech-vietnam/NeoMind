@@ -3,6 +3,20 @@
 Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
 Bàn giao hiện tại: [04/11/2026 Windows](session-handoff-2026-11-04-windows.md), trước đó [04/11/2026 Linux](session-handoff-2026-11-04.md). Phạm vi v1 rộng hơn tám việc vừa triển khai; đã có walkthrough browser cho Dev tuần tự bên dưới, các thao tác canvas nâng cao, Windows và host acceptance Nimbalyst vẫn cần kiểm chứng riêng.
 
+## Sửa sau lần dùng thật — 05/11/2026 (5 session Nimbalyst song song)
+
+Theo [kế hoạch](plan-fixes-2026-11-05.md) người dùng duyệt; mỗi gói một session Opus trong worktree riêng, session điều phối gộp bằng cherry-pick lên `codex/temporary-workflow-memory` (không xung đột). Sau khi gộp, Windows: `npm test` **222 test, 220 pass, 0 fail, 2 skip**; build extension đạt và đã cài lại.
+
+| Gói | Kết quả |
+| --- | --- |
+| A | Vòng sửa đưa output các check hỏng của lượt review gần nhất vào prompt writer (phần cuối, tối đa 200 dòng/20000 ký tự, có đánh dấu cắt); writer được dặn không lách lỗi môi trường. Planner được dặn check không ghi file vào repo. Artifact check ghi `baselineHash` và giữ phần cuối output dài. Run cũ thiếu `baselineHash` không có output check trong prompt sửa |
+| B | Trước vòng sửa, thiếu thời gian (dưới max(5 phút, thời lượng vòng trước)) thì `paused` với lý do rõ; `runtime-state` thêm `roundStartMs`/`lastRoundMs` (tùy chọn). Hủy run isolated không có thay đổi chưa giao thì `autoClean` (snapshot rồi xóa) |
+| C | Check làm đổi baseline: lỗi liệt kê tối đa 20 đường dẫn thêm/sửa/xóa kèm gợi ý; vẫn chặn như cũ. `command/exec` nhận `env` (gộp vào môi trường của server, kiểm trong `codex app-server generate-ts`, Codex 0.166.0); check chạy với `PYTHONDONTWRITEBYTECODE=1` (không chặn được `py_compile`) |
+| D | `run start --task-file`, `run changes --feedback-file`, `run plan <project> <run> [--out]` xuất plan Markdown (`src/domain/plan-markdown.ts`) |
+| E | Tái hiện lỗi sandbox bằng `scripts/probe-check-sandbox.mjs` (chỉ `config/read` và `command/exec`, không gọi model). Nguyên nhân: Python ≥ 3.12.4 tạo thư mục `0o700` (mọi `tempfile.mkdtemp`) với DACL bảo vệ chỉ `SYSTEM`/`Administrators`/`OWNER RIGHTS`, bỏ ACE capability SID mà sandbox `unelevated` (restricted token) cần, nên ghi vào bên trong bị `WinError 5`. Không phải lỗi thư mục con nói chung; `TEMP` không ảnh hưởng. Chế độ `elevated` chưa thử (cần setup admin) |
+
+Hướng xử lý lỗi sandbox còn chờ người dùng chọn: giải thích `WinError 5` trong output check (không nới quyền), thử sandbox `elevated` bằng probe, thư mục tạm riêng mỗi check. Chưa chạy lại run thật sau đợt sửa.
+
 ## Dùng thật đầu tiên: `leetcode-practice` — 04/11/2026
 
 Repo luyện LeetCode của người dùng (`W:\projects\AI\leetcode-practice`), flow Dev, Claude Opus 5.5 / high cho planner, writer và reviewer; checks qua Codex. Task: script tạo bài, build/test harness, selftest. Run `run-0f7e84e0-b21e-47b8-badf-7e445d73d67c`.
