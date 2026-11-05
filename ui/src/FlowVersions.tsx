@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react';
 import type { Flow } from '../../src/domain/schema';
 import { jsonChanges } from '../../src/domain/json-diff';
 import { api } from './api';
+import { Dialog, SheetContent } from './components/ui/dialog';
 
 /** Compare a published immutable version with the draft currently displayed in the editor. */
-export function FlowVersions({ flow }: { flow: Flow }) {
+export function FlowVersions({ flow, open, onOpenChange }: { flow: Flow; open: boolean; onOpenChange(open: boolean): void }) {
   const [versions, setVersions] = useState<number[]>([]), [selected, setSelected] = useState(''), [published, setPublished] = useState<Flow | null>(null), [error, setError] = useState(''), [reload, setReload] = useState(0);
   useEffect(() => {
     let current = true; setVersions([]); setSelected(''); setPublished(null); setError('');
-    void api<{ versions: number[] }>(`/api/flows/${encodeURIComponent(flow.flowId)}/versions`).then(data => { if (current) setVersions(data.versions); }).catch(e => { if (current) setError(String(e)); });
+    void api<{ versions: number[] }>(`/api/flows/${encodeURIComponent(flow.flowId)}/versions`).then(data => { if (current) { setVersions(data.versions); setSelected(data.versions.length ? String(Math.max(...data.versions)) : ''); } }).catch(e => { if (current) setError(String(e)); });
     return () => { current = false; };
   }, [flow.flowId, reload]);
   useEffect(() => {
@@ -24,16 +25,16 @@ export function FlowVersions({ flow }: { flow: Flow }) {
   const changed = [...current.keys()].filter(id => previous.has(id) && JSON.stringify(previous.get(id)) !== JSON.stringify(current.get(id)));
   const details = published ? jsonChanges({ name: published.name, description: published.description, definition: published.definition, layout: published.layout }, { name: flow.name, description: flow.description, definition: flow.definition, layout: flow.layout }, diffLimit) : null;
   const value = (item: unknown) => item === undefined ? '(không có)' : JSON.stringify(item, null, 2);
-  return <details className="flow-versions"><summary>So sánh phiên bản đã lưu</summary>
+  return <Dialog open={open} onOpenChange={onOpenChange}><SheetContent title="So sánh phiên bản"><div className="flow-versions">
     <button type="button" className="secondary-btn small" onClick={() => setReload(value => value + 1)}>Cập nhật danh sách</button>
     <label>Phiên bản <select value={selected} onChange={e => setSelected(e.target.value)}><option value="">Chọn phiên bản</option>{versions.map(version => <option key={version} value={version}>v{version}</option>)}</select></label>
     {!versions.length && <p className="hint">Chưa có phiên bản đã lưu.</p>}{error && <p role="alert">{error}</p>}
-    {published && <div><p>So với v{selected}: {added.length} bước mới · {removed.length} đã xóa · {changed.length} thay đổi</p>
+    {published && <div><div className="studio-version-summary"><span>{added.length} bước mới</span><span>{removed.length} đã xóa</span><span>{changed.length} bước đổi</span><span>Kết nối: {JSON.stringify(published.definition.edges) === JSON.stringify(flow.definition.edges) ? 'không đổi' : 'đã đổi'}</span><span>Vị trí: {JSON.stringify(published.layout) === JSON.stringify(flow.layout) ? 'không đổi' : 'đã đổi'}</span></div>
       {!!added.length && <p>Thêm: {added.join(', ')}</p>}{!!removed.length && <p>Xóa: {removed.join(', ')}</p>}{!!changed.length && <p>Sửa: {changed.join(', ')}</p>}
-      <p>Kết nối: {JSON.stringify(published.definition.edges) === JSON.stringify(flow.definition.edges) ? 'không đổi' : 'đã thay đổi'} · Binding: {JSON.stringify(published.definition.bindings) === JSON.stringify(flow.definition.bindings) ? 'không đổi' : 'đã thay đổi'} · Vị trí: {JSON.stringify(published.layout) === JSON.stringify(flow.layout) ? 'không đổi' : 'đã thay đổi'}</p>
+      <p>Binding: {JSON.stringify(published.definition.bindings) === JSON.stringify(flow.definition.bindings) ? 'không đổi' : 'đã thay đổi'}</p>
       {details && <details><summary>Thay đổi từng thuộc tính ({details.changes.length}{details.truncated ? '+' : ''})</summary>
         {details.changes.map((item, index) => <div key={`${item.path}-${index}`}><strong>{item.path}</strong><p>Trước:</p><pre>{value(item.before)}</pre><p>Sau:</p><pre>{value(item.after)}</pre></div>)}
         {details.truncated && <button type="button" className="secondary-btn small" onClick={() => setDiffLimit(value => value + 200)}>Hiện thêm 200 thay đổi</button>}</details>}
     </div>}
-  </details>;
+  </div></SheetContent></Dialog>;
 }

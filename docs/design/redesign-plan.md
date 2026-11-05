@@ -231,6 +231,8 @@ Chỉ đổi giao diện: dữ liệu sự kiện (`Row`) đã có đủ trườ
 - Ngăn "Vấn đề" ở đáy canvas, bấm một dòng thì chọn bước lỗi.
 - Canvas cao hết phần còn lại của màn, không để thanh dưới bị cắt.
 
+**Kết quả GĐ 3 (05/11/2026, branch `ui/redesign-p3`):** Đã chuyển Flow Studio sang header một hàng, dải icon, tìm/thêm bước, thẻ và inspector, ngăn Vấn đề và sheet so sánh; panel dùng sheet inspector. Gallery flow dùng dữ liệu giả. Chưa kiểm host Nimbalyst; so sánh chi tiết vẫn dùng diff thuộc tính hiện có. Validate không có mức độ nên chưa có cảnh báo riêng; chưa có mô phỏng flow. Kiểm chứng và test song song cần theo dõi được ghi trong [trạng thái implementation](../adaptive-agent-flow/implementation-status.md).
+
 ### GĐ 4. Profiles và Memory
 
 - **Profiles:** danh sách trái chia "Có sẵn" (Implementer, Verifier) và "Của project"; bên phải chi tiết profile: phiên bản, quyền dạng công tắc có giải thích, skills dạng bảng thay JSON, "Được dùng ở" các flow/bước. "Tạo profile" là `Dialog`. Theo mockup 19.

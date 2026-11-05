@@ -7,3 +7,4 @@
 @import "@xyflow/react/dist/style.css" layer(xyflow);
 @import "./styles.css" layer(legacy);
 @import "./theme.css";
+@import "./studio.css";

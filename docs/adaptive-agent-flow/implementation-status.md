@@ -1,7 +1,19 @@
 # NeoMind v1 — trạng thái implementation
 
 Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
-Bàn giao hiện tại: [04/11/2026 Windows](session-handoff-2026-11-04-windows.md), trước đó [04/11/2026 Linux](session-handoff-2026-11-04.md). Phạm vi v1 rộng hơn tám việc vừa triển khai; đã có walkthrough browser cho Dev tuần tự bên dưới, các thao tác canvas nâng cao, Windows và host acceptance Nimbalyst vẫn cần kiểm chứng riêng.
+Bàn giao hiện tại: [05/11/2026 Flow Studio](session-handoff-2026-11-05-flow-studio.md); trước đó [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md). Phạm vi v1 rộng hơn tám việc vừa triển khai; đã có walkthrough browser cho Dev tuần tự bên dưới, các thao tác canvas nâng cao, Windows và host acceptance Nimbalyst vẫn cần kiểm chứng riêng.
+
+## Thiết kế lại giao diện · GĐ 3 — 05/11/2026
+
+Flow Studio trên branch `ui/redesign-p3`: header một hàng, dải thêm bước và tìm bằng `/`, thẻ React Flow theo token, inspector và ngăn Vấn đề, so sánh phiên bản trong sheet. Inspector panel dùng `SheetContent`; gallery `/__gallery/flow.html` dùng transport giả và chỉ có ở vite dev. Không đổi backend, không chạy flow thật. Validate không phân biệt mức độ nên mọi diagnostic được trình bày là lỗi; mô phỏng flow và cảnh báo riêng không hiển thị. So sánh từng thuộc tính tiếp tục dùng diff JSON hiện có.
+
+| Kiểm chứng Windows | Kết quả |
+| --- | --- |
+| `npm test` | 222 test: 219 pass, 1 fail, 2 skip. Test song song báo peak 1 thay vì 2; chạy riêng test đó đạt 1/1. Fixture có timeout 5 giây, chưa xác định chắc nguyên nhân lỗi trong suite. |
+| `npm run build:ui`, build extension, `npx tsc -p tsconfig.ui.json --noEmit` | Đạt. Build extension có cảnh báo sourcemap của Tailwind và cảnh báo URL `dist-ui` resolve khi chạy. |
+| Edge headless, gallery dữ liệu giả | Đã xem tối/sáng 1440 và panel 900, inspector, thêm bước, diagnostic và sheet so sánh. Chưa kiểm tương tác toàn bộ bằng CDP hoặc trong host Nimbalyst. |
+
+Bàn giao GĐ 3: [05/11/2026](session-handoff-2026-11-05-flow-studio.md). Panel Nimbalyst và lần chạy lại suite đầy đủ để xác định test song song còn dành cho session điều phối.
 
 ## Thiết kế lại giao diện · GĐ 2 — 05/11/2026
 
