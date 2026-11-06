@@ -3,6 +3,17 @@
 Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
 Bàn giao hiện tại: [06/11/2026 thiết kế lại](session-handoff-2026-11-06.md); trước đó [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md).
 
+## Nâng cấp NeoMind · Gói 2 — 06/11/2026
+
+Skills và profile. `src/storage/skill-catalog.ts` quét `.claude/skills/*/SKILL.md` và `neomind/skills/*/SKILL.md` (frontmatter đọc bằng `yaml`, không theo symlink ra ngoài project), `skillStatus` trả `ok | changed | missing`. `src/runtime/profile-authoring.ts`: đọc profile + phiên bản kèm tác giả, đọc nội dung một phiên bản cũ, tìm flow dùng profile (draft và bản publish mới nhất, kể cả template có sẵn), `migrateProfile` chỉ sửa draft các flow được chọn với compare-and-swap theo revision, `draftProfile`/`publishProfile` theo `ai.profilePublish`. Phiên bản profile thêm `author?` (không nằm trong `contentHash`, giống flow). Prompt dùng nhãn `Skill <name> (<id>):` và liệt kê file phụ của skill. Tool `skills`, `profile_get`, `profile_draft`, `profile_publish`; CLI `skills …`, `profile get|version|skills-status|usage|migrate|author-draft|author-publish`; API `/api/skills`, `/api/skills/status`, `/api/profile-draft`, `/api/profiles/:id/{authoring,skills-status,usage,migrate,versions/:n}`. UI: `SkillPicker` trong Profiles › Skills và inspector Flow Studio › Nâng cao (`skillsOverride`), xem phiên bản chỉ đọc, dialog chuyển flow.
+
+Quyết định nhỏ: thêm dependency `yaml` (frontmatter nhiều dòng); CLI dùng `profile author-draft/author-publish` cho đường AI giống flow; `skillStatus` báo `missing` chỉ khi file không tồn tại, lỗi khác (symlink thoát project) vẫn ném lỗi.
+
+| Kiểm chứng Windows | Kết quả |
+| --- | --- |
+| `npm test` (commit `266bc41`) | 244 test: 242 pass, 2 skip, 0 fail (~4 phút; `claude-capabilities` gọi Claude CLI ~$0.0019). |
+| TypeScript UI, build UI, build extension | Đạt. Gallery `profiles.html#skills` / `#migrate` có trạng thái mẫu `changed`. Không cài extension, không chạy run thật. |
+
 ## Nâng cấp NeoMind · Gói 1 — 06/11/2026
 
 Branch `feat/neomind-upgrade`: thêm core tạo/lấy/kiểm/publish flow, diff cấu trúc và `assess`; session tools, CLI và editor API dùng cùng core. Metadata phiên bản ghi tác giả AI/human (bản cũ coi là human); UI hiện badge AI và tác giả/lý do trong so sánh. Compiler giữ policy sàn và chặn thời gian AI vượt mức nhỏ hơn giữa Dev và `policy.maxActiveTimeSeconds?` của project. `ai.flowPublish` mặc định allow, hỗ trợ draft-only/deny; các trường mới đều tùy chọn.

@@ -38,7 +38,25 @@ npm run neomind -- flow author-publish /project my-dev <revision> "Lý do"
 
 Khi sửa draft đã có, input cần `expectedRevision` từ `flow get` hoặc lần lưu trước; khi publish AI cũng cần revision này. `assess.available: false` nghĩa là flow được gợi ý hiện không sẵn sàng; chọn phương án khác hoặc tạo flow. Mỗi phiên bản AI ghi tác giả, session nếu có và lý do; phiên bản cũ không có tác giả được coi là do người lưu. `contentHash` tiếp tục chỉ bao phủ nội dung flow; metadata tác giả không có hash riêng.
 
-Trong `neomind/project.json`, trường tùy chọn `ai.flowPublish` nhận `allow` (mặc định), `draft-only` hoặc `deny`. `draft-only` cho AI sửa draft nhưng không publish; `deny` chặn cả tạo/sửa draft bằng tool AI. Project có thể đặt `policy.maxActiveTimeSeconds` tùy chọn: thời gian flow AI publish không vượt giá trị nhỏ hơn giữa trần này và mẫu Dev (1.800 giây). Policy sàn về duyệt và review vẫn được compiler kiểm; flow do người lưu giữ hành vi trước đây. `ai.profilePublish` dành cho gói profile tiếp theo, chưa được áp dụng ở gói này.
+Trong `neomind/project.json`, trường tùy chọn `ai.flowPublish` nhận `allow` (mặc định), `draft-only` hoặc `deny`. `draft-only` cho AI sửa draft nhưng không publish; `deny` chặn cả tạo/sửa draft bằng tool AI. Project có thể đặt `policy.maxActiveTimeSeconds` tùy chọn: thời gian flow AI publish không vượt giá trị nhỏ hơn giữa trần này và mẫu Dev (1.800 giây). Policy sàn về duyệt và review vẫn được compiler kiểm; flow do người lưu giữ hành vi trước đây. `ai.profilePublish` áp dụng tương tự cho profile (xem mục dưới).
+
+## Skills và profile
+
+Skill của project là thư mục `.claude/skills/<id>/SKILL.md` hoặc `neomind/skills/<id>/SKILL.md`; frontmatter `name`, `description` chỉ để hiển thị. Profile ghim skill bằng SHA-256; khi file đổi, trạng thái là `changed` (nút "Ghim lại" trong Profiles › Skills cập nhật sha của draft), mất file là `missing` và run sẽ từ chối bắt đầu như trước. Prompt đưa nội dung `SKILL.md` với nhãn `Skill <name> (<id>):` và chỉ liệt kê đường dẫn các file phụ trong thư mục skill.
+
+```bash
+npm run neomind -- skills /project
+npm run neomind -- skills status /project refs.json
+npm run neomind -- profile get /project my-profile
+npm run neomind -- profile version /project my-profile 1
+npm run neomind -- profile skills-status /project my-profile
+npm run neomind -- profile usage /project my-profile
+npm run neomind -- profile migrate /project my-profile 2 selection.json   # [{"flowId":"dev-x","expectedRevision":"…"}]
+npm run neomind -- profile author-draft /project input.json              # {"profileId":"p","name":"P","from":{"profileId":"implementer"}}
+npm run neomind -- profile author-publish /project my-profile <revision> "Lý do"
+```
+
+`profile migrate` chỉ sửa **draft** của các flow được chọn sang phiên bản profile mới (so revision từng flow); không publish flow. `ai.profilePublish` (`allow` mặc định, `draft-only`, `deny`) giới hạn tool AI như `ai.flowPublish`.
 
 ## Dùng Claude Code làm runner
 

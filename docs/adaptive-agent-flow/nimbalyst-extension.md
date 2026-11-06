@@ -50,6 +50,8 @@ flowchart LR
 
 **Tạo flow từ session (Gói 1, 06/11/2026):** `neomind_flow_blocks`, `neomind_flow_get`, `neomind_flow_draft`, `neomind_flow_validate`, `neomind_flow_publish` và `neomind_assess` dùng chung core với CLI/API. Tool publish ghi `author: ai`, session nếu host cung cấp và lý do; mô tả tool yêu cầu trình bày diff trước khi publish. `ai.flowPublish` của project giới hạn `allow` / `draft-only` / `deny`; compiler vẫn giữ policy sàn. `assess.available` báo flow được gợi ý có sẵn sàng hay không. Lệnh `/neomind:run` đã dùng vòng assess → draft/validate/diff/publish khi cần → preview/start; người dùng vẫn quyết định duyệt plan của run theo policy.
 
+**Skills và profile từ session (Gói 2, 06/11/2026):** `neomind_skills` (danh mục skill của project, kèm trạng thái `ok`/`changed`/`missing` khi truyền `refs`), `neomind_profile_get`, `neomind_profile_draft`, `neomind_profile_publish` (ghi tác giả AI; theo `ai.profilePublish`). Panel Profiles chọn skill từ danh mục, ghim lại sha khi skill đổi, xem phiên bản cũ chỉ đọc và chuyển draft flow sang phiên bản profile mới.
+
 **Panel = editor đầy đủ.**
 - Phần định tuyến `/api/*` của server được tách thành `createEditorApi(projectRoot, runs)`. Server HTTP và backend extension dùng chung hàm này, và chung một `RunManager` trong process.
 - Panel render `App` của `ui/src` trong shadow root. CSS (`:root` → `:host`) không lẫn với Nimbalyst. `api()` có transport thay được: HTTP trong trình duyệt, `callBackendTool('neomind.api')` trong panel.
