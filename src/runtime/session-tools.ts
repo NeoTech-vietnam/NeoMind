@@ -38,7 +38,7 @@ export const SESSION_TOOLS: SessionTool[] = [
   { name: 'program_deliver', description: 'Mark a completed phase as delivered when Git cannot see it (squash, rebase, manual copy), with the user note for later phases. Ask the user first.',
     inputSchema: object({ programId: { type: 'string' }, phaseId: { type: 'string' }, note: { type: 'string' }, ...confirmed }, ['programId', 'phaseId', 'confirmed']) },
   { name: 'flows', description: 'NeoMind flows of this project (built-in: fast, dev, parallel, research, plus the project\'s own). Use the flowId with preview and start.', inputSchema: object() },
-  { name: 'preview', description: 'What starting a flow would do, without starting it: the runner, model and reasoning of each step, blockers that prevent starting, exceptions the flow declares (Fast approves its own plan and leaves review to the user), and the checkout\'s uncommitted changes.',
+  { name: 'preview', description: 'What starting a flow would do, without starting it: the runner, model and reasoning of each step, blockers that prevent starting, exceptions the flow declares (Fast approves its own plan and leaves review to the user), the checkout\'s uncommitted changes, and the project rules (neomind/rules.md) every agent must follow and every review judges.',
     inputSchema: object({ flowId: { type: 'string' } }, ['flowId']) },
   { name: 'start', description: 'Start a NeoMind flow for a task in this project. "fast": quick plan approved by NeoMind, then implement; the user reviews and applies the changes. "dev": plan, user approval, implement, checks, independent review, local commit. "parallel": two implementers in parallel. "research": read-only report. A preview with blockers does not start. Agents run in an isolated Git worktree, never in the user\'s checkout. Returns the run id; follow it with wait.',
     inputSchema: object({ flowId: { type: 'string' }, task: { type: 'string', description: 'What the flow should accomplish, in the user\'s words' },
@@ -145,6 +145,7 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
       return { flow: preview.snapshot.configuration.flow.name,
         steps: Object.fromEntries(Object.entries(preview.snapshot.configuration.bindings).map(([key, binding]) => [key, binding.values])),
         blockers: [...preview.runtimeDiagnostics, ...(preview.runnerPreflight?.blockers ?? [])], exceptions: preview.flowExceptions ?? [],
+        rules: preview.rules.rules.map(rule => `[${rule.id}] ${rule.text}`), ...(preview.rules.warnings.length ? { ruleWarnings: preview.rules.warnings } : {}),
         uncommittedChanges: preview.dirtyImport.changes.length ? { count: preview.dirtyImport.changes.length, files: preview.dirtyImport.changes.slice(0, 30).map(change => `${change.change} ${change.path}`), importDirty: preview.dirtyImport.baselineHash } : null };
     },
     start: async (args, call) => {

@@ -12,7 +12,7 @@ import { FlowLibrary } from '../storage/flow-library.js';
 import { RunManager } from '../runtime/run-manager.js';
 import type { BindingOverride } from '../domain/resolve.js';
 import { ProfileLibrary } from '../storage/profile-library.js';
-import { builtinProfile, readProject } from '../runtime/project.js';
+import { builtinProfile, readProject, readProjectRules } from '../runtime/project.js';
 import { workerScopeSupported } from '../adapters/worker-scope.js';
 import { RevisionConflict } from '../storage/library-lock.js';
 import type { RunnerId } from '../runners/agent-runner.js';
@@ -87,6 +87,7 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       const input = z.strictObject({ record: z.strictObject({ id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/), type: z.enum(['context', 'decision']), scope: z.string().min(1), sources: z.array(z.string().min(1)).min(1), tags: z.array(z.string()), body: z.string().min(1), expiresAt: z.iso.datetime().optional(), supersedes: z.array(z.string().min(1)).optional() }), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable() }).parse(payload);
       return reply(200, await (await runs()).writeMemory(input.record, input.expectedRevision, 'ui'));
     }
+    if (url.pathname === '/api/rules' && method === 'GET') return reply(200, await readProjectRules(projectRoot) ?? { rules: [], warnings: [] });
     if (url.pathname === '/api/skills' && method === 'GET') return reply(200, { skills: await skillCatalog(projectRoot) });
     if (url.pathname === '/api/skills/status' && method === 'POST') { const input = z.strictObject({ refs: z.array(skillReferenceSchema) }).parse(payload); return reply(200, { skills: await skillStatus(projectRoot, input.refs) }); }
     if (url.pathname === '/api/profile-draft' && method === 'POST') {
