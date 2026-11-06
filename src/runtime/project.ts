@@ -83,7 +83,7 @@ export async function snapshotProjectFlow(projectRoot: string, flowId: string, v
     const key = `${ref.profileId}@${ref.version}`;
     if (versions[key]) continue;
     if (metadataProfiles.some(item => item.profileId === ref.profileId)) {
-      const { contentHash: _h, createdAt: _c, ...profile } = await profiles.readVersion(ref.profileId, ref.version); versions[key] = profile;
+      const { contentHash: _h, createdAt: _c, author: _a, ...profile } = await profiles.readVersion(ref.profileId, ref.version); versions[key] = profile;
     } else {
       const profile = builtinProfile(ref.profileId);
       if (!profile || ref.version !== 1) throw new Error(`Missing profile version ${key}`);

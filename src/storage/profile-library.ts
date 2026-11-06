@@ -6,10 +6,11 @@ import { hashJson } from '../domain/resolve.js';
 import { profileSchema, type Profile } from '../domain/schema.js';
 import { RevisionConflict, revisionOf, withLibraryLock } from './library-lock.js';
 import { replaceJson } from './atomic-json.js';
+import { flowAuthorSchema, type FlowAuthor } from './flow-library.js';
 
 const identifier = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 const metadataSchema = z.strictObject({ schemaVersion: z.literal(1), profileId: identifier, name: z.string().min(1), archived: z.boolean() });
-const storedSchema = profileSchema.extend({ contentHash: z.string().regex(/^[a-f0-9]{64}$/), createdAt: z.iso.datetime() });
+const storedSchema = profileSchema.extend({ contentHash: z.string().regex(/^[a-f0-9]{64}$/), createdAt: z.iso.datetime(), author: flowAuthorSchema.optional() });
 export type StoredProfile = z.infer<typeof storedSchema>;
 
 async function rejectLink(file: string): Promise<void> {
@@ -59,6 +60,14 @@ export class ProfileLibrary {
   saveDraft(profileId: string, draft: unknown, expectedRevision?: string | null): Promise<string> {
     return withLibraryLock(this.root, () => this.saveDraftUnlocked(profileId, draft, expectedRevision));
   }
+  saveDraftWithName(profileId: string, draft: unknown, expectedRevision: string, name: string): Promise<string> {
+    return withLibraryLock(this.root, async () => {
+      const current = await this.metadata(profileId), next = metadataSchema.parse({ ...current, name });
+      const revision = await this.saveDraftUnlocked(profileId, draft, expectedRevision);
+      if (current.name !== next.name) await replaceJson(this.metaFile(profileId), next);
+      return revision;
+    });
+  }
   private async saveDraftUnlocked(profileId: string, draft: unknown, expectedRevision?: string | null): Promise<string> {
     await this.metadata(profileId);
     if (expectedRevision !== undefined && await this.draftRevision(profileId) !== expectedRevision) throw new RevisionConflict('Draft profile đã bị sửa ở nơi khác (editor khác hoặc CLI); tải lại trước khi lưu');
@@ -79,10 +88,10 @@ export class ProfileLibrary {
     await this.metadata(profileId); const folder = path.join(this.directory(profileId), 'versions'); await rejectLink(folder);
     return (await readdir(folder)).filter(name => /^\d{6}\.json$/.test(name)).map(name => Number(name.slice(0, 6))).sort((a, b) => a - b);
   }
-  publish(profileId: string, expectedRevision?: string): Promise<StoredProfile> {
-    return withLibraryLock(this.root, () => this.publishUnlocked(profileId, expectedRevision));
+  publish(profileId: string, expectedRevision?: string, author?: FlowAuthor): Promise<StoredProfile> {
+    return withLibraryLock(this.root, () => this.publishUnlocked(profileId, expectedRevision, author));
   }
-  private async publishUnlocked(profileId: string, expectedRevision?: string): Promise<StoredProfile> {
+  private async publishUnlocked(profileId: string, expectedRevision?: string, author?: FlowAuthor): Promise<StoredProfile> {
     const metadata = await this.metadata(profileId);
     if (metadata.archived) throw new Error('Archived profile cannot be published');
     const current = await this.readDraftWithRevision(profileId);
@@ -91,7 +100,7 @@ export class ProfileLibrary {
     if (draft.profileId !== profileId) throw new Error('Draft profile ID mismatch');
     const version = ((await this.versions(profileId)).at(-1) ?? 0) + 1;
     const profile: Profile = { ...draft, profileId, name: metadata.name, version };
-    const stored = storedSchema.parse({ ...profile, contentHash: hashJson(profile), createdAt: new Date().toISOString() });
+    const stored = storedSchema.parse({ ...profile, contentHash: hashJson(profile), createdAt: new Date().toISOString(), ...(author ? { author } : {}) });
     const destination = this.versionFile(profileId, version);
     const temporary = `${destination}.${randomUUID()}.tmp`;
     try {
@@ -105,7 +114,7 @@ export class ProfileLibrary {
     await rejectLink(this.versionFile(profileId, version));
     const stored = storedSchema.parse(JSON.parse(await readFile(this.versionFile(profileId, version), 'utf8')));
     if (stored.profileId !== profileId || stored.version !== version) throw new Error('Profile version identity mismatch');
-    const { contentHash, createdAt: _createdAt, ...profile } = stored;
+    const { contentHash, createdAt: _createdAt, author: _author, ...profile } = stored;
     if (hashJson(profile) !== contentHash) throw new Error('Profile version hash mismatch');
     return stored;
   }

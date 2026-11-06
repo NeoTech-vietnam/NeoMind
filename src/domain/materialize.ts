@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
-import { readFile, realpath } from 'node:fs/promises';
-import path from 'node:path';
+import { realpath } from 'node:fs/promises';
 import { flowSchema, profileSchema, projectSchema, type Flow, type Profile, type ProjectConfig } from './schema.js';
 import { snapshotConfiguration, type BindingOverride, type RunConfiguration } from './resolve.js';
 import { compileFlow } from './compiler.js';
+import { resolveSkill, skillCompanions, skillMetadata } from '../storage/skill-catalog.js';
 
-export interface MaterializedSkill { id: string; path: string; sha256: string; content: string }
+export interface MaterializedSkill { id: string; path: string; sha256: string; content: string; name?: string | undefined; files?: string[] | undefined }
 export interface MaterializedProfile {
   profileId: string; version: number; instructions: string; skills: MaterializedSkill[];
   requestedPermissions: Profile['requestedPermissions']; outputDefaults: Profile['outputDefaults'];
@@ -43,18 +43,14 @@ export async function materializeRun(
     for (const skill of skillsOverride ?? profile.skills) {
       if (ids.has(skill.id)) throw new Error(`Duplicate skill ID ${skill.id} in ${key}`);
       ids.add(skill.id);
-      const resolved = await realpath(path.resolve(root, skill.path));
-      const relative = path.relative(root, resolved);
-      if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-        throw new Error(`Skill path escapes project root: ${skill.path}`);
-      }
-      const bytes = await readFile(resolved);
+      const { bytes } = await resolveSkill(root, skill);
       const digest = createHash('sha256').update(bytes).digest('hex');
       if (digest !== skill.sha256) throw new Error(`Skill hash mismatch: ${skill.path}`);
       let content: string;
       try { content = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
       catch { throw new Error(`Skill is not valid UTF-8: ${skill.path}`); }
-      skills.push({ id: skill.id, path: skill.path, sha256: digest, content });
+      const { name } = skillMetadata(content, skill.id);
+      skills.push({ id: skill.id, path: skill.path, sha256: digest, content, name, files: await skillCompanions(root, skill.path) });
     }
     profilesByStep[key] = { profileId, version, instructions: instructionsOverride ?? profile.instructions,
       skills, requestedPermissions: structuredClone(profile.requestedPermissions), outputDefaults: structuredClone(profile.outputDefaults) };
@@ -85,7 +81,7 @@ const source = z.enum(['run', 'step', 'flow', 'project']);
 const resolvedSchema = z.strictObject({ values: valueSchema, sources: z.strictObject({ runner: source, provider: source, model: source, reasoning: source }),
   fallback: bindingSchema.shape.fallback });
 const materializedProfileSchema = z.strictObject({ profileId: z.string().min(1), version: z.number().int().min(1), instructions: z.string(),
-  skills: z.array(skillReferenceSchema.extend({ content: z.string() })), requestedPermissions: permissionsSchema, outputDefaults: z.record(z.string(), z.json()) });
+  skills: z.array(skillReferenceSchema.extend({ content: z.string(), name: z.string().optional(), files: z.array(z.string()).optional() })), requestedPermissions: permissionsSchema, outputDefaults: z.record(z.string(), z.json()) });
 export const materializedRunSchema = z.strictObject({
   configuration: z.strictObject({ flow: flowSchema, projectId: z.string().min(1), policyVersion: z.number().int().min(1),
     bindings: z.record(z.string(), resolvedSchema), semanticHash: z.string().regex(/^[a-f0-9]{64}$/), contentHash: z.string().regex(/^[a-f0-9]{64}$/) }),

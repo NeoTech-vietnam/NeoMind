@@ -12,7 +12,7 @@ import { builtinProfile, defaultRoles } from './project.js';
 export { diffFlows } from '../domain/flow-diff.js';
 
 function library(root: string) { return new FlowLibrary(path.join(projectDir(root), 'flows')); }
-async function authoringProject(root: string) {
+export async function authoringProject(root: string) {
   try { return projectSchema.parse(JSON.parse(await readFile(path.join(projectDir(root), 'project.json'), 'utf8'))); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { ...structuredClone(defaultProject), roleDefaults: structuredClone(defaultRoles) }; throw error; }
 }
