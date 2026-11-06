@@ -19,6 +19,7 @@ import type { RunnerId } from '../runners/agent-runner.js';
 import { projectDir } from '../storage/project-dir.js';
 import { flowBlocks, draftFlow, getFlow, validateFlow, flowDiff, publishFlow, assess } from '../runtime/flow-authoring.js';
 import { flowAuthorSchema } from '../storage/flow-library.js';
+import { runStats } from '../runtime/run-stats.js';
 import { createProgram, listPrograms, markPhaseDelivered, programNext, programStatus, startPhase } from '../runtime/programs.js';
 import { skillCatalog, skillStatus } from '../storage/skill-catalog.js';
 import { draftProfile, getProfile, getProfileVersion, migrateProfile, profileSkillStatus, profileUsage, publishProfile } from '../runtime/profile-authoring.js';
@@ -125,6 +126,7 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       return reply(405, { error: 'Method not allowed' });
     }
     if (url.pathname === '/api/runs' && method === 'GET') { return reply(200, { runs: await (await runs()).list() }); }
+    if (url.pathname === '/api/stats' && method === 'GET') { const flowId = url.searchParams.get('flow'); return reply(200, await runStats(projectRoot, await runs(), flowId ? { flowId } : {})); }
     if (url.pathname === '/api/programs' && method === 'GET') return reply(200, await listPrograms(projectRoot, await runs()));
     if (url.pathname === '/api/programs' && method === 'POST') return reply(201, { program: await createProgram(projectRoot, z.strictObject({ program: z.json() }).parse(payload).program) });
     const programMatch = /^\/api\/programs\/([^/]+)(?:\/(next|phases\/([^/]+)\/(start|deliver)))?$/.exec(url.pathname);
@@ -187,8 +189,9 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       if (!runMatch[2] && method === 'GET') { return reply(200, await (await runs()).get(runMatch[1]!)); }
       if (runMatch[2] && method === 'POST') {
         if (runMatch[2] === 'extend_time') {
-          const input = z.strictObject({ seconds: z.number().int().positive().max(86400) }).parse(payload);
-          return reply(200, await (await runs()).extendTime(runMatch[1]!, input.seconds));
+          const input = z.strictObject({ seconds: z.number().int().positive().max(86400).optional(), tokens: z.number().int().positive().max(1_000_000_000).optional() })
+            .refine(value => value.seconds !== undefined || value.tokens !== undefined, 'seconds or tokens is required').parse(payload);
+          return reply(200, await (await runs()).extendTime(runMatch[1]!, input.seconds ?? 0, input.tokens ?? 0));
         }
         if (runMatch[2] === 'changes') {
           const input = z.strictObject({ feedback: z.string().min(1).max(10000), planHash: z.string().regex(/^[a-f0-9]{64}$/) }).parse(payload);
@@ -202,7 +205,8 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
     if (url.pathname === '/api/flow-blocks' && method === 'GET') return reply(200, await flowBlocks(projectRoot));
     if (url.pathname === '/api/assess' && method === 'POST') {
       const input = z.strictObject({ task: z.string().min(1).max(10000) }).parse(payload);
-      return reply(200, await assess(projectRoot, input.task));
+      // Statistics only refine the ranking; a project whose runs cannot be read still gets the rule-based answer.
+      return reply(200, await assess(projectRoot, input.task, await runs().then(manager => runStats(projectRoot, manager)).catch(() => undefined)));
     }
     if (url.pathname === '/api/flow-draft' && method === 'POST') {
       const input = z.strictObject({ flowId: z.string().min(1), name: z.string().min(1).optional(),

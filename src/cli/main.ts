@@ -54,6 +54,18 @@ async function main(args: string[]): Promise<number> {
     try {
       switch (command.kind) {
         case 'list': console.log(JSON.stringify(await manager.list(), null, 2)); return 0;
+        case 'stats': {
+          const { runStats, statsCsv } = await import('../runtime/run-stats.js');
+          const stats = await runStats(command.project, manager, command.flowId ? { flowId: command.flowId } : {});
+          if (command.format === 'json') console.log(JSON.stringify(stats, null, 2));
+          else if (command.format === 'csv') process.stdout.write(statsCsv(stats));
+          else {
+            const percent = (value: number | null) => value === null ? '-' : `${Math.round(value * 100)}%`, round = (value: number | null) => value === null ? '-' : String(Math.round(value));
+            console.log(['flow | runs | delivered | tokens (median) | active s (median) | repair rounds | first-pass review', ...stats.byFlow.map(item =>
+              `${item.key} | ${item.runs} | ${percent(item.deliveryRate)} | ${round(item.tokens.median)} | ${round(item.activeSeconds.median)} | ${item.repairRounds?.toFixed(1) ?? '-'} | ${percent(item.firstPassReviewRate)}`)].join('\n'));
+          }
+          return 0;
+        }
         case 'show': console.log(JSON.stringify(await manager.get(command.runId), null, 2)); return 0;
         case 'plan': {
           const run = await manager.get(command.runId), proposal = run.plans.at(-1);
@@ -83,7 +95,7 @@ async function main(args: string[]): Promise<number> {
           const results = await manager.cleanFinished(command.force);
           console.log(JSON.stringify(results, null, 2)); return results.some(item => item.status === 'kept') ? 1 : 0;
         }
-        case 'extend-time': await manager.extendTime(command.runId, command.seconds); await settle(command.runId); return 0;
+        case 'extend-time': await manager.extendTime(command.runId, command.seconds, command.tokens ?? 0); await settle(command.runId); return 0;
         case 'resume': case 'pause': case 'cancel': await manager.action(command.runId, command.kind, 'cli'); await settle(command.runId); return 0;
       }
     } finally { uninstall(); await manager.close(); }

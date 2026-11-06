@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises';
 
-export const runUsage = 'Usage: neomind run list <project> | preview <project> <flow> | start <project> <flow> "task"|--task-file <file> [--import-dirty HASH] [--workspace isolated|current|shared] | show|resume|pause|cancel|retry-git|include-imported|apply <project> <run-id> | plan <project> <run-id> [--out <file>] | clean <project> <run-id>|--all [--force] | approve <project> <run-id> --plan-hash HASH | changes <project> <run-id> --plan-hash HASH "feedback"|--feedback-file <file> | extend-time <project> <run-id> <seconds>';
+export const runUsage = 'Usage: neomind run list <project> | preview <project> <flow> | start <project> <flow> "task"|--task-file <file> [--import-dirty HASH] [--workspace isolated|current|shared] | show|resume|pause|cancel|retry-git|include-imported|apply <project> <run-id> | plan <project> <run-id> [--out <file>] | clean <project> <run-id>|--all [--force] | approve <project> <run-id> --plan-hash HASH | changes <project> <run-id> --plan-hash HASH "feedback"|--feedback-file <file> | extend-time <project> <run-id> <seconds> [--tokens N] | extend-time <project> <run-id> --tokens N | stats <project> [--flow ID] [--json|--csv]';
 type WorkspaceMode = 'isolated' | 'current' | 'shared';
 type RunCommand =
   | { kind: 'list'; project: string }
+  | { kind: 'stats'; project: string; flowId?: string; format: 'table' | 'json' | 'csv' }
   | { kind: 'show' | 'resume' | 'pause' | 'cancel' | 'retry-git' | 'include-imported' | 'apply'; project: string; runId: string }
   | { kind: 'plan'; project: string; runId: string; out?: string }
   | { kind: 'clean'; project: string; runId?: string; force: boolean }
@@ -11,7 +12,7 @@ type RunCommand =
   | ({ kind: 'start'; project: string; flowId: string; importDirty?: string; workspaceMode?: WorkspaceMode } & ({ task: string } | { taskFile: string }))
   | { kind: 'approve'; project: string; runId: string; planHash: string }
   | ({ kind: 'changes'; project: string; runId: string; planHash: string } & ({ feedback: string } | { feedbackFile: string }))
-  | { kind: 'extend-time'; project: string; runId: string; seconds: number };
+  | { kind: 'extend-time'; project: string; runId: string; seconds: number; tokens?: number };
 type Resolved<T> = T extends { taskFile: string } ? Omit<T, 'taskFile'> & { task: string } : T extends { feedbackFile: string } ? Omit<T, 'feedbackFile'> & { feedback: string } : T;
 export type ResolvedRunCommand = Resolved<RunCommand>;
 
@@ -23,6 +24,16 @@ export function parseRunCommand(args: string[]): RunCommand | undefined {
   if (!kind || !project) return undefined;
   const planHash = (value: string | undefined) => value !== undefined && /^[a-f0-9]{64}$/.test(value) ? value : undefined;
   if (kind === 'list') return args.length === 3 ? { kind, project } : undefined;
+  if (kind === 'stats') {
+    let flowId: string | undefined, format: 'table' | 'json' | 'csv' = 'table';
+    const flags = args.slice(3);
+    for (let i = 0; i < flags.length; i++) {
+      if (flags[i] === '--flow' && !flowId && flags[i + 1]?.trim()) flowId = flags[++i];
+      else if ((flags[i] === '--json' || flags[i] === '--csv') && format === 'table') format = flags[i] === '--json' ? 'json' : 'csv';
+      else return undefined;
+    }
+    return { kind, project, format, ...(flowId ? { flowId } : {}) };
+  }
   if (!id) return undefined;
   if (kind === 'clean' && rest.length <= 1 && (!rest.length || rest[0] === '--force')) return { kind, project, ...(id === '--all' ? {} : { runId: id }), force: rest[0] === '--force' };
   if (['show', 'resume', 'pause', 'cancel', 'retry-git', 'include-imported', 'apply'].includes(kind) && !rest.length) return { kind: kind as 'show', project, runId: id };
@@ -53,6 +64,11 @@ export function parseRunCommand(args: string[]): RunCommand | undefined {
   if (kind === 'extend-time' && rest.length === 1 && /^\d+$/.test(rest[0]!)) {
     const seconds = Number(rest[0]);
     if (seconds >= 1 && seconds <= 86400) return { kind, project, runId: id, seconds };
+  }
+  // `--tokens N` adds to the token budget, alone (seconds 0) or with more time.
+  if (kind === 'extend-time' && (rest.length === 2 || rest.length === 3) && rest.at(-2) === '--tokens' && /^\d+$/.test(rest.at(-1)!) && (rest.length === 2 || /^\d+$/.test(rest[0]!))) {
+    const seconds = rest.length === 3 ? Number(rest[0]) : 0, tokens = Number(rest.at(-1));
+    if (seconds <= 86400 && tokens >= 1 && tokens <= 1_000_000_000) return { kind, project, runId: id, seconds, tokens };
   }
   return undefined;
 }

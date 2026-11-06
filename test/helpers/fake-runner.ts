@@ -18,7 +18,12 @@ export interface FakeRunnerBehaviour {
   startTurn?(session: VerifiedRunnerSession, request: RunnerTurnRequest): Promise<string>;
   /** The turn's final agent message. Defaults to "done". */
   respond?(session: VerifiedRunnerSession, request: RunnerTurnRequest): Promise<string> | string;
+  /** Tokens each turn adds to its session's cumulative usage (a quarter of them output); omitted reports no usage. */
+  tokensPerTurn?: number;
 }
+
+/** Turns per session of every runner sharing one behaviour (one factory), like a runtime's own session history. */
+const sessionTurns = new WeakMap<FakeRunnerBehaviour, Map<string, number>>();
 
 /** A runner with no runtime behind it: sessions are "verified" as requested and turns complete with `respond`. */
 export class FakeRunner implements AgentRunner {
@@ -40,7 +45,7 @@ export class FakeRunner implements AgentRunner {
     const turnId = this.behaviour.startTurn ? await this.behaviour.startTurn(session, request) : randomUUID();
     this.turns.push({ session, request, turnId });
     const respond = this.behaviour.respond ?? (() => 'done');
-    const result = Promise.resolve().then(() => respond(session, request)).then(text => ({ threadId: session.sessionId, turnId, status: 'completed' as const, messages: [text] }));
+    const result = Promise.resolve().then(() => respond(session, request)).then(text => ({ threadId: session.sessionId, turnId, status: 'completed' as const, messages: [text], ...this.usage(session) }));
     result.catch(() => {}); this.results.set(turnId, result);
     return turnId;
   }
@@ -50,6 +55,15 @@ export class FakeRunner implements AgentRunner {
     const result = this.results.get(turnId);
     if (!result) throw new Error('Unknown turn');
     return result;
+  }
+  /** Runners report cumulative usage per session, so a session resumed by a later runner keeps counting up. */
+  private usage(session: VerifiedRunnerSession) {
+    const step = this.behaviour.tokensPerTurn;
+    if (!step) return {};
+    const counts = sessionTurns.get(this.behaviour) ?? new Map<string, number>(); sessionTurns.set(this.behaviour, counts);
+    const turns = (counts.get(session.sessionId) ?? 0) + 1, output = Math.floor(step / 4) * turns, total = step * turns;
+    counts.set(session.sessionId, turns);
+    return { usage: { inputTokens: total - output, outputTokens: output, cachedInputTokens: 0, cacheWriteInputTokens: 0, reasoningOutputTokens: 0, totalTokens: total } };
   }
   async verifyNoDelegation(session: VerifiedRunnerSession): Promise<void> { this.owned(session); }
   close(): Promise<boolean> { return this.scope.stop(); }

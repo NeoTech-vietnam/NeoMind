@@ -28,6 +28,8 @@ export const SESSION_TOOLS: SessionTool[] = [
   { name: 'flow_validate', description: 'Validate an AI flow draft against project policy and return its diff from the latest published version.', inputSchema: object({ flowId: { type: 'string' } }, ['flowId']) },
   { name: 'flow_publish', description: 'Publish the validated AI draft as a new version. Present the flow_validate diff to the user before publishing, even when policy allows publication.', inputSchema: object({ flowId: { type: 'string' }, expectedRevision: { type: 'string' }, reason: { type: 'string' } }, ['flowId', 'expectedRevision', 'reason']) },
   { name: 'assess', description: 'Recommend an existing flow for a task using deterministic rules. available=false means the named flow is unavailable; this does not start a run.', inputSchema: object({ task: { type: 'string' } }, ['task']) },
+  { name: 'stats', description: 'Run statistics of this project by flow, profile, runner/model and flow + runners: runs, completion and delivery rate, median tokens and active time, repair rounds, first-pass review rate, cost when neomind/pricing.json exists.',
+    inputSchema: object({ flowId: { type: 'string' } }) },
   { name: 'program_create', description: 'Create a multi-phase program in neomind/programs from a spec: { schemaVersion: 1, programId, name, goal, phases: [{ id, title, task, flowId, dependsOn: [] }] }. Every flowId must be published. Show the phases to the user first.',
     inputSchema: object({ program: { type: 'object' } }, ['program']) },
   { name: 'program_list', description: 'Programs of this project with progress and the current phase.', inputSchema: object() },
@@ -54,8 +56,8 @@ export const SESSION_TOOLS: SessionTool[] = [
   { name: 'pause', description: 'Pause the run: stop dispatching and stop the running agents. Resume continues it.', inputSchema: object(runId, ['runId']) },
   { name: 'resume', description: 'Continue a paused, blocked or recovering run after NeoMind reconciles its state.', inputSchema: object(runId, ['runId']) },
   { name: 'cancel', description: 'Cancel the run (only when the user asks). Its worktree and history are kept.', inputSchema: object(runId, ['runId']) },
-  { name: 'extend_time', description: 'Give a run that used up its active-time limit more time, then continue it.',
-    inputSchema: object({ ...runId, seconds: { type: 'number', description: '1-86400' } }, ['runId', 'seconds']) },
+  { name: 'extend_time', description: 'Give a run that used up its active-time limit more time, or its token budget (maxTokens) more tokens, then continue it.',
+    inputSchema: object({ ...runId, seconds: { type: 'number', description: '1-86400' }, tokens: { type: 'number', description: 'Tokens to add to the budget' } }, ['runId']) },
   { name: 'apply', description: 'Copy a finished Fast run\'s changes into the user\'s checkout (not staged, not committed). Ask the user first, listing the changed files from status; call only after they agree.',
     inputSchema: object({ ...runId, ...confirmed }, ['runId', 'confirmed']) },
   { name: 'retry_commit', description: 'Retry the local commit of a run blocked at its commit step.', inputSchema: object(runId, ['runId']) },
@@ -126,6 +128,7 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
     flow_validate: async args => authoringApi('POST', `${flowPath(args)}/author-validate`, {}),
     flow_publish: async (args, call) => authoringApi('POST', `${flowPath(args)}/publish`, { expectedRevision: text(args, 'expectedRevision'), author: { kind: 'ai', ...(call?.sessionId ? { sessionId: call.sessionId } : {}), reason: text(args, 'reason') } }),
     assess: async args => authoringApi('POST', '/api/assess', { task: text(args, 'task') }),
+    stats: async args => { const stats = await authoringApi('GET', `/api/stats${optional(args, 'flowId') ? `?flow=${encodeURIComponent(optional(args, 'flowId')!)}` : ''}`) as { runs: unknown[] }; const { runs: _runs, ...rest } = stats; return rest; },
     program_create: async args => authoringApi('POST', '/api/programs', { program: args.program }),
     program_list: async () => authoringApi('GET', '/api/programs'),
     program_status: async args => authoringApi('GET', programPath(args)),
@@ -190,9 +193,11 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
     resume: args => act(args, 'resume'),
     cancel: args => act(args, 'cancel'),
     extend_time: async args => {
-      const seconds = Number(args.seconds);
-      if (!Number.isInteger(seconds) || seconds < 1 || seconds > 86400) throw new Error('seconds must be an integer from 1 to 86400');
-      await (await runs()).extendTime(text(args, 'runId'), seconds); return summary(text(args, 'runId'));
+      const seconds = args.seconds === undefined ? 0 : Number(args.seconds), tokens = args.tokens === undefined ? 0 : Number(args.tokens);
+      if (!Number.isInteger(seconds) || seconds < 0 || seconds > 86400) throw new Error('seconds must be an integer from 1 to 86400');
+      if (!Number.isInteger(tokens) || tokens < 0 || tokens > 1_000_000_000) throw new Error('tokens must be a positive integer');
+      if (!seconds && !tokens) throw new Error('Give seconds, tokens or both');
+      await (await runs()).extendTime(text(args, 'runId'), seconds, tokens); return summary(text(args, 'runId'));
     },
     apply: async args => { requireConfirmed(args, 'Applying changes to the checkout'); return act(args, 'apply'); },
     retry_commit: args => act(args, 'retry_git'),
