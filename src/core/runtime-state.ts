@@ -13,6 +13,8 @@ export const runtimeContextSchema = z.strictObject({
   /** The user's uncommitted changes copied in before the run: input to the run, never part of its commit by default. */
   /** The program phase this run executes; status is derived from runs, never stored in the program file. */
   programId: z.string().min(1).optional(), phaseId: z.string().min(1).optional(),
+  /** Project rules pinned at creation; every agent must follow them and every review judges them. */
+  rules: z.strictObject({ hash: z.string().regex(/^[a-f0-9]{64}$/), rules: z.array(z.strictObject({ id: z.string().min(1).max(32), text: z.string().min(1).max(2000) })).max(100) }).optional(),
   imported: z.strictObject({ sourceBaselineHash: z.string().min(1), tree: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/), paths: z.array(z.string().min(1)).min(1) }).optional(),
 });
 export const runtimeStateSchema = z.strictObject({

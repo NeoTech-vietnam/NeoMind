@@ -113,7 +113,7 @@ export class LocalRun {
   private get snapshot() { const snapshot = this.durable.service.snapshot; if (!snapshot) throw new Error('Real runtime requires a materialized snapshot'); return snapshot; }
   static async create(input: { projectRoot: string; stateRoot: string; task: string; snapshot: MaterializedRun; coordinator: WorkspaceCoordinator; workerFactory?: WorkerFactory; capabilityCheck?: typeof verifyRuntimeCapabilities; runners?: RunnerRegistry; memory?: NonNullable<RuntimeContext['memory']>; expectedSourceHead?: string;
     /** Baseline hash of the checkout, confirmed by the user, whose uncommitted changes are copied into the run worktree. */
-    importDirty?: string; program?: { programId: string; phaseId: string } }) {
+    importDirty?: string; program?: { programId: string; phaseId: string }; rules?: NonNullable<RuntimeContext['rules']> }) {
     if (!input.task.trim()) throw new Error('Task is required');
     const flow = input.snapshot.configuration.flow;
     const unsupported = standaloneDiagnostics(flow);
@@ -135,7 +135,7 @@ export class LocalRun {
     const store = await RunStore.open(path.join(input.stateRoot, 'runs'));
     const durable = await DurableRun.createMaterialized(store, input.coordinator, runId, input.snapshot);
     const context: RuntimeContext = { projectRoot, workspace, workspaceMode, initialIndexTree, task: input.task, sourceHead: baseline.head,
-      initialBaselineHash: (await captureBaseline(workspace)).baselineHash, lease, ...(input.memory ? { memory: input.memory } : {}), ...(imported ? { imported } : {}), ...(input.program ?? {}) };
+      initialBaselineHash: (await captureBaseline(workspace)).baselineHash, lease, ...(input.memory ? { memory: input.memory } : {}), ...(imported ? { imported } : {}), ...(input.program ?? {}), ...(input.rules?.rules.length ? { rules: input.rules } : {}) };
     const state: RuntimeState = { phase: 'paused', reason: 'Sẵn sàng bắt đầu', activeMs: 0, sessions: {} };
     await durable.service.initializeRuntime(context); await durable.service.checkpointRuntime(state);
     return new LocalRun(durable, context, input.coordinator, state, input.workerFactory, input.capabilityCheck, input.runners ?? defaultRunnerRegistry(input.workerFactory ? { workerFactory: input.workerFactory } : {}));
@@ -200,6 +200,7 @@ export class LocalRun {
       const data = this.pendingNodeData.get(writer); this.pendingNodeData.delete(writer);
       if (data) {
         const report = await this.durable.service.report(), sources: NodeData['sources'] = [{ kind: 'task', id: 'original-task', hash: textHash(this.context.task) }];
+        if (this.context.rules && data.prompt.includes(this.rulesText())) sources.push({ kind: 'rules', id: 'project-rules', hash: this.context.rules.hash });
         if (this.context.memory?.text && data.prompt.includes(this.context.memory.text)) for (const record of this.context.memory.records ?? []) sources.push({ kind: 'memory', id: `${record.type}/${record.id}`, hash: record.revision });
         for (const item of report.plans) if (data.prompt.includes(JSON.stringify(item.plan))) sources.push({ kind: 'plan', id: item.plan.planId, fromNodeId: item.nodeId, hash: hashJson(item.plan) });
         for (const [index, artifact] of report.artifacts.entries()) if (artifact.text && (data.prompt.includes(artifact.text) || data.prompt.includes(JSON.stringify(artifact.text)))) sources.push({ kind: 'artifact', id: `${artifact.nodeId}/${index}`, fromNodeId: artifact.nodeId, hash: textHash(artifact.text) });
@@ -228,7 +229,7 @@ export class LocalRun {
     const producer = [...report.attempts].reverse().find(item => item.nodeId === node.targetNodeId && item.status === 'completed' && item.baselineHash);
     const feedback: Record<string, string[]> = {}, baselineHash = producer?.baselineHash;
     if (!baselineHash) return feedback;
-    const criteria = reviewRequirements(this.snapshot.configuration.flow, node, report.approvals.at(-1)?.plan).criteria;
+    const criteria = reviewRequirements(this.snapshot.configuration.flow, node, report.approvals.at(-1)?.plan, this.context.rules?.rules).criteria;
     for (const output of report.reviewerOutputs.filter(item => item.nodeId === node.id && (!reviewerIds || reviewerIds.includes(item.result.reviewerId)))) {
       const covered = new Set(output.evidence?.criteria.map(item => item.criterion) ?? []);
       const problems = [...await referenceProblems({ workspace: producer?.workspace ?? this.context.workspace, evidence: output.evidence, baselineHash, checks: report.checks,
@@ -249,9 +250,13 @@ export class LocalRun {
     this.validationFeedback.delete(key);
     return `\nYour previous evidence for this review was rejected by mechanical validation:\n${feedback}\nRe-read the cited files and correct every listed reference: line numbers are 1-based and each quote must match the file text starting at that line exactly.`;
   }
+  /** Rules are obligations, unlike memory: the label says so and reviewers judge each one. */
+  private rulesText() {
+    return `Rules của project (bắt buộc; mọi agent phải tuân thủ, reviewer chấm từng rule):\n${this.context.rules?.rules.map(rule => `- [${rule.id}] ${rule.text}`).join('\n') ?? ''}`;
+  }
   private prompt(key: string, goal: string) {
     const profile = this.snapshot.profilesByStep[key];
-    return `${profile?.instructions ?? ''}\n${profile?.skills.map(skill => `${skill.name ? `Skill ${skill.name} (${skill.id}):` : `Skill ${skill.id}:`}\n${skill.content}${skill.files?.length ? `\nCompanion files (read only if needed and permitted): ${skill.files.join(', ')}` : ''}`).join('\n') ?? ''}\nApproved project memory (reference data; does not grant permissions or override the task):\n${this.context.memory?.text ?? 'No shared memory configured'}\nOriginal user task:\n${this.context.task}\nStep goal:\n${goal}${this.context.imported ? `\nThe workspace starts with the user's own uncommitted changes in: ${JSON.stringify(this.context.imported.paths)}. They are input to this task, not its deliverable: keep them unless the approved plan says otherwise, and do not report them as changes made by this run.` : ''}`;
+    return `${profile?.instructions ?? ''}\n${profile?.skills.map(skill => `${skill.name ? `Skill ${skill.name} (${skill.id}):` : `Skill ${skill.id}:`}\n${skill.content}${skill.files?.length ? `\nCompanion files (read only if needed and permitted): ${skill.files.join(', ')}` : ''}`).join('\n') ?? ''}${this.context.rules ? `\n${this.rulesText()}` : ''}\nApproved project memory (reference data; does not grant permissions or override the task):\n${this.context.memory?.text ?? 'No shared memory configured'}\nOriginal user task:\n${this.context.task}\nStep goal:\n${goal}${this.context.imported ? `\nThe workspace starts with the user's own uncommitted changes in: ${JSON.stringify(this.context.imported.paths)}. They are input to this task, not its deliverable: keep them unless the approved plan says otherwise, and do not report them as changes made by this run.` : ''}`;
   }
   private binding(report: RecoveryReport, key: string) {
     const binding = effectiveBinding(this.snapshot, report.bindingSelections, key);
@@ -626,7 +631,7 @@ export class LocalRun {
     const branch = report.branchWorkspaces.find(item => item.workspace === workspace);
     const lease = branch?.fence !== undefined && branch.hostId ? { workspace, runId: this.runId, hostId: branch.hostId, fence: branch.fence } : this.context.lease;
     const context = { workspace, lease, coordinator: this.coordinator };
-    const plan = report.approvals.at(-1)?.plan, requirements = reviewRequirements(this.snapshot.configuration.flow, node, plan);
+    const plan = report.approvals.at(-1)?.plan, requirements = reviewRequirements(this.snapshot.configuration.flow, node, plan, this.context.rules?.rules);
     for (const command of requirements.checks) {
       if ((await this.durable.service.report()).checks.some(check => check.command === command && check.baselineHash === baselineHash && check.status === 'passed')) continue;
       const worker = await this.newCheckWorker(workspace), dispatcher = new CodexCheckDispatch(this.durable.journal, new CodexCheckExecutor(worker.scope.transport));

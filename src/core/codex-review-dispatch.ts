@@ -88,7 +88,7 @@ export class CodexReviewDispatch {
     if (node?.type !== 'review_group') throw new Error('Not a review group');
     if (z.object({ snapshot: z.json().optional() }).parse(events[0]?.payload).snapshot) {
       assessments = {};
-      const criteria = reviewRequirements(flow, node, report.approvals.at(-1)?.plan).criteria;
+      const criteria = reviewRequirements(flow, node, report.approvals.at(-1)?.plan, report.runtimeContext?.rules?.rules).criteria;
       // A carried-forward pass cites the receipts of the baseline it reviewed; its sources lie outside the changed paths.
       for (const output of report.reviewerOutputs.filter(item => item.nodeId === nodeId)) assessments[output.result.reviewerId] = await assessReviewEvidence({ workspace: context.workspace, criteria, evidence: output.evidence, findingIds: output.result.findingIds, baselineHash: output.carried?.fromBaselineHash ?? baselineHash, checks: report.checks, artifacts: report.artifacts.filter(item => item.nodeId === node.targetNodeId && item.baselineHash === (output.carried?.fromBaselineHash ?? baselineHash)) });
       await this.verifyWorkspace(nodeId, baselineHash, context);

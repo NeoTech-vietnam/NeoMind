@@ -10,6 +10,7 @@ import { ProfileLibrary } from '../storage/profile-library.js';
 import { projectIdentity } from '../workspace/worktree.js';
 import { branchLayout } from '../domain/branches.js';
 import { projectDir } from '../storage/project-dir.js';
+import { parseRules, rulesHash, type ProjectRule } from '../domain/rules.js';
 
 export const defaultRoles: ProjectConfig['roleDefaults'] = Object.fromEntries(['implementer', 'verifier'].map(role => [role,
   { runner: 'codex', provider: 'openai', model: 'gpt-6-luna', reasoning: 'low' }]));
@@ -50,6 +51,14 @@ export async function readProject(projectRoot: string): Promise<ProjectConfig> {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     return { ...structuredClone(defaultProject), projectId: `project-${hashJson(projectIdentity(projectRoot)).slice(0, 16)}`, roleDefaults: structuredClone(defaultRoles) };
   }
+}
+/** The project's rules as written in the checkout now; a run pins them so replay and review use the same text. */
+export async function readProjectRules(projectRoot: string): Promise<{ rules: ProjectRule[]; warnings: string[]; hash: string } | undefined> {
+  let text: string;
+  try { text = await readFile(path.join(projectDir(projectRoot), 'rules.md'), 'utf8'); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
+  const parsed = parseRules(text);
+  return { ...parsed, hash: rulesHash(parsed.rules) };
 }
 export async function projectRuntimeRoot(projectRoot: string, base?: string): Promise<string> {
   const key = hashJson(projectIdentity(await realpath(projectRoot)));

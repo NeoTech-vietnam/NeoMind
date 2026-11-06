@@ -5,7 +5,7 @@ import { RunStore } from '../storage/run-store.js';
 import { SingleOwnerJournal } from '../storage/journal.js';
 import { replayRun } from '../core/recovery.js';
 import { LocalRun } from './local-run.js';
-import { projectRuntimeRoot, readProject, snapshotProjectFlow, standaloneDiagnostics } from './project.js';
+import { projectRuntimeRoot, readProject, readProjectRules, snapshotProjectFlow, standaloneDiagnostics } from './project.js';
 import { hashJson, type BindingOverride } from '../domain/resolve.js';
 import { captureBaseline } from '../workspace/baseline.js';
 import { formatMemorySnapshot, memoryForRun, openProjectMemory } from './memory.js';
@@ -60,8 +60,8 @@ export class RunManager {
   }
   async preview(flowId: string, version?: number, overrides: Record<string, BindingOverride> = {}, limits: Partial<Flow['definition']['limits']> = {}, workspaceMode?: Flow['definition']['workspacePolicy']) {
     const snapshot = await snapshotProjectFlow(this.projectRoot, flowId, version, overrides, limits, workspaceMode), baseline = await captureBaseline(this.projectRoot);
-    const dirty = planDirtyImport(baseline), importBlockers = [...(dirty.refused.length ? [`Symlink không mang vào run được: ${dirty.refused.join(', ')}`] : [])];
-    return { snapshot, runtimeDiagnostics: standaloneDiagnostics(snapshot.configuration.flow), runnerPreflight: this.runnerPreflight(snapshot), flowExceptions: flowExceptions(snapshot.configuration.flow), configurationHash: hashJson({ snapshot, sourceHead: baseline.head }), sourceHead: baseline.head, dirtyPaths: baseline.entries.map(entry => entry.path),
+    const dirty = planDirtyImport(baseline), rules = await readProjectRules(this.projectRoot), importBlockers = [...(dirty.refused.length ? [`Symlink không mang vào run được: ${dirty.refused.join(', ')}`] : [])];
+    return { snapshot, runtimeDiagnostics: standaloneDiagnostics(snapshot.configuration.flow), runnerPreflight: this.runnerPreflight(snapshot), flowExceptions: flowExceptions(snapshot.configuration.flow), rules: rules ? { rules: rules.rules, warnings: rules.warnings } : { rules: [], warnings: [] }, configurationHash: hashJson({ snapshot, sourceHead: baseline.head, ...(rules?.rules.length ? { rules: rules.hash } : {}) }), sourceHead: baseline.head, dirtyPaths: baseline.entries.map(entry => entry.path),
       // Confirming `baselineHash` copies exactly these changes into the run; they stay out of its commit.
       dirtyImport: { baselineHash: dirty.baselineHash, changes: snapshot.configuration.flow.definition.workspacePolicy === 'isolated' ? dirty.changes : baseline.entries.map(entry => ({ path: entry.path, change: entry.kind === 'missing' ? 'deleted' as const : entry.status === '??' ? 'added' as const : 'modified' as const })), blockers: snapshot.configuration.flow.definition.workspacePolicy === 'isolated' ? importBlockers : [] },
       workspaceChoices: ['isolated', 'current', 'shared'], gitDelivery: 'Local commit from the reviewed tree; configured Git hooks are not executed. Approved checks run before review.' };
@@ -86,8 +86,9 @@ export class RunManager {
     const diagnostics = standaloneDiagnostics(snapshot.configuration.flow);
     if (diagnostics.length) throw new Error(diagnostics.join(' '));
     if (Object.values(snapshot.profilesByStep).some(profile => !profile.requestedPermissions.read)) throw new Error('Executor hiện cần quyền đọc trong mọi agent profile');
-    const sourceHead = (await captureBaseline(this.projectRoot)).head;
-    if (configurationHash !== undefined && hashJson({ snapshot, sourceHead }) !== configurationHash) throw new Error('Cấu hình hoặc HEAD đã thay đổi; xem lại trước khi bắt đầu');
+    const sourceHead = (await captureBaseline(this.projectRoot)).head, rules = await readProjectRules(this.projectRoot);
+    // Rules join the hash only when the project has some, so previews from before rules existed still match.
+    if (configurationHash !== undefined && hashJson({ snapshot, sourceHead, ...(rules?.rules.length ? { rules: rules.hash } : {}) }) !== configurationHash) throw new Error('Cấu hình hoặc HEAD đã thay đổi; xem lại trước khi bắt đầu');
     const { models, failures } = await this.discoverModels(bindingRunners(snapshot.configuration.bindings));
     const selections: { key: string; values: ReturnType<typeof selectAvailableBinding>['values'] }[] = [], selected = new Set<string>();
     for (const [key, binding] of Object.entries(snapshot.configuration.bindings)) {
@@ -103,7 +104,7 @@ export class RunManager {
     for (const runner of selected) await this.runners.get(runner).verifyCapabilities();
     const selectionPolicy = (await readProject(this.projectRoot)).memorySelection;
     const memory = memoryForRun(this.projectRoot, path.join(this.stateRoot, 'coordination.sqlite'), task, selectionPolicy);
-    const run = await LocalRun.create({ projectRoot: this.projectRoot, stateRoot: this.stateRoot, task, snapshot, coordinator: this.coordinator, runners: this.runners, expectedSourceHead: sourceHead, ...(importDirty ? { importDirty } : {}), ...(program ? { program } : {}),
+    const run = await LocalRun.create({ projectRoot: this.projectRoot, stateRoot: this.stateRoot, task, snapshot, coordinator: this.coordinator, runners: this.runners, expectedSourceHead: sourceHead, ...(importDirty ? { importDirty } : {}), ...(program ? { program } : {}), ...(rules?.rules.length ? { rules: { hash: rules.hash, rules: rules.rules } } : {}),
       ...(memory ? { memory: formatMemorySnapshot(memory, task, selectionPolicy) } : {}) });
     this.runs.set(run.runId, run);
     for (const selection of selections) await run.durable.service.selectAllowedFallback(selection.key, selection.values, 'Lựa chọn chính không khả dụng; dùng model trong danh sách thay thế đã cấu hình');

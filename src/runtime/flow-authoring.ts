@@ -7,7 +7,7 @@ import { defaultProject, newFlowFromTemplate, templates } from '../domain/templa
 import { FlowLibrary, flowAuthorSchema, type FlowAuthor, type StoredFlowVersion } from '../storage/flow-library.js';
 import { ProfileLibrary } from '../storage/profile-library.js';
 import { projectDir } from '../storage/project-dir.js';
-import { builtinProfile, defaultRoles } from './project.js';
+import { builtinProfile, defaultRoles, readProjectRules } from './project.js';
 
 export { diffFlows } from '../domain/flow-diff.js';
 
@@ -44,7 +44,9 @@ export async function flowBlocks(root: string) {
   return { nodeTypes: nodeSchema.options.map(option => option.shape.type.value), templates: Object.keys(templates),
     profiles: profileSummaries, builtinProfiles: [builtinProfile('implementer'), builtinProfile('verifier')], flowBindings: flowBindings.filter(item => item !== null),
     roleDefaults: project.roleDefaults, bindings: templates.dev.definition.bindings, policy: project.policy, ai: project.ai ?? {},
-    flows, example: templates.dev };
+    flows, example: templates.dev,
+    // Rules apply to every run whatever the flow; listed so an author knows reviews will judge them.
+    rules: { appliesToEveryRun: true, ...(await readProjectRules(root) ?? { rules: [], warnings: [] }) } };
 }
 
 export async function getFlow(root: string, flowId: string) {

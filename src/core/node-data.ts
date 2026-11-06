@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-export const dataSourceSchema = z.strictObject({ kind: z.enum(['task', 'memory', 'plan', 'artifact', 'check', 'code']),
+export const dataSourceSchema = z.strictObject({ kind: z.enum(['task', 'memory', 'rules', 'plan', 'artifact', 'check', 'code']),
   id: z.string().min(1), fromNodeId: z.string().min(1).optional(), hash: z.string().min(1) });
 export const nodeInputSchema = z.strictObject({ nodeId: z.string().min(1), attemptId: z.string().min(1), workspace: z.string().min(1),
   prompt: z.string().max(1000000), promptHash: z.string().regex(/^[a-f0-9]{64}$/), truncated: z.boolean(), sources: z.array(dataSourceSchema) });
