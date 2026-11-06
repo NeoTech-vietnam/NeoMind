@@ -15,6 +15,7 @@ const builtins = [makeProfile('implementer', 'Implementer', true), makeProfile('
 const drafts: Record<string, Profile> = { 'ts-strict': { ...makeProfile('ts-strict', 'Implementer · TypeScript strict', true), version: 2, skills: [{ id: 'style-guide', path: 'skills/style/SKILL.md', sha256: 'a'.repeat(64) }] } };
 let metadata = [{ profileId: 'ts-strict', name: 'Implementer · TypeScript strict', archived: false }];
 const published: Record<string, number[]> = { 'ts-strict': [1, 2] };
+const catalog = [{ id: 'style-guide', path: 'skills/style/SKILL.md', sha256: 'b'.repeat(64), name: 'Style guide', description: 'Quy tắc code', source: 'claude' }, { id: 'review', path: 'neomind/skills/review/SKILL.md', sha256: 'c'.repeat(64), name: 'Review', description: 'Review độc lập', source: 'neomind' }];
 const galleryFlow = structuredClone(templates.dev);
 const implement = galleryFlow.definition.nodes.find(node => node.id === 'implement');
 if (implement?.type === 'agent_task') { implement.profileId = 'ts-strict'; implement.profileVersion = 2; }
@@ -32,14 +33,21 @@ setApiTransport(async (endpoint, method, body) => {
   const ok = (value: unknown) => ({ status: 200, body: value });
   if (path === '/api/bootstrap') return ok({ projectName: 'neomind-demo', projectRoot: 'W:\\projects\\neomind-demo', templates: ['dev'], runtimeAvailable: true, flows: [{ flowId: 'dev', name: 'Dev', archived: false }] });
   if (path === '/api/runs') return ok({ runs: [] });
+  if (path === '/api/skills' && method === 'GET') return ok({ skills: catalog });
+  if (path === '/api/skills/status' && method === 'POST') return ok({ skills: (input?.refs as { id: string; path: string; sha256: string }[] ?? []).map(ref => { const found = catalog.find(item => item.path === ref.path); return found ? { ...ref, status: found.sha256 === ref.sha256 ? 'ok' : 'changed', currentSha256: found.sha256 } : { ...ref, status: 'missing' }; }) });
   if (path === '/api/flows/dev/draft') return ok({ draft: galleryFlow, revision: 'd'.repeat(64) });
   if (path === '/api/profiles' && method === 'GET') return ok({ profiles: metadata, builtins });
   if (path === '/api/profiles' && method === 'POST') { const id = String(input?.id), name = String(input?.name), template = builtins.find(item => item.profileId === input?.template) ?? builtins[0]!; drafts[id] = { ...structuredClone(template), profileId: id, name }; metadata.push({ profileId: id, name, archived: false }); return ok({ draft: drafts[id], revision: 'e'.repeat(64) }); }
-  const profile = /^\/api\/profiles\/([^/]+)\/(draft|versions|publish|rename|clone|archive|restore|delete)$/.exec(path);
+  const savedProfile = /^\/api\/profiles\/([^/]+)\/versions\/(\d+)$/.exec(path);
+  if (savedProfile) { const id = decodeURIComponent(savedProfile[1]!), profile = drafts[id] ?? builtins.find(item => item.profileId === id); return ok({ version: { ...structuredClone(profile), version: Number(savedProfile[2]) } }); }
+  const profile = /^\/api\/profiles\/([^/]+)\/(draft|versions|publish|rename|clone|archive|restore|delete|usage|migrate|skills-status)$/.exec(path);
   if (profile) { const id = decodeURIComponent(profile[1]!), operation = profile[2]!;
     if (operation === 'draft' && method === 'PUT') { drafts[id] = structuredClone(input?.draft as Profile); return ok({ revision: 'e'.repeat(64) }); }
     if (operation === 'draft') return ok({ draft: drafts[id], revision: 'd'.repeat(64) });
     if (operation === 'versions') return ok({ versions: published[id] ?? [] });
+    if (operation === 'usage') return ok({ flows: [{ flowId: 'dev', name: 'Dev', archived: false, revision: 'd'.repeat(64), draftValid: true, draft: [{ nodeId: 'implement', label: 'Implement', version: 1 }], published: [{ nodeId: 'implement', label: 'Implement', version: 1 }], publishedVersion: 1 }] });
+    if (operation === 'migrate') return ok({ results: ((input?.flows ?? []) as { flowId: string }[]).map(item => ({ flowId: item.flowId, changed: 1, revision: 'e'.repeat(64) })) });
+    if (operation === 'skills-status') return ok({ skills: [] });
     if (operation === 'publish') { const version = (published[id]?.at(-1) ?? 0) + 1; published[id] = [...(published[id] ?? []), version]; return ok({ version: { version } }); }
     if (operation === 'clone') { const targetId = String(input?.targetId); drafts[targetId] = { ...structuredClone(drafts[id]!), profileId: targetId, name: String(input?.name) }; metadata.push({ profileId: targetId, name: String(input?.name), archived: false }); return ok({}); }
     if (operation === 'rename') metadata = metadata.map(item => item.profileId === id ? { ...item, name: String(input?.name) } : item);
@@ -67,5 +75,6 @@ click(byText('nav button, aside button', isMemory ? 'Memory' : 'Profiles'), () =
   if (hash.includes('skills')) click(byText('button', 'Skills'));
   if (hash.includes('perm')) click(byText('button', 'Quyền'));
   if (hash.includes('usage')) click(byText('button', 'Được dùng ở'));
+  if (hash.includes('migrate')) click(byText('button', 'Chuyển flow sang bản này'));
   if (hash.includes('edited')) click(() => document.querySelector('textarea[aria-label="Hướng dẫn"]'), () => { const el = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Hướng dẫn"]'); if (el) { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(el, `${el.value}\nThay đổi mẫu.`); el.dispatchEvent(new Event('input', { bubbles: true })); } });
 });

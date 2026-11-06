@@ -17,6 +17,8 @@ setApiTransport(async (endpoint, method, body) => {
   const ok = (value: unknown) => ({ status: 200, body: value });
   if (path === '/api/bootstrap') return ok({ projectName: 'neomind-demo', projectRoot: 'W:\\projects\\neomind-demo', templates: ['dev', 'parallel'], runtimeAvailable: true, flows: hash.includes('empty') ? [] : [{ flowId: 'dev', name: 'Dev', archived: false }, { flowId: 'parallel', name: 'Dev song song', archived: false }] });
   if (path === '/api/runs') return ok({ runs: [] });
+  if (path === '/api/skills' && method === 'GET') return ok({ skills: [{ id: 'review', path: 'neomind/skills/review/SKILL.md', sha256: 'a'.repeat(64), name: 'Review', description: 'Review độc lập', source: 'neomind' }] });
+  if (path === '/api/skills/status' && method === 'POST') return ok({ skills: ((body as { refs?: unknown[] }).refs ?? []).map(ref => ({ ...(ref as object), status: 'ok' })) });
   if (path === '/api/runners') return ok({ runners: [{ runner: 'codex', provider: 'openai', models: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna'], reasoning: ['low', 'medium', 'high'] }, { runner: 'claude-code', provider: 'anthropic', models: ['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-opus-5-5'], reasoning: ['low', 'medium', 'high'] }] });
   const match = /^\/api\/flows\/([^/]+)\/(draft|validate|versions|publish)$/.exec(path);
   if (match) {
