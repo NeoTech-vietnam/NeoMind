@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { CircleAlert } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Badge, Tag } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/input';
 import { Callout } from '@/components/ui/misc';
 import { api } from './api';
 
-type Lesson = { proposal: { proposalId: string; record: { body: string; sources: string[] } }; version: number; proposalHash: string; expectedRevision: string | null; promoted: boolean; rejected?: boolean };
+type Lesson = { proposal: { proposalId: string; record: { body: string; sources: string[]; scope?: string; tags?: string[] } }; version: number; proposalHash: string; expectedRevision: string | null; promoted: boolean; rejected?: boolean };
 
 /** Lessons the run proposed for the shared memory: only a version the user approves is promoted. */
 export function RunLessons({ runId, onPromoted }: { runId: string; onPromoted?(): void }) {
@@ -30,7 +30,7 @@ export function RunLessons({ runId, onPromoted }: { runId: string; onPromoted?()
     {!data.memoryRoot && <p className="m-0 px-4 pt-3 text-[12.5px] text-muted-foreground">Mở mục Memory để chọn thư mục lưu trước khi duyệt.</p>}
     {data.proposals.map(lesson => { const id = lesson.proposal.proposalId, open = !lesson.promoted && !lesson.rejected;
       return <div key={id} className="flex flex-col gap-2.5 border-b px-4 py-3 last:border-b-0">
-        <div className="flex items-center gap-2"><code className="font-mono text-[12.5px] font-semibold">{id}</code><span className="text-[11.5px] text-muted-foreground">v{lesson.version}</span>
+        <div className="flex flex-wrap items-center gap-2"><code className="font-mono text-[12.5px] font-semibold">{id}</code><span className="text-[11.5px] text-muted-foreground">v{lesson.version}</span><Tag>Lesson</Tag>{lesson.proposal.record.scope && <Tag>{lesson.proposal.record.scope}</Tag>}{lesson.proposal.record.tags?.map(tag => <Tag key={tag}>{tag}</Tag>)}
           {lesson.promoted && <Badge status="success">Đã lưu vào memory</Badge>}{lesson.rejected && <Badge status="idle">Đã từ chối</Badge>}</div>
         {editing === id ? <Textarea aria-label="Nội dung lesson" rows={6} value={editedBody} onChange={e => setEditedBody(e.target.value)} />
           : <p className="m-0 whitespace-pre-wrap text-[13px] leading-relaxed text-fg-2">{lesson.proposal.record.body}</p>}
