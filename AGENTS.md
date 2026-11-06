@@ -12,7 +12,7 @@ Công cụ cấu hình và chạy *agent flow* trên một Git repo: lập kế 
 
 ## Đọc theo thứ tự
 
-1. [Bàn giao mới nhất](docs/adaptive-agent-flow/session-handoff-2026-11-06.md) (thiết kế lại GĐ 0–5), [bàn giao Windows](docs/adaptive-agent-flow/session-handoff-2026-11-04-windows.md) và [Linux](docs/adaptive-agent-flow/session-handoff-2026-11-04.md): trạng thái, việc đang dở, bài học.
+1. [Bàn giao mới nhất](docs/adaptive-agent-flow/session-handoff-2026-11-06-upgrade.md) (nâng cấp Gói 1–5 trên `feat/neomind-upgrade`), [bàn giao thiết kế lại](docs/adaptive-agent-flow/session-handoff-2026-11-06.md) (GĐ 0–5), [bàn giao Windows](docs/adaptive-agent-flow/session-handoff-2026-11-04-windows.md) và [Linux](docs/adaptive-agent-flow/session-handoff-2026-11-04.md): trạng thái, việc đang dở, bài học.
 2. [Định hướng từ 11/2026](docs/adaptive-agent-flow/direction-2026-11.md): rule của project, đo kết quả run, AI điều phối, flow tự thích ứng (đang chờ duyệt).
 3. [Trạng thái triển khai](docs/adaptive-agent-flow/implementation-status.md) và [acceptance matrix](docs/adaptive-agent-flow/acceptance-matrix.md).
 4. [README](README.md): cách dùng; [START-HERE-WINDOWS](START-HERE-WINDOWS.md): chi tiết Windows.

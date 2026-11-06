@@ -58,6 +58,20 @@ npm run neomind -- profile author-publish /project my-profile <revision> "Lý do
 
 `profile migrate` chỉ sửa **draft** của các flow được chọn sang phiên bản profile mới (so revision từng flow); không publish flow. `ai.profilePublish` (`allow` mặc định, `draft-only`, `deny`) giới hạn tool AI như `ai.flowPublish`.
 
+## Chi phí, ngân sách token và thống kê
+
+`limits.maxTokens` (tùy chọn) trong flow hoặc ô "Ngân sách token" ở Run mới › Nâng cao (override khi start) đặt ngân sách token cho run. NeoMind kiểm tổng token sau mỗi bước (lượt agent đang chạy luôn được ghi xong); khi đạt ngân sách, run `paused` với lý do "Hết ngân sách token (đã dùng/ngân sách)". Thêm token rồi tiếp tục trong màn run, bằng tool `extend_time` (`tokens`), API `POST /api/runs/:id/extend_time` `{ tokens }` hoặc CLI:
+
+```bash
+npm run neomind -- run extend-time /project <run-id> --tokens 50000        # chỉ thêm token
+npm run neomind -- run extend-time /project <run-id> 600 --tokens 50000    # thêm cả thời gian
+npm run neomind -- run stats /project [--flow dev] [--json|--csv]
+```
+
+`run stats` (API `GET /api/stats?flow=`, tool `stats`) tổng hợp theo flow, profile, runner/model và flow + bộ runner: số run, tỷ lệ hoàn tất/giao, token và thời gian hoạt động (trung bình/trung vị trên run đã xong), số vòng sửa, tỷ lệ review đạt lượt đầu. `run list` có thêm `tokens`. Run mới hiện ước tính thời gian/token (và chi phí) chỉ khi có ≥ 3 run đã xong cùng flow và cùng bộ runner. `assess` dùng thống kê để xếp các phương án khác khi đủ dữ liệu.
+
+Chi phí USD là tùy chọn: tạo `neomind/pricing.json` với giá do bạn tự điền, ví dụ `{ "schemaVersion": 1, "models": { "gpt-6-luna": { "inputPerMTok": 1, "outputPerMTok": 4, "cachedInputPerMTok": 0.1 } } }` (USD mỗi triệu token). Không có file, hoặc thiếu giá của một model đã dùng, thì chỉ hiện token.
+
 ## Rules của project
 
 `neomind/rules.md` (commit cùng repo) chứa các rule bắt buộc, mỗi rule một dòng có mã: `- [R1] Không sửa file ngoài phạm vi plan đã duyệt.` Dòng tiêu đề `#` và dòng trống được bỏ qua; dòng khác dạng hoặc mã trùng bị bỏ kèm cảnh báo. Khi tạo run, NeoMind ghim nội dung + hash rule vào run (sửa file sau đó không đổi run đang chạy), đưa rule vào prompt của mọi agent sau instructions của profile với nhãn "Rules của project (bắt buộc)" (khác memory chỉ để tham khảo), và thêm `Rule R1: …` thành tiêu chí bắt buộc của mọi review: thiếu kết luận hoặc vi phạm thì review không đạt. Preview (`Run mới`, tool `preview`) liệt kê rule sẽ áp dụng; chi tiết run hiện kết quả từng rule trong phần Kiểm tra. Flow (kể cả flow AI dựng) không tắt được rule. Project không có `rules.md` chạy như trước.

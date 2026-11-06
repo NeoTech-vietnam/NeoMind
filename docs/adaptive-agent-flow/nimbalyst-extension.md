@@ -56,6 +56,8 @@ flowchart LR
 
 **Rules (Gói 4, 06/11/2026):** tool `neomind_preview` trả thêm `rules` (`[R1] …`) và `ruleWarnings`; `neomind_flow_blocks` trả `rules` để AI biết review sẽ chấm theo rule. Không có tool sửa `rules.md`: rule là quyết định của người dùng, sửa qua Git.
 
+**Chi phí và quota (Gói 5, 06/11/2026):** tool `neomind_stats` (thống kê theo flow/profile/runner, không trả danh sách run chi tiết); `neomind_extend_time` nhận `seconds`, `tokens` hoặc cả hai (gia hạn ngân sách token `maxTokens`); `neomind_status` không đổi, `run list` có `tokens`. `neomind_assess` kèm `statistics` khi project có ≥ 3 run đã xong của flow.
+
 **Panel = editor đầy đủ.**
 - Phần định tuyến `/api/*` của server được tách thành `createEditorApi(projectRoot, runs)`. Server HTTP và backend extension dùng chung hàm này, và chung một `RunManager` trong process.
 - Panel render `App` của `ui/src` trong shadow root. CSS (`:root` → `:host`) không lẫn với Nimbalyst. `api()` có transport thay được: HTTP trong trình duyệt, `callBackendTool('neomind.api')` trong panel.

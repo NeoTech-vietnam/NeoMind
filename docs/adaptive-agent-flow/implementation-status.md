@@ -1,7 +1,18 @@
 # NeoMind v1 — trạng thái implementation
 
 Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
-Bàn giao hiện tại: [06/11/2026 thiết kế lại](session-handoff-2026-11-06.md); trước đó [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md).
+Bàn giao hiện tại: [06/11/2026 nâng cấp Gói 1–5](session-handoff-2026-11-06-upgrade.md); [06/11/2026 thiết kế lại](session-handoff-2026-11-06.md); trước đó [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md).
+
+## Nâng cấp NeoMind · Gói 5 — 06/11/2026
+
+Chi phí và quota. `RunManager.list()` có `tokens`. `src/runtime/run-stats.ts`: `runFacts` từ report (hoàn tất, giao = commit/áp dụng/không đổi file, token, thời gian hoạt động, số vòng sửa, review đạt lượt đầu = review được chấp nhận và không có vòng sửa, profile, runner/model, chi phí), `runStats` nhóm theo flow, profile, runner/model, flow + bộ runner; trung bình/trung vị token, thời gian, chi phí chỉ tính run đã xong. `neomind/pricing.json` tùy chọn (`schemaVersion: 1`, USD/triệu token theo model). `src/domain/estimate.ts` (dùng chung UI): ước tính chỉ khi ≥ 3 run đã xong cùng flow + bộ runner. Ngân sách token: `limits.maxTokens?` (schema flow, override khi start), kiểm ở đầu mỗi vòng `drive()` sau khi các nhánh đang chạy xong lượt, `paused` với lý do "Hết ngân sách token (đã dùng/ngân sách)"; `resume` từ chối khi còn vượt; sự kiện `runtime_tokens_extended` + `RecoveryReport.tokenExtensions`; `extendTime(seconds, tokens)` dùng chung cho tool `extend_time` (`tokens`), API (`{ seconds?, tokens? }`), CLI `run extend-time … [--tokens N]`. CLI `run stats [--flow] [--json|--csv]`, API `GET /api/stats`, tool `stats`. `assess` nhận thống kê (API/tool) để xếp hạng phương án. UI: thanh ngân sách token và gia hạn token trong run, ô ngân sách token ở Run mới › Nâng cao và Flow Studio, ước tính thời gian/token/chi phí ở Run mới; gallery `runs.html#budget`, `#new,price`. `diffFlows` so cả `maxTokens`.
+
+Quyết định nhỏ: kiểm ngân sách giữa các bước (không ngắt lượt agent đang chạy, để kết quả luôn được ghi); `assess` không tự đổi flow theo thống kê, chỉ xếp hạng và thêm lý do; CLI `assess` giữ quy tắc tĩnh (không tạo state cho thư mục bất kỳ); thiếu giá một model thì run không có chi phí. Fake runner có `tokensPerTurn` (usage cộng dồn theo session như runner thật).
+
+| Kiểm chứng Windows | Kết quả |
+| --- | --- |
+| `npm test` (commit `e33cc11`) | 254 test: 252 pass, 2 skip, 0 fail. `test/run-stats.test.ts`: vượt `maxTokens` → `paused`, `resume` bị từ chối, gia hạn token rồi hoàn tất; thống kê từ journal có `usage_observed` (3 run xong + 1 chờ duyệt), chi phí theo `pricing.json`, ước tính chỉ có khi đủ 3 run, CSV/CLI, tool `stats` và `assess` có thống kê. |
+| TypeScript UI, build UI, build extension | Đạt (cả sau `b88559c`); kiểm UI bằng gallery qua Edge headless (CDP). |
 
 ## Nâng cấp NeoMind · Gói 4 — 06/11/2026
 
