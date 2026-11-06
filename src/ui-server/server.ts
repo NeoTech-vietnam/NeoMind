@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { compileFlow } from '../domain/compiler.js';
 import { projectSchema, skillReferenceSchema } from '../domain/schema.js';
-import { defaultProject, templates } from '../domain/templates.js';
+import { defaultProject, newFlowFromTemplate, templates } from '../domain/templates.js';
 import { FlowLibrary } from '../storage/flow-library.js';
 import { RunManager } from '../runtime/run-manager.js';
 import type { BindingOverride } from '../domain/resolve.js';
@@ -19,6 +19,7 @@ import type { RunnerId } from '../runners/agent-runner.js';
 import { projectDir } from '../storage/project-dir.js';
 import { flowBlocks, draftFlow, getFlow, validateFlow, flowDiff, publishFlow, assess } from '../runtime/flow-authoring.js';
 import { flowAuthorSchema } from '../storage/flow-library.js';
+import { createProgram, listPrograms, markPhaseDelivered, programNext, programStatus, startPhase } from '../runtime/programs.js';
 import { skillCatalog, skillStatus } from '../storage/skill-catalog.js';
 import { draftProfile, getProfile, getProfileVersion, migrateProfile, profileSkillStatus, profileUsage, publishProfile } from '../runtime/profile-authoring.js';
 
@@ -123,6 +124,17 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       return reply(405, { error: 'Method not allowed' });
     }
     if (url.pathname === '/api/runs' && method === 'GET') { return reply(200, { runs: await (await runs()).list() }); }
+    if (url.pathname === '/api/programs' && method === 'GET') return reply(200, await listPrograms(projectRoot, await runs()));
+    if (url.pathname === '/api/programs' && method === 'POST') return reply(201, { program: await createProgram(projectRoot, z.strictObject({ program: z.json() }).parse(payload).program) });
+    const programMatch = /^\/api\/programs\/([^/]+)(?:\/(next|phases\/([^/]+)\/(start|deliver)))?$/.exec(url.pathname);
+    if (programMatch) {
+      const programId = decodeURIComponent(programMatch[1]!), phaseId = programMatch[3] ? decodeURIComponent(programMatch[3]) : undefined;
+      if (!programMatch[2] && method === 'GET') return reply(200, await programStatus(projectRoot, await runs(), programId));
+      const input = z.strictObject({ importDirty: z.string().min(1).optional(), note: z.string().max(4000).optional() }).parse(payload ?? {});
+      if (programMatch[2] === 'next' && method === 'POST') return reply(200, await programNext(projectRoot, await runs(), programId, input.importDirty ? { importDirty: input.importDirty } : {}));
+      if (programMatch[4] === 'start' && method === 'POST') return reply(200, await startPhase(projectRoot, await runs(), programId, phaseId!, input.importDirty ? { importDirty: input.importDirty } : {}));
+      if (programMatch[4] === 'deliver' && method === 'POST') return reply(200, await markPhaseDelivered(projectRoot, await runs(), programId, phaseId!, input.note ?? ''));
+    }
     const runInput = z.strictObject({ flowId: z.string().min(1), version: z.number().int().positive().optional(), task: z.string().min(1).optional(), configurationHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
       workspaceMode: z.enum(['isolated', 'current', 'shared']).optional(),
       importDirty: z.string().regex(/^[a-f0-9]{64}$/).optional(),
@@ -200,7 +212,7 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
     if (url.pathname === '/api/flows' && method === 'POST') {
       const input = z.strictObject({ id: z.string().min(1), name: z.string().min(1), template: z.enum(['fast', 'dev', 'parallel', 'research']) }).parse(payload);
       const metadata = await library.create(input.id, input.name);
-      const draft = { ...structuredClone(templates[input.template]), flowId: input.id, name: input.name, version: 1 };
+      const draft = { ...newFlowFromTemplate(input.template), flowId: input.id, name: input.name, version: 1 };
       return reply(201, { metadata, draft, revision: await library.saveDraft(input.id, draft) });
     }
     const match = /^\/api\/flows\/([^/]+)\/(draft|validate|publish|archive|restore|rename|delete|clone|canvas-export|canvas-import|versions|authoring|author-validate|diff)$/.exec(url.pathname);

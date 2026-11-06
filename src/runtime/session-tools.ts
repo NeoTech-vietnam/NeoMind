@@ -28,6 +28,15 @@ export const SESSION_TOOLS: SessionTool[] = [
   { name: 'flow_validate', description: 'Validate an AI flow draft against project policy and return its diff from the latest published version.', inputSchema: object({ flowId: { type: 'string' } }, ['flowId']) },
   { name: 'flow_publish', description: 'Publish the validated AI draft as a new version. Present the flow_validate diff to the user before publishing, even when policy allows publication.', inputSchema: object({ flowId: { type: 'string' }, expectedRevision: { type: 'string' }, reason: { type: 'string' } }, ['flowId', 'expectedRevision', 'reason']) },
   { name: 'assess', description: 'Recommend an existing flow for a task using deterministic rules. available=false means the named flow is unavailable; this does not start a run.', inputSchema: object({ task: { type: 'string' } }, ['task']) },
+  { name: 'program_create', description: 'Create a multi-phase program in neomind/programs from a spec: { schemaVersion: 1, programId, name, goal, phases: [{ id, title, task, flowId, dependsOn: [] }] }. Every flowId must be published. Show the phases to the user first.',
+    inputSchema: object({ program: { type: 'object' } }, ['program']) },
+  { name: 'program_list', description: 'Programs of this project with progress and the current phase.', inputSchema: object() },
+  { name: 'program_status', description: 'Status of each phase: blocked_by_dependency, ready, running, waiting_user (merge or apply the result), delivered or failed, with its runs and commits.',
+    inputSchema: object({ programId: { type: 'string' } }, ['programId']) },
+  { name: 'program_next', description: 'Start the first ready phase; the task includes lessons from earlier phases. Never starts on its own: call only after the user confirmed the previous phase result is in their branch.',
+    inputSchema: object({ programId: { type: 'string' }, importDirty: { type: 'string' } }, ['programId']) },
+  { name: 'program_deliver', description: 'Mark a completed phase as delivered when Git cannot see it (squash, rebase, manual copy), with the user note for later phases. Ask the user first.',
+    inputSchema: object({ programId: { type: 'string' }, phaseId: { type: 'string' }, note: { type: 'string' }, ...confirmed }, ['programId', 'phaseId', 'confirmed']) },
   { name: 'flows', description: 'NeoMind flows of this project (built-in: fast, dev, parallel, research, plus the project\'s own). Use the flowId with preview and start.', inputSchema: object() },
   { name: 'preview', description: 'What starting a flow would do, without starting it: the runner, model and reasoning of each step, blockers that prevent starting, exceptions the flow declares (Fast approves its own plan and leaves review to the user), and the checkout\'s uncommitted changes.',
     inputSchema: object({ flowId: { type: 'string' } }, ['flowId']) },
@@ -104,6 +113,7 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
     return response.body;
   };
   const flowPath = (args: Record<string, unknown>) => `/api/flows/${encodeURIComponent(text(args, 'flowId'))}`;
+  const programPath = (args: Record<string, unknown>) => `/api/programs/${encodeURIComponent(text(args, 'programId'))}`;
   const profilePath = (args: Record<string, unknown>) => `/api/profiles/${encodeURIComponent(text(args, 'profileId'))}`;
   return {
     skills: async args => ({ catalog: await authoringApi('GET', '/api/skills'), ...(args.refs ? { status: await authoringApi('POST', '/api/skills/status', { refs: args.refs }) } : {}) }),
@@ -116,6 +126,15 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
     flow_validate: async args => authoringApi('POST', `${flowPath(args)}/author-validate`, {}),
     flow_publish: async (args, call) => authoringApi('POST', `${flowPath(args)}/publish`, { expectedRevision: text(args, 'expectedRevision'), author: { kind: 'ai', ...(call?.sessionId ? { sessionId: call.sessionId } : {}), reason: text(args, 'reason') } }),
     assess: async args => authoringApi('POST', '/api/assess', { task: text(args, 'task') }),
+    program_create: async args => authoringApi('POST', '/api/programs', { program: args.program }),
+    program_list: async () => authoringApi('GET', '/api/programs'),
+    program_status: async args => authoringApi('GET', programPath(args)),
+    program_next: async (args, call) => {
+      const result = await authoringApi('POST', `${programPath(args)}/next`, optional(args, 'importDirty') ? { importDirty: optional(args, 'importDirty') } : {}) as { started: boolean; runId?: string };
+      if (result.started && result.runId) await options.onStart?.(result.runId, call);
+      return result;
+    },
+    program_deliver: async args => { requireConfirmed(args, 'Marking a phase delivered'); return authoringApi('POST', `${programPath(args)}/phases/${encodeURIComponent(text(args, 'phaseId'))}/deliver`, { note: optional(args, 'note') ?? '' }); },
     flows: async () => {
       const response = await api({ method: 'GET', path: '/api/bootstrap' });
       const body = response.body as { flows?: { flowId: string; name: string; archived?: boolean }[]; templates?: string[] };

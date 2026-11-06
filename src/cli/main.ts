@@ -87,6 +87,28 @@ async function main(args: string[]): Promise<number> {
       }
     } finally { uninstall(); await manager.close(); }
   }
+  if (args[0] === 'program' && ((args[1] === 'list' && args.length === 3) || (['create', 'status', 'next'].includes(args[1] ?? '') && args.length === 4) || (args[1] === 'deliver' && args.length === 6))) {
+    const programs = await import('../runtime/programs.js'), { RunManager } = await import('../runtime/run-manager.js');
+    const project = await (await import('node:fs/promises')).realpath(args[2]!);
+    // The program file is read before any state opens, so a malformed spec fails without touching runs.
+    const spec = args[1] === 'create' ? JSON.parse(await readFile(args[3]!, 'utf8')) as unknown : undefined;
+    if (args[1] === 'create') { console.log(JSON.stringify({ program: await programs.createProgram(project, spec) }, null, 2)); return 0; }
+    const manager = await RunManager.open(project);
+    const uninstall = installShutdown(async () => {
+      for (const state of await manager.close()) console.error(`${state.runId}: ${state.phase} (${state.reason}). Tiếp tục: neomind run resume <project> ${state.runId}`);
+    });
+    try {
+      if (args[1] === 'list') console.log(JSON.stringify(await programs.listPrograms(project, manager), null, 2));
+      else if (args[1] === 'status') console.log(JSON.stringify(await programs.programStatus(project, manager, args[3]!), null, 2));
+      else if (args[1] === 'deliver') console.log(JSON.stringify(await programs.markPhaseDelivered(project, manager, args[3]!, args[4]!, args[5]!), null, 2));
+      else {
+        const result = await programs.programNext(project, manager, args[3]!);
+        console.log(JSON.stringify(result.started ? { ...result, run: await manager.settle(result.runId) } : result, null, 2));
+        return result.started ? 0 : 1;
+      }
+      return 0;
+    } finally { uninstall(); await manager.close(); }
+  }
   if (args[0] === 'assess' && ((args.length === 3 && args[2] !== '--task-file') || (args.length === 4 && args[2] === '--task-file'))) {
     const task = args[2] === '--task-file' ? await readFile(args[3]!, 'utf8') : args[2]!;
     if (!task.trim() || task.length > 10000) throw new Error('Task must contain 1–10000 characters');
@@ -253,7 +275,7 @@ async function main(args: string[]): Promise<number> {
     console.log(JSON.stringify({ simulated: false, executables, auth: 'unknown', inference: 'not_tested', delegationEnforcement: 'unknown' }, null, 2));
     return 0;
   }
-  console.error('Usage: neomind skills <project> | skills status <project> <refs.json> | profile get|skills-status|usage <project> <id> | profile version <project> <id> <n> | profile migrate <project> <id> <n> <selection.json> | profile author-draft <project> <input.json> | profile author-publish <project> <id> <revision> <reason> | assess <project> --task-file <file>|<task> | flow blocks <project> | flow get|diff|author-validate <project> <id> | flow author-draft <project> <input.json> | flow author-publish <project> <id> <revision> <reason> | editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|parallel|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | flow canvas export|import <flows-dir> <flow-id> [file.canvas] | project migrate <project> | memory configure|project-search|search|get ... | doctor capabilities');
+  console.error('Usage: neomind program create <project> <program.json> | program list <project> | program status|next <project> <programId> | program deliver <project> <programId> <phaseId> <note> | skills <project> | skills status <project> <refs.json> | profile get|skills-status|usage <project> <id> | profile version <project> <id> <n> | profile migrate <project> <id> <n> <selection.json> | profile author-draft <project> <input.json> | profile author-publish <project> <id> <revision> <reason> | assess <project> --task-file <file>|<task> | flow blocks <project> | flow get|diff|author-validate <project> <id> | flow author-draft <project> <input.json> | flow author-publish <project> <id> <revision> <reason> | editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|parallel|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | flow canvas export|import <flows-dir> <flow-id> [file.canvas] | project migrate <project> | memory configure|project-search|search|get ... | doctor capabilities');
   return 2;
 }
 
