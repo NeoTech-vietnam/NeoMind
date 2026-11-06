@@ -18,6 +18,12 @@ const runId = { runId: { type: 'string', description: 'Run id returned by start 
 const confirmed = { confirmed: { type: 'boolean', description: 'true only after the user explicitly agreed in this session' } };
 
 export const SESSION_TOOLS: SessionTool[] = [
+  { name: 'flow_blocks', description: 'List available node types, templates, profiles, bindings and project policy for authoring a flow.', inputSchema: object() },
+  { name: 'flow_get', description: 'Read a flow draft, revision and published versions with their authors.', inputSchema: object({ flowId: { type: 'string' } }, ['flowId']) },
+  { name: 'flow_draft', description: 'Create or update an AI flow draft from a template, another flow or a full draft. Updates require the revision previously read. Returns policy diagnostics.', inputSchema: object({ flowId: { type: 'string' }, name: { type: 'string' }, from: { oneOf: [object({ template: { type: 'string', enum: ['fast', 'dev', 'parallel', 'research'] } }, ['template']), object({ flowId: { type: 'string' } }, ['flowId'])] }, draft: { type: 'object', description: 'Full flow draft; compiler returns diagnostics for incomplete drafts' }, expectedRevision: { type: 'string', description: 'Required for updates, from flow_get or flow_draft' } }, ['flowId']) },
+  { name: 'flow_validate', description: 'Validate an AI flow draft against project policy and return its diff from the latest published version.', inputSchema: object({ flowId: { type: 'string' } }, ['flowId']) },
+  { name: 'flow_publish', description: 'Publish the validated AI draft as a new version. Present the flow_validate diff to the user before publishing, even when policy allows publication.', inputSchema: object({ flowId: { type: 'string' }, expectedRevision: { type: 'string' }, reason: { type: 'string' } }, ['flowId', 'expectedRevision', 'reason']) },
+  { name: 'assess', description: 'Recommend an existing flow for a task using deterministic rules. available=false means the named flow is unavailable; this does not start a run.', inputSchema: object({ task: { type: 'string' } }, ['task']) },
   { name: 'flows', description: 'NeoMind flows of this project (built-in: fast, dev, parallel, research, plus the project\'s own). Use the flowId with preview and start.', inputSchema: object() },
   { name: 'preview', description: 'What starting a flow would do, without starting it: the runner, model and reasoning of each step, blockers that prevent starting, exceptions the flow declares (Fast approves its own plan and leaves review to the user), and the checkout\'s uncommitted changes.',
     inputSchema: object({ flowId: { type: 'string' } }, ['flowId']) },
@@ -88,7 +94,19 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
     await (await runs()).action(text(args, 'runId'), action, 'session');
     return summary(text(args, 'runId'));
   };
+  const authoringApi = async (method: string, path: string, body?: unknown) => {
+    const response = await api({ method, path, ...(body === undefined ? {} : { body }) });
+    if (response.status >= 400) throw new Error(String((response.body as { error?: string }).error ?? `HTTP ${response.status}`));
+    return response.body;
+  };
+  const flowPath = (args: Record<string, unknown>) => `/api/flows/${encodeURIComponent(text(args, 'flowId'))}`;
   return {
+    flow_blocks: async () => authoringApi('GET', '/api/flow-blocks'),
+    flow_get: async args => authoringApi('GET', `${flowPath(args)}/authoring`),
+    flow_draft: async args => authoringApi('POST', '/api/flow-draft', args),
+    flow_validate: async args => authoringApi('POST', `${flowPath(args)}/author-validate`, {}),
+    flow_publish: async (args, call) => authoringApi('POST', `${flowPath(args)}/publish`, { expectedRevision: text(args, 'expectedRevision'), author: { kind: 'ai', ...(call?.sessionId ? { sessionId: call.sessionId } : {}), reason: text(args, 'reason') } }),
+    assess: async args => authoringApi('POST', '/api/assess', { task: text(args, 'task') }),
     flows: async () => {
       const response = await api({ method: 'GET', path: '/api/bootstrap' });
       const body = response.body as { flows?: { flowId: string; name: string; archived?: boolean }[]; templates?: string[] };

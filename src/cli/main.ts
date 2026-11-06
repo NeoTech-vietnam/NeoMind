@@ -12,6 +12,7 @@ import { readProject } from '../runtime/project.js';
 import { ProfileLibrary } from '../storage/profile-library.js';
 import { installShutdown } from './shutdown.js';
 import { parseRunCommand, readRunCommandInput, runUsage } from './run-command.js';
+import { flowBlocks, draftFlow, getFlow, validateFlow, flowDiff, publishFlow, assess } from '../runtime/flow-authoring.js';
 
 async function executableAvailable(name: string): Promise<boolean> {
   // Windows has no execute bit; a command resolves through PATHEXT (codex.cmd, codex.exe, ...).
@@ -74,6 +75,31 @@ async function main(args: string[]): Promise<number> {
         case 'resume': case 'pause': case 'cancel': await manager.action(command.runId, command.kind, 'cli'); await settle(command.runId); return 0;
       }
     } finally { uninstall(); await manager.close(); }
+  }
+  if (args[0] === 'assess' && ((args.length === 3 && args[2] !== '--task-file') || (args.length === 4 && args[2] === '--task-file'))) {
+    const task = args[2] === '--task-file' ? await readFile(args[3]!, 'utf8') : args[2]!;
+    if (!task.trim() || task.length > 10000) throw new Error('Task must contain 1–10000 characters');
+    console.log(JSON.stringify(await assess(path.resolve(args[1]!), task), null, 2)); return 0;
+  }
+  if (args[0] === 'flow' && args[1] === 'blocks' && args.length === 3) {
+    console.log(JSON.stringify(await flowBlocks(path.resolve(args[2]!)), null, 2)); return 0;
+  }
+  if (args[0] === 'flow' && args[1] === 'get' && args.length === 4) {
+    console.log(JSON.stringify(await getFlow(path.resolve(args[2]!), args[3]!), null, 2)); return 0;
+  }
+  if (args[0] === 'flow' && args[1] === 'diff' && args.length === 4) {
+    console.log(JSON.stringify(await flowDiff(path.resolve(args[2]!), args[3]!), null, 2)); return 0;
+  }
+  if (args[0] === 'flow' && args[1] === 'author-draft' && args.length === 4) {
+    const { z } = await import('zod');
+    const input = z.strictObject({ flowId: z.string().min(1), name: z.string().min(1).optional(), from: z.union([z.strictObject({ template: z.enum(['fast', 'dev', 'parallel', 'research']) }), z.strictObject({ flowId: z.string().min(1) })]).optional(), draft: z.json().optional(), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional() }).parse(JSON.parse(await readFile(args[3]!, 'utf8')));
+    console.log(JSON.stringify(await draftFlow(path.resolve(args[2]!), input), null, 2)); return 0;
+  }
+  if (args[0] === 'flow' && args[1] === 'author-validate' && args.length === 4) {
+    const result = await validateFlow(path.resolve(args[2]!), args[3]!); console.log(JSON.stringify(result, null, 2)); return result.valid ? 0 : 1;
+  }
+  if (args[0] === 'flow' && args[1] === 'author-publish' && args.length === 6) {
+    console.log(JSON.stringify(await publishFlow(path.resolve(args[2]!), args[3]!, { author: { kind: 'ai', reason: args[5]! }, expectedRevision: args[4]! }), null, 2)); return 0;
   }
   if (args[0] === 'editor' && (args.length === 2 || (args.length === 4 && args[2] === '--port'))) {
     const port = args[3] === undefined ? 0 : Number(args[3]);
@@ -216,7 +242,7 @@ async function main(args: string[]): Promise<number> {
     console.log(JSON.stringify({ simulated: false, executables, auth: 'unknown', inference: 'not_tested', delegationEnforcement: 'unknown' }, null, 2));
     return 0;
   }
-  console.error('Usage: neomind editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|parallel|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | flow canvas export|import <flows-dir> <flow-id> [file.canvas] | project migrate <project> | memory configure|project-search|search|get ... | doctor capabilities');
+  console.error('Usage: neomind assess <project> --task-file <file>|<task> | flow blocks <project> | flow get|diff|author-validate <project> <id> | flow author-draft <project> <input.json> | flow author-publish <project> <id> <revision> <reason> | editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|parallel|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | flow canvas export|import <flows-dir> <flow-id> [file.canvas] | project migrate <project> | memory configure|project-search|search|get ... | doctor capabilities');
   return 2;
 }
 

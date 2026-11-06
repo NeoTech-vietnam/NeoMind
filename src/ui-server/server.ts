@@ -17,6 +17,8 @@ import { workerScopeSupported } from '../adapters/worker-scope.js';
 import { RevisionConflict } from '../storage/library-lock.js';
 import type { RunnerId } from '../runners/agent-runner.js';
 import { projectDir } from '../storage/project-dir.js';
+import { flowBlocks, draftFlow, getFlow, validateFlow, flowDiff, publishFlow, assess } from '../runtime/flow-authoring.js';
+import { flowAuthorSchema } from '../storage/flow-library.js';
 
 /** Static model allowlist per runner, first model is the default. Host availability is checked by the runtime, not here. */
 export const runnerModels: { runner: RunnerId; provider: string; models: string[]; reasoning: string[] }[] = [
@@ -170,18 +172,35 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       }
       return reply(405, { error: 'Method not allowed' });
     }
+    if (url.pathname === '/api/flow-blocks' && method === 'GET') return reply(200, await flowBlocks(projectRoot));
+    if (url.pathname === '/api/assess' && method === 'POST') {
+      const input = z.strictObject({ task: z.string().min(1).max(10000) }).parse(payload);
+      return reply(200, await assess(projectRoot, input.task));
+    }
+    if (url.pathname === '/api/flow-draft' && method === 'POST') {
+      const input = z.strictObject({ flowId: z.string().min(1), name: z.string().min(1).optional(),
+        from: z.union([z.strictObject({ template: z.enum(['fast', 'dev', 'parallel', 'research']) }), z.strictObject({ flowId: z.string().min(1) })]).optional(),
+        draft: z.json().optional(), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional() }).parse(payload);
+      return reply(200, await draftFlow(projectRoot, input));
+    }
     if (url.pathname === '/api/flows' && method === 'POST') {
       const input = z.strictObject({ id: z.string().min(1), name: z.string().min(1), template: z.enum(['fast', 'dev', 'parallel', 'research']) }).parse(payload);
       const metadata = await library.create(input.id, input.name);
       const draft = { ...structuredClone(templates[input.template]), flowId: input.id, name: input.name, version: 1 };
       return reply(201, { metadata, draft, revision: await library.saveDraft(input.id, draft) });
     }
-    const match = /^\/api\/flows\/([^/]+)\/(draft|validate|publish|archive|restore|rename|delete|clone|canvas-export|canvas-import|versions)$/.exec(url.pathname);
+    const match = /^\/api\/flows\/([^/]+)\/(draft|validate|publish|archive|restore|rename|delete|clone|canvas-export|canvas-import|versions|authoring|author-validate|diff)$/.exec(url.pathname);
     if (match) {
       const id = decodeURIComponent(match[1]!), action = match[2]!;
+      if (action === 'authoring' && method === 'GET') return reply(200, await getFlow(projectRoot, id));
+      if (action === 'diff' && method === 'GET') return reply(200, { diff: await flowDiff(projectRoot, id) });
+      if (action === 'author-validate' && method === 'POST') {
+        const input = z.strictObject({ draft: z.json().optional() }).parse(payload);
+        return reply(200, await validateFlow(projectRoot, id, input.draft));
+      }
       if (action === 'versions' && method === 'GET') {
         const selected = url.searchParams.get('version');
-        if (selected === null) return reply(200, { versions: await library.versions(id) });
+        if (selected === null) { const versions = await library.versions(id); const versionInfo = await Promise.all(versions.map(async version => { const stored = await library.readVersion(id, version); return { version, createdAt: stored.createdAt, author: stored.author ?? { kind: 'human' as const } }; })); return reply(200, { versions, versionInfo }); }
         const version = z.coerce.number().int().positive().parse(selected);
         return reply(200, { version: await library.readVersion(id, version) });
       }
@@ -201,7 +220,7 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
         const result = compileFlow(input.draft, await policyFor(projectRoot));
         return reply(200, result.ok ? { valid: true, order: result.order } : { valid: false, diagnostics: result.diagnostics });
       }
-      if (action === 'publish' && method === 'POST') { const input = z.strictObject({ expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional() }).parse(payload); return reply(200, { version: await library.publish(id, await policyFor(projectRoot), input.expectedRevision) }); }
+      if (action === 'publish' && method === 'POST') { const input = z.strictObject({ expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(), author: flowAuthorSchema.optional() }).parse(payload); return reply(200, { version: await publishFlow(projectRoot, id, { author: input.author ?? { kind: 'human' }, ...(input.expectedRevision ? { expectedRevision: input.expectedRevision } : {}) }) }); }
       if ((action === 'archive' || action === 'restore') && method === 'POST') {
         await library.setArchived(id, action === 'archive'); return reply(200, { archived: action === 'archive' });
       }

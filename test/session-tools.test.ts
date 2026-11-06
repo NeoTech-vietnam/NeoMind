@@ -88,3 +88,30 @@ test('a session approves a Dev plan only with the user\'s confirmation, and the 
     await (await f.manager.settle(runId));
   } finally { await f.manager.close(); }
 });
+
+
+test('session authors a flow through shared API and cannot bypass project policy', async () => {
+  const f = await project();
+  try {
+    for (const name of ['flow_blocks', 'flow_get', 'flow_draft', 'flow_validate', 'flow_publish', 'assess']) {
+      assert.ok(SESSION_TOOLS.some(tool => tool.name === name), name); assert.ok(f.tools[name], name);
+    }
+    const created = await f.tools.flow_draft!({ flowId: 'session-flow', name: 'Session flow', from: { template: 'dev' } }) as { revision: string; diagnostics: unknown[] };
+    assert.deepEqual(created.diagnostics, []);
+    const validation = await f.tools.flow_validate!({ flowId: 'session-flow' }) as { valid: boolean; diff: { nodes: { added: unknown[] } } };
+    assert.equal(validation.valid, true); assert.ok(validation.diff.nodes.added.length > 0);
+    await f.tools.flow_publish!({ flowId: 'session-flow', expectedRevision: created.revision, reason: 'Review required' }, { sessionId: 'test-session' });
+    const data = await f.tools.flow_get!({ flowId: 'session-flow' }) as { draft: import('../src/domain/schema.js').Flow; versions: { author: { kind: string; sessionId?: string } }[]; revision: string };
+    assert.deepEqual(data.versions[0]?.author, { kind: 'ai', sessionId: 'test-session', reason: 'Review required' });
+    const review = data.draft.definition.nodes.find(node => node.type === 'review_group'); assert.ok(review?.type === 'review_group'); review.reviewers[0]!.required = false;
+    const modified = await f.tools.flow_draft!({ flowId: 'session-flow', draft: data.draft, expectedRevision: data.revision }) as { revision: string };
+    await assert.rejects(f.tools.flow_publish!({ flowId: 'session-flow', expectedRevision: modified.revision, reason: 'Try bypass' }), /missing_required_reviewer/);
+    const policyFile = path.join(f.repo, 'neomind', 'project.json');
+    const configuration = JSON.parse(await readFile(policyFile, 'utf8')) as Record<string, unknown>;
+    await writeFile(policyFile, JSON.stringify({ ...configuration, ai: { flowPublish: 'draft-only' } }));
+    await assert.rejects(f.tools.flow_publish!({ flowId: 'session-flow', expectedRevision: modified.revision, reason: 'Forbidden' }), /disabled/);
+    await writeFile(policyFile, JSON.stringify({ ...configuration, ai: { flowPublish: 'deny' } }));
+    await assert.rejects(f.tools.flow_draft!({ flowId: 'another', from: { template: 'dev' } }), /disabled/);
+    assert.equal((await f.tools.assess!({ task: 'nghiên cứu giải pháp' }) as { flowId: string }).flowId, 'research');
+  } finally { await f.manager.close(); }
+});

@@ -6,7 +6,7 @@ Run a NeoMind flow for: $ARGUMENTS
 
 NeoMind runs agent flows in an isolated Git worktree of this project: a plan, an approval, the implementation, checks and an independent review, depending on the flow. You start the flow and follow it with the NeoMind tools; you do not do the work yourself, and you never edit the files the run is changing.
 
-1. If the task above is empty, ask the user what the flow should do. If the user did not name a flow, use `fast` for a small, contained change and `dev` for anything that should be reviewed and committed; say which one you chose.
+1. If the task above is empty, ask the user what the flow should do. Otherwise call `neomind_assess` unless the user named a flow, and explain the recommendation. If `assess` reports `available: false` or no existing flow fits, call `neomind_flow_blocks`, create a draft with `neomind_flow_draft`, then call `neomind_flow_validate`. Show the diff and diagnostics to the user before calling `neomind_flow_publish` with the observed revision and a reason. Respect the project policy: when publication is denied, leave the draft and explain the restriction.
 2. Call `neomind_preview` for that flow. If it lists blockers, show them and stop. Tell the user briefly which runner and model each step uses and any exceptions the flow declares. If the checkout has uncommitted changes, ask whether to bring them into the run (`importDirty`); by default the run starts from HEAD without them.
 3. Call `neomind_start` with the flow and the task in the user's words.
 4. Follow the run with `neomind_wait` (not repeated `neomind_status`). Report progress briefly when the phase changes.
