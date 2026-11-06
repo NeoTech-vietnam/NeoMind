@@ -12,6 +12,7 @@ export function MemorySelection() {
   const [matching, setMatching] = useState(false), [maxRecords, setMaxRecords] = useState(30), [maxBytes, setMaxBytes] = useState(16000);
   const [retrievalMode, setRetrievalMode] = useState<'lexical' | 'semantic' | 'hybrid'>('lexical'), [inferPaths, setInferPaths] = useState(false);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState('');
+  const [task, setTask] = useState(''), [preview, setPreview] = useState<{ root: string | null; records: { id: string; type: string; scope: string; selectionReason: string }[] } | null>(null);
   async function reload() {
     const data = await api<{ selection: Selection; revision: string }>('/api/memory/selection');
     setRetrievalMode(data.selection.retrievalMode ?? 'lexical'); setRevision(data.revision); setScopes((data.selection.scopes ?? []).join(', ')); setTags((data.selection.tags ?? []).join(', '));
@@ -40,6 +41,9 @@ export function MemorySelection() {
       <Field label="Số bản ghi tối đa"><Input type="number" min="0" max="30" value={maxRecords} onChange={e => setMaxRecords(Number(e.target.value))} /></Field>
       <Field label="Ngân sách nội dung (bytes)"><Input type="number" min="0" max="16000" value={maxBytes} onChange={e => setMaxBytes(Number(e.target.value))} /></Field>
       <div><Button disabled={busy || !revision || !Number.isInteger(maxRecords) || maxRecords < 0 || maxRecords > 30 || !Number.isInteger(maxBytes) || maxBytes < 0 || maxBytes > 16000} onClick={() => void save()}>Lưu policy</Button></div>
+      <Field label="Xem thử memory với một task" help="Bản xem thử dùng policy đã lưu của project."><Input value={task} onChange={e => setTask(e.target.value)} placeholder="Nhập yêu cầu…" /></Field>
+      <div><Button disabled={busy || !task.trim()} onClick={() => { setBusy(true); setError(''); void api<typeof preview>('/api/memory/preview', 'POST', { task: task.trim() }).then(setPreview).catch(e => setError(String(e))).finally(() => setBusy(false)); }}>Xem thử</Button></div>
+      {preview && <div className="text-[12px] text-muted-foreground">{!preview.root ? 'Chưa chọn memory root.' : !preview.records.length ? 'Không có bản ghi phù hợp.' : preview.records.map(record => <p key={`${record.type}/${record.id}`}><strong>{record.id}</strong> · {record.scope} · {record.selectionReason}</p>)}</div>}
     </div>
   </Disclosure>;
 }

@@ -9,7 +9,7 @@ import { api } from './api';
 type Lesson = { proposal: { proposalId: string; record: { body: string; sources: string[]; scope?: string; tags?: string[] } }; version: number; proposalHash: string; expectedRevision: string | null; promoted: boolean; rejected?: boolean };
 
 /** Lessons the run proposed for the shared memory: only a version the user approves is promoted. */
-export function RunLessons({ runId, onPromoted }: { runId: string; onPromoted?(): void }) {
+export function RunLessons({ runId, onPromoted, pendingOnly = false }: { runId: string; onPromoted?(): void; pendingOnly?: boolean }) {
   const [data, setData] = useState<{ memoryRoot: string | null; proposals: Lesson[] }>({ memoryRoot: null, proposals: [] });
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string | null>(null), [editedBody, setEditedBody] = useState('');
@@ -28,7 +28,7 @@ export function RunLessons({ runId, onPromoted }: { runId: string; onPromoted?()
       <span className="text-[12px] text-muted-foreground">{pending ? `${pending} chờ duyệt · ` : ''}chỉ bản bạn duyệt mới được đưa vào memory dùng chung</span></div>
     {error && <div className="px-4 pt-3"><Callout tone="danger" icon={<CircleAlert />}>{error}</Callout></div>}
     {!data.memoryRoot && <p className="m-0 px-4 pt-3 text-[12.5px] text-muted-foreground">Mở mục Memory để chọn thư mục lưu trước khi duyệt.</p>}
-    {data.proposals.map(lesson => { const id = lesson.proposal.proposalId, open = !lesson.promoted && !lesson.rejected;
+    {data.proposals.filter(lesson => !pendingOnly || (!lesson.promoted && !lesson.rejected)).map(lesson => { const id = lesson.proposal.proposalId, open = !lesson.promoted && !lesson.rejected;
       return <div key={id} className="flex flex-col gap-2.5 border-b px-4 py-3 last:border-b-0">
         <div className="flex flex-wrap items-center gap-2"><code className="font-mono text-[12.5px] font-semibold">{id}</code><span className="text-[11.5px] text-muted-foreground">v{lesson.version}</span><Tag>Lesson</Tag>{lesson.proposal.record.scope && <Tag>{lesson.proposal.record.scope}</Tag>}{lesson.proposal.record.tags?.map(tag => <Tag key={tag}>{tag}</Tag>)}
           {lesson.promoted && <Badge status="success">Đã lưu vào memory</Badge>}{lesson.rejected && <Badge status="idle">Đã từ chối</Badge>}</div>

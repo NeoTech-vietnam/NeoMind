@@ -240,6 +240,8 @@ Chỉ đổi giao diện: dữ liệu sự kiện (`Row`) đã có đủ trườ
 - **Profiles:** danh sách trái chia "Có sẵn" (Implementer, Verifier) và "Của project"; bên phải chi tiết profile: phiên bản, quyền dạng công tắc có giải thích, skills dạng bảng thay JSON, "Được dùng ở" các flow/bước. "Tạo profile" là `Dialog`. Theo mockup 19.
 - **Memory:** trạng thái memory root là banner rõ ràng có hai nút (Khởi tạo / Chọn thư mục); "Lesson chờ duyệt" thành hàng đợi có Duyệt/Bỏ qua; bảng bản ghi lọc theo loại, phạm vi. Theo mockup 20.
 
+**Kết quả GĐ 4 (06/11/2026, branch `ui/redesign-p4`):** Profiles và Memory đã chuyển sang component dùng chung, có gallery dữ liệu giả. Duyệt/sửa/từ chối lesson và xem thử memory theo task dùng API sẵn có; thống kê dùng profile dựa trên draft flow. Các giới hạn dữ liệu và kiểm chứng được ghi trong [trạng thái implementation](../adaptive-agent-flow/implementation-status.md). Chưa kiểm trong host Nimbalyst.
+
 ### GĐ 5. Hoàn thiện extension và tài liệu
 
 - Kiểm toàn bộ màn ở bề ngang panel hẹp (900px) và rộng; bỏ `min-width: 1024px`, dùng breakpoint (dưới 1100px: inspector Flow Studio thành `Sheet`, danh sách run thu gọn).

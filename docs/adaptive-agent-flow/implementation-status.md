@@ -3,6 +3,18 @@
 Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
 Bàn giao hiện tại: [06/11/2026 Flow Studio](session-handoff-2026-11-06-flow-studio.md); trước đó [05/11/2026 Flow Studio](session-handoff-2026-11-05-flow-studio.md), [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md). Phạm vi v1 rộng hơn tám việc vừa triển khai; đã có walkthrough browser cho Dev tuần tự bên dưới, các thao tác canvas nâng cao, Windows và host acceptance Nimbalyst vẫn cần kiểm chứng riêng.
 
+## Thiết kế lại giao diện · GĐ 4 — 06/11/2026
+
+Trên `ui/redesign-p4`, Profiles có danh sách profile có sẵn và project, chỉnh hướng dẫn/quyền/skills, nhân bản, lưu nháp và publish có `expectedRevision`; tab sử dụng lấy tham chiếu từ draft flow. Memory có trạng thái root, hàng đợi lesson (duyệt, sửa, từ chối), bảng và sheet chi tiết, sửa context/quyết định và policy. API `memory/preview` sẵn có được dùng để xem thử theo task với policy đã lưu. Không đổi backend.
+
+| Kiểm chứng Windows | Kết quả |
+| --- | --- |
+| `npm test` | 222 test: 220 pass, 2 skip, 0 fail; test parallel writers đạt. Probe Claude CLI ước tính ~$0.0022. |
+| TypeScript UI, build UI, build extension | Đạt; build extension còn cảnh báo sourcemap Tailwind và URL `dist-ui` resolve khi chạy. |
+| Edge headless, gallery dữ liệu giả | Profiles và Memory ở tối/sáng, web 1440/panel 900; có dialog tạo profile, root chưa chọn, lesson, sheet chi tiết, policy, Skills và profile đã sửa. Chưa kiểm host Nimbalyst thật. |
+
+Không hiển thị cảnh báo hash skill lệch, revision/cập nhật của toàn bộ root, cập nhật profile mới sang flow hoặc nội dung phiên bản profile cũ: API hiện có không cung cấp các thao tác/dữ liệu đó. Menu phiên bản chỉ liệt kê số phiên bản. `styles.css` còn 168 dòng vật lý, chủ yếu các rule shell và control cũ dùng chung/Flow Studio; class riêng Profiles/Memory đã bỏ. Xem lại bằng vite dev tại `/__gallery/profiles.html` và `/__gallery/memory.html`; hash `light`, `panel`, `create`, `edited`, `skills`, `usage`, `root`, `detail`, `policy` chọn trạng thái.
+
 ## Thiết kế lại giao diện · GĐ 3 — 05/11/2026
 
 **Hoàn thiện 06/11:** Header dùng Button/DropdownMenu; inspector dùng Input, Textarea, Field và Select với portal chung. Tên bước sửa ở header; vòng sửa và join chọn bước bằng checkbox, vẫn hiển thị các ID cũ không còn phù hợp để có thể bỏ chọn. Đã xem gallery ở theme tối/sáng, 1440 và panel 900 với inspector, thêm bước, so sánh, lỗi, menu; CDP mở Select và chọn Opus 5.5, xác nhận chip `Claude Code · Opus 5.5`. TypeScript UI, build UI và build extension đạt; không chạy lại `npm test` theo yêu cầu. Chưa kiểm portal trong host Nimbalyst thật.

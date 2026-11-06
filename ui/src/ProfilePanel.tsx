@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Dialog, DialogActions, DialogContent } from './components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './components/ui/dropdown-menu';
 import { Callout, EmptyState } from './components/ui/misc';
+import { cn } from './lib/utils';
 
 type Metadata = { profileId: string; name: string; archived: boolean };
 type Use = { flowId: string; flowName: string; nodeId: string; nodeName: string; profileId: string; version: number };
@@ -28,12 +29,13 @@ export function ProfilePanel() {
   const [profiles, setProfiles] = useState<Metadata[]>([]), [builtins, setBuiltins] = useState<Profile[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null), [original, setOriginal] = useState(''), [builtin, setBuiltin] = useState(false);
   const [versions, setVersions] = useState<number[]>([]), [usage, setUsage] = useState<Use[]>([]), [usageError, setUsageError] = useState('');
+  const [listVersions, setListVersions] = useState<Record<string, number | null | undefined>>({});
   const [error, setError] = useState(''), [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [query, setQuery] = useState('');
   const [createOpen, setCreateOpen] = useState(false), [id, setId] = useState(''), [name, setName] = useState(''), [template, setTemplate] = useState<Template>('implementer');
   const [archivedOpen, setArchivedOpen] = useState(false), [outputOpen, setOutputOpen] = useState(false), [output, setOutput] = useState('{}');
-  const metadata = profiles.find(item => item.profileId === profile?.profileId);
+  const metadata = builtin ? undefined : profiles.find(item => item.profileId === profile?.profileId);
   const dirty = !!profile && !builtin && (JSON.stringify(profile) !== original || output !== JSON.stringify(profile.outputDefaults, null, 2));
-  const refresh = useCallback(async () => { const data = await api<{ profiles: Metadata[]; builtins: Profile[] }>('/api/profiles'); setProfiles(data.profiles); setBuiltins(data.builtins); return data; }, []);
+  const refresh = useCallback(async () => { const data = await api<{ profiles: Metadata[]; builtins: Profile[] }>('/api/profiles'); setProfiles(data.profiles); setBuiltins(data.builtins); const pairs = await Promise.all(data.profiles.map(async item => { try { const result = await api<{ versions: number[] }>(`/api/profiles/${encodeURIComponent(item.profileId)}/versions`); return [item.profileId, result.versions.at(-1) ?? null] as const; } catch { return [item.profileId, undefined] as const; } })); setListVersions(Object.fromEntries(pairs)); return data; }, []);
   const loadUsage = useCallback(async () => {
     try {
       const bootstrap = await api<{ flows: { flowId: string; name: string }[] }>('/api/bootstrap');
@@ -75,14 +77,14 @@ export function ProfilePanel() {
       await openProject(targetId.trim()); setMessage('Đã tạo bản nháp profile.');
     });
   }
-  const uses = usage.filter(item => item.profileId === profile?.profileId);
+  const uses = builtin && profiles.some(item => item.profileId === profile?.profileId) ? [] : usage.filter(item => item.profileId === profile?.profileId);
   const visible = profiles.filter(item => `${item.name} ${item.profileId}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   const edit = (change: (value: Profile) => void) => setProfile(current => { if (!current || builtin) return current; const next = structuredClone(current); change(next); return next; });
   return <section className="p4-page"><div className="p4-heading"><div><h1>Agent profiles</h1><p>Tái sử dụng hướng dẫn, quyền và skills giữa các flow.</p></div><Button onClick={() => void canLeave().then(ok => { if (ok) { setId(''); setName(''); setCreateOpen(true); } })}><Plus />Tạo profile</Button></div>
     {error && <Callout tone="danger">{error}</Callout>}{message && <Callout tone="success">{message}</Callout>}
     <div className="p4-profile-layout"><aside className="p4-profile-list"><div className="relative"><Search className="absolute left-2 top-2 size-4 text-muted-foreground" /><Input aria-label="Tìm profile" className="pl-8" placeholder="Tìm theo tên hoặc ID" value={query} onChange={e => setQuery(e.target.value)} /></div>
-      <p className="p4-caption">CÓ SẴN</p>{builtins.filter(item => `${item.name} ${item.profileId}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(item => <button key={item.profileId} className={listClass} onClick={() => void canLeave().then(ok => { if (ok) openBuiltin(item); })}><Lock className="size-4 text-muted-foreground" /><span className="min-w-0 flex-1"><strong className="block truncate">{item.name}</strong><small className="text-muted-foreground">Nhân bản để có bản riêng</small></span></button>)}
-      <p className="p4-caption">CỦA PROJECT</p>{visible.filter(item => !item.archived).map(item => <button key={item.profileId} className={`${listClass} ${!builtin && profile?.profileId === item.profileId ? 'bg-accent' : ''}`} onClick={() => void canLeave().then(ok => { if (ok) void action(() => openProject(item.profileId)); })}><span className="min-w-0 flex-1"><strong className="block truncate">{item.name}</strong><small className="text-muted-foreground">{item.profileId}</small></span></button>)}
+      <p className="p4-caption">CÓ SẴN</p>{builtins.filter(item => `${item.name} ${item.profileId}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(item => <button key={item.profileId} className={cn(listClass, builtin && profile?.profileId === item.profileId && 'bg-accent')} onClick={() => void canLeave().then(ok => { if (ok) openBuiltin(item); })}><Lock className="size-4 text-muted-foreground" /><span className="min-w-0 flex-1"><strong className="block truncate">{item.profileId === 'verifier' ? 'Verifier' : item.name}</strong><small className="text-muted-foreground">Nhân bản để có bản riêng</small></span></button>)}
+      <p className="p4-caption">CỦA PROJECT</p>{visible.filter(item => !item.archived).map(item => <button key={item.profileId} className={cn(listClass, !builtin && profile?.profileId === item.profileId && 'bg-accent')} onClick={() => void canLeave().then(ok => { if (ok) void action(() => openProject(item.profileId)); })}><span className="min-w-0 flex-1"><strong className="block truncate">{item.name}</strong><small className="text-muted-foreground">{listVersions[item.profileId] === undefined ? 'Chưa tải phiên bản' : listVersions[item.profileId] === null ? 'Bản nháp' : `v${listVersions[item.profileId]}`}{!usageError ? ` · ${new Set(usage.filter(use => use.profileId === item.profileId).map(use => `${use.flowId}/${use.nodeId}`)).size} bước dùng` : ''}</small></span></button>)}
       {visible.some(item => item.archived) && <><Button variant="ghost" className="mt-3 w-full justify-start" onClick={() => setArchivedOpen(!archivedOpen)}><ChevronDown />Đã lưu trữ</Button>{archivedOpen && visible.filter(item => item.archived).map(item => <button key={item.profileId} className={listClass} onClick={() => void canLeave().then(ok => { if (ok) void action(() => openProject(item.profileId)); })}>{item.name}</button>)}</>}
     </aside><div className="p4-profile-detail">{!profile ? <EmptyState title="Chọn profile">Chọn profile có sẵn hoặc tạo profile cho project.</EmptyState> : <>
       <div className="p4-detail-header"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h2 className="m-0 truncate text-[16px] font-semibold">{metadata?.name ?? profile.name}</h2><DropdownMenu><DropdownMenuTrigger asChild><Button size="sm">{builtin ? 'Có sẵn' : versions.length ? `v${versions.at(-1)}` : 'Bản nháp'}<ChevronDown /></Button></DropdownMenuTrigger><DropdownMenuContent>{versions.length ? versions.map(v => <DropdownMenuItem key={v} disabled>v{v}</DropdownMenuItem>) : <DropdownMenuItem disabled>Chưa lưu phiên bản</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu></div><p className="m-0 mt-1 text-[11px] text-muted-foreground">{profile.profileId} · {builtin ? 'profile có sẵn' : 'profile của project'}{dirty ? ' · Đã sửa, chưa lưu' : ''}</p></div>
