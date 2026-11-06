@@ -25,7 +25,10 @@ setApiTransport(async (endpoint, method, body) => {
     if (action === 'draft' && method === 'PUT') { drafts[id] = structuredClone((body as { draft: Flow }).draft); return ok({ revision: 'gallery' }); }
     if (action === 'draft') return ok({ draft: structuredClone(flow), revision: 'gallery' });
     if (action === 'validate') return ok(hash.includes('errors') ? { valid: false, diagnostics } : { valid: true, order: [] });
-    if (action === 'versions') return ok(url.searchParams.has('version') ? { version: structuredClone(flow) } : { versions: [1, 2, 3] });
+    if (action === 'versions') {
+      if (url.searchParams.has('version')) { const previous = structuredClone(flow); if (hash.includes('ai')) { const node = previous.definition.nodes.find(item => item.id === 'implement'); if (node) node.label = 'Thực hiện trước đây'; previous.definition.limits.activeTimeSeconds = 1200; } return ok({ version: previous }); }
+      return ok({ versions: [1, 2, 3], versionInfo: [1, 2, 3].map(version => ({ version, author: version === 3 && hash.includes('ai') ? { kind: 'ai', reason: 'Tạo flow theo yêu cầu', sessionId: 'session-demo' } : { kind: 'human' } })) });
+    }
     if (action === 'publish') return ok({ version: { version: 4 } });
   }
   return { status: 404, body: { error: `Gallery has no ${method} ${path}` } };

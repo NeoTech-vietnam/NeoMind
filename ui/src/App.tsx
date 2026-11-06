@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { AppRoot, Shell, type FlowMeta, type ShellKind, type View } from './shell/AppShell';
 import { CreateFlowDialog, NoFlows, slug, type Template } from './shell/FlowStart';
 import { Callout } from './components/ui/misc';
+import { Tag } from './components/ui/badge';
 import { useTheme } from './lib/theme';
 import { Background, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, applyNodeChanges,
   type Connection, type Edge, type Node, type NodeChange, type NodeProps, type NodeTypes, type ReactFlowInstance } from '@xyflow/react';
@@ -206,6 +207,7 @@ function Workspace({ shell }: { shell: ShellKind }) {
   const pastedSelection = useRef<string[] | null>(null);
   const [paletteQuery, setPaletteQuery] = useState('');
   const [versionsOpen, setVersionsOpen] = useState(false);
+  const [latestAuthor, setLatestAuthor] = useState<'human' | 'ai' | null>(null), [versionsReload, setVersionsReload] = useState(0);
   const [addOpen, setAddOpen] = useState(false), [problemOpen, setProblemOpen] = useState(false), [inspectorOpen, setInspectorOpen] = useState(false);
   const [connectMenu, setConnectMenu] = useState<{ source: string; x: number; y: number; position: { x: number; y: number } } | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<number | null>(null);
@@ -221,6 +223,13 @@ function Workspace({ shell }: { shell: ShellKind }) {
   const refresh = useCallback(async () => { const data = await api<Bootstrap>('/api/bootstrap'); setBoot(data); return data; }, []);
   useEffect(() => { void refresh().catch(e => setError(String(e))); }, [refresh]);
   useEffect(() => setConnectMenu(null), [flow?.flowId, view]);
+  useEffect(() => {
+    if (!flow?.flowId) { setLatestAuthor(null); return; }
+    let current = true; setLatestAuthor(null);
+    void api<{ versionInfo?: { author: { kind: 'human' | 'ai' } }[] }>(`/api/flows/${encodeURIComponent(flow.flowId)}/versions`)
+      .then(data => { if (current) setLatestAuthor(data.versionInfo?.at(-1)?.author.kind ?? null); }).catch(() => { if (current) setLatestAuthor(null); });
+    return () => { current = false; };
+  }, [flow?.flowId, versionsReload]);
   // The Flows view always shows a flow when one exists; the template picker is only for projects with none.
   const autoOpened = useRef<string | null>(null);
   useEffect(() => {
@@ -491,11 +500,11 @@ function Workspace({ shell }: { shell: ShellKind }) {
       {message && <Callout tone="success" icon={<CircleCheck />} className={cn('mb-3', view === 'runs' && 'mx-6 mt-3')}><div className="flex items-start"><span className="flex-1">{message}</span>{dismiss(() => setMessage(''))}</div></Callout>}
       {view === 'memory' ? <MemoryPanel /> : view === 'profiles' ? <ProfilePanel /> : view === 'runs' ? <div className="min-h-0 flex-1"><RunPanel {...(flow ? { flowId: flow.flowId } : {})} flows={flows} /></div>
         : !flow ? (boot && !hasFlows ? <NoFlows onPick={openCreate} /> : null) : <>
-        <div className="studio-header"><div className="studio-heading"><div className="studio-title"><h1>{flow.name}</h1><span className="studio-draft">Bản nháp{dirty ? ' · chưa lưu' : ''}</span></div><p>dựa trên {flow.version ? `v${flow.version}` : 'bản mới'} · {flow.definition.nodes.length} bước · {flow.definition.edges.length} kết nối</p></div>
+        <div className="studio-header"><div className="studio-heading"><div className="studio-title"><h1>{flow.name}</h1>{latestAuthor === 'ai' && <Tag>AI</Tag>}<span className="studio-draft">Bản nháp{dirty ? ' · chưa lưu' : ''}</span></div><p>dựa trên {flow.version ? `v${flow.version}` : 'bản mới'} · {flow.definition.nodes.length} bước · {flow.definition.edges.length} kết nối</p></div>
           <div className="studio-actions"><Tooltip label="Hoàn tác"><Button variant="ghost" size="icon" aria-label="Hoàn tác" disabled={!past.length} onClick={undo}><Undo2 /></Button></Tooltip><Tooltip label="Làm lại"><Button variant="ghost" size="icon" aria-label="Làm lại" disabled={!future.length} onClick={redo}><Redo2 /></Button></Tooltip>
             {compact && <Tooltip label="Thuộc tính"><Button variant="ghost" size="icon" aria-label="Thuộc tính" onClick={() => setInspectorOpen(true)}><PanelRight /></Button></Tooltip>}
             <Button variant="outline" disabled={busy} onClick={() => void action(async () => { const valid = await validate(flow); setMessage(valid ? 'Flow hợp lệ.' : ''); })}>Kiểm tra</Button>
-            <Button variant="primary" disabled={busy} onClick={() => void action(async () => { if (!await validate(flow)) return; const expectedRevision = await saveDraft(); const saved = await api<{ version: { version: number } }>(`/api/flows/${encodeURIComponent(flow.flowId)}/publish`, 'POST', { expectedRevision }); setMessage(`Đã lưu phiên bản ${saved.version.version}.`); })}>Lưu phiên bản</Button>
+            <Button variant="primary" disabled={busy} onClick={() => void action(async () => { if (!await validate(flow)) return; const expectedRevision = await saveDraft(); const saved = await api<{ version: { version: number } }>(`/api/flows/${encodeURIComponent(flow.flowId)}/publish`, 'POST', { expectedRevision, author: { kind: 'human' } }); setVersionsReload(value => value + 1); setMessage(`Đã lưu phiên bản ${saved.version.version}.`); })}>Lưu phiên bản</Button>
             <DropdownMenu><Tooltip label="Quản lý flow"><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Quản lý flow"><Ellipsis /></Button></DropdownMenuTrigger></Tooltip><DropdownMenuContent>
               <DropdownMenuItem onSelect={() => setVersionsOpen(true)}>So sánh phiên bản</DropdownMenuItem>
               <DropdownMenuItem shortcut="Ctrl S" onSelect={() => void action(async () => { await saveDraft(); setMessage('Đã lưu bản nháp.'); })}>Lưu nháp</DropdownMenuItem><DropdownMenuSeparator />
