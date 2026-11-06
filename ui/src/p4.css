@@ -1,0 +1,21 @@
+@layer components {
+  .p4-page { max-width: 1440px; margin: 0 auto; color: var(--foreground); }
+  .p4-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+  .p4-heading h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  .p4-heading p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 12px; }
+  .p4-profile-layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); min-height: 620px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .p4-profile-list { padding: 12px; border-right: 1px solid var(--border); }
+  .p4-caption { margin: 20px 8px 5px; font-size: 10px; font-weight: 600; color: var(--muted-foreground); letter-spacing: .06em; }
+  .p4-profile-detail { min-width: 0; }
+  .p4-detail-header { display: flex; align-items: center; gap: 6px; min-height: 68px; padding: 12px 18px; border-bottom: 1px solid var(--border); }
+  .p4-tab { padding: 20px; }
+  .p4-permission { display: flex; gap: 16px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--border); }
+  .p4-permission small { display: block; color: var(--muted-foreground); font-size: 11px; }
+  .p4-permission input { appearance: none; width: 28px; height: 16px; border: 1px solid var(--border); border-radius: 99px; background: var(--muted); cursor: pointer; }
+  .p4-permission input::before { content: ''; display: block; width: 10px; height: 10px; margin: 2px; border-radius: 50%; background: var(--muted-foreground); }
+  .p4-permission input:checked { background: var(--foreground); }
+  .p4-permission input:checked::before { transform: translateX(12px); background: var(--background); }
+  .p4-permission input:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  .p4-skill { display: grid; grid-template-columns: 1fr 1.5fr 2fr 30px; gap: 8px; align-items: end; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  @media (max-width: 1000px) { .p4-profile-layout { grid-template-columns: 210px minmax(0,1fr); } .p4-detail-header { flex-wrap: wrap; } .p4-skill { grid-template-columns: 1fr 1fr; } }
+}
