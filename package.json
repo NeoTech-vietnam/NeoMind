@@ -37,6 +37,7 @@
     "evaluate": "node scripts/evaluate.mjs",
     "package:smoke": "node scripts/package-smoke.mjs",
     "extension:package": "node scripts/package-extension.mjs",
+    "agent-plugin:package": "node scripts/package-agent-plugin.mjs",
     "runtime:package": "node scripts/package-runtime.mjs",
     "release:artifacts": "node scripts/package-release.mjs",
     "engine:bootstrap": "node scripts/bootstrap-engine.mjs"
