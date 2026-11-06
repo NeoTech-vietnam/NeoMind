@@ -3,6 +3,21 @@
 Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
 Bàn giao hiện tại: [06/11/2026 thiết kế lại](session-handoff-2026-11-06.md); trước đó [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md).
 
+## Nâng cấp NeoMind · Gói 3 — 06/11/2026
+
+Chương trình nhiều giai đoạn. `src/runtime/programs.ts`: file `neomind/programs/<id>.json` (schema `programSchema`, kiểm ID trùng, phụ thuộc không tồn tại, vòng lặp; mọi `flowId` phải là flow project đã publish và chưa lưu trữ hoặc template có sẵn không bị che). Run mang `runtimeContext.programId/phaseId` (tùy chọn) và `RunManager.list()` trả hai trường này. `programStatus` suy ra trạng thái từ run mới nhất của mỗi giai đoạn; `startPhase`/`programNext` chỉ chạy giai đoạn `ready` (hoặc `failed` khi phụ thuộc đã giao, để chạy lại) với task + khối bài học ≤ 4.000 ký tự. Tool `program_create|list|status|next|deliver`; CLI `program create|list|status|next|deliver`; API `/api/programs…`. A3: `review_group.planStepCriteria?` + `planSteps()` trong `review-requirements.ts`; `newFlowFromTemplate('dev')` bật cờ cho flow mới tạo từ editor/`draftFlow`. UI: nhóm "Chương trình" trong danh sách run và sheet chi tiết (`ui/src/RunPrograms.tsx`), gallery `runs.html#completed,programs`.
+
+Quyết định nhỏ (tương thích ngược):
+- Thêm trạng thái giao thủ công `program deliver` (tool cần `confirmed: true`) kèm ghi chú: plan nhắc "ghi chú người dùng khi đánh dấu giao" mà chưa có chỗ ghi, và squash/rebase làm `merge-base --is-ancestor` không thấy commit. Đánh dấu lưu ở state (`<state>/programs/<id>.marks.json`), không ở file chương trình, đúng nguyên tắc "trạng thái không lưu trong file".
+- Run hoàn tất không có commit và không đổi file (research) được coi là đã giao; run bị hủy → `failed` và có thể chạy lại; run `blocked`/`paused`/`waiting_approval` → `waiting_user`.
+- Bài học "review đã needs_changes rồi được sửa" lấy từ `priorReviewerOutputs` của run (vòng sửa gần nhất của mỗi review group), không phải mọi vòng.
+- `planStepCriteria` không bật trong template Dev có sẵn (để run Dev chưa lưu thành flow project giữ tiêu chí cũ); chỉ bật khi tạo flow mới từ mẫu Dev.
+
+| Kiểm chứng Windows | Kết quả |
+| --- | --- |
+| `npm test` (commit `42e3263`) | 247 test: 245 pass, 2 skip, 0 fail. `test/programs.test.ts`: chương trình 3 giai đoạn với fake runner (giai đoạn 2 `blocked_by_dependency` tới khi `git merge --ff-only` commit giai đoạn 1; task giai đoạn 2 chứa phát hiện review đã sửa), `planStepCriteria` thiếu một bước → evidence không phủ tiêu chí. |
+| TypeScript UI, build UI, build extension | Đạt; kiểm sheet chương trình bằng Edge headless (sáng/tối). |
+
 ## Nâng cấp NeoMind · Gói 2 — 06/11/2026
 
 Skills và profile. `src/storage/skill-catalog.ts` quét `.claude/skills/*/SKILL.md` và `neomind/skills/*/SKILL.md` (frontmatter đọc bằng `yaml`, không theo symlink ra ngoài project), `skillStatus` trả `ok | changed | missing`. `src/runtime/profile-authoring.ts`: đọc profile + phiên bản kèm tác giả, đọc nội dung một phiên bản cũ, tìm flow dùng profile (draft và bản publish mới nhất, kể cả template có sẵn), `migrateProfile` chỉ sửa draft các flow được chọn với compare-and-swap theo revision, `draftProfile`/`publishProfile` theo `ai.profilePublish`. Phiên bản profile thêm `author?` (không nằm trong `contentHash`, giống flow). Prompt dùng nhãn `Skill <name> (<id>):` và liệt kê file phụ của skill. Tool `skills`, `profile_get`, `profile_draft`, `profile_publish`; CLI `skills …`, `profile get|version|skills-status|usage|migrate|author-draft|author-publish`; API `/api/skills`, `/api/skills/status`, `/api/profile-draft`, `/api/profiles/:id/{authoring,skills-status,usage,migrate,versions/:n}`. UI: `SkillPicker` trong Profiles › Skills và inspector Flow Studio › Nâng cao (`skillsOverride`), xem phiên bản chỉ đọc, dialog chuyển flow.

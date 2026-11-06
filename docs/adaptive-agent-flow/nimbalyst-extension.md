@@ -52,6 +52,8 @@ flowchart LR
 
 **Skills và profile từ session (Gói 2, 06/11/2026):** `neomind_skills` (danh mục skill của project, kèm trạng thái `ok`/`changed`/`missing` khi truyền `refs`), `neomind_profile_get`, `neomind_profile_draft`, `neomind_profile_publish` (ghi tác giả AI; theo `ai.profilePublish`). Panel Profiles chọn skill từ danh mục, ghim lại sha khi skill đổi, xem phiên bản cũ chỉ đọc và chuyển draft flow sang phiên bản profile mới.
 
+**Chương trình nhiều giai đoạn (Gói 3, 06/11/2026):** `neomind_program_create`, `neomind_program_list`, `neomind_program_status`, `neomind_program_next` (chỉ gọi sau khi người dùng xác nhận kết quả giai đoạn trước đã vào branch; run mới được gắn vào session như `start`) và `neomind_program_deliver` (`confirmed: true`, đánh dấu giao khi Git không thấy commit). Panel Runs có nhóm Chương trình.
+
 **Panel = editor đầy đủ.**
 - Phần định tuyến `/api/*` của server được tách thành `createEditorApi(projectRoot, runs)`. Server HTTP và backend extension dùng chung hàm này, và chung một `RunManager` trong process.
 - Panel render `App` của `ui/src` trong shadow root. CSS (`:root` → `:host`) không lẫn với Nimbalyst. `api()` có transport thay được: HTTP trong trình duyệt, `callBackendTool('neomind.api')` trong panel.

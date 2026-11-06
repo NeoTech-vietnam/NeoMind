@@ -58,6 +58,22 @@ npm run neomind -- profile author-publish /project my-profile <revision> "Lý do
 
 `profile migrate` chỉ sửa **draft** của các flow được chọn sang phiên bản profile mới (so revision từng flow); không publish flow. `ai.profilePublish` (`allow` mặc định, `draft-only`, `deny`) giới hạn tool AI như `ai.flowPublish`.
 
+## Chương trình nhiều giai đoạn
+
+Một việc lớn chia thành các giai đoạn, mỗi giai đoạn là một run với flow đã publish (hoặc flow có sẵn). File `neomind/programs/<programId>.json` (nên commit) mô tả `{ schemaVersion: 1, programId, name, goal, phases: [{ id, title, task, flowId, dependsOn: [], runnerOverrides? }] }`. Trạng thái không lưu trong file mà suy ra từ các run có `programId`/`phaseId`: `blocked_by_dependency`, `ready`, `running`, `waiting_user`, `delivered`, `failed`. Giai đoạn chỉ `delivered` khi commit của run đã nằm trong HEAD của checkout (`git merge-base --is-ancestor`), khi thay đổi đã áp dụng vào checkout, khi run không đổi file nào (research), hoặc khi người dùng đánh dấu giao (squash/rebase) kèm ghi chú.
+
+```bash
+npm run neomind -- program create /project program.json
+npm run neomind -- program list /project
+npm run neomind -- program status /project my-program
+npm run neomind -- program next /project my-program        # bắt đầu giai đoạn sẵn sàng đầu tiên
+npm run neomind -- program deliver /project my-program phase-1 "Đã squash vào main"
+```
+
+NeoMind không tự chạy giai đoạn sau. Task của giai đoạn mới kèm khối "Bài học từ các giai đoạn trước" (phát hiện review đã yêu cầu sửa và được sửa, lesson đã duyệt từ các run trước, ghi chú khi giao), tối đa 4.000 ký tự. Màn Runs hiện nhóm "Chương trình" với tiến độ và nút "Bắt đầu giai đoạn tiếp theo".
+
+**Kiểm đủ phạm vi plan.** `review_group.planStepCriteria: true` biến mỗi bước đánh số trong `approach` của plan đã duyệt thành tiêu chí bắt buộc `Plan step N: …`; reviewer thiếu mục nào thì review không đạt như các tiêu chí khác. Flow mới tạo từ mẫu Dev (editor, `flow author-draft`) bật sẵn; mẫu Dev có sẵn và flow cũ giữ nguyên.
+
 ## Dùng Claude Code làm runner
 
 > Đã chạy thật trên Windows tới commit: Claude viết + Codex review, toàn Claude, crash giữa lượt viết rồi resume, và một run điều khiển hoàn toàn qua UI. Linux chưa chạy. Chi tiết: [claude-code-runner.md](docs/adaptive-agent-flow/claude-code-runner.md).
