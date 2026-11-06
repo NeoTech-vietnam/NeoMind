@@ -43,7 +43,7 @@ export function MemorySelection() {
       <div><Button disabled={busy || !revision || !Number.isInteger(maxRecords) || maxRecords < 0 || maxRecords > 30 || !Number.isInteger(maxBytes) || maxBytes < 0 || maxBytes > 16000} onClick={() => void save()}>Lưu policy</Button></div>
       <Field label="Xem thử memory với một task" help="Bản xem thử dùng policy đã lưu của project."><Input value={task} onChange={e => setTask(e.target.value)} placeholder="Nhập yêu cầu…" /></Field>
       <div><Button disabled={busy || !task.trim()} onClick={() => { setBusy(true); setError(''); void api<typeof preview>('/api/memory/preview', 'POST', { task: task.trim() }).then(setPreview).catch(e => setError(String(e))).finally(() => setBusy(false)); }}>Xem thử</Button></div>
-      {preview && <div className="text-[12px] text-muted-foreground">{!preview.root ? 'Chưa chọn memory root.' : !preview.records.length ? 'Không có bản ghi phù hợp.' : preview.records.map(record => <p key={`${record.type}/${record.id}`}><strong>{record.id}</strong> · {record.scope} · {record.selectionReason}</p>)}</div>}
+      {preview && <div className="text-[12px] text-muted-foreground">{!preview.root ? 'Chưa chọn thư mục memory.' : !preview.records.length ? 'Không có bản ghi phù hợp.' : preview.records.map(record => <p key={`${record.type}/${record.id}`}><strong>{record.id}</strong> · {record.scope} · {record.selectionReason}</p>)}</div>}
     </div>
   </Disclosure>;
 }
