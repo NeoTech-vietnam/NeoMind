@@ -65,6 +65,8 @@ export interface RecoveryReport {
   nodeData: NodeData[];
   bindingSelections: { key: string; values: BindingValues; reason: string }[];
   timeExtensionsMs: number;
+  /** Tokens the user added to the flow's `maxTokens` budget. */
+  tokenExtensions: number;
   usage: { totalTokens: number | null; partial: boolean; reportedAttemptIds: string[]; bySession: Record<string, TokenUsage>; costUSD: null };
   reviewValidationRetries: { nodeId: string; round: number; reviewerIds: string[] }[];
   planRevisions: { planningNodeId: string; planId: string; version: number; feedback: string }[];
@@ -132,7 +134,7 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
   const planRevisions: RecoveryReport['planRevisions'] = [];
   const reviewValidationRetries: RecoveryReport['reviewValidationRetries'] = [];
   const usageBySession: Record<string, TokenUsage> = {}, usageAttempts = new Set<string>(); let usageReset = false;
-  let timeExtensionsMs = 0;
+  let timeExtensionsMs = 0, tokenExtensions = 0;
   const bindingSelections: RecoveryReport['bindingSelections'] = [];
   let runtimeContext: RuntimeContext | undefined, runtimeState: RuntimeState | undefined;
   let budget: BudgetState = { runRoundsUsed: 0, scopesUsed: {}, allocations: {} };
@@ -175,6 +177,11 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
         const { seconds } = z.strictObject({ seconds: z.number().int().positive().max(86400) }).parse(event.payload);
         if (!runtimeContext || !runtimeState || !['paused', 'blocked', 'recovering'].includes(runtimeState.phase) || [...attempts.values()].some(item => item.status === 'unresolved')) throw new Error('Time extension requires a stopped run');
         timeExtensionsMs += seconds * 1000; break;
+      }
+      case 'runtime_tokens_extended': {
+        const { tokens } = z.strictObject({ tokens: z.number().int().positive().max(1_000_000_000) }).parse(event.payload);
+        if (!runtimeContext || !runtimeState || !['paused', 'blocked', 'recovering'].includes(runtimeState.phase) || [...attempts.values()].some(item => item.status === 'unresolved')) throw new Error('Token extension requires a stopped run');
+        tokenExtensions += tokens; break;
       }
       case 'condition_evaluated': {
         const payload = z.strictObject({ nodeId: z.string().min(1), value: z.boolean() }).parse(event.payload), node = flow.definition.nodes.find(item => item.id === payload.nodeId);
@@ -542,7 +549,7 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
     }
   }
   const list = [...attempts.values()];
-  return { nodeData: structuredClone([...nodeData.values()]), ...(runtimeContext ? { runtimeContext } : {}), ...(runtimeState ? { runtimeState } : {}), graph: scheduler.snapshot(), bindingSelections, timeExtensionsMs, usage: { totalTokens: usageAttempts.size ? Object.values(usageBySession).reduce((sum, usage) => sum + usage.totalTokens, 0) : null, partial: usageReset || usageAttempts.size < list.filter(item => !item.core).length, reportedAttemptIds: [...usageAttempts], bySession: usageBySession, costUSD: null }, reviewValidationRetries, planRevisions, artifacts, continuationBaselines, repairRounds: structuredClone(repairRounds), plans: structuredClone([...plans.values()]), approvals: structuredClone(approvals), reviewerOutputs: structuredClone(reviewerOutputs), acceptedReviews: [...acceptedReviews].map(([nodeId, baselineHash]) => ({ nodeId, baselineHash })), checks: structuredClone([...checks.values()]), unresolvedCheckIds: [...checks.values()].filter(item => item.status === 'unresolved').map(item => item.checkId), attempts: structuredClone(list),
+  return { nodeData: structuredClone([...nodeData.values()]), ...(runtimeContext ? { runtimeContext } : {}), ...(runtimeState ? { runtimeState } : {}), graph: scheduler.snapshot(), bindingSelections, timeExtensionsMs, tokenExtensions, usage: { totalTokens: usageAttempts.size ? Object.values(usageBySession).reduce((sum, usage) => sum + usage.totalTokens, 0) : null, partial: usageReset || usageAttempts.size < list.filter(item => !item.core).length, reportedAttemptIds: [...usageAttempts], bySession: usageBySession, costUSD: null }, reviewValidationRetries, planRevisions, artifacts, continuationBaselines, repairRounds: structuredClone(repairRounds), plans: structuredClone([...plans.values()]), approvals: structuredClone(approvals), reviewerOutputs: structuredClone(reviewerOutputs), acceptedReviews: [...acceptedReviews].map(([nodeId, baselineHash]) => ({ nodeId, baselineHash })), checks: structuredClone([...checks.values()]), unresolvedCheckIds: [...checks.values()].filter(item => item.status === 'unresolved').map(item => item.checkId), attempts: structuredClone(list),
     unresolvedAttemptIds: list.filter(a => a.status === 'unresolved').map(a => a.attemptId),
     commits: structuredClone([...commits.values()]), unresolvedCommitNodeIds: [...commits.values()].filter(c => !c.confirmed).map(c => c.nodeId),
     branchWorkspaces: structuredClone([...branchWorkspaces.values()]), integrations: structuredClone([...integrations.values()]),

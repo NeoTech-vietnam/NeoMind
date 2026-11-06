@@ -77,7 +77,9 @@ export const flowDefinitionSchema = z.strictObject({
   bindingDefaults: z.record(id, bindingSchema).default({}),
   sessionGroups: z.array(z.strictObject({ id, bindingId: id })).min(1),
   limits: z.strictObject({ maxConcurrency: z.number().int().min(1),
-    maxRepairRounds: z.number().int().min(0), activeTimeSeconds: z.number().int().min(1) }),
+    maxRepairRounds: z.number().int().min(0), activeTimeSeconds: z.number().int().min(1),
+    // Total tokens the run may use before it pauses for the user, checked between steps; omitted means no token budget.
+    maxTokens: z.number().int().min(1).optional() }),
   workspacePolicy: z.enum(['isolated', 'current', 'shared']),
   outputContract: z.string().min(1),
   // `human`: the user reviews the changes outside the flow, so the flow has no review gate and never commits.

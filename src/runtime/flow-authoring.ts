@@ -8,6 +8,7 @@ import { FlowLibrary, flowAuthorSchema, type FlowAuthor, type StoredFlowVersion 
 import { ProfileLibrary } from '../storage/profile-library.js';
 import { projectDir } from '../storage/project-dir.js';
 import { builtinProfile, defaultRoles, readProjectRules } from './project.js';
+import { ESTIMATE_MIN_RUNS, type StatsGroup } from './run-stats.js';
 
 export { diffFlows } from '../domain/flow-diff.js';
 
@@ -112,7 +113,11 @@ export async function publishFlow(root: string, flowId: string, input: { author:
 }
 
 /** Deterministic initial recommendation; it does not start a run. */
-export async function assess(root: string, task: string) {
+/**
+ * Recommend a flow by static rules. With run statistics, candidates that have enough finished runs are ranked by delivery
+ * rate, then median tokens; the rule-based choice stays unless the user picks an alternative.
+ */
+export async function assess(root: string, task: string, stats?: { byFlow: StatsGroup[] }) {
   if (!task.trim()) throw new Error('task is required');
   const project = await authoringProject(root), query = task.toLocaleLowerCase();
   let flowId: string = /nghiên cứu|tìm hiểu|so sánh|research|investigat|compar/.test(query) ? 'research'
@@ -138,5 +143,16 @@ export async function assess(root: string, task: string) {
   if (!available(flowId)) reasons.push(`Flow ${flowId} chưa sẵn sàng hoặc không phù hợp policy; cần chọn flow khác hoặc tạo mới.`);
   let suggestedChecks: string[] = [];
   try { const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')) as { scripts?: { test?: unknown } }; if (typeof pkg.scripts?.test === 'string') suggestedChecks = ['npm test']; } catch { /* No readable package script to recommend. */ }
-  return { flowId, available: available(flowId), reasons, alternatives: [...new Set([...Object.keys(templates), ...availableProjects.keys()])].filter(id => id !== flowId && available(id)), suggestedChecks };
+  let alternatives = [...new Set([...Object.keys(templates), ...availableProjects.keys()])].filter(id => id !== flowId && available(id));
+  const measured = (id: string) => { const item = stats?.byFlow.find(group => group.key === id); return item && item.completed >= ESTIMATE_MIN_RUNS ? item : undefined; };
+  if (stats) {
+    const score = (id: string) => measured(id)?.deliveryRate ?? -1, tokens = (id: string) => measured(id)?.tokens.median ?? Infinity;
+    alternatives = [...alternatives].sort((a, b) => score(b) - score(a) || tokens(a) - tokens(b));
+    const own = measured(flowId);
+    if (own) reasons.push(`Thống kê ${flowId}: giao ${Math.round((own.deliveryRate ?? 0) * 100)}% trong ${own.runs} run, trung vị ${Math.round(own.tokens.median ?? 0)} token.`);
+    const better = alternatives.find(id => (measured(id)?.deliveryRate ?? -1) > (own?.deliveryRate ?? 1));
+    if (better) reasons.push(`${better} có tỷ lệ giao cao hơn theo thống kê; cân nhắc nếu việc phù hợp.`);
+  }
+  const statistics = stats ? Object.fromEntries([flowId, ...alternatives].flatMap(id => { const item = measured(id); return item ? [[id, { runs: item.runs, deliveryRate: item.deliveryRate, medianTokens: item.tokens.median, medianActiveSeconds: item.activeSeconds.median }]] : []; })) : undefined;
+  return { flowId, available: available(flowId), reasons, alternatives, suggestedChecks, ...(statistics ? { statistics } : {}) };
 }

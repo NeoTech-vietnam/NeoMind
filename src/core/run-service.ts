@@ -81,6 +81,7 @@ export class RunService {
   initializeRuntime(context: RuntimeContext) { return this.serialize(() => this.append('runtime_context', runtimeContextSchema.parse(context))); }
   checkpointRuntime(state: RuntimeState) { return this.serialize(() => this.append('runtime_state', runtimeStateSchema.parse(state))); }
   extendRuntimeTime(seconds: number) { return this.serialize(() => this.append('runtime_time_extended', { seconds })); }
+  extendRuntimeTokens(tokens: number) { return this.serialize(() => this.append('runtime_tokens_extended', { tokens })); }
   selectAllowedFallback(key: string, values: BindingValues, reason: string) { return this.serialize(() => this.append('binding_fallback_selected', { key, values, reason })); }
   recordNodeInput(input: unknown) { return this.serialize(() => this.append('node_input', input)); }
   recordNodeOutput(output: unknown) { return this.serialize(() => this.append('node_output', output)); }

@@ -5,7 +5,7 @@ export type FlowDiff = {
   nodes: { added: FlowNode[]; removed: FlowNode[]; changed: { id: string; before: FlowNode; after: FlowNode }[] };
   edges: { added: Flow['definition']['edges']; removed: Flow['definition']['edges'] };
   bindings: { id: string; before?: Binding; after?: Binding }[];
-  limits: { field: string; before: number | null; after: number }[];
+  limits: { field: string; before: number | null; after: number | null }[];
 };
 
 /** Structural diff shared by the session, CLI, API and editor. */
@@ -28,6 +28,7 @@ export function diffFlows(before: Flow | null, after: Flow): FlowDiff {
       const old = before?.definition.bindings[id], next = after.definition.bindings[id];
       return changed(old, next) ? [{ id, ...(old ? { before: old } : {}), ...(next ? { after: next } : {}) }] : [];
     }),
-    limits: (Object.keys(after.definition.limits) as (keyof Flow['definition']['limits'])[]).flatMap(field => before?.definition.limits[field] === after.definition.limits[field] ? [] : [{ field, before: before?.definition.limits[field] ?? null, after: after.definition.limits[field] }]),
+    // Optional limits (maxTokens) can appear or disappear, so compare the keys of both sides.
+    limits: ([...new Set([...Object.keys(before?.definition.limits ?? {}), ...Object.keys(after.definition.limits)])] as (keyof Flow['definition']['limits'])[]).flatMap(field => before?.definition.limits[field] === after.definition.limits[field] ? [] : [{ field, before: before?.definition.limits[field] ?? null, after: after.definition.limits[field] ?? null }]),
   };
 }

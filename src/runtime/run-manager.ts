@@ -188,7 +188,7 @@ export class RunManager {
       const run = await this.report(id);
       const flow = run.snapshot ? (run.snapshot as MaterializedRun).configuration.flow : undefined;
       const createdAt = (await new SingleOwnerJournal(await this.store.journal(id), id).read())[0]?.timestamp;
-      return { runId: id, task: run.runtimeContext?.task, flowId: flow?.flowId, flowName: flow?.name, createdAt, programId: run.runtimeContext?.programId, phaseId: run.runtimeContext?.phaseId, phase: run.runtimeState?.phase ?? 'recovering', reason: run.runtimeState?.reason ?? '', activeMs: run.runtimeState?.activeMs ?? 0 };
+      return { runId: id, task: run.runtimeContext?.task, flowId: flow?.flowId, flowName: flow?.name, createdAt, programId: run.runtimeContext?.programId, phaseId: run.runtimeContext?.phaseId, phase: run.runtimeState?.phase ?? 'recovering', reason: run.runtimeState?.reason ?? '', activeMs: run.runtimeState?.activeMs ?? 0, tokens: run.usage.totalTokens };
     } catch (error) { return { runId: id, task: id, createdAt: undefined, phase: 'blocked', reason: error instanceof Error ? error.message : String(error), activeMs: 0 }; }
   })); return runs.sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.runId.localeCompare(b.runId)); }
   private async owned(id: string) {
@@ -224,7 +224,7 @@ export class RunManager {
     return results;
   }
   async revisePlan(id: string, feedback: string, planHash: string) { const run = await this.owned(id); await run.revisePlan(feedback, planHash); return run.report(); }
-  async extendTime(id: string, seconds: number) { const run = await this.owned(id); await run.extendTime(seconds); return run.report(); }
+  async extendTime(id: string, seconds: number, tokens = 0) { const run = await this.owned(id); await run.extendTime(seconds, tokens); return run.report(); }
   async settle(id: string) { await this.runs.get(id)?.settled(); return this.get(id); }
   readMemory(query?: string) {
     const memory = openProjectMemory(this.projectRoot, path.join(this.stateRoot, 'coordination.sqlite'));

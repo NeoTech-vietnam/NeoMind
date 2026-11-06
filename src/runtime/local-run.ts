@@ -100,6 +100,7 @@ export class LocalRun {
   private lastTick = 0;
   private closed = false;
   private extraTimeMs = 0;
+  private extraTokens = 0;
   private gitAbort: AbortController | undefined;
   /**
    * `workerFactory` starts the Codex workers that run checks (and, by default, the Codex runner); `runners` selects the
@@ -146,7 +147,7 @@ export class LocalRun {
       const report = await durable.service.report();
       if (!report.runtimeContext || !report.runtimeState) throw new Error('Run has no standalone runtime context');
       const run = new LocalRun(durable, report.runtimeContext, coordinator, report.runtimeState, workerFactory, capabilityCheck, runners ?? defaultRunnerRegistry(workerFactory ? { workerFactory } : {}));
-      run.extraTimeMs = report.timeExtensionsMs;
+      run.extraTimeMs = report.timeExtensionsMs; run.extraTokens = report.tokenExtensions;
       if (!['completed', 'cancelled'].includes(run.state.phase)) {
         try { await run.reconcile(); await run.checkpoint('recovering', 'Đã đối chiếu worker; cần bấm Tiếp tục'); }
         catch (error) { await run.checkpoint('blocked', error instanceof Error ? error.message : String(error)); }
@@ -156,7 +157,7 @@ export class LocalRun {
   }
   async report() {
     const report = await this.durable.service.report(), plan = report.plans.at(-1)?.plan;
-    return { runId: this.runId, ...report, timeLimitMs: this.snapshot.configuration.flow.definition.limits.activeTimeSeconds * 1000 + this.extraTimeMs, ...(plan ? { proposedPlanHash: hashJson(plan) } : {}), runtimeState: structuredClone(this.state), snapshot: this.snapshot, busy: this.busy };
+    return { runId: this.runId, ...report, timeLimitMs: this.snapshot.configuration.flow.definition.limits.activeTimeSeconds * 1000 + this.extraTimeMs, tokenLimit: this.tokenLimit() ?? null, ...(plan ? { proposedPlanHash: hashJson(plan) } : {}), runtimeState: structuredClone(this.state), snapshot: this.snapshot, busy: this.busy };
   }
   private async checkpoint(phase: RuntimeState['phase'], reason: string) {
     this.state = { ...this.state, phase, reason };
@@ -369,10 +370,22 @@ export class LocalRun {
     await this.durable.service.continueAfterRecovery();
     await this.checkpoint('paused', 'Người dùng yêu cầu thử commit lại'); this.launch();
   }
-  async extendTime(seconds: number) {
+  /** The flow's token budget plus what the user added; undefined when the flow sets none. */
+  private tokenLimit() {
+    const base = this.snapshot.configuration.flow.definition.limits.maxTokens;
+    return base === undefined ? undefined : base + this.extraTokens;
+  }
+  private overTokenBudget(report: RecoveryReport) {
+    const limit = this.tokenLimit(), used = report.usage.totalTokens;
+    return limit !== undefined && used !== null && used >= limit ? { used, limit } : undefined;
+  }
+  /** Add active time and/or tokens to the run's budgets, then continue it. */
+  async extendTime(seconds: number, tokens = 0) {
     if (this.busy) throw new Error('Tạm dừng run trước khi đổi ngân sách thời gian');
-    await this.durable.service.extendRuntimeTime(seconds);
-    this.extraTimeMs = (await this.durable.service.report()).timeExtensionsMs;
+    if (seconds > 0) await this.durable.service.extendRuntimeTime(seconds);
+    if (tokens > 0) await this.durable.service.extendRuntimeTokens(tokens);
+    const report = await this.durable.service.report();
+    this.extraTimeMs = report.timeExtensionsMs; this.extraTokens = report.tokenExtensions;
     await this.resume();
   }
   launch(): void {
@@ -386,6 +399,8 @@ export class LocalRun {
   async resume() {
     if (this.busy || ['completed', 'cancelled', 'waiting_approval'].includes(this.state.phase)) throw new Error('Run không thể tiếp tục ở trạng thái này');
     if (this.state.activeMs >= this.snapshot.configuration.flow.definition.limits.activeTimeSeconds * 1000 + this.extraTimeMs) throw new Error('Hết ngân sách thời gian; thêm thời gian trước khi tiếp tục');
+    const budget = this.overTokenBudget(await this.durable.service.report());
+    if (budget) throw new Error(`Hết ngân sách token (${budget.used}/${budget.limit}); thêm token trước khi tiếp tục`);
     await this.reconcile(); await this.policy();
     let report = await this.durable.service.report();
     const continuationHash = report.approvals.length ? await this.durable.service.authorizeWorkspaceContinuation() : undefined;
@@ -500,7 +515,12 @@ export class LocalRun {
       while (!this.stopIntent) {
         if (this.branchFailure) throw this.branchFailure;
         await this.policy();
-        const report = await this.durable.service.report();
+        const report = await this.durable.service.report(), budget = this.overTokenBudget(report);
+        // The budget is checked between steps, so a finished turn is always recorded; running branches finish their turn first.
+        if (budget) {
+          await this.settleBranches(); if (this.branchFailure) throw this.branchFailure;
+          await this.checkpoint('paused', `Hết ngân sách token (${budget.used}/${budget.limit}); thêm token để tiếp tục`); return;
+        }
         // Agent steps inside fork branches run concurrently (each writer in its own worktree); every other step waits for them.
         const ready = flow.definition.nodes.filter(item => report.graph.nodes[item.id]?.status === 'ready' && !this.inflight.has(item.id));
         const shared = this.context.workspaceMode && this.context.workspaceMode !== 'isolated';
