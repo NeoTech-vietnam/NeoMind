@@ -6,6 +6,7 @@ import { api } from './api';
 import { RunList } from './RunList';
 import { RunMonitor } from './RunMonitor';
 import { RunStart } from './RunStart';
+import { RunPrograms, type ProgramSummary } from './RunPrograms';
 import type { Run, RunSummary } from './runTypes';
 
 const terminal = ['completed', 'cancelled'];
@@ -17,7 +18,12 @@ function Dismiss({ onClick }: { onClick(): void }) {
 /** Runs screen: the list of runs on the left, the selected run or the new-run form on the right (docs/design/mockups/13-runs-v2). */
 export function RunPanel({ flowId, flows }: { flowId?: string; flows: { flowId: string; name: string; archived: boolean }[] }) {
   const [run, setRun] = useState<Run | null>(null), [history, setHistory] = useState<RunSummary[]>([]), [error, setError] = useState(''), [stale, setStale] = useState(false);
-  async function refresh() { setHistory((await api<{ runs: RunSummary[] }>('/api/runs')).runs.slice().reverse()); }
+  const [programs, setPrograms] = useState<ProgramSummary[]>([]);
+  async function refresh() {
+    setHistory((await api<{ runs: RunSummary[] }>('/api/runs')).runs.slice().reverse());
+    // Programs are optional; an older backend or a broken program file must not hide the runs.
+    setPrograms(await api<{ programs: ProgramSummary[] }>('/api/programs').then(value => value.programs, () => []));
+  }
   useEffect(() => {
     void refresh().catch(e => setError(String(e)));
     const timer = setInterval(() => void refresh().catch(() => {}), 5000);
@@ -54,7 +60,8 @@ export function RunPanel({ flowId, flows }: { flowId?: string; flows: { flowId: 
   async function open(runId: string) { setError(''); try { setRun(await api<Run>(`/api/runs/${runId}`)); setStale(false); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } }
 
   return <section className="grid h-full min-h-0 grid-cols-[272px_minmax(0,1fr)] min-[1200px]:grid-cols-[296px_minmax(0,1fr)]">
-    <RunList history={history} selectedId={run?.runId} open={id => void open(id)} startNew={() => setRun(null)} cleaning={cleaning} clean={() => void cleanFinished()} />
+    <RunList history={history} selectedId={run?.runId} open={id => void open(id)} startNew={() => setRun(null)} cleaning={cleaning} clean={() => void cleanFinished()}
+      programs={<RunPrograms programs={programs} open={id => void open(id)} changed={id => { void refresh(); if (id) void open(id); }} />} />
     <div className="min-h-0 min-w-0 overflow-auto">
       <div className="mx-auto flex max-w-[1040px] flex-col gap-3 px-6 pb-0 pt-5">
         {error && <Callout tone="danger" icon={<CircleAlert />}><div className="flex items-start"><span className="flex-1">{error}</span><Dismiss onClick={() => setError('')} /></div></Callout>}

@@ -112,6 +112,12 @@ function transcriptsOf(scenario: Scenario) {
 }
 
 const hash = location.hash.slice(1).split(',').filter(Boolean);
+/** A three-phase program: the first phase delivered, the second ready, the third waiting for it (`#programs` opens its sheet). */
+const program = { programId: 'calc-power', name: 'Máy tính lũy thừa', goal: 'Thêm power vào calc.js, dùng trong CLI và cập nhật tài liệu.', progress: { delivered: 1, total: 3 }, currentPhaseId: 'cli', nextReady: 'cli',
+  phases: [
+    { id: 'core', title: 'Hàm power và test', flowId: 'dev', dependsOn: [], status: 'delivered', reason: 'Commit của giai đoạn đã có trong HEAD', runId: 'run-completed-1', runs: ['run-completed-1'], commits: ['3648ef2a1b2c3d4e5f60718293a4b5c6d7e8f901'] },
+    { id: 'cli', title: 'Lệnh CLI power', flowId: 'dev', dependsOn: ['core'], status: 'ready', reason: 'Sẵn sàng bắt đầu', runs: [] },
+    { id: 'docs', title: 'Tài liệu', flowId: 'fast', dependsOn: ['cli'], status: 'blocked_by_dependency', reason: 'Chờ giai đoạn cli', runs: [] }] };
 const wanted = Object.keys(scenarios).find(key => hash.includes(key)) ?? 'waiting';
 const wantsNew = hash.includes('new'), wantSession = hash.includes('session');
 localStorage.setItem('neomind.theme', hash.includes('light') ? 'light' : 'dark');
@@ -133,6 +139,8 @@ setApiTransport(async (endpoint, method, body) => {
     return ok({ runtimeDiagnostics: [], snapshot: { configuration: { flow: source.flow, bindings: bindingsOf(source.bindings) } }, configurationHash: 'b'.repeat(64), sourceHead: '3648ef2a1b2c3d4e', dirtyPaths: [], gitDelivery: 'local',
       flowExceptions: [], dirtyImport: { baselineHash: 'c'.repeat(64), changes: hash.includes('dirty') ? [{ path: 'calc.js', change: 'modified' }, { path: 'README.md', change: 'modified' }] : [], blockers: [] } }); }
   if (path === '/api/memory/preview') return ok({ root: 'neomind/memory', records: [{ id: 'test-style', type: 'rule', scope: 'project', revision: '9f2c1a0e11223344', selectionReason: 'khớp đường dẫn calc.test.js' }, { id: 'guard-invalid-input', type: 'lesson', scope: 'calc.js', revision: '4b81e3d255667788', selectionReason: 'khớp đường dẫn calc.js' }, { id: 'checks-command', type: 'fact', scope: 'project', revision: '1c07aa9399aabbcc', selectionReason: 'luôn chọn' }], inferredPaths: ['calc.js', 'calc.test.js'], excluded: [{ id: 'old-note', reason: 'quá cũ' }] });
+  if (path === '/api/programs' && method === 'GET') return ok({ programs: hash.includes('noprogram') ? [] : [program], errors: [] });
+  if (path === '/api/programs/calc-power/next' && method === 'POST') return ok({ started: false, reason: 'Gallery không bắt đầu run thật' });
   const match = /^\/api\/runs\/([a-z0-9-]+)(?:\/(transcripts)(?:\/([A-Za-z0-9_-]+))?|\/(lessons)|\/(\w+))?$/.exec(path);
   if (match) {
     const scenario = scenarios[runIds[match[1]!]!];
@@ -156,3 +164,4 @@ if (!wantsNew) click(byText('aside[aria-label="Danh sách run"] button', scenari
   if (hash.includes('filter')) click(byText('button', 'Lọc'));
 });
 else if (hash.includes('filter')) click(byText('button', 'Lọc'));
+if (hash.includes('programs')) click(byText('aside[aria-label="Danh sách run"] button', program.name));

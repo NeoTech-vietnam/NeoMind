@@ -75,7 +75,7 @@ function Row({ item, selected, open }: { item: RunSummary; selected: boolean; op
 }
 
 /** Left column of the Runs screen: runs that need the user first, then the ones running, then everything else. */
-export function RunList({ history, selectedId, open, startNew, cleaning, clean }: { history: RunSummary[]; selectedId: string | undefined; open(runId: string): void; startNew(): void; cleaning: boolean; clean(): void }) {
+export function RunList({ history, selectedId, open, startNew, cleaning, clean, programs }: { history: RunSummary[]; selectedId: string | undefined; open(runId: string): void; startNew(): void; cleaning: boolean; clean(): void; programs?: React.ReactNode }) {
   const [query, setQuery] = useState(''), [filters, setFilters] = useState<Filters>(noFilters);
   const visible = useMemo(() => applyFilters(history, query, filters), [history, query, filters]);
   const needs = visible.filter(item => needsYou(item.phase)), live = visible.filter(item => item.phase === 'running' || item.phase === 'stopping');
@@ -89,6 +89,7 @@ export function RunList({ history, selectedId, open, startNew, cleaning, clean }
       <FilterPopover history={history} filters={filters} setFilters={setFilters} shown={visible.length} />
     </div>
     <div className="-mx-1 min-h-0 flex-1 overflow-auto px-1">
+      {programs}
       {history.length === 0 && <p className="m-0 px-2.5 py-3 text-[12.5px] text-muted-foreground">Chưa có run nào. Bấm “Run mới” để giao việc đầu tiên.</p>}
       {history.length > 0 && visible.length === 0 && <div className="px-2.5 py-3 text-[12.5px] text-muted-foreground">Không có run khớp.{' '}
         <button type="button" className="cursor-pointer border-0 bg-transparent p-0 font-sans text-[12.5px] text-foreground underline" onClick={() => { setQuery(''); setFilters(noFilters); }}>Xóa lọc</button></div>}
