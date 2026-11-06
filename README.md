@@ -21,6 +21,25 @@ Mở URL localhost được in ra. Editor hỗ trợ canvas kéo thả, flow/pro
 
 Mặc định standalone dùng `gpt-6-luna` reasoning `low`; có thể chọn `gpt-6.1-sol` hoặc `gpt-6.1-terra` khi runner cung cấp. Không tự chuyển model ngoài danh sách fallback đã cấu hình. Chạy thật sử dụng quota tài khoản Codex.
 
+## AI tạo và chọn flow
+
+NeoMind có thể đề xuất flow bằng quy tắc tĩnh, tạo bản nháp, kiểm policy và so sánh trước khi lưu phiên bản. Các lệnh sau nhận **thư mục project**; `draft.json` là input authoring, ví dụ `{"flowId":"my-dev","name":"My Dev","from":{"template":"dev"}}`.
+
+```bash
+npm run neomind -- assess /project "nghiên cứu kiến trúc"
+npm run neomind -- assess /project --task-file task.txt
+npm run neomind -- flow blocks /project
+npm run neomind -- flow author-draft /project draft.json
+npm run neomind -- flow get /project my-dev
+npm run neomind -- flow author-validate /project my-dev
+npm run neomind -- flow diff /project my-dev
+npm run neomind -- flow author-publish /project my-dev <revision> "Lý do"
+```
+
+Khi sửa draft đã có, input cần `expectedRevision` từ `flow get` hoặc lần lưu trước; khi publish AI cũng cần revision này. `assess.available: false` nghĩa là flow được gợi ý hiện không sẵn sàng; chọn phương án khác hoặc tạo flow. Mỗi phiên bản AI ghi tác giả, session nếu có và lý do; phiên bản cũ không có tác giả được coi là do người lưu. `contentHash` tiếp tục chỉ bao phủ nội dung flow; metadata tác giả không có hash riêng.
+
+Trong `neomind/project.json`, trường tùy chọn `ai.flowPublish` nhận `allow` (mặc định), `draft-only` hoặc `deny`. `draft-only` cho AI sửa draft nhưng không publish; `deny` chặn cả tạo/sửa draft bằng tool AI. Project có thể đặt `policy.maxActiveTimeSeconds` tùy chọn: thời gian flow AI publish không vượt giá trị nhỏ hơn giữa trần này và mẫu Dev (1.800 giây). Policy sàn về duyệt và review vẫn được compiler kiểm; flow do người lưu giữ hành vi trước đây. `ai.profilePublish` dành cho gói profile tiếp theo, chưa được áp dụng ở gói này.
+
 ## Dùng Claude Code làm runner
 
 > Đã chạy thật trên Windows tới commit: Claude viết + Codex review, toàn Claude, crash giữa lượt viết rồi resume, và một run điều khiển hoàn toàn qua UI. Linux chưa chạy. Chi tiết: [claude-code-runner.md](docs/adaptive-agent-flow/claude-code-runner.md).

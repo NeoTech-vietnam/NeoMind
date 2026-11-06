@@ -3,6 +3,20 @@
 Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
 Bàn giao hiện tại: [06/11/2026 thiết kế lại](session-handoff-2026-11-06.md); trước đó [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md).
 
+## Nâng cấp NeoMind · Gói 1 — 06/11/2026
+
+Branch `feat/neomind-upgrade`: thêm core tạo/lấy/kiểm/publish flow, diff cấu trúc và `assess`; session tools, CLI và editor API dùng cùng core. Metadata phiên bản ghi tác giả AI/human (bản cũ coi là human); UI hiện badge AI và tác giả/lý do trong so sánh. Compiler giữ policy sàn và chặn thời gian AI vượt mức nhỏ hơn giữa Dev và `policy.maxActiveTimeSeconds?` của project. `ai.flowPublish` mặc định allow, hỗ trợ draft-only/deny; các trường mới đều tùy chọn.
+
+Quyết định đã hỏi: trần project lưu tại `policy.maxActiveTimeSeconds?`. Diff thuần nằm ở `src/domain/flow-diff.ts` và core re-export để UI dùng cùng hàm mà không đưa Node vào browser. CLI dùng `flow author-draft/author-validate/author-publish` cho đường AI vì các lệnh `flow draft/validate/publish` cũ đã có nghĩa khác; `flow diff` và `assess` theo plan. `assess.available` báo flow bị che bởi draft chưa publish hoặc bị policy chặn; bản có sẵn vẫn có thể đọc và sao chép.
+
+| Kiểm chứng Windows | Kết quả |
+| --- | --- |
+| `npm test` | Chạy đầy đủ một lần: 236 test, 234 pass, 2 skip, 0 fail. Lượt này hoàn tất **trước** sửa khóa cạnh tranh khi đổi tên draft. |
+| Sau sửa khóa | Build core và 30 test liên quan (authoring, library, lock, editor API, session tools/fake runner) đều đạt; thêm test hai thao tác đổi tên cùng revision chỉ có một thao tác thắng. Chưa chạy lại toàn bộ suite để giữ yêu cầu một lượt. |
+| TypeScript UI, build UI, build extension | Đạt sau sửa khóa; không cài extension, không chạy flow thật. Gallery `flow.html#ai,compare` và panel sáng `#panel,light,ai,insp` đã kiểm bằng Edge. |
+
+Người dùng đã chọn giữ ý nghĩa `contentHash` hiện tại: `author` là metadata như `createdAt`, không có hash xác thực riêng. Session điều phối có thể quyết định có chạy lại toàn suite trên commit cuối hay không; Gói 2–5 chưa thực hiện.
+
 ## Thiết kế lại giao diện · GĐ 5 — 06/11/2026
 
 `ui/redesign-p5`: bỏ `styles.css` và bridge biến cũ; bật Tailwind preflight, đổi `studio.css` thành `flow-studio.css`, `p4.css` thành `profiles-memory.css`, đổi tên gallery. Inspector Flow Studio chuyển sheet ở viewport dưới 1100px; khắc phục wrap runner và bo controls React Flow sau preflight.
