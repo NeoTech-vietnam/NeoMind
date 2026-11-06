@@ -31,7 +31,7 @@ export function FlowVersions({ flow, open, onOpenChange }: { flow: Flow; open: b
   return <Dialog open={open} onOpenChange={onOpenChange}><SheetContent title="So sánh phiên bản"><div className="flow-versions">
     <Button size="sm" onClick={() => setReload(value => value + 1)}>Cập nhật danh sách</Button>
     <Field label="Phiên bản" className="mt-3"><Select label="Phiên bản" value={selected} placeholder="Chọn phiên bản" onValueChange={setSelected} options={versions.map(version => ({ value: String(version), label: `v${version}` }))} /></Field>
-    {!versions.length && <p className="hint">Chưa có phiên bản đã lưu.</p>}{error && <p role="alert">{error}</p>}
+    {!versions.length && <p className="mt-2 text-[12.5px] leading-relaxed text-muted-foreground">Chưa có phiên bản đã lưu.</p>}{error && <p role="alert">{error}</p>}
     {published && <div><div className="studio-version-summary"><span>{added.length} bước mới</span><span>{removed.length} đã xóa</span><span>{changed.length} bước đổi</span><span>Kết nối: {JSON.stringify(published.definition.edges) === JSON.stringify(flow.definition.edges) ? 'không đổi' : 'đã đổi'}</span><span>Vị trí: {JSON.stringify(published.layout) === JSON.stringify(flow.layout) ? 'không đổi' : 'đã đổi'}</span></div>
       {!!added.length && <p>Thêm: {added.join(', ')}</p>}{!!removed.length && <p>Xóa: {removed.join(', ')}</p>}{!!changed.length && <p>Sửa: {changed.join(', ')}</p>}
       <p>Binding: {JSON.stringify(published.definition.bindings) === JSON.stringify(flow.definition.bindings) ? 'không đổi' : 'đã thay đổi'}</p>

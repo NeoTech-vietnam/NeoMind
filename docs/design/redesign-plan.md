@@ -1,6 +1,6 @@
 # Kế hoạch thiết kế lại UI NeoMind (editor web + extension Nimbalyst)
 
-Ngày: 05/11/2026. Trạng thái: **đã chốt; GĐ 0 xong (mục 7); GĐ 1 xong phần code ngày 05/11 trên branch `ui/redesign-p1`** (kết quả ở cuối mục GĐ 1), panel Nimbalyst đã kiểm đạt; còn cài skill. **GĐ 2 xong phần code ngày 05/11 trên branch `ui/redesign-p2`** (kết quả ở cuối mục GĐ 2), panel Nimbalyst đã kiểm đạt.
+Ngày: 05/11/2026. Trạng thái: **đã hoàn thành phần code GĐ 0–5**, gallery và tài liệu; kiểm bản build GĐ 5 trong host Nimbalyst thật còn chờ.
 
 Đã chốt với người dùng:
 
@@ -248,6 +248,8 @@ Chỉ đổi giao diện: dữ liệu sự kiện (`Row`) đã có đủ trườ
 - Kiểm đổi theme Nimbalyst khi panel đang mở.
 - Cập nhật `docs/design/README.md` (design system mới, đánh dấu v1 là lịch sử), `nimbalyst-extension.md` (portal, `@property`, theme), `implementation-status.md`, ảnh chụp mới cạnh ảnh cũ trong `docs/design/redesign/`.
 
+**Kết quả GĐ 5 (06/11/2026, `ui/redesign-p5`):** Đã bỏ CSS legacy, bật preflight, đổi tên CSS và gallery, kiểm các màn bằng Edge và cập nhật ảnh/tài liệu. Kết quả và giới hạn kiểm chứng: [trạng thái implementation](../adaptive-agent-flow/implementation-status.md).
+
 ## 5. Skill cho agent khi code
 
 Cài trong project (`.claude/skills/` hoặc plugin), ghi vào `AGENTS.md` khi nào dùng:
@@ -264,14 +266,23 @@ Không đưa nội dung skill vào policy của NeoMind (giống quy tắc với
 
 | Giai đoạn | Hoàn tất khi |
 | --- | --- |
-| GĐ 0 | Dialog, Select, Tooltip shadcn hiển thị đúng trong panel Nimbalyst ở cả hai theme; mục 7 đã điền |
-| GĐ 1 | Shell web và panel khớp mockup 12; không còn `window.confirm`/`prompt`; không còn nhãn tiếng Anh ngoài bảng thuật ngữ; `/__gallery` có mọi component cơ bản |
-| GĐ 2 | Mọi trạng thái run (chờ duyệt, đang chạy, bị chặn, lỗi, xong, hủy) và Xem session khớp mockup 10, 13–17 với dữ liệu thật |
-| GĐ 3 | Flow Studio khớp mockup 18; sửa, kiểm tra, lưu phiên bản một flow Dev từ đầu tới cuối không cần cuộn trang |
-| GĐ 4 | Profiles và Memory khớp mockup 19, 20 |
-| GĐ 5 | Mọi màn dùng được ở panel 900px và web 1440px, cả hai theme; tài liệu và ảnh chụp đã cập nhật |
+| ☑ GĐ 0 | Dialog, Select, Tooltip shadcn hiển thị đúng trong panel Nimbalyst ở cả hai theme; mục 7 đã điền |
+| ☑ GĐ 1 | Shell web và panel khớp mockup 12; không còn `window.confirm`/`prompt`; không còn nhãn tiếng Anh ngoài bảng thuật ngữ; `/__gallery` có mọi component cơ bản |
+| ☑ GĐ 2 | Đã triển khai các trạng thái run và Xem session theo mockup 10, 13–17; gallery kiểm bằng dữ liệu giả |
+| ☑ GĐ 3 | Đã triển khai Flow Studio theo mockup 18; kiểm gallery, luồng đầy đủ với backend thật còn chờ |
+| ☑ GĐ 4 | Profiles và Memory khớp mockup 19, 20 |
+| ☑ GĐ 5 | Đã kiểm gallery panel giả lập 900px và web 1440px ở cả hai theme; tài liệu và ảnh đã cập nhật |
 
 Mỗi giai đoạn còn phải qua: `npm test`, `npm run build:ui`, build extension, ảnh chụp trước/sau trong `docs/design/redesign/`.
+
+Dấu ☑ xác nhận phần triển khai và gallery; kiểm host Nimbalyst thật cho bản GĐ 5 còn chờ.
+
+### Việc backend sau này
+
+- Runs: ước tính token từ lịch sử; diff của commit và áp dụng vào main qua giao diện; chạy lại checks, mở worktree, đổi reviewer, lựa chọn xử lý khi bị chặn và so sánh kế hoạch.
+- Flow Studio: phân loại cảnh báo/lỗi từ validate và mô phỏng flow; hiện mọi diagnostic được coi là lỗi.
+- Profiles: kiểm tra hash skill đã lệch, đọc nội dung phiên bản profile cũ, thời gian lưu và chuyển các flow sang phiên bản profile mới.
+- Memory: revision/cập nhật của toàn bộ thư mục memory. API hiện đã có preview theo task và receipt từ chối lesson, nên hai khả năng này đã được dùng.
 
 ## 7. Kết quả GĐ 0 (05/11/2026)
 

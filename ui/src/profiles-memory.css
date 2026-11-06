@@ -1,0 +1,36 @@
+@layer components {
+  .library-page { max-width: 1440px; margin: 0 auto; color: var(--foreground); }
+  .library-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+  .library-heading h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  .library-heading p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 12px; }
+  .profiles-layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); min-height: 620px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .profiles-list { padding: 12px; border-right: 1px solid var(--border); }
+  .profiles-caption { margin: 20px 8px 5px; font-size: 10px; font-weight: 600; color: var(--muted-foreground); letter-spacing: .06em; }
+  .profiles-detail { min-width: 0; }
+  .profiles-detail-header { display: flex; align-items: center; gap: 6px; min-height: 68px; padding: 12px 18px; border-bottom: 1px solid var(--border); }
+  .profiles-tab { padding: 20px; }
+  .profiles-permission { display: flex; gap: 16px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--border); }
+  .profiles-permission small { display: block; color: var(--muted-foreground); font-size: 11px; }
+  .profiles-permission input { appearance: none; width: 28px; height: 16px; border: 1px solid var(--border); border-radius: 99px; background: var(--muted); cursor: pointer; }
+  .profiles-permission input::before { content: ''; display: block; width: 10px; height: 10px; margin: 2px; border-radius: 50%; background: var(--muted-foreground); }
+  .profiles-permission input:checked { background: var(--foreground); }
+  .profiles-permission input:checked::before { transform: translateX(12px); background: var(--background); }
+  .profiles-permission input:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  .profiles-skill { display: grid; grid-template-columns: 1fr 1.5fr 2fr 30px; gap: 8px; align-items: end; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .memory-root { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+  .memory-root p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 12px; overflow-wrap: anywhere; }
+  .memory-root code { font-size: 11px; }
+  .memory-block { margin-bottom: 18px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .memory-block-heading { padding: 15px 16px; border-bottom: 1px solid var(--border); }
+  .memory-block-heading h2 { margin: 0; font-size: 14px; font-weight: 600; }
+  .memory-block-heading p, .memory-empty-line { margin: 4px 0 0; color: var(--muted-foreground); font-size: 11px; }
+  .memory-empty-line { margin: 12px 16px; }
+  .memory-lesson-run { padding: 12px 16px; }
+  .memory-filters { display: flex; align-items: center; gap: 8px; padding: 12px 16px; }
+  .memory-record-head, .memory-record { display: grid; grid-template-columns: minmax(0, 1fr) 100px 120px; align-items: center; gap: 12px; width: 100%; padding: 10px 16px; text-align: left; }
+  .memory-record-head { color: var(--muted-foreground); background: var(--muted); font-size: 10px; font-weight: 600; }
+  .memory-record { border: 0; border-top: 1px solid var(--border); background: var(--background); color: var(--fg-2); cursor: pointer; }
+  .memory-record:hover { background: var(--accent); }
+  .memory-record small { display: block; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
+  @media (max-width: 1000px) { .profiles-layout { grid-template-columns: 210px minmax(0,1fr); } .profiles-detail-header { flex-wrap: wrap; } .profiles-skill { grid-template-columns: 1fr 1fr; } }
+}

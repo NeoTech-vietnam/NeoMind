@@ -1,7 +1,19 @@
 # NeoMind v1 — trạng thái implementation
 
 Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
-Bàn giao hiện tại: [06/11/2026 Flow Studio](session-handoff-2026-11-06-flow-studio.md); trước đó [05/11/2026 Flow Studio](session-handoff-2026-11-05-flow-studio.md), [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md). Phạm vi v1 rộng hơn tám việc vừa triển khai; đã có walkthrough browser cho Dev tuần tự bên dưới, các thao tác canvas nâng cao, Windows và host acceptance Nimbalyst vẫn cần kiểm chứng riêng.
+Bàn giao hiện tại: [06/11/2026 thiết kế lại](session-handoff-2026-11-06.md); trước đó [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md).
+
+## Thiết kế lại giao diện · GĐ 5 — 06/11/2026
+
+`ui/redesign-p5`: bỏ `styles.css` và bridge biến cũ; bật Tailwind preflight, đổi `studio.css` thành `flow-studio.css`, `p4.css` thành `profiles-memory.css`, đổi tên gallery. Inspector Flow Studio chuyển sheet ở viewport dưới 1100px; khắc phục wrap runner và bo controls React Flow sau preflight.
+
+| Kiểm chứng Windows | Kết quả |
+| --- | --- |
+| `npm test` | 222 test: 220 pass, 0 fail, 2 skip |
+| TypeScript UI, build UI, build extension | Đạt; panel `dist/index.js` 1.356.324 bytes, gzip 364,84 kB theo Vite. |
+| Edge headless | Gallery component/Runs/Flow Studio/Profiles/Memory, tối/sáng, web 1440/panel giả lập 900; kiểm Ctrl K, màn trống và portal trong shadow root giả lập. Chưa kiểm build mới trong host Nimbalyst. |
+
+Ảnh: `docs/design/redesign/after-*.png`; việc backend trong [kế hoạch](../design/redesign-plan.md). Cảnh báo build sourcemap Tailwind và URL `dist-ui` resolve khi chạy vẫn còn.
 
 ## Thiết kế lại giao diện · GĐ 4 — 06/11/2026
 
@@ -13,7 +25,7 @@ Trên `ui/redesign-p4`, Profiles có danh sách profile có sẵn và project, c
 | TypeScript UI, build UI, build extension | Đạt; build extension còn cảnh báo sourcemap Tailwind và URL `dist-ui` resolve khi chạy. |
 | Edge headless, gallery dữ liệu giả | Profiles và Memory ở tối/sáng, web 1440/panel 900; có dialog tạo profile, root chưa chọn, lesson, sheet chi tiết, policy, Skills và profile đã sửa. Chưa kiểm host Nimbalyst thật. |
 
-Không hiển thị cảnh báo hash skill lệch, revision/cập nhật của toàn bộ root, cập nhật profile mới sang flow hoặc nội dung phiên bản profile cũ: API hiện có không cung cấp các thao tác/dữ liệu đó. Menu phiên bản chỉ liệt kê số phiên bản. `styles.css` còn 168 dòng vật lý, chủ yếu các rule shell và control cũ dùng chung/Flow Studio; class riêng Profiles/Memory đã bỏ. Xem lại bằng vite dev tại `/__gallery/profiles.html` và `/__gallery/memory.html`; hash `light`, `panel`, `create`, `edited`, `skills`, `usage`, `root`, `detail`, `policy` chọn trạng thái.
+Không hiển thị cảnh báo hash skill lệch, revision/cập nhật của toàn bộ root, cập nhật profile mới sang flow hoặc nội dung phiên bản profile cũ: API hiện có không cung cấp các thao tác/dữ liệu đó. Menu phiên bản chỉ liệt kê số phiên bản. Kết thúc GĐ 4, `styles.css` còn 168 dòng vật lý; GĐ 5 đã xóa file này. Xem lại bằng vite dev tại `/__gallery/profiles.html` và `/__gallery/memory.html`; hash `light`, `panel`, `create`, `edited`, `skills`, `usage`, `root`, `detail`, `policy` chọn trạng thái.
 
 ## Thiết kế lại giao diện · GĐ 3 — 05/11/2026
 
@@ -27,7 +39,7 @@ Flow Studio trên branch `ui/redesign-p3`: header một hàng, dải thêm bư�
 | `npm run build:ui`, build extension, `npx tsc -p tsconfig.ui.json --noEmit` | Đạt. Build extension có cảnh báo sourcemap của Tailwind và cảnh báo URL `dist-ui` resolve khi chạy. |
 | Edge headless, gallery dữ liệu giả | Đã xem tối/sáng 1440 và panel 900, inspector, thêm bước, diagnostic và sheet so sánh. Chưa kiểm tương tác toàn bộ bằng CDP hoặc trong host Nimbalyst. |
 
-Bàn giao GĐ 3: [05/11/2026](session-handoff-2026-11-05-flow-studio.md). Panel Nimbalyst và lần chạy lại suite đầy đủ để xác định test song song còn dành cho session điều phối.
+Bàn giao GĐ 3 đã gộp trong [bàn giao chung](session-handoff-2026-11-06.md). Suite đầy đủ GĐ 4 và GĐ 5 đạt; kiểm panel thật với bản GĐ 5 còn dành cho session điều phối.
 
 ## Thiết kế lại giao diện · GĐ 2 — 05/11/2026
 

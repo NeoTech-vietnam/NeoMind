@@ -67,6 +67,7 @@ flowchart LR
 - Panel render `<App shell="panel" />`: chỉ thanh tab 40px, không logo, không sidebar; theme theo Nimbalyst (`<html class="dark-theme" data-theme="…">`, độ sáng nền `body` khi theme tùy biến), theo dõi bằng `MutationObserver` có debounce.
 - CSS của panel là `ui/src/app.css?inline` (`:root` → `:host`). Khi mount, `registerDocumentRules` (`ui/src/lib/shadow.ts`) chép các rule `@property` và `@font-face` sang `document.adoptedStyleSheets`: trình duyệt bỏ qua hai loại rule này trong shadow root (mất shadow/ring của Tailwind, font không tải). Chỉ đăng ký biến và font, không đổi giao diện Nimbalyst.
 - Radix render Dialog/Select/Tooltip/menu qua Portal; mọi Portal nhận `container` là một node trong lớp bọc theme (`PortalContainer`), nếu không nội dung ra `document.body` và mất style.
+- GĐ 5: `app.css` không còn layer `legacy`; Tailwind preflight chạy trong shadow root ở layer `base`, sau React Flow (`xyflow`). Base text trên `.nm-theme` áp dụng cả vùng portal.
 - Tailwind chạy trong cả hai bản build; `theme.css` khai báo `@source "./"` vì build panel chạy từ `extensions/nimbalyst`, ngoài `ui/`.
 - Nimbalyst cấp React **19.2.7** (repo ghim 19.3.1): không dùng API chỉ có từ React 19.3 trong `ui/src`.
 

@@ -15,7 +15,7 @@ const diagnostics = [{ code: 'sample', nodeId: 'repair', message: 'Chọn ít nh
 setApiTransport(async (endpoint, method, body) => {
   const url = new URL(endpoint, 'http://gallery'), path = url.pathname;
   const ok = (value: unknown) => ({ status: 200, body: value });
-  if (path === '/api/bootstrap') return ok({ projectName: 'neomind-demo', projectRoot: 'W:\\projects\\neomind-demo', templates: ['dev', 'parallel'], runtimeAvailable: true, flows: [{ flowId: 'dev', name: 'Dev', archived: false }, { flowId: 'parallel', name: 'Dev song song', archived: false }] });
+  if (path === '/api/bootstrap') return ok({ projectName: 'neomind-demo', projectRoot: 'W:\\projects\\neomind-demo', templates: ['dev', 'parallel'], runtimeAvailable: true, flows: hash.includes('empty') ? [] : [{ flowId: 'dev', name: 'Dev', archived: false }, { flowId: 'parallel', name: 'Dev song song', archived: false }] });
   if (path === '/api/runs') return ok({ runs: [] });
   if (path === '/api/runners') return ok({ runners: [{ runner: 'codex', provider: 'openai', models: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna'], reasoning: ['low', 'medium', 'high'] }, { runner: 'claude-code', provider: 'anthropic', models: ['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-opus-5-5'], reasoning: ['low', 'medium', 'high'] }] });
   const match = /^\/api\/flows\/([^/]+)\/(draft|validate|versions|publish)$/.exec(path);
@@ -34,6 +34,7 @@ createRoot(document.getElementById('root')!).render(<React.StrictMode><App shell
 const click = (find: () => Element | null | undefined, then?: () => void, tries = 80) => { const element = find(); if (element) { if (element.getAttribute('aria-label') === 'Quản lý flow') element.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' })); else (element as HTMLElement).click(); then?.(); } else if (tries > 0) setTimeout(() => click(find, then, tries - 1), 100); };
 const byText = (selector: string, text: string) => () => [...document.querySelectorAll(selector)].find(item => item.textContent?.includes(text));
 click(byText('nav button, aside button', 'Flows'), () => {
+  if (hash.includes('command')) window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
   if (hash.includes('errors')) click(byText('button', 'Kiểm tra'));
   if (hash.includes('add')) click(() => document.querySelector('button[aria-label="Thêm bước"]'));
   if (hash.includes('compare')) click(() => document.querySelector('[aria-label="Quản lý flow"]'), () => click(byText('[role="menuitem"]', 'So sánh phiên bản')));

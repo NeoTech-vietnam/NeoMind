@@ -1,10 +1,9 @@
 /*
  * NeoMind theme: tokens from docs/design/mockups/v2-shared.css in shadcn naming, Tailwind v4 utilities, bundled fonts.
- * Tailwind's preflight is left out until every screen has moved off styles.css (redesign phases 2-4): it would restyle
- * the old screens. The legacy bridge below points the old variables at the new tokens so those screens follow the theme.
  */
-@layer theme, base, components, utilities; /* app.css declares the full order, legacy layers included */
+@layer theme, base, components, utilities; /* app.css declares the full order */
 @import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
 @import "tailwindcss/utilities.css" layer(utilities);
 /* The panel build runs from extensions/nimbalyst, outside ui/; Tailwind only finds the classes with an explicit source. */
 @source "./";
@@ -39,30 +38,13 @@
   --foreground: #ececec; --fg-2: #c8c8c8; --muted-foreground: #9b9b9b; --faint: #6f6f6f;
   --primary: #ececec; --primary-foreground: #1a1a1a; --ring: #ececec66; --code-bg: #191919; --overlay: #00000080;
   --running: #60a5fa; --attention: #fbbf24; --danger: #f87171; --success: #4ade80; --idle: #8b8b8b; --danger-solid: #dc2626;
-  --brand: #d97757;
-  /* Legacy clay accents, kept for the screens that still use styles.css. */
-  --clay-2: #e8956f; --clay-strong: #c15f3c; --clay-soft: #3a2822; --clay-line: #6b3f2e; }
+  --brand: #d97757; }
 .theme-light { color-scheme: light;
   --background: #ffffff; --card: #fafafa; --popover: #ffffff; --muted: #f4f4f5; --accent: #f0f0f1; --input: #e4e4e7; --border: #e4e4e7;
   --foreground: #18181b; --fg-2: #3f3f46; --muted-foreground: #71717a; --faint: #a1a1aa;
   --primary: #18181b; --primary-foreground: #fafafa; --ring: #18181b40; --code-bg: #f4f4f5; --overlay: #0000004d;
   --running: #2563eb; --attention: #b45309; --danger: #dc2626; --success: #16a34a; --idle: #71717a; --danger-solid: #dc2626;
-  --brand: #c15f3c;
-  --clay-2: #b4532f; --clay-strong: #c15f3c; --clay-soft: #fbeee8; --clay-line: #efc3b0; }
-
-/* Legacy bridge: the variable names styles.css uses, mapped onto the tokens above. */
-.theme-dark, .theme-light {
-  --ink: var(--foreground); --ink-2: var(--fg-2); --ink-3: var(--muted-foreground); --ink-4: var(--faint);
-  --bg: var(--background); --surface: var(--card); --soft: var(--muted); --field: var(--background);
-  --line: var(--border); --line-2: color-mix(in srgb, var(--border) 70%, var(--background)); --focus: var(--ring);
-  --clay: var(--brand); --accent-2: var(--clay-2); --accent-strong: var(--clay-strong); --accent-soft: var(--clay-soft); --accent-line: var(--clay-line);
-  --green: var(--success); --green-soft: color-mix(in srgb, var(--success) 12%, transparent); --green-line: color-mix(in srgb, var(--success) 35%, transparent);
-  --amber: var(--attention); --amber-soft: color-mix(in srgb, var(--attention) 12%, transparent); --amber-line: color-mix(in srgb, var(--attention) 35%, transparent);
-  --red: var(--danger); --red-soft: color-mix(in srgb, var(--danger) 12%, transparent); --red-line: color-mix(in srgb, var(--danger) 35%, transparent);
-  --blue: var(--running); --blue-soft: color-mix(in srgb, var(--running) 12%, transparent); --blue-line: color-mix(in srgb, var(--running) 35%, transparent);
-  --gray: var(--idle); --gray-soft: color-mix(in srgb, var(--idle) 14%, transparent);
-  --violet: var(--clay-2); --violet-soft: var(--clay-soft);
-}
+  --brand: #c15f3c; }
 
 @theme inline {
   --color-background: var(--background); --color-foreground: var(--foreground); --color-fg-2: var(--fg-2); --color-faint: var(--faint);
@@ -80,6 +62,5 @@
      render as siblings of the app root and would otherwise fall back to the host page's colors. */
   .nm-theme { background: var(--background); color: var(--foreground); font-family: var(--font-sans); font-size: 13px;
     line-height: 1.45; -webkit-font-smoothing: antialiased; }
-  /* The two preflight rules the components rely on; the rest of preflight waits for phase 4. */
-  .nm-theme, .nm-theme *, .nm-theme ::before, .nm-theme ::after { box-sizing: border-box; border-color: var(--border); }
+  .nm-theme, .nm-theme *, .nm-theme ::before, .nm-theme ::after { border-color: var(--border); }
 }

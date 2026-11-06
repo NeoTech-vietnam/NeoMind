@@ -22,7 +22,17 @@ Mockup là prototype bấm được (khối `NEOMIND PROTOTYPE SCRIPT` cuối m�
 
 Code hiện tại: `ui/src/` (React). Ảnh chụp UI thật được tạo bằng Edge headless khi kiểm tra.
 
-## Design system
+## Design system v2 — hiện hành
+
+Token sáng/tối nằm trong `ui/src/theme.css`; component dùng chung trong `ui/src/components/ui/`, CSS màn trong `flow-studio.css` và `profiles-memory.css`. Tailwind preflight chạy trong layer `base`, React Flow trong layer `xyflow`; portal nhận container trong lớp theme. Chạy vite dev và mở `/__gallery/` để xem component, hoặc `runs.html`, `flow.html`, `profiles.html`, `memory.html` trong `/__gallery/` để xem màn với dữ liệu giả. Màu chỉ dùng cho trạng thái; clay dành cho logo.
+
+[Design system v2](mockups/11-design-system-v2.mockup.html "width=1100 height=900")
+
+## Thiết kế v1 — lịch sử
+
+Các mục và mockup 00–09 bên dưới là tư liệu v1, không mô tả trạng thái UI hiện hành.
+
+### Design system v1
 
 Giao diện dùng nền tối theo tông Claude Code: nền than ấm `#1f1e1d`/`#262624`, chữ trắng ngà `#f2efe8`, màu nhấn clay `#d97757` (nút chính `#c15f3c`). Đánh dấu ĐỀ XUẤT dùng xanh teal để không lẫn với màu nhấn. Trang này gồm màu, chữ, nhãn trạng thái, nút, ô nhập, callout và quy ước. Khối CSS `NEOMIND SHARED STYLES` trong file này được chép nguyên vào mọi mockup khác.
 

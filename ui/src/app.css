@@ -1,12 +1,5 @@
-/*
- * Stylesheet entry for the web editor and the Nimbalyst panel. Layer order, lowest first: React Flow's defaults, the
- * legacy styles.css that unmigrated screens still use, then the theme and Tailwind. Unlayered legacy rules would beat
- * every Tailwind utility (`button { font: inherit }` erased the new buttons' sizes), so they live in a layer too.
- */
-@layer xyflow, legacy, theme, base, components, utilities;
+@layer xyflow, theme, base, components, utilities;
 @import "@xyflow/react/dist/style.css" layer(xyflow);
-@import "./styles.css" layer(legacy);
 @import "./theme.css";
-@import "./studio.css";
-
-@import "./p4.css";
+@import "./flow-studio.css";
+@import "./profiles-memory.css";

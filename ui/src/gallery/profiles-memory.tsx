@@ -62,7 +62,7 @@ const click = (find: () => Element | undefined | null, next?: () => void, tries 
 const byText = (selector: string, text: string) => () => [...document.querySelectorAll(selector)].find(item => item.textContent?.includes(text));
 click(byText('nav button, aside button', isMemory ? 'Memory' : 'Profiles'), () => {
   if (hash.includes('create')) click(byText('button', 'Tạo profile'));
-  if (hash.includes('detail')) click(() => document.querySelector('.p4-record'));
+  if (hash.includes('detail')) click(() => document.querySelector('.memory-record'));
   if (hash.includes('policy')) click(byText('button', 'Chọn memory cho run'));
   if (hash.includes('skills')) click(byText('button', 'Skills'));
   if (hash.includes('perm')) click(byText('button', 'Quyền'));
