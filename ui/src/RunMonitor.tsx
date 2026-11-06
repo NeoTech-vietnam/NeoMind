@@ -51,6 +51,9 @@ export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }
   const bindings = effectiveBindings(run), plan = run.plans.at(-1)?.plan;
   const timeLimitMs = run.timeLimitMs ?? (flow?.definition.limits.activeTimeSeconds ?? 0) * 1000 + run.timeExtensionsMs;
   const activeMs = run.runtimeState?.activeMs ?? 0, timeExhausted = timeLimitMs > 0 && activeMs >= timeLimitMs;
+  // The token budget is optional (flow `limits.maxTokens`); the run pauses between steps once it is used up.
+  const tokenLimit = run.tokenLimit ?? null, tokensUsed = run.usage.totalTokens ?? 0, tokensExhausted = tokenLimit !== null && tokensUsed >= tokenLimit && !timeExhausted;
+  const [extraTokens, setExtraTokens] = useState(() => Math.max(10_000, Math.round((tokenLimit ?? 0) / 2 / 1000) * 1000));
   const locked = busy || run.busy, running = phase === 'running';
   const listing = useTranscripts(run.runId, running), [session, setSession] = useState<SessionTarget | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -109,12 +112,15 @@ export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }
     {(running || stopped) && timeLimitMs > 0 && <div className="flex items-center gap-3 text-[12.5px]"><Clock className="size-3.5 text-muted-foreground" /><span className="text-muted-foreground">Thời gian xử lý</span>
       <span className="h-1 w-36 overflow-hidden rounded-full bg-muted"><span className={cn('block h-full rounded-full', timeExhausted ? 'bg-attention' : 'bg-running')} style={{ width: `${Math.min(100, (activeMs / timeLimitMs) * 100)}%` }} /></span>
       <strong className="font-semibold tabular-nums">{Math.floor(activeMs / 60_000)}/{Math.round(timeLimitMs / 60_000)} phút</strong><span className="text-muted-foreground">không tính lúc chờ duyệt</span></div>}
+    {(running || stopped) && tokenLimit !== null && <div className="flex items-center gap-3 text-[12.5px]"><Info className="size-3.5 text-muted-foreground" /><span className="text-muted-foreground">Ngân sách token</span>
+      <span className="h-1 w-36 overflow-hidden rounded-full bg-muted"><span className={cn('block h-full rounded-full', tokensExhausted ? 'bg-attention' : 'bg-running')} style={{ width: `${Math.min(100, (tokensUsed / tokenLimit) * 100)}%` }} /></span>
+      <strong className="font-semibold tabular-nums">{formatTokens(tokensUsed)}/{formatTokens(tokenLimit)}</strong><span className="text-muted-foreground">kiểm giữa các bước</span></div>}
 
     {phase === 'waiting_approval' && <Callout tone="attention" icon={<Shield />}><strong className="font-semibold text-foreground">Chưa file nào bị sửa.</strong> Duyệt để agent bắt đầu thực hiện.</Callout>}
 
-    {stopped && <section className={cn('flex flex-col gap-3 rounded-lg border px-4 py-3.5', phase === 'blocked' || timeExhausted || commitFailed ? 'border-attention/40 bg-card' : 'bg-card')}>
-      <div className="flex items-center gap-2"><TriangleAlert className={cn('size-4', phase === 'blocked' || timeExhausted || commitFailed ? 'text-attention' : 'text-muted-foreground')} />
-        <h3 className="m-0 text-[14px] font-semibold">{timeExhausted ? 'Đã dùng hết thời gian xử lý' : commitFailed ? 'Commit chưa xong' : phase === 'blocked' ? 'Vì sao run dừng?' : phase === 'paused' ? 'Run đang tạm dừng' : 'Run chờ tiếp tục'}</h3></div>
+    {stopped && <section className={cn('flex flex-col gap-3 rounded-lg border px-4 py-3.5', phase === 'blocked' || timeExhausted || tokensExhausted || commitFailed ? 'border-attention/40 bg-card' : 'bg-card')}>
+      <div className="flex items-center gap-2"><TriangleAlert className={cn('size-4', phase === 'blocked' || timeExhausted || tokensExhausted || commitFailed ? 'text-attention' : 'text-muted-foreground')} />
+        <h3 className="m-0 text-[14px] font-semibold">{timeExhausted ? 'Đã dùng hết thời gian xử lý' : tokensExhausted && !commitFailed ? 'Đã dùng hết ngân sách token' : commitFailed ? 'Commit chưa xong' : phase === 'blocked' ? 'Vì sao run dừng?' : phase === 'paused' ? 'Run đang tạm dừng' : 'Run chờ tiếp tục'}</h3></div>
       {timeExhausted && !commitFailed ? <p className="m-0 text-[13px] leading-relaxed text-fg-2">Run đã dùng hết {Math.round(timeLimitMs / 60_000)} phút xử lý. Thêm thời gian để agent làm tiếp từ bước đang dừng; thay đổi trong worktree vẫn được giữ.</p>
         : reason && <p className="m-0 text-[13px] leading-relaxed text-fg-2">{reason}</p>}
       {facts.length > 0 && <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 text-[12.5px]">{facts.map(fact => <li key={fact.text} className={factTone[fact.tone]}>{fact.text}</li>)}</ul>}
@@ -122,6 +128,9 @@ export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }
       {timeExhausted && !commitFailed ? <div className="flex flex-wrap items-end gap-3">
         <Field label="Thêm thời gian" className="w-32"><span className="relative block"><Input type="number" min="1" max="1440" value={extraMinutes} onChange={e => setExtraMinutes(Number(e.target.value))} className="pr-12" /><span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] text-muted-foreground">phút</span></span></Field>
         <Button variant="primary" disabled={locked || extraMinutes < 1} onClick={() => void act('extend_time', { seconds: extraMinutes * 60 })}>Thêm thời gian và tiếp tục</Button></div>
+        : tokensExhausted && !commitFailed ? <div className="flex flex-wrap items-end gap-3">
+        <Field label="Thêm token" className="w-40"><Input type="number" min="1000" step="1000" value={extraTokens} onChange={e => setExtraTokens(Number(e.target.value))} /></Field>
+        <Button variant="primary" disabled={locked || extraTokens < 1} onClick={() => void act('extend_time', { tokens: extraTokens })}>Thêm token và tiếp tục</Button></div>
         : <div className="flex flex-wrap items-center gap-2">
           {commitFailed && <Button variant="primary" disabled={locked} onClick={() => void act('retry_git')}>Thử commit lại</Button>}
           {imported && <Button variant="primary" disabled={locked} onClick={() => void act('include_imported')}>Commit kèm thay đổi có sẵn</Button>}

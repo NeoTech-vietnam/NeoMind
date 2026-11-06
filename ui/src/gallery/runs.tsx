@@ -75,6 +75,9 @@ const scenarios: Record<string, Scenario> = {
     extra: { checks: [{ checkId: 'c1', command: 'npm test', status: 'passed' }], acceptedReviews: [], reviewerOutputs: [1, 2, 3].map(n => ({ attemptId: `rv${n}`, nodeId: 'verify', summary: n === 3 ? 'divide() ném RangeError khi b bằng 0 và có test cho trường hợp này. Không so được calc.js với bản trước khi sửa, nên chưa xác nhận các hàm khác giữ nguyên.' : 'Cần sửa thêm.', result: { reviewerId: 'required-reviewer', verdict: n === 3 ? 'inconclusive' : 'needs_changes', findingIds: ['F1'] }, ...(n === 3 ? { evidence: reviewEvidence } : {}) })) } },
   timeout: { flow: flowOf('dev'), bindings: devBindings, task: 'Tách module parser', phase: 'blocked', reason: 'Đã dùng hết thời gian xử lý.',
     graph: { start: 'succeeded', plan: 'succeeded', approval: 'succeeded', implement: 'running', repair: 'pending', verify: 'pending', commit: 'pending' }, activeMs: 30 * minute, attempts: attemptsFor('dev', true), extra: { timeLimitMs: 30 * minute } },
+  // `#budget`: paused because the run used its token budget (limits.maxTokens) before the review.
+  budget: { flow: flowOf('dev'), bindings: devBindings, task: 'Đổi tên biến trong parser', phase: 'paused', reason: 'Hết ngân sách token (167000/150000); thêm token để tiếp tục',
+    graph: { start: 'succeeded', plan: 'succeeded', approval: 'succeeded', implement: 'succeeded', repair: 'pending', verify: 'pending', commit: 'pending' }, activeMs: 12 * minute, attempts: attemptsFor('dev', true), extra: { timeLimitMs: 30 * minute, tokenLimit: 150_000 } },
   commit: { flow: flowOf('dev'), bindings: devBindings, task: 'Thêm cờ --precision cho CLI', phase: 'blocked', reason: 'Git commit lỗi: index.lock đang bị giữ bởi một tiến trình khác.',
     graph: { start: 'succeeded', plan: 'succeeded', approval: 'succeeded', implement: 'succeeded', repair: 'skipped', verify: 'succeeded', commit: 'failed' }, activeMs: 4 * minute, attempts: attemptsFor('dev', false),
     extra: { unresolvedCommitNodeIds: ['commit'], checks: [{ checkId: 'c1', command: 'npm test', status: 'passed' }], acceptedReviews: [{ nodeId: 'verify' }] } },
@@ -99,7 +102,7 @@ function runOf(id: string, scenario: Scenario): Run {
 }
 
 const list = [
-  ['run-waiting-1', 'waiting', 12], ['run-waiting-2', 'blocked', 38], ['run-running-1', 'running', 4], ['run-completed-1', 'completed', 120], ['run-timeout-1', 'timeout', 1500], ['run-cancelled-1', 'cancelled', 4300], ['run-handoff-1', 'handoff', 2900],
+  ['run-waiting-1', 'waiting', 12], ['run-waiting-2', 'blocked', 38], ['run-running-1', 'running', 4], ['run-completed-1', 'completed', 120], ['run-timeout-1', 'timeout', 1500], ['run-budget-1', 'budget', 1700], ['run-cancelled-1', 'cancelled', 4300], ['run-handoff-1', 'handoff', 2900],
 ] as const;
 const runIds = Object.fromEntries(list.map(([id, key]) => [id, key]));
 
@@ -140,6 +143,8 @@ setApiTransport(async (endpoint, method, body) => {
     return ok({ runtimeDiagnostics: [], snapshot: { configuration: { flow: source.flow, bindings: bindingsOf(source.bindings) } }, configurationHash: 'b'.repeat(64), sourceHead: '3648ef2a1b2c3d4e', dirtyPaths: [], gitDelivery: 'local',
       flowExceptions: [], rules: { rules: galleryRules, warnings: hash.includes('rulewarn') ? ['Dòng 4 không đúng dạng "- [R1] nội dung"; bỏ qua.'] : [] }, dirtyImport: { baselineHash: 'c'.repeat(64), changes: hash.includes('dirty') ? [{ path: 'calc.js', change: 'modified' }, { path: 'README.md', change: 'modified' }] : [], blockers: [] } }); }
   if (path === '/api/memory/preview') return ok({ root: 'neomind/memory', records: [{ id: 'test-style', type: 'rule', scope: 'project', revision: '9f2c1a0e11223344', selectionReason: 'khớp đường dẫn calc.test.js' }, { id: 'guard-invalid-input', type: 'lesson', scope: 'calc.js', revision: '4b81e3d255667788', selectionReason: 'khớp đường dẫn calc.js' }, { id: 'checks-command', type: 'fact', scope: 'project', revision: '1c07aa9399aabbcc', selectionReason: 'luôn chọn' }], inferredPaths: ['calc.js', 'calc.test.js'], excluded: [{ id: 'old-note', reason: 'quá cũ' }] });
+  // Five finished Dev runs with Claude + Codex: enough for the new-run estimate (three or more).
+  if (path === '/api/stats') return ok({ byFlowRunners: [{ key: 'dev|claude-code+codex', completed: 5, tokens: { median: 152_000 }, activeSeconds: { median: 290 }, costUSD: hash.includes('price') ? { median: 0.84 } : null }] });
   if (path === '/api/programs' && method === 'GET') return ok({ programs: hash.includes('noprogram') ? [] : [program], errors: [] });
   if (path === '/api/programs/calc-power/next' && method === 'POST') return ok({ started: false, reason: 'Gallery không bắt đầu run thật' });
   const match = /^\/api\/runs\/([a-z0-9-]+)(?:\/(transcripts)(?:\/([A-Za-z0-9_-]+))?|\/(lessons)|\/(\w+))?$/.exec(path);

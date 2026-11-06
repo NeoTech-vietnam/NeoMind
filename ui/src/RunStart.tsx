@@ -9,12 +9,13 @@ import { Select } from '@/components/ui/select';
 import { Tooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { api } from './api';
-import { formatDuration } from './format';
+import { formatDuration, formatTokens } from './format';
 import { flowSteps } from './runSteps';
 import { modelLabel, reasoningLabel, runnerLabel, useRunners, type RunnerModels } from './runners';
 import { bindingLabel, type BindingValues, type Preview, type Run, type RunSummary } from './runTypes';
+import { estimateFor, type EstimateGroup } from '../../src/domain/estimate';
 
-type Limits = { activeTimeSeconds?: number; maxConcurrency?: number };
+type Limits = { activeTimeSeconds?: number; maxConcurrency?: number; maxTokens?: number };
 type WorkspaceMode = 'isolated' | 'current' | 'shared' | '';
 type MemoryPreview = { excluded?: { id: string; reason: string }[]; root: string | null; selectionPolicy?: Record<string, unknown>; inferredPaths?: string[]; records: { id: string; type: string; scope: string; revision: string; selectionReason: string }[] };
 const templateFlows = [{ flowId: 'dev', name: 'Dev' }, { flowId: 'parallel', name: 'Dev song song' }, { flowId: 'fast', name: 'Fast' }, { flowId: 'research', name: 'Research' }];
@@ -87,11 +88,15 @@ export function RunStart({ initialFlow, flows, history, started }: { initialFlow
   const reason = shared && canImport && !importDirty ? 'Xác nhận baseline có sẵn trước khi chạy trong checkout' : !task.trim() ? 'Nhập yêu cầu để bắt đầu' : loading ? 'Đang cập nhật cấu hình…' : !preview ? 'Chưa có cấu hình hợp lệ' : blockers.length ? 'Cần xử lý các điểm chặn ở trên' : '';
   const unpublished = /Publish the flow before starting a run/i.test(previewError);
   const steps = useMemo(() => flowSteps(definition), [definition]);
-  // Typical duration from the finished runs of this flow already in the list; no estimate without history.
-  const estimate = useMemo(() => {
-    const times = history.filter(item => item.flowId === flowId && item.phase === 'completed' && item.activeMs).slice(0, 5).map(item => item.activeMs!);
-    return times.length ? { ms: times.reduce((sum, value) => sum + value, 0) / times.length, runs: times.length } : null;
-  }, [history, flowId]);
+  // Medians of earlier finished runs with this flow and the same runners (run-stats); nothing until there are enough of them.
+  const [statGroups, setStatGroups] = useState<EstimateGroup[]>([]);
+  useEffect(() => {
+    let live = true;
+    void api<{ byFlowRunners: EstimateGroup[] }>(`/api/stats?flow=${encodeURIComponent(flowId)}`).then(value => { if (live) setStatGroups(value.byFlowRunners); }, () => { if (live) setStatGroups([]); });
+    return () => { live = false; };
+  }, [flowId, history.length]);
+  const runnerSet = useMemo(() => Object.entries(preview?.snapshot.configuration.bindings ?? {}).map(([key, binding]) => ({ ...binding.values, ...overrides[key] }).runner), [preview, overrides]);
+  const estimate = useMemo(() => estimateFor(statGroups, flowId, runnerSet), [statGroups, flowId, runnerSet]);
 
   const edited = (key: string) => !!overrides[key] && Object.keys(overrides[key]!).length > 0;
   const setRunner = (key: string, base: BindingValues, runner: string) => {
@@ -192,6 +197,9 @@ export function RunStart({ initialFlow, flows, history, started }: { initialFlow
             <Field label="Thời gian xử lý tối đa"><span className="relative block"><Input type="number" min="1" value={Math.round((limits.activeTimeSeconds ?? definition!.definition.limits.activeTimeSeconds) / 60)} onChange={e => setLimits(value => ({ ...value, activeTimeSeconds: Math.max(1, Number(e.target.value)) * 60 }))} className="pr-12" />
               <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] text-muted-foreground">phút</span></span></Field>
             {parallel && <Field label="Agent chạy đồng thời"><Input type="number" min="1" value={limits.maxConcurrency ?? definition!.definition.limits.maxConcurrency} onChange={e => setLimits(value => ({ ...value, maxConcurrency: Number(e.target.value) }))} /></Field>}
+            <Field label="Ngân sách token" help="Run tạm dừng giữa các bước khi tổng token đạt mức này; để trống là không giới hạn.">
+              <Input type="number" min="1000" step="1000" placeholder="Không giới hạn" value={limits.maxTokens ?? definition!.definition.limits.maxTokens ?? ''}
+                onChange={e => setLimits(value => { const next = { ...value }; if (Number(e.target.value) >= 1) next.maxTokens = Math.round(Number(e.target.value)); else delete next.maxTokens; return next; })} /></Field>
           </div>
           <p className="m-0 mt-3 text-[12px] text-muted-foreground">Vòng sửa tối đa <strong className="text-foreground">{definition!.definition.limits.maxRepairRounds}</strong> (theo flow) · Bắt đầu từ commit <code className="font-mono">{preview.sourceHead.slice(0, 10)}</code></p>
           <p className="m-0 mt-1.5 text-[12px] text-muted-foreground">{shared ? 'Run sửa trực tiếp checkout, giữ staging có sẵn và commit chỉ thay đổi của run.' : 'Run làm việc trong worktree riêng; checkout chỉ đổi khi bạn áp dụng kết quả.'} Commit local không chạy Git hooks.</p>
@@ -233,7 +241,7 @@ export function RunStart({ initialFlow, flows, history, started }: { initialFlow
     {blockers.length > 0 && <Callout tone="danger" icon={<CircleAlert />}><strong className="font-semibold text-foreground">Chưa chạy được</strong><ul className="m-0 mt-1 list-disc pl-4">{blockers.map(item => <li key={item}>{item}</li>)}</ul></Callout>}
     {error && <Callout tone="danger" icon={<CircleAlert />}>{error}</Callout>}
     <div className="sticky bottom-0 -mx-6 mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 border-t bg-background px-6 py-3">
-      <div className="min-w-0 text-[12.5px]">{estimate && <><strong className="font-semibold">~{formatDuration(Math.round(estimate.ms / 60_000) * 60_000 || 60_000)}</strong><span className="block text-[11.5px] text-muted-foreground">dựa trên {estimate.runs} run {definition?.name ?? 'cùng flow'} gần nhất</span></>}</div>
+      <div className="min-w-0 text-[12.5px]">{estimate && <><strong className="font-semibold">{[estimate.activeSeconds !== null ? `~${formatDuration(Math.round(estimate.activeSeconds / 60) * 60_000 || 60_000)}` : '', estimate.tokens !== null ? `~${formatTokens(estimate.tokens)} token` : '', estimate.costUSD !== null ? `~$${estimate.costUSD.toFixed(2)}` : ''].filter(Boolean).join(' · ')}</strong><span className="block text-[11.5px] text-muted-foreground">trung vị {estimate.runs} run {definition?.name ?? 'cùng flow'} đã xong, cùng runner</span></>}</div>
       <span className="ml-auto text-[12.5px] text-muted-foreground">{reason}</span>
       <Button variant="primary" size="lg" disabled={starting || !!reason} onClick={() => void start()}><Play />{starting ? 'Đang khởi động…' : 'Bắt đầu'}</Button>
     </div>
