@@ -60,8 +60,9 @@ const attemptsFor = (flowId: string, running: boolean): Attempt[] => flowId === 
     ...(running ? [] : [{ id: 'a-impl', nodeId: 'implement', key: 'implement', role: 'write' as const, runner: 'claude-code', model: 'claude-sonnet-5-5', startOffset: 400, ms: 151_000, status: 'completed' as const, usage: [74_000, 9_800] as [number, number], events: events(base + 400_000, 'write-a', false) },
       { id: 'a-review', nodeId: 'verify', key: 'verify/required-reviewer', role: 'review' as const, runner: 'codex', model: 'gpt-6.1-sol', startOffset: 600, ms: 47_000, status: 'completed' as const, usage: [39_100, 2_400] as [number, number], events: events(base + 600_000, 'review', false) }])];
 
+const galleryRules = [{ id: 'R1', text: 'Không sửa file ngoài phạm vi plan đã duyệt.' }, { id: 'R2', text: 'Mọi hàm mới có test.' }];
 const reviewEvidence = { criteria: [{ criterion: 'divide(a, 0) ném RangeError', status: 'pass' }, { criterion: 'divide trả đúng kết quả khi b khác 0', status: 'pass' }, { criterion: 'calc.test.js có test cho chia cho 0', status: 'pass' },
-  { criterion: 'add, subtract, multiply giữ nguyên hành vi', status: 'unresolved' }, { criterion: 'Chỉ sửa calc.js và calc.test.js', status: 'pass' }, { criterion: 'npm test thoát 0', status: 'pass' }],
+  { criterion: 'add, subtract, multiply giữ nguyên hành vi', status: 'unresolved' }, { criterion: 'Chỉ sửa calc.js và calc.test.js', status: 'pass' }, { criterion: 'npm test thoát 0', status: 'pass' }, ...galleryRules.map(rule => ({ criterion: `Rule ${rule.id}: ${rule.text}`, status: 'pass' }))],
   findings: [{ id: 'F1', criterion: 'calc.js:1-12', explanation: 'Không chạy được git diff main trong sandbox, nên không so được 3 hàm đầu với bản trước khi sửa.' }] };
 
 const scenarios: Record<string, Scenario> = {
@@ -90,7 +91,7 @@ const scenarios: Record<string, Scenario> = {
 function runOf(id: string, scenario: Scenario): Run {
   const flow = scenario.flow;
   return { runId: id, busy: false, timeExtensionsMs: 0, proposedPlanHash: 'a'.repeat(64), runtimeState: { phase: scenario.phase, reason: scenario.reason, activeMs: scenario.activeMs },
-    runtimeContext: { workspaceMode: 'isolated', task: scenario.task, workspace: 'C:\\Users\\dev\\AppData\\Local\\neomind\\ab12\\workspaces\\' + id, sourceHead: '3648ef2', memory: { root: 'neomind/memory', text: 'rule · test-style\nlesson · guard-invalid-input', records: [{ id: 'test-style', type: 'rule', scope: 'project', revision: '9f2c1a0e11', sources: ['AGENTS.md'], selectionReason: 'khớp đường dẫn calc.js' }] } },
+    runtimeContext: { workspaceMode: 'isolated', task: scenario.task, workspace: 'C:\\Users\\dev\\AppData\\Local\\neomind\\ab12\\workspaces\\' + id, sourceHead: '3648ef2', memory: { root: 'neomind/memory', text: 'rule · test-style\nlesson · guard-invalid-input', records: [{ id: 'test-style', type: 'rule', scope: 'project', revision: '9f2c1a0e11', sources: ['AGENTS.md'], selectionReason: 'khớp đường dẫn calc.js' }] }, rules: { hash: 'e'.repeat(64), rules: galleryRules } },
     snapshot: { configuration: { flow, bindings: bindingsOf(scenario.bindings) } }, bindingSelections: [], usage: { totalTokens: scenario.phase === 'waiting_approval' ? 24_000 : 167_000, partial: false },
     graph: { nodes: Object.fromEntries(flow.definition.nodes.map(node => [node.id, { status: scenario.graph[node.id] ?? 'pending' }])) },
     plans: [{ nodeId: 'plan', plan }], approvals: scenario.phase === 'waiting_approval' ? [] : [{ nodeId: 'approval', approval: { source: flow.flowId === 'fast' ? 'flow' : 'user' } }],
@@ -137,7 +138,7 @@ setApiTransport(async (endpoint, method, body) => {
     if (input.flowId === 'writing') return { status: 409, body: { error: 'Publish the flow before starting a run' } };
     const source = input.flowId === 'parallel' ? scenarios.running! : scenarios.waiting!;
     return ok({ runtimeDiagnostics: [], snapshot: { configuration: { flow: source.flow, bindings: bindingsOf(source.bindings) } }, configurationHash: 'b'.repeat(64), sourceHead: '3648ef2a1b2c3d4e', dirtyPaths: [], gitDelivery: 'local',
-      flowExceptions: [], dirtyImport: { baselineHash: 'c'.repeat(64), changes: hash.includes('dirty') ? [{ path: 'calc.js', change: 'modified' }, { path: 'README.md', change: 'modified' }] : [], blockers: [] } }); }
+      flowExceptions: [], rules: { rules: galleryRules, warnings: hash.includes('rulewarn') ? ['Dòng 4 không đúng dạng "- [R1] nội dung"; bỏ qua.'] : [] }, dirtyImport: { baselineHash: 'c'.repeat(64), changes: hash.includes('dirty') ? [{ path: 'calc.js', change: 'modified' }, { path: 'README.md', change: 'modified' }] : [], blockers: [] } }); }
   if (path === '/api/memory/preview') return ok({ root: 'neomind/memory', records: [{ id: 'test-style', type: 'rule', scope: 'project', revision: '9f2c1a0e11223344', selectionReason: 'khớp đường dẫn calc.test.js' }, { id: 'guard-invalid-input', type: 'lesson', scope: 'calc.js', revision: '4b81e3d255667788', selectionReason: 'khớp đường dẫn calc.js' }, { id: 'checks-command', type: 'fact', scope: 'project', revision: '1c07aa9399aabbcc', selectionReason: 'luôn chọn' }], inferredPaths: ['calc.js', 'calc.test.js'], excluded: [{ id: 'old-note', reason: 'quá cũ' }] });
   if (path === '/api/programs' && method === 'GET') return ok({ programs: hash.includes('noprogram') ? [] : [program], errors: [] });
   if (path === '/api/programs/calc-power/next' && method === 'POST') return ok({ started: false, reason: 'Gallery không bắt đầu run thật' });

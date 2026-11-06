@@ -8,6 +8,7 @@ import { bindingLabel, effectiveBindings, type Run } from './runTypes';
 import type { Flow } from '../../src/domain/schema';
 
 type ReviewOutput = Run['reviewerOutputs'][number];
+const ruleInfo = { pass: { label: 'Đạt', status: 'success' }, fail: { label: 'Vi phạm', status: 'danger' }, unresolved: { label: 'Chưa xác nhận', status: 'attention' }, pending: { label: 'Chưa chấm', status: 'idle' } } as const;
 
 function Criteria({ output }: { output: ReviewOutput }) {
   if (!output.evidence) return null;
@@ -29,6 +30,11 @@ export function RunChecks({ run, flow }: { run: Run; flow: Flow | undefined }) {
   const agentLine = (key: string) => { const values = bindings.get(key); return values ? `${runnerLabel(values.runner)} · ${modelLabel(values.model)} · ${reasoningLabel(values.reasoning)}` : ''; };
   const latest = reviews.filter((output, index) => !reviews.slice(index + 1).some(item => item.nodeId === output.nodeId && item.result.reviewerId === output.result.reviewerId));
   const earlier = reviews.filter(output => !latest.includes(output));
+  // One line per pinned rule: failed if any latest reviewer failed it, passed only when every reviewer that judged it passed.
+  const rules = (run.runtimeContext?.rules?.rules ?? []).map(rule => {
+    const verdicts = latest.flatMap(output => output.evidence?.criteria.filter(item => item.criterion === `Rule ${rule.id}: ${rule.text}`).map(item => item.status) ?? []);
+    return { ...rule, result: verdicts.includes('fail') ? 'fail' as const : verdicts.length && verdicts.every(item => item === 'pass') ? 'pass' as const : verdicts.length ? 'unresolved' as const : 'pending' as const };
+  });
   return <section className="overflow-hidden rounded-lg border bg-card">
     <div className="flex items-baseline gap-2 border-b px-4 py-3"><h3 className="m-0 text-[14px] font-semibold">Kiểm tra</h3><span className="text-[12px] text-muted-foreground">checks + review độc lập</span>
       {run.acceptedReviews.length > 0 && <Badge status="success" className="ml-auto">Review đã chấp nhận</Badge>}</div>
@@ -40,6 +46,10 @@ export function RunChecks({ run, flow }: { run: Run; flow: Flow | undefined }) {
       return <div key={output.attemptId} className="grid grid-cols-[116px_minmax(0,1fr)] items-start gap-3 border-b px-4 py-3 last:border-b-0"><Badge status={verdict.status} className="justify-self-start">{verdict.label}</Badge>
         <div className="min-w-0"><div className="flex flex-wrap items-baseline gap-x-2"><strong className="text-[13px]">{bindingLabel(key, flow)}</strong><span className="text-[12px] text-muted-foreground">{agentLine(key)}{turns > 1 ? ` · lượt ${turns}` : ''}</span></div>
           <p className="m-0 mt-1 text-[13px] leading-relaxed text-fg-2">{output.summary}</p><Criteria output={output} /></div></div>; })}
+    {rules.length > 0 && <div className="grid grid-cols-[116px_minmax(0,1fr)] items-start gap-3 border-b px-4 py-3 last:border-b-0"><span className="text-[12px] font-semibold text-muted-foreground">Rules</span>
+      <ul className="m-0 flex list-none flex-col overflow-hidden rounded-md border p-0">{rules.map(rule => { const info = ruleInfo[rule.result];
+        return <li key={rule.id} className={cn('flex items-start gap-2 border-b px-2.5 py-1.5 text-[12.5px] last:border-b-0', info.status === 'danger' && 'bg-danger/10')}>
+          <code className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[11.5px]">{rule.id}</code><span className="min-w-0 flex-1">{rule.text}</span><Badge status={info.status} className="shrink-0">{info.label}</Badge></li>; })}</ul></div>}
     {earlier.length > 0 && <Disclosure className="border-t" title={<span className="text-[12px] font-normal text-muted-foreground">{earlier.length} lượt review trước</span>}>
       <div className="flex flex-col gap-3">{earlier.map(output => { const verdict = verdictInfo(output.result.verdict);
         return <div key={output.attemptId} className="text-[12.5px]"><Badge status={verdict.status}>{verdict.label}</Badge><span className="ml-2 font-medium">{bindingLabel(`${output.nodeId}/${output.result.reviewerId}`, flow)}</span>

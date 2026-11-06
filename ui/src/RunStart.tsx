@@ -207,6 +207,13 @@ export function RunStart({ initialFlow, flows, history, started }: { initialFlow
       </Callout>}
     </section>}
 
+    {preview?.rules && (preview.rules.rules.length > 0 || preview.rules.warnings.length > 0) && <section className="flex flex-col gap-2.5">
+      <SectionHead title="Rules của project" hint="Bắt buộc với mọi agent; reviewer chấm từng rule. Đọc từ neomind/rules.md khi bắt đầu run" />
+      {preview.rules.rules.length > 0 && <ul className="m-0 flex list-none flex-col overflow-hidden rounded-lg border bg-card p-0">{preview.rules.rules.map(rule =>
+        <li key={rule.id} className="flex items-start gap-2.5 border-b px-3 py-2 text-[12.5px] last:border-b-0"><code className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[11.5px]">{rule.id}</code><span className="min-w-0 flex-1 text-fg-2">{rule.text}</span></li>)}</ul>}
+      {preview.rules.warnings.length > 0 && <Callout tone="attention" icon={<TriangleAlert />}>{preview.rules.warnings.map(item => <span key={item} className="block">{item}</span>)}</Callout>}
+    </section>}
+
     <section className="flex flex-col gap-2.5">
       <SectionHead title="Memory dự kiến" hint={memoryPreview?.root && memoryPreview.records.length ? `${memoryPreview.records.length} bản ghi sẽ được ghim khi bắt đầu` : 'NeoMind ghim nội dung và revision thực tế khi bắt đầu run'} />
       {memoryError && <Callout tone="danger" icon={<CircleAlert />}>Không đọc được memory: {memoryError}</Callout>}
