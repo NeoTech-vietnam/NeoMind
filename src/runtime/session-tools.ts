@@ -18,6 +18,10 @@ const runId = { runId: { type: 'string', description: 'Run id returned by start 
 const confirmed = { confirmed: { type: 'boolean', description: 'true only after the user explicitly agreed in this session' } };
 
 export const SESSION_TOOLS: SessionTool[] = [
+  { name: 'skills', description: 'List project skill catalog and optionally check pinned references for changed or missing files.', inputSchema: object({ refs: { type: 'array', items: object({ id: { type: 'string' }, path: { type: 'string' }, sha256: { type: 'string' } }, ['id', 'path', 'sha256']) } }) },
+  { name: 'profile_get', description: 'Read a profile draft and immutable versions with their authors.', inputSchema: object({ profileId: { type: 'string' } }, ['profileId']) },
+  { name: 'profile_draft', description: 'Create or update an AI profile draft from a profile or full draft. Updates require the observed revision.', inputSchema: object({ profileId: { type: 'string' }, name: { type: 'string' }, from: object({ profileId: { type: 'string' } }, ['profileId']), draft: { type: 'object' }, expectedRevision: { type: 'string' } }, ['profileId']) },
+  { name: 'profile_publish', description: 'Publish an AI profile as a new version under project policy. Present the proposed changes to the user before publishing.', inputSchema: object({ profileId: { type: 'string' }, expectedRevision: { type: 'string' }, reason: { type: 'string' } }, ['profileId', 'expectedRevision', 'reason']) },
   { name: 'flow_blocks', description: 'List available node types, templates, profiles, bindings and project policy for authoring a flow.', inputSchema: object() },
   { name: 'flow_get', description: 'Read a flow draft, revision and published versions with their authors.', inputSchema: object({ flowId: { type: 'string' } }, ['flowId']) },
   { name: 'flow_draft', description: 'Create or update an AI flow draft from a template, another flow or a full draft. Updates require the revision previously read. Returns policy diagnostics.', inputSchema: object({ flowId: { type: 'string' }, name: { type: 'string' }, from: { oneOf: [object({ template: { type: 'string', enum: ['fast', 'dev', 'parallel', 'research'] } }, ['template']), object({ flowId: { type: 'string' } }, ['flowId'])] }, draft: { type: 'object', description: 'Full flow draft; compiler returns diagnostics for incomplete drafts' }, expectedRevision: { type: 'string', description: 'Required for updates, from flow_get or flow_draft' } }, ['flowId']) },
@@ -100,7 +104,12 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
     return response.body;
   };
   const flowPath = (args: Record<string, unknown>) => `/api/flows/${encodeURIComponent(text(args, 'flowId'))}`;
+  const profilePath = (args: Record<string, unknown>) => `/api/profiles/${encodeURIComponent(text(args, 'profileId'))}`;
   return {
+    skills: async args => ({ catalog: await authoringApi('GET', '/api/skills'), ...(args.refs ? { status: await authoringApi('POST', '/api/skills/status', { refs: args.refs }) } : {}) }),
+    profile_get: async args => authoringApi('GET', `${profilePath(args)}/authoring`),
+    profile_draft: async args => authoringApi('POST', '/api/profile-draft', args),
+    profile_publish: async (args, call) => authoringApi('POST', `${profilePath(args)}/publish`, { expectedRevision: text(args, 'expectedRevision'), author: { kind: 'ai', ...(call?.sessionId ? { sessionId: call.sessionId } : {}), reason: text(args, 'reason') } }),
     flow_blocks: async () => authoringApi('GET', '/api/flow-blocks'),
     flow_get: async args => authoringApi('GET', `${flowPath(args)}/authoring`),
     flow_draft: async args => authoringApi('POST', '/api/flow-draft', args),

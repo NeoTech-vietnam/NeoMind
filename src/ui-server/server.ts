@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { compileFlow } from '../domain/compiler.js';
-import { projectSchema } from '../domain/schema.js';
+import { projectSchema, skillReferenceSchema } from '../domain/schema.js';
 import { defaultProject, templates } from '../domain/templates.js';
 import { FlowLibrary } from '../storage/flow-library.js';
 import { RunManager } from '../runtime/run-manager.js';
@@ -19,6 +19,8 @@ import type { RunnerId } from '../runners/agent-runner.js';
 import { projectDir } from '../storage/project-dir.js';
 import { flowBlocks, draftFlow, getFlow, validateFlow, flowDiff, publishFlow, assess } from '../runtime/flow-authoring.js';
 import { flowAuthorSchema } from '../storage/flow-library.js';
+import { skillCatalog, skillStatus } from '../storage/skill-catalog.js';
+import { draftProfile, getProfile, getProfileVersion, migrateProfile, profileSkillStatus, profileUsage, publishProfile } from '../runtime/profile-authoring.js';
 
 /** Static model allowlist per runner, first model is the default. Host availability is checked by the runtime, not here. */
 export const runnerModels: { runner: RunnerId; provider: string; models: string[]; reasoning: string[] }[] = [
@@ -84,6 +86,12 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       const input = z.strictObject({ record: z.strictObject({ id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/), type: z.enum(['context', 'decision']), scope: z.string().min(1), sources: z.array(z.string().min(1)).min(1), tags: z.array(z.string()), body: z.string().min(1), expiresAt: z.iso.datetime().optional(), supersedes: z.array(z.string().min(1)).optional() }), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable() }).parse(payload);
       return reply(200, await (await runs()).writeMemory(input.record, input.expectedRevision, 'ui'));
     }
+    if (url.pathname === '/api/skills' && method === 'GET') return reply(200, { skills: await skillCatalog(projectRoot) });
+    if (url.pathname === '/api/skills/status' && method === 'POST') { const input = z.strictObject({ refs: z.array(skillReferenceSchema) }).parse(payload); return reply(200, { skills: await skillStatus(projectRoot, input.refs) }); }
+    if (url.pathname === '/api/profile-draft' && method === 'POST') {
+      const input = z.strictObject({ profileId: z.string().min(1), name: z.string().min(1).optional(), from: z.strictObject({ profileId: z.string().min(1) }).optional(), draft: z.json().optional(), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional() }).parse(payload);
+      return reply(200, await draftProfile(projectRoot, input));
+    }
     if (url.pathname === '/api/profiles' && method === 'GET') { return reply(200, { profiles: await profiles.list(), builtins: ['implementer', 'verifier'].map(id => builtinProfile(id)) }); }
     if (url.pathname === '/api/profiles' && method === 'POST') {
       const input = z.strictObject({ id: z.string().min(1), name: z.string().min(1), template: z.enum(['implementer', 'verifier']) }).parse(payload);
@@ -91,9 +99,15 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       const draft = { ...builtinProfile(input.template), profileId: input.id, name: input.name };
       return reply(201, { metadata, draft, revision: await profiles.saveDraft(input.id, draft) });
     }
-    const profileMatch = /^\/api\/profiles\/([^/]+)\/(draft|publish|rename|clone|archive|restore|delete|versions)$/.exec(url.pathname);
+    const profileVersion = /^\/api\/profiles\/([^/]+)\/versions\/(\d+)$/.exec(url.pathname);
+    if (profileVersion && method === 'GET') return reply(200, { version: await getProfileVersion(projectRoot, decodeURIComponent(profileVersion[1]!), Number(profileVersion[2])) });
+    const profileMatch = /^\/api\/profiles\/([^/]+)\/(draft|publish|rename|clone|archive|restore|delete|versions|authoring|skills-status|usage|migrate)$/.exec(url.pathname);
     if (profileMatch) {
       const id = decodeURIComponent(profileMatch[1]!), action = profileMatch[2]!;
+      if (action === 'authoring' && method === 'GET') return reply(200, await getProfile(projectRoot, id));
+      if (action === 'skills-status' && method === 'GET') return reply(200, { skills: await profileSkillStatus(projectRoot, id) });
+      if (action === 'usage' && method === 'GET') return reply(200, { flows: await profileUsage(projectRoot, id) });
+      if (action === 'migrate' && method === 'POST') { const input = z.strictObject({ version: z.number().int().positive(), flows: z.array(z.strictObject({ flowId: z.string().min(1), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/) })) }).parse(payload); return reply(200, await migrateProfile(projectRoot, id, input.version, input.flows)); }
       if (action === 'draft' && method === 'GET') { return reply(200, await profiles.readDraftWithRevision(id)); }
       if (action === 'draft' && method === 'PUT') {
         const input = z.strictObject({ draft: z.json(), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional() }).parse(payload);
@@ -101,7 +115,7 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
         return reply(200, { saved: true, revision: await profiles.saveDraft(id, input.draft, input.expectedRevision) });
       }
       if (action === 'versions' && method === 'GET') { return reply(200, { versions: await profiles.versions(id) }); }
-      if (action === 'publish' && method === 'POST') { const input = z.strictObject({ expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional() }).parse(payload); return reply(200, { version: await profiles.publish(id, input.expectedRevision) }); }
+      if (action === 'publish' && method === 'POST') { const input = z.strictObject({ expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(), author: flowAuthorSchema.optional() }).parse(payload); return reply(200, { version: await publishProfile(projectRoot, id, { author: input.author ?? { kind: 'human' }, ...(input.expectedRevision ? { expectedRevision: input.expectedRevision } : {}) }) }); }
       if (action === 'rename' && method === 'POST') { const input = z.strictObject({ name: z.string().min(1) }).parse(payload); await profiles.rename(id, input.name); return reply(200, { renamed: true }); }
       if (action === 'clone' && method === 'POST') { const input = z.strictObject({ targetId: z.string().min(1), name: z.string().min(1) }).parse(payload); return reply(201, { metadata: await profiles.cloneDraft(id, input.targetId, input.name) }); }
       if ((action === 'archive' || action === 'restore') && method === 'POST') { await profiles.setArchived(id, action === 'archive'); return reply(200, { archived: action === 'archive' }); }

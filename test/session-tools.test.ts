@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
@@ -35,7 +36,7 @@ async function project() {
   const manager = await RunManager.open(repo, path.join(root, 's'), new RunnerRegistry([agents]));
   const runs = async () => manager, started: string[] = [];
   const tools = sessionToolHandlers(runs, createEditorApi(repo, runs), { onStart: runId => { started.push(runId); } });
-  return { repo, manager, tools, started };
+  return { repo, manager, tools, started, agents };
 }
 
 test('session tools cover the CLI commands; panel-only tools are marked', () => {
@@ -113,5 +114,40 @@ test('session authors a flow through shared API and cannot bypass project policy
     await writeFile(policyFile, JSON.stringify({ ...configuration, ai: { flowPublish: 'deny' } }));
     await assert.rejects(f.tools.flow_draft!({ flowId: 'another', from: { template: 'dev' } }), /disabled/);
     assert.equal((await f.tools.assess!({ task: 'nghiên cứu giải pháp' }) as { flowId: string }).flowId, 'research');
+  } finally { await f.manager.close(); }
+});
+
+test('fake runner receives pinned SKILL.md with its name and companion paths', async () => {
+  const f = await project();
+  try {
+    const skillPath = '.claude/skills/review/SKILL.md', folder = path.join(f.repo, '.claude/skills/review');
+    await mkdir(folder, { recursive: true });
+    const content = '---\nname: Review Guide\ndescription: Test skill\n---\nUse evidence.\n';
+    await writeFile(path.join(f.repo, skillPath), content); await writeFile(path.join(folder, 'reference.md'), 'Reference data');
+    const { ProfileLibrary } = await import('../src/storage/profile-library.js'), { builtinProfile } = await import('../src/runtime/project.js');
+    const profiles = new ProfileLibrary(path.join(f.repo, 'neomind/profiles')); await profiles.create('implementer', 'Implementer');
+    await profiles.saveDraft('implementer', { ...builtinProfile('implementer')!, skills: [{ id: 'review', path: skillPath, sha256: createHash('sha256').update(content).digest('hex') }] });
+    await profiles.publish('implementer');
+    const started = await f.tools.start!({ flowId: 'dev', task: 'Add proof' }) as { runId: string };
+    await f.manager.settle(started.runId);
+    const prompts = f.agents.started.flatMap(runner => runner.turns.map(turn => turn.request.prompt));
+    assert.ok(prompts.some(prompt => prompt.includes('Skill Review Guide (review):') && prompt.includes('Use evidence.') && prompt.includes('.claude/skills/review/reference.md')));
+    assert.ok(prompts.every(prompt => !prompt.includes('Reference data')));
+  } finally { await f.manager.close(); }
+});
+
+test('session profile authoring uses the shared policy and records AI provenance', async () => {
+  const f = await project();
+  try {
+    for (const name of ['skills', 'profile_get', 'profile_draft', 'profile_publish']) { assert.ok(SESSION_TOOLS.some(tool => tool.name === name)); assert.ok(f.tools[name]); }
+    const draft = await f.tools.profile_draft!({ profileId: 'custom', from: { profileId: 'implementer' } }) as { revision: string };
+    await f.tools.profile_publish!({ profileId: 'custom', expectedRevision: draft.revision, reason: 'Review profile' }, { sessionId: 's1' });
+    const profile = await f.tools.profile_get!({ profileId: 'custom' }) as { versions: { author: { kind: string; sessionId: string } }[] };
+    assert.equal(profile.versions[0]?.author.kind, 'ai'); assert.equal(profile.versions[0]?.author.sessionId, 's1');
+    const file = path.join(f.repo, 'neomind/project.json'), projectConfig = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    await writeFile(file, JSON.stringify({ ...projectConfig, ai: { profilePublish: 'draft-only' } }));
+    await assert.rejects(f.tools.profile_publish!({ profileId: 'custom', expectedRevision: draft.revision, reason: 'blocked' }), /disabled/);
+    await writeFile(file, JSON.stringify({ ...projectConfig, ai: { profilePublish: 'deny' } }));
+    await assert.rejects(f.tools.profile_draft!({ profileId: 'other', from: { profileId: 'implementer' } }), /disabled/);
   } finally { await f.manager.close(); }
 });
