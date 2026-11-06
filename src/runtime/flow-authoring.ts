@@ -3,7 +3,7 @@ import path from 'node:path';
 import { compileFlow, type Diagnostic } from '../domain/compiler.js';
 import { diffFlows, type FlowDiff } from '../domain/flow-diff.js';
 import { flowSchema, nodeSchema, profileSchema, projectSchema, type Flow } from '../domain/schema.js';
-import { defaultProject, templates } from '../domain/templates.js';
+import { defaultProject, newFlowFromTemplate, templates } from '../domain/templates.js';
 import { FlowLibrary, flowAuthorSchema, type FlowAuthor, type StoredFlowVersion } from '../storage/flow-library.js';
 import { ProfileLibrary } from '../storage/profile-library.js';
 import { projectDir } from '../storage/project-dir.js';
@@ -74,7 +74,7 @@ export async function draftFlow(root: string, input: DraftFlowInput) {
     if (input.draft !== undefined) draft = input.draft;
     else if (input.from && 'template' in input.from) {
       if (!Object.hasOwn(templates, input.from.template)) throw new Error('Unknown template');
-      draft = structuredClone(templates[input.from.template]);
+      draft = newFlowFromTemplate(input.from.template);
     } else if (input.from && 'flowId' in input.from) draft = await builtinFlow(store, input.from.flowId) ?? structuredClone(await store.readDraft(input.from.flowId));
     else throw new Error('Provide a draft or a source flow/template');
   }

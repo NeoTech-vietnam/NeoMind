@@ -81,7 +81,7 @@ export class RunManager {
     if (failures.length) throw new Error(failures.join('; '));
     return models;
   }
-  async create(flowId: string, task: string, version?: number, overrides: Record<string, BindingOverride> = {}, configurationHash?: string, limits: Partial<Flow['definition']['limits']> = {}, importDirty?: string, workspaceMode?: Flow['definition']['workspacePolicy']) {
+  async create(flowId: string, task: string, version?: number, overrides: Record<string, BindingOverride> = {}, configurationHash?: string, limits: Partial<Flow['definition']['limits']> = {}, importDirty?: string, workspaceMode?: Flow['definition']['workspacePolicy'], program?: { programId: string; phaseId: string }) {
     const snapshot = await snapshotProjectFlow(this.projectRoot, flowId, version, overrides, limits, workspaceMode);
     const diagnostics = standaloneDiagnostics(snapshot.configuration.flow);
     if (diagnostics.length) throw new Error(diagnostics.join(' '));
@@ -103,7 +103,7 @@ export class RunManager {
     for (const runner of selected) await this.runners.get(runner).verifyCapabilities();
     const selectionPolicy = (await readProject(this.projectRoot)).memorySelection;
     const memory = memoryForRun(this.projectRoot, path.join(this.stateRoot, 'coordination.sqlite'), task, selectionPolicy);
-    const run = await LocalRun.create({ projectRoot: this.projectRoot, stateRoot: this.stateRoot, task, snapshot, coordinator: this.coordinator, runners: this.runners, expectedSourceHead: sourceHead, ...(importDirty ? { importDirty } : {}),
+    const run = await LocalRun.create({ projectRoot: this.projectRoot, stateRoot: this.stateRoot, task, snapshot, coordinator: this.coordinator, runners: this.runners, expectedSourceHead: sourceHead, ...(importDirty ? { importDirty } : {}), ...(program ? { program } : {}),
       ...(memory ? { memory: formatMemorySnapshot(memory, task, selectionPolicy) } : {}) });
     this.runs.set(run.runId, run);
     for (const selection of selections) await run.durable.service.selectAllowedFallback(selection.key, selection.values, 'Lựa chọn chính không khả dụng; dùng model trong danh sách thay thế đã cấu hình');
@@ -187,7 +187,7 @@ export class RunManager {
       const run = await this.report(id);
       const flow = run.snapshot ? (run.snapshot as MaterializedRun).configuration.flow : undefined;
       const createdAt = (await new SingleOwnerJournal(await this.store.journal(id), id).read())[0]?.timestamp;
-      return { runId: id, task: run.runtimeContext?.task, flowId: flow?.flowId, flowName: flow?.name, createdAt, phase: run.runtimeState?.phase ?? 'recovering', reason: run.runtimeState?.reason ?? '', activeMs: run.runtimeState?.activeMs ?? 0 };
+      return { runId: id, task: run.runtimeContext?.task, flowId: flow?.flowId, flowName: flow?.name, createdAt, programId: run.runtimeContext?.programId, phaseId: run.runtimeContext?.phaseId, phase: run.runtimeState?.phase ?? 'recovering', reason: run.runtimeState?.reason ?? '', activeMs: run.runtimeState?.activeMs ?? 0 };
     } catch (error) { return { runId: id, task: id, createdAt: undefined, phase: 'blocked', reason: error instanceof Error ? error.message : String(error), activeMs: 0 }; }
   })); return runs.sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.runId.localeCompare(b.runId)); }
   private async owned(id: string) {

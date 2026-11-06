@@ -113,7 +113,7 @@ export class LocalRun {
   private get snapshot() { const snapshot = this.durable.service.snapshot; if (!snapshot) throw new Error('Real runtime requires a materialized snapshot'); return snapshot; }
   static async create(input: { projectRoot: string; stateRoot: string; task: string; snapshot: MaterializedRun; coordinator: WorkspaceCoordinator; workerFactory?: WorkerFactory; capabilityCheck?: typeof verifyRuntimeCapabilities; runners?: RunnerRegistry; memory?: NonNullable<RuntimeContext['memory']>; expectedSourceHead?: string;
     /** Baseline hash of the checkout, confirmed by the user, whose uncommitted changes are copied into the run worktree. */
-    importDirty?: string }) {
+    importDirty?: string; program?: { programId: string; phaseId: string } }) {
     if (!input.task.trim()) throw new Error('Task is required');
     const flow = input.snapshot.configuration.flow;
     const unsupported = standaloneDiagnostics(flow);
@@ -135,7 +135,7 @@ export class LocalRun {
     const store = await RunStore.open(path.join(input.stateRoot, 'runs'));
     const durable = await DurableRun.createMaterialized(store, input.coordinator, runId, input.snapshot);
     const context: RuntimeContext = { projectRoot, workspace, workspaceMode, initialIndexTree, task: input.task, sourceHead: baseline.head,
-      initialBaselineHash: (await captureBaseline(workspace)).baselineHash, lease, ...(input.memory ? { memory: input.memory } : {}), ...(imported ? { imported } : {}) };
+      initialBaselineHash: (await captureBaseline(workspace)).baselineHash, lease, ...(input.memory ? { memory: input.memory } : {}), ...(imported ? { imported } : {}), ...(input.program ?? {}) };
     const state: RuntimeState = { phase: 'paused', reason: 'Sẵn sàng bắt đầu', activeMs: 0, sessions: {} };
     await durable.service.initializeRuntime(context); await durable.service.checkpointRuntime(state);
     return new LocalRun(durable, context, input.coordinator, state, input.workerFactory, input.capabilityCheck, input.runners ?? defaultRunnerRegistry(input.workerFactory ? { workerFactory: input.workerFactory } : {}));

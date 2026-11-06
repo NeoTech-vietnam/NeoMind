@@ -57,7 +57,9 @@ export const nodeSchema = z.discriminatedUnion('type', [
     writeScopes: z.array(z.string().min(1)), outputContract: z.string().min(1),
     instructionsOverride: z.string().optional(), skillsOverride: z.array(skillReferenceSchema).optional() }),
   z.strictObject({ ...base, type: z.literal('review_group'), targetNodeId: id,
-    reviewers: z.array(reviewer).min(1), criteria: z.array(z.string().min(1)).min(1), checks: z.array(z.string().min(1)).optional() }),
+    reviewers: z.array(reviewer).min(1), criteria: z.array(z.string().min(1)).min(1), checks: z.array(z.string().min(1)).optional(),
+    // Each numbered step of the approved plan's approach becomes a required criterion; omitted keeps older flows' reviews unchanged.
+    planStepCriteria: z.boolean().optional() }),
   z.strictObject({ ...base, type: z.literal('repair_scope'), targetReviewId: id,
     ownerNodeIds: z.array(id).min(1), maxRounds: z.number().int().min(1) }),
 ]);
