@@ -74,7 +74,6 @@ button.nav-item.active-nav { background: var(--accent-soft); color: var(--accent
 .quiet-btn { padding: 0 10px; }
 .quiet-btn.icon { width: 34px; padding: 0; font-size: 16px; }
 .ghost-btn { border: 1px solid var(--accent-line); background: var(--surface); color: var(--accent-2); }
-.dashed-btn { width: 100%; background: var(--soft); border: 1px dashed var(--accent-line); border-radius: 8px; color: var(--accent-2); padding: 8px; font-size: 13px; font-weight: 600; margin-bottom: 14px; }
 .text-button { background: none; border: 0; color: var(--red); font-size: 12.5px; }
 .danger-link { border: 0; background: none; color: var(--red); font-size: 13px; font-weight: 600; padding: 0; }
 /* Alerts and callouts */
@@ -101,15 +100,6 @@ button.nav-item.active-nav { background: var(--accent-soft); color: var(--accent
 @keyframes pulse { 50% { opacity: .25; } }
 .hint { font-size: 12.5px; color: var(--ink-3); line-height: 1.5; margin-top: 10px; }
 .run-note { font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
-.field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
-.field > span { font-size: 12.5px; color: var(--ink-2); font-weight: 600; }
-.field small { font-size: 12px; color: var(--ink-4); line-height: 1.45; }
-.field input, .field select, .field textarea { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); padding: 7px 9px; font-size: 13.5px; outline: none; }
-.field textarea { resize: vertical; line-height: 1.45; }
-.field input:focus, .field select:focus, .field textarea:focus { border-color: var(--clay); box-shadow: 0 0 0 3px #d977571f; }
-.field-grid { display: grid; grid-template-columns: 84px 1fr; gap: 8px; }
-.check-row { display: flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 13px; margin: 8px 0 14px; }
-.check-row input { accent-color: var(--clay); }
 .empty-stage { min-height: calc(100vh - 165px); display: flex; align-items: center; justify-content: center; flex-direction: column; text-align: center; }
 .empty-stage h1 { font-size: 24px; letter-spacing: -.6px; }
 .empty-stage p { font-size: 14px; color: var(--ink-3); max-width: 380px; line-height: 1.6; margin: 10px 0 18px; }
@@ -162,10 +152,6 @@ button.nav-item.active-nav { background: var(--accent-soft); color: var(--accent
 .run-card summary { cursor: pointer; color: var(--accent-2); font-weight: 600; font-size: 13.5px; }
 .run-controls { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 0; }
 /* Start a run */
-.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; padding: 2px; background: var(--soft); width: fit-content; }
-.segmented button { border: 0; background: transparent; padding: 5px 11px; border-radius: 6px; font-size: 13px; font-weight: 600; color: var(--ink-3); white-space: nowrap; }
-.segmented button.on { background: var(--surface); color: var(--accent-2); box-shadow: 0 1px 3px #0000004d; }
-.segmented button:hover:not(.on) { color: var(--ink); }
 @keyframes shimmer { to { background-position: -200% 0; } }
 .fact { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .fact span { font-weight: 600; color: var(--ink-2); }
@@ -200,13 +186,11 @@ button.nav-item.active-nav { background: var(--accent-soft); color: var(--accent
 /* Dark theme details: form controls, scrollbars and React Flow chrome. */
 input, select, textarea { background-color: var(--field); color: var(--ink); }
 ::placeholder { color: var(--ink-4); }
-.segmented button.on { background: var(--soft); color: var(--accent-2); }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px; border: 2px solid var(--bg); }
 *::-webkit-scrollbar-track { background: transparent; }
 /* Agent activity: live lanes, finished-session lines and the session viewer (docs/design/mockups/03, 09) */
 .secondary-btn.small { height: 28px; padding: 0 11px; font-size: 12.5px; }
-.segmented.small button { padding: 3px 9px; font-size: 12px; }
 .switch { width: 26px; height: 15px; border-radius: 99px; background: var(--line); position: relative; flex: none; transition: background .15s; }
 .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%; background: var(--ink-3); transition: all .15s; }
 .switch.on { background: var(--accent-strong); }

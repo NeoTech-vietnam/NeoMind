@@ -1,9 +1,11 @@
 # NeoMind v1 — trạng thái implementation
 
 Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
-Bàn giao hiện tại: [05/11/2026 Flow Studio](session-handoff-2026-11-05-flow-studio.md); trước đó [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md). Phạm vi v1 rộng hơn tám việc vừa triển khai; đã có walkthrough browser cho Dev tuần tự bên dưới, các thao tác canvas nâng cao, Windows và host acceptance Nimbalyst vẫn cần kiểm chứng riêng.
+Bàn giao hiện tại: [06/11/2026 Flow Studio](session-handoff-2026-11-06-flow-studio.md); trước đó [05/11/2026 Flow Studio](session-handoff-2026-11-05-flow-studio.md), [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md). Phạm vi v1 rộng hơn tám việc vừa triển khai; đã có walkthrough browser cho Dev tuần tự bên dưới, các thao tác canvas nâng cao, Windows và host acceptance Nimbalyst vẫn cần kiểm chứng riêng.
 
 ## Thiết kế lại giao diện · GĐ 3 — 05/11/2026
+
+**Hoàn thiện 06/11:** Header dùng Button/DropdownMenu; inspector dùng Input, Textarea, Field và Select với portal chung. Tên bước sửa ở header; vòng sửa và join chọn bước bằng checkbox, vẫn hiển thị các ID cũ không còn phù hợp để có thể bỏ chọn. Đã xem gallery ở theme tối/sáng, 1440 và panel 900 với inspector, thêm bước, so sánh, lỗi, menu; CDP mở Select và chọn Opus 5.5, xác nhận chip `Claude Code · Opus 5.5`. TypeScript UI, build UI và build extension đạt; không chạy lại `npm test` theo yêu cầu. Chưa kiểm portal trong host Nimbalyst thật.
 
 Flow Studio trên branch `ui/redesign-p3`: header một hàng, dải thêm bước và tìm bằng `/`, thẻ React Flow theo token, inspector và ngăn Vấn đề, so sánh phiên bản trong sheet. Inspector panel dùng `SheetContent`; gallery `/__gallery/flow.html` dùng transport giả và chỉ có ở vite dev. Không đổi backend, không chạy flow thật. Validate không phân biệt mức độ nên mọi diagnostic được trình bày là lỗi; mô phỏng flow và cảnh báo riêng không hiển thị. So sánh từng thuộc tính tiếp tục dùng diff JSON hiện có.
 

@@ -31,11 +31,13 @@ setApiTransport(async (endpoint, method, body) => {
   return { status: 404, body: { error: `Gallery has no ${method} ${path}` } };
 });
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App shell={hash.includes('panel') ? 'panel' : 'web'} /></React.StrictMode>);
-const click = (find: () => Element | null | undefined, then?: () => void, tries = 80) => { const element = find(); if (element) { (element as HTMLElement).click(); then?.(); } else if (tries > 0) setTimeout(() => click(find, then, tries - 1), 100); };
+const click = (find: () => Element | null | undefined, then?: () => void, tries = 80) => { const element = find(); if (element) { if (element.getAttribute('aria-label') === 'Quản lý flow') element.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' })); else (element as HTMLElement).click(); then?.(); } else if (tries > 0) setTimeout(() => click(find, then, tries - 1), 100); };
 const byText = (selector: string, text: string) => () => [...document.querySelectorAll(selector)].find(item => item.textContent?.includes(text));
 click(byText('nav button, aside button', 'Flows'), () => {
   if (hash.includes('errors')) click(byText('button', 'Kiểm tra'));
   if (hash.includes('add')) click(() => document.querySelector('button[aria-label="Thêm bước"]'));
-  if (hash.includes('compare')) click(() => document.querySelector('[aria-label="Quản lý flow"]'), () => click(byText('button', 'So sánh phiên bản')));
+  if (hash.includes('compare')) click(() => document.querySelector('[aria-label="Quản lý flow"]'), () => click(byText('[role="menuitem"]', 'So sánh phiên bản')));
+  else if (hash.includes('menu')) click(() => document.querySelector('[aria-label="Quản lý flow"]'));
   if (hash.includes('insp')) click(() => document.querySelector('.react-flow__node[data-id="implement"]'));
+  if (hash.includes('repair')) click(() => document.querySelector('.react-flow__node[data-id="repair"]'));
 });
