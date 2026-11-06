@@ -54,6 +54,8 @@ flowchart LR
 
 **Chương trình nhiều giai đoạn (Gói 3, 06/11/2026):** `neomind_program_create`, `neomind_program_list`, `neomind_program_status`, `neomind_program_next` (chỉ gọi sau khi người dùng xác nhận kết quả giai đoạn trước đã vào branch; run mới được gắn vào session như `start`) và `neomind_program_deliver` (`confirmed: true`, đánh dấu giao khi Git không thấy commit). Panel Runs có nhóm Chương trình.
 
+**Rules (Gói 4, 06/11/2026):** tool `neomind_preview` trả thêm `rules` (`[R1] …`) và `ruleWarnings`; `neomind_flow_blocks` trả `rules` để AI biết review sẽ chấm theo rule. Không có tool sửa `rules.md`: rule là quyết định của người dùng, sửa qua Git.
+
 **Panel = editor đầy đủ.**
 - Phần định tuyến `/api/*` của server được tách thành `createEditorApi(projectRoot, runs)`. Server HTTP và backend extension dùng chung hàm này, và chung một `RunManager` trong process.
 - Panel render `App` của `ui/src` trong shadow root. CSS (`:root` → `:host`) không lẫn với Nimbalyst. `api()` có transport thay được: HTTP trong trình duyệt, `callBackendTool('neomind.api')` trong panel.

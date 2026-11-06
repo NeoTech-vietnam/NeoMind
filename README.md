@@ -58,6 +58,14 @@ npm run neomind -- profile author-publish /project my-profile <revision> "Lý do
 
 `profile migrate` chỉ sửa **draft** của các flow được chọn sang phiên bản profile mới (so revision từng flow); không publish flow. `ai.profilePublish` (`allow` mặc định, `draft-only`, `deny`) giới hạn tool AI như `ai.flowPublish`.
 
+## Rules của project
+
+`neomind/rules.md` (commit cùng repo) chứa các rule bắt buộc, mỗi rule một dòng có mã: `- [R1] Không sửa file ngoài phạm vi plan đã duyệt.` Dòng tiêu đề `#` và dòng trống được bỏ qua; dòng khác dạng hoặc mã trùng bị bỏ kèm cảnh báo. Khi tạo run, NeoMind ghim nội dung + hash rule vào run (sửa file sau đó không đổi run đang chạy), đưa rule vào prompt của mọi agent sau instructions của profile với nhãn "Rules của project (bắt buộc)" (khác memory chỉ để tham khảo), và thêm `Rule R1: …` thành tiêu chí bắt buộc của mọi review: thiếu kết luận hoặc vi phạm thì review không đạt. Preview (`Run mới`, tool `preview`) liệt kê rule sẽ áp dụng; chi tiết run hiện kết quả từng rule trong phần Kiểm tra. Flow (kể cả flow AI dựng) không tắt được rule. Project không có `rules.md` chạy như trước.
+
+```bash
+npm run neomind -- rules /project      # rule đã đọc và cảnh báo
+```
+
 ## Chương trình nhiều giai đoạn
 
 Một việc lớn chia thành các giai đoạn, mỗi giai đoạn là một run với flow đã publish (hoặc flow có sẵn). File `neomind/programs/<programId>.json` (nên commit) mô tả `{ schemaVersion: 1, programId, name, goal, phases: [{ id, title, task, flowId, dependsOn: [], runnerOverrides? }] }`. Trạng thái không lưu trong file mà suy ra từ các run có `programId`/`phaseId`: `blocked_by_dependency`, `ready`, `running`, `waiting_user`, `delivered`, `failed`. Giai đoạn chỉ `delivered` khi commit của run đã nằm trong HEAD của checkout (`git merge-base --is-ancestor`), khi thay đổi đã áp dụng vào checkout, khi run không đổi file nào (research), hoặc khi người dùng đánh dấu giao (squash/rebase) kèm ghi chú.

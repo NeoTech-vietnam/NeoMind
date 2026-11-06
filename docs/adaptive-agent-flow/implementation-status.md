@@ -3,6 +3,17 @@
 Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
 Bàn giao hiện tại: [06/11/2026 thiết kế lại](session-handoff-2026-11-06.md); trước đó [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md).
 
+## Nâng cấp NeoMind · Gói 4 — 06/11/2026
+
+Rules của project. `src/domain/rules.ts` parse `neomind/rules.md` (`- [R1] …`, mã duy nhất; dòng `#`/trống bỏ qua, dòng khác dạng hoặc trùng mã bỏ kèm cảnh báo). `RunManager.create` ghim `{ hash, rules }` vào `runtimeContext.rules` (chỉ khi có rule); `LocalRun.prompt` đưa khối "Rules của project (bắt buộc…)" vào mọi agent, sau instructions/skills của profile và trước memory; prompt sources thêm loại `rules` (enum `dataSourceSchema`). `reviewRequirements(flow, node, plan, rules)` thêm `Rule R1: …` cho **mọi** review (cả review nhánh) ở cả `LocalRun` và `CodexReviewDispatch`. Preview và tool `preview` trả `rules`/`ruleWarnings`; `flowBlocks` trả `rules`; CLI `rules <project>`, API `GET /api/rules`. UI: mục "Rules của project" trong Run mới (cảnh báo màu hổ phách) và dòng Rules trong phần Kiểm tra của run (Đạt / Vi phạm / Chưa xác nhận / Chưa chấm), gallery `runs.html#completed`, `#new,rulewarn`.
+
+Quyết định nhỏ: `configurationHash` của preview gồm hash rule **chỉ khi** project có rule (preview cũ vẫn khớp, sửa `rules.md` giữa preview và start bị phát hiện như đổi cấu hình). Không có tool sửa `rules.md` (rule do người dùng quyết qua Git). Codex vẫn tự đọc `AGENTS.md` (câu hỏi cũ, chưa chốt; ghi vào bàn giao).
+
+| Kiểm chứng Windows | Kết quả |
+| --- | --- |
+| `npm test` (commit `812bf0a`) | 251 test: 249 pass, 2 skip, 0 fail. `test/rules.test.ts`: rule có trong prompt planner/writer/reviewer (fake runner), ghim lúc tạo run (sửa file sau đó không đổi run), evidence thiếu `Rule R2` không phủ tiêu chí, project không có `rules.md` chạy như trước. |
+| TypeScript UI, build UI, build extension | Đạt; kiểm Run mới và chi tiết run bằng Edge headless (CDP). |
+
 ## Nâng cấp NeoMind · Gói 3 — 06/11/2026
 
 Chương trình nhiều giai đoạn. `src/runtime/programs.ts`: file `neomind/programs/<id>.json` (schema `programSchema`, kiểm ID trùng, phụ thuộc không tồn tại, vòng lặp; mọi `flowId` phải là flow project đã publish và chưa lưu trữ hoặc template có sẵn không bị che). Run mang `runtimeContext.programId/phaseId` (tùy chọn) và `RunManager.list()` trả hai trường này. `programStatus` suy ra trạng thái từ run mới nhất của mỗi giai đoạn; `startPhase`/`programNext` chỉ chạy giai đoạn `ready` (hoặc `failed` khi phụ thuộc đã giao, để chạy lại) với task + khối bài học ≤ 4.000 ký tự. Tool `program_create|list|status|next|deliver`; CLI `program create|list|status|next|deliver`; API `/api/programs…`. A3: `review_group.planStepCriteria?` + `planSteps()` trong `review-requirements.ts`; `newFlowFromTemplate('dev')` bật cờ cho flow mới tạo từ editor/`draftFlow`. UI: nhóm "Chương trình" trong danh sách run và sheet chi tiết (`ui/src/RunPrograms.tsx`), gallery `runs.html#completed,programs`.
