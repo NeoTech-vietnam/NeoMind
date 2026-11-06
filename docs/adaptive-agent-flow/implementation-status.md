@@ -11,7 +11,8 @@ Bàn giao hiện tại: [06/11/2026 thiết kế lại](session-handoff-2026-11-
 | --- | --- |
 | `npm test` | 222 test: 220 pass, 0 fail, 2 skip |
 | TypeScript UI, build UI, build extension | Đạt; panel `dist/index.js` 1.356.324 bytes, gzip 364,84 kB theo Vite. |
-| Edge headless | Gallery component/Runs/Flow Studio/Profiles/Memory, tối/sáng, web 1440/panel giả lập 900; kiểm Ctrl K, màn trống và portal trong shadow root giả lập. Chưa kiểm build mới trong host Nimbalyst. |
+| Edge headless | Gallery component/Runs/Flow Studio/Profiles/Memory, tối/sáng, web 1440/panel giả lập 900; kiểm Ctrl K, màn trống và portal trong shadow root giả lập. |
+| Panel trong Nimbalyst | Đạt (người dùng kiểm 06/11, sau khi merge GĐ 3–5): Runs, Flows, Profiles, Memory |
 
 Ảnh: `docs/design/redesign/after-*.png`; việc backend trong [kế hoạch](../design/redesign-plan.md). Cảnh báo build sourcemap Tailwind và URL `dist-ui` resolve khi chạy vẫn còn.
 

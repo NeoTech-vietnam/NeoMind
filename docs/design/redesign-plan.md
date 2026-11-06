@@ -1,6 +1,6 @@
 # Kế hoạch thiết kế lại UI NeoMind (editor web + extension Nimbalyst)
 
-Ngày: 05/11/2026. Trạng thái: **đã hoàn thành phần code GĐ 0–5**, gallery và tài liệu; kiểm bản build GĐ 5 trong host Nimbalyst thật còn chờ.
+Ngày: 05/11/2026. Trạng thái: **đã hoàn thành phần code GĐ 0–5**, gallery và tài liệu; người dùng kiểm bản GĐ 5 trong panel Nimbalyst đạt ngày 06/11.
 
 Đã chốt với người dùng:
 
@@ -275,7 +275,7 @@ Không đưa nội dung skill vào policy của NeoMind (giống quy tắc với
 
 Mỗi giai đoạn còn phải qua: `npm test`, `npm run build:ui`, build extension, ảnh chụp trước/sau trong `docs/design/redesign/`.
 
-Dấu ☑ xác nhận phần triển khai và gallery; kiểm host Nimbalyst thật cho bản GĐ 5 còn chờ.
+Dấu ☑ xác nhận phần triển khai và gallery; bản GĐ 5 đã được người dùng kiểm trong panel Nimbalyst (06/11).
 
 ### Việc backend sau này
 
