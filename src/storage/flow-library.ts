@@ -11,8 +11,10 @@ import { replaceJson } from './atomic-json.js';
 
 const idSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).refine(v => v !== '.' && v !== '..');
 const metadataSchema = z.strictObject({ schemaVersion: z.literal(1), flowId: idSchema, name: z.string().min(1), archived: z.boolean() });
+export const flowAuthorSchema = z.strictObject({ kind: z.enum(['human', 'ai']), sessionId: z.string().min(1).optional(), reason: z.string().min(1).optional() });
+export type FlowAuthor = z.infer<typeof flowAuthorSchema>;
 const versionSchema = flowSchema.extend({ semanticHash: z.string().regex(/^[a-f0-9]{64}$/),
-  contentHash: z.string().regex(/^[a-f0-9]{64}$/), createdAt: z.iso.datetime() });
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/), createdAt: z.iso.datetime(), author: flowAuthorSchema.optional() });
 export type FlowMetadata = z.infer<typeof metadataSchema>;
 export type StoredFlowVersion = z.infer<typeof versionSchema>;
 
@@ -80,6 +82,16 @@ export class FlowLibrary {
   saveDraft(flowId: string, draft: unknown, expectedRevision?: string | null): Promise<string> {
     return withLibraryLock(this.root, () => this.saveDraftUnlocked(flowId, draft, expectedRevision));
   }
+  /** Keep a draft update and its library name under the same lock and revision check. */
+  saveDraftWithName(flowId: string, draft: unknown, expectedRevision: string, name: string): Promise<string> {
+    return withLibraryLock(this.root, async () => {
+      const current = await this.metadata(flowId);
+      const next = metadataSchema.parse({ ...current, name });
+      const revision = await this.saveDraftUnlocked(flowId, draft, expectedRevision);
+      if (current.name !== next.name) await replaceJson(this.metadataFile(flowId), next);
+      return revision;
+    });
+  }
   private async saveDraftUnlocked(flowId: string, draft: unknown, expectedRevision?: string | null): Promise<string> {
     await this.metadata(flowId); // A draft may be incomplete, but must belong to an existing flow.
     if (expectedRevision !== undefined && await this.draftRevision(flowId) !== expectedRevision) throw new RevisionConflict('Draft đã bị sửa ở nơi khác (editor khác hoặc CLI); tải lại trước khi lưu');
@@ -105,21 +117,21 @@ export class FlowLibrary {
       .filter(name => /^\d{6}\.json$/.test(name)).map(name => Number(name.slice(0, 6))).sort((a, b) => a - b);
   }
   /** Publish the stored draft; with `expectedRevision`, only the draft revision the caller has seen. */
-  publish(flowId: string, policy: ProjectPolicy, expectedRevision?: string): Promise<StoredFlowVersion> {
-    return withLibraryLock(this.root, () => this.publishUnlocked(flowId, policy, expectedRevision));
+  publish(flowId: string, policy: ProjectPolicy, expectedRevision?: string, author?: FlowAuthor): Promise<StoredFlowVersion> {
+    return withLibraryLock(this.root, () => this.publishUnlocked(flowId, policy, expectedRevision, author));
   }
-  private async publishUnlocked(flowId: string, policy: ProjectPolicy, expectedRevision?: string): Promise<StoredFlowVersion> {
+  private async publishUnlocked(flowId: string, policy: ProjectPolicy, expectedRevision?: string, author?: FlowAuthor): Promise<StoredFlowVersion> {
     const metadata = await this.metadata(flowId);
     if (metadata.archived) throw new Error('Archived flow cannot be published');
     const { draft, revision } = await this.readDraftWithRevision(flowId);
     if (expectedRevision !== undefined && revision !== expectedRevision) throw new RevisionConflict('Draft đã bị sửa ở nơi khác; tải lại trước khi publish');
-    const compiled = compileFlow(draft, policy);
+    const compiled = compileFlow(draft, policy, { aiAuthored: author?.kind === 'ai' });
     if (!compiled.ok) throw new Error(`Invalid draft: ${compiled.diagnostics.map(d => d.code).join(', ')}`);
     if (compiled.flow.flowId !== flowId) throw new Error('Draft flow ID mismatch');
     const versions = await this.versions(flowId);
     const version = (versions.at(-1) ?? 0) + 1;
     const flow: Flow = { ...compiled.flow, flowId, version, name: metadata.name };
-    const stored = versionSchema.parse({ ...flow, ...flowHashes(flow), createdAt: new Date().toISOString() });
+    const stored = versionSchema.parse({ ...flow, ...flowHashes(flow), createdAt: new Date().toISOString(), ...(author ? { author } : {}) });
     const destination = this.versionFile(flowId, version);
     const temporary = `${destination}.${randomUUID()}.tmp`;
     try {
@@ -135,7 +147,7 @@ export class FlowLibrary {
     await rejectSymlink(this.versionFile(flowId, version));
     const stored = versionSchema.parse(JSON.parse(await readFile(this.versionFile(flowId, version), 'utf8')));
     if (stored.flowId !== flowId || stored.version !== version) throw new Error('Flow version identity mismatch');
-    const { semanticHash, contentHash, createdAt: _createdAt, ...flow } = stored;
+    const { semanticHash, contentHash, createdAt: _createdAt, author: _author, ...flow } = stored;
     const actual = flowHashes(flow);
     if (actual.semanticHash !== semanticHash || actual.contentHash !== contentHash) throw new Error('Flow version hash mismatch');
     return stored;

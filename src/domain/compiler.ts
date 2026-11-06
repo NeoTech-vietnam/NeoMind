@@ -1,5 +1,6 @@
 import { flowSchema, projectPolicySchema, type Flow, type ProjectPolicy } from './schema.js';
 import path from 'node:path';
+import { templates } from './templates.js';
 
 export interface Diagnostic { code: string; message: string; nodeId?: string }
 export type Compilation =
@@ -7,7 +8,7 @@ export type Compilation =
   | { ok: false; diagnostics: Diagnostic[] };
 
 /** Validate a persisted graph before it can be published or dispatched. */
-export function compileFlow(input: unknown, policyInput: unknown, options: { legacyExceptions?: boolean } = {}): Compilation {
+export function compileFlow(input: unknown, policyInput: unknown, options: { legacyExceptions?: boolean; aiAuthored?: boolean } = {}): Compilation {
   const parsed = flowSchema.safeParse(input);
   const parsedPolicy = projectPolicySchema.safeParse(policyInput);
   if (!parsed.success || !parsedPolicy.success) {
@@ -36,6 +37,7 @@ export function compileFlow(input: unknown, policyInput: unknown, options: { leg
   if (!nodes.some(n => n.type === 'finish')) issue('missing_finish', 'At least one finish node is required.');
   if (limits.maxConcurrency > policy.maxConcurrency) issue('concurrency_limit', 'Flow concurrency exceeds project policy.');
   if (limits.maxRepairRounds > policy.maxRepairRounds) issue('repair_limit', 'Flow repair budget exceeds project policy.');
+  if (options.aiAuthored && limits.activeTimeSeconds > Math.min(templates.dev.definition.limits.activeTimeSeconds, policy.maxActiveTimeSeconds ?? Infinity)) issue('ai_limit_exceeded', 'AI-authored flow time exceeds the project or Dev limit.');
 
   const outgoing = new Map(nodes.map(n => [n.id, [] as string[]]));
   const incoming = new Map(nodes.map(n => [n.id, [] as string[]]));

@@ -66,7 +66,7 @@ export async function snapshotProjectFlow(projectRoot: string, flowId: string, v
     if (metadata.archived) throw new Error('Archived flow cannot start a new run');
     const selected = version ?? (await library.versions(flowId)).at(-1);
     if (!selected) throw new Error('Publish the flow before starting a run');
-    const { semanticHash: _s, contentHash: _h, createdAt: _c, ...stored } = await library.readVersion(flowId, selected); flow = stored;
+    const { semanticHash: _s, contentHash: _h, createdAt: _c, author: _a, ...stored } = await library.readVersion(flowId, selected); flow = stored;
   } else {
     if (!Object.hasOwn(templates, flowId)) throw new Error('Unknown flow');
     flow = structuredClone(templates[flowId as keyof typeof templates]);
