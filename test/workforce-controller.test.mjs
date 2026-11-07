@@ -788,6 +788,86 @@ test('quality escalation is reserved before the no-progress guard and cannot res
   assert.equal(workforceRecoveryDecision(state, 'implementation', 'same-checkpoint', [], false).allowed, false);
 });
 
+test('a confirmed answer resumes a blocked implementation incident from its retained typed diagnosis without another PM call', { timeout: 180000 }, async t => {
+  const name = 'confirmed-input-recovery', root = await fixture(t, [name], { repair: true });
+  const priorRun = OpenCodeSession.prototype.run;
+  let reviews = 0, diagnoses = 0, entered, release;
+  const diagnosisEnded = new Promise(resolve => { entered = resolve; });
+  const allowReturn = new Promise(resolve => { release = resolve; });
+  t.after(() => { release(); OpenCodeSession.prototype.run = priorRun; });
+  async function boundCalls(session, operation) {
+    const context = ownedContext(root, session.receipt.request_id), binding = { ...context.binding, invocation_id: session.receipt.id };
+    const server = createControlledMcpServer(root, binding, context.callbacks), client = new Client({ name: 'confirmed-input-fixture', version: '1' });
+    const [ct, st] = InMemoryTransport.createLinkedPair(); await server.connect(st); await client.connect(ct);
+    try {
+      await operation(async (tool, args) => {
+        const result = await client.callTool({ name: tool, arguments: args });
+        assert.ok(!result.isError, JSON.stringify(parsed(result))); return parsed(result);
+      });
+    } finally { await client.close(); await server.close(); }
+  }
+  OpenCodeSession.prototype.run = async function () {
+    const context = ownedContext(root, this.receipt.request_id), stage = context.binding.stage;
+    if (stage === 'review' && ++reviews === 2) {
+      await boundCalls(this, async call => {
+        await call('project_read', { path: `products/${name}.json` });
+        await call('assignment_report', { summary: 'The result is correct; the local delivery choice requires PM clarification.', verdict: 'fail', failure_kind: 'unknown' });
+      });
+      await this.complete('completed', null); return;
+    }
+    if (stage === 'diagnosis' && ++diagnoses === 1) {
+      await boundCalls(this, async call => {
+        await call('project_read', { path: 'requirements.md' });
+        await call('request_input', { question: 'Which supported delivery label should be used?', missing: 'The local delivery label is unspecified.',
+          why_cannot_infer: 'requirements.md lists Alpha and Beta without selecting a label.', criterion: 'The delivered result uses the selected local label.',
+          category: 'business-choice', searched_paths: ['requirements.md'] });
+      });
+      await this.complete('completed', null); return;
+    }
+    if (stage === 'diagnosis') {
+      const complete = this.complete;
+      this.complete = async (...args) => { await complete(...args); entered(); await allowReturn; };
+    }
+    return priorRun.call(this);
+  };
+  const started = await startControlledWorkflow(root, { requirement: `Case: ${name}\nCreate and independently verify the JSON result; deliver it locally using the confirmed business label.` });
+  const asked = await wait(root, started.workflow_id, 'needs_input');
+  await answerControlledWorkflow(root, started.workflow_id, 'Use Alpha and deliver the result locally.', asked.pending_question.id);
+  await diagnosisEnded;
+  const pausing = controlControlledWorkflow(root, { workflow_id: started.workflow_id, action: 'pause' });
+  await wait(root, started.workflow_id, 'paused'); release(); await pausing;
+  const retained = controlledStatus(root, started.workflow_id), diagnosis = retained.attempts.at(-1);
+  assert.equal(diagnosis.stage, 'diagnosis'); assert.equal(diagnosis.report.failure_kind, 'implementation');
+  assert.equal(readInvocation(root, diagnosis.invocation_id).state, 'completed');
+  const receiptPath = safePath(root, `.workforce/native/receipts/${diagnosis.invocation_id}.json`), originalReceipt = readFileSync(receiptPath);
+  const originalReport = JSON.stringify(getRecord(root, diagnosis.report_id)), originalStrategies = structuredClone(retained.workforce_recovery.strategies);
+  const statePath = safePath(root, `.workforce/controlled/workflows/${hash(started.workflow_id)}.json`);
+  // Reproduce the old runtime's semantic stop. Its authentic completed report,
+  // issued answer, signatures and old strategy usage remain untouched.
+  retained.attempts.at(-1).state = 'completed'; // Its already verified native receipt completed before the fixture pause.
+  retained.status = 'blocked'; retained.blocker = { kind: 'implementation', code: 'WORKFORCE_OPERATIONAL_INCIDENT', owner: 'runtime',
+    message: 'No untried recovery strategy remains at this semantic checkpoint.' };
+  retained.incident_condition = { code: 'runtime', build: 'same-installed-build', configuration: 'same-configuration', free_bytes: 0, required_bytes: 0, at: new Date().toISOString() };
+  const consumed = structuredClone(retained);
+  workforceRecoveryDecision(consumed, 'implementation', 'fixture-consumed-input', [], false);
+  consumed.workforce_recovery.no_progress = retained.workforce_recovery.no_progress;
+  atomicWrite(statePath, JSON.stringify(consumed));
+  const unchanged = await controlControlledWorkflow(root, { workflow_id: started.workflow_id, action: 'resume' });
+  assert.equal(unchanged.status, 'blocked', 'An already-consumed answer cannot repeatedly restore the same implementation incident.');
+  assert.deepEqual(unchanged.workforce_recovery.strategies, originalStrategies);
+  atomicWrite(statePath, JSON.stringify(retained));
+  const resumed = await controlControlledWorkflow(root, { workflow_id: started.workflow_id, action: 'resume' });
+  assert.notEqual(resumed.status, 'blocked', 'A newly committed answer must pass the real Resume incident gate.');
+  const done = await wait(root, started.workflow_id);
+  assert.equal(done.status, 'completed'); assert.equal(done.epoch_id, retained.epoch_id);
+  assert.equal(diagnoses, 2, 'The completed post-answer diagnosis is reused, never dispatched again.');
+  assert.ok(done.diagnosis_reconciliations.some(item => item.attempt_id === diagnosis.id && item.source === 'explicit-field'));
+  assert.deepEqual(done.workforce_recovery.strategies.slice(0, originalStrategies.length), originalStrategies);
+  assert.equal(JSON.stringify(getRecord(root, diagnosis.report_id)), originalReport);
+  assert.deepEqual(readFileSync(receiptPath), originalReceipt);
+  assert.ok(done.checks.some(check => check.passed && !check.negative)); assert.deepEqual(errors, []);
+});
+
 test('a delayed duplicate Q1 answer cannot consume or replace a newer Q2', { timeout: 90000 }, async t => {
   const root = await fixture(t, ['two-questions'], { questions: 2 });
   const started = await startControlledWorkflow(root, { requirement: 'Case: two-questions\nCreate the requested JSON result with the confirmed business choices.' });

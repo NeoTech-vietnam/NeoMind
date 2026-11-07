@@ -125,7 +125,7 @@ export interface ControlledSnapshot {
   answers?: { question_id: string; question: string; answer: string; at: string }[];
   answer_receipt?: { question_id: string; accepted: true; replayed: boolean };
   workforce_recovery?: { strategies: { checkpoint: string; strategy: string; kind: FailureKind; at: string; source_attempt_id?: string }[];
-    strong_implementation: boolean; no_progress: number; resolved_checks: string[]; incident?: string };
+    strong_implementation: boolean; no_progress: number; resolved_checks: string[]; incident?: string; confirmed_answers_sha256?: string };
   protocol_reconciliations?: { invocation_id: string; attempt_id: string; checked_at: string; completed_operations: string[]; retained_report_id?: string; diagnosis_attempt_id?: string }[];
   model_escalations?: { source_attempt_id: string; source_report_id?: string; from_alias: string; to_alias: string; checkpoint: string; rationale: string; at: string }[];
   incident_condition?: { code: string; build: string; configuration: string; free_bytes: number; required_bytes: number; at: string; prerequisite?: WorkForcePrerequisite };
@@ -158,7 +158,7 @@ export interface ControlledSnapshot {
     record_fingerprints: Record<string, string>; prepared?: { note_id: string; record_fingerprint: string;
       mode: 'canonical-restoration' | 'committed-generation' }[] };
   diagnosis_reconciliations?: { id: string; attempt_id: string; invocation_id: string; report_id: string;
-    report_fingerprint: string; baseline_hash: string; failure_kind: FailureKind; source: 'anchored-finding'; index: number }[];
+    report_fingerprint: string; baseline_hash: string; failure_kind: FailureKind; source: 'anchored-finding' | 'explicit-field'; index?: number }[];
   /** One bounded strong diagnosis request per immutable failed-attempt/checker checkpoint. */
   diagnosis_sources?: ControlledDiagnosisSource[];
   local_executions?: { id: string; attempt_id: string; request_hash: string; title: string; state: 'running' | 'completed';
@@ -171,9 +171,26 @@ export interface ControlledSnapshot {
     evidence_input?: ControlledCheckReceipt['evidence_input']; command?: string[]; negative?: boolean; expected_exit_code?: number; purpose?: 'self-check' | 'intended-use' }[];
 }
 /** Semantic recovery ledger is independent of legacy repair counters and attempt IDs. */
+function workforceConfirmedAnswerHash(run: Pick<ControlledSnapshot, 'answers'>): string | undefined {
+  const content = [...new Set((run.answers ?? []).map(item => canonicalJson({ question: item.question.trim(), answer: item.answer.trim() })))].sort();
+  return content.length ? hash(canonicalJson(content)) : undefined;
+}
+export function workforceRecoveryCheckpoint(run: ControlledSnapshot, condition: string | undefined, progress: string[]): string {
+  const answers = workforceConfirmedAnswerHash(run);
+  return hash(canonicalJson({ contract: run.contract_hash ?? run.request_id, condition: condition ?? null,
+    resolved: [...new Set([...(run.workforce_recovery?.resolved_checks ?? []), ...progress])].sort(),
+    ...(answers ? { confirmed_answers: answers } : {}) }));
+}
 export function workforceRecoveryDecision(run: ControlledSnapshot, kind: FailureKind, checkpoint: string,
   progress: string[], sourceWorker: boolean): { allowed: boolean; strategy?: string; strong?: boolean; reason?: string } {
   const state = run.workforce_recovery ?? { strategies: [], strong_implementation: false, no_progress: 0, resolved_checks: [] };
+  const answers = workforceConfirmedAnswerHash(run);
+  if (answers && state.confirmed_answers_sha256 !== answers) {
+    // A committed business answer changes task inputs, not test verdicts or
+    // historical strategy usage. Ignore question IDs and timestamps so another
+    // delivery of the same answer cannot manufacture progress.
+    state.no_progress = 0; state.confirmed_answers_sha256 = answers;
+  }
   const progressed = progress.some(title => !state.resolved_checks.includes(title));
   if (progressed) { state.no_progress = 0; state.resolved_checks = [...new Set([...state.resolved_checks, ...progress])]; }
   const strong = kind === 'implementation' && sourceWorker && !state.strong_implementation;
@@ -2260,17 +2277,20 @@ class Controller {
       .map(item => ({ title: item.title, passed: item.passed, observed_passed: item.observed_passed,
         checker_scope_current: item.checker_scope_current, exit_code: item.exit_code, evidence: item.log_path })) };
   }
-  /** Reconcile a precise legacy professional marker without rewriting its signed report. */
+  /** Reuse a completed professional diagnosis only after authenticating its
+   * exact typed/legacy classification, signed actor and current artifacts. */
   private reconcileCompletedDiagnosis(run: ControlledSnapshot, contract: Contract): boolean | undefined {
     const attempt = run.attempts.at(-1);
     if (run.phase !== 'diagnosis' || attempt?.stage !== 'diagnosis' || attempt.role !== 'manager' ||
         attempt.purpose === 'specialist' || attempt.state !== 'completed' || attempt.report?.outcome !== 'completed' ||
-        attempt.report.failure_kind !== undefined || !attempt.invocation_id || !attempt.report_id || !attempt.report_fingerprint)
+        !attempt.invocation_id || !attempt.report_id || !attempt.report_fingerprint)
       return undefined;
     let classification;
     try { classification = classifyControlledDiagnosisReport(attempt.report); } catch { return undefined; }
-    if (classification?.source !== 'anchored-finding' || classification.index === undefined) return undefined;
+    if (!classification || classification.source === 'anchored-finding' && classification.index === undefined) return undefined;
     const report = getRecord(this.root, attempt.report_id), receipt = readInvocation(this.root, attempt.invocation_id);
+    if (run.answers?.length && !receipt.input_text.includes(`Confirmed user business answers:\n${JSON.stringify(run.answers)}`))
+      return undefined; // A pre-answer diagnosis needs fresh professional assessment of the changed inputs.
     const baseline = attempt.bound_hashes ?? {};
     if (report.meta.type !== 'knowledge' || report.meta.owner !== 'manager' ||
         evidenceRecordFingerprint(report) !== attempt.report_fingerprint || report.meta.data.kind !== 'controlled-work-record' ||
@@ -2300,7 +2320,7 @@ class Controller {
       this.block(run, 'unknown', 'The authenticated diagnosis explicitly reports an unknown cause; no bounded repair was inferred.'); return false;
     }
     const repaired = this.repair(run, classification.failure_kind,
-      `Backend read the explicit anchored ${classification.failure_kind} classification from the unchanged completed diagnosis. ${attempt.report.summary}`, true);
+      `Backend read the ${classification.source} ${classification.failure_kind} classification from the unchanged completed diagnosis. ${attempt.report.summary}`, true);
     if (repaired) save(this.root, run, 'diagnosis-reconciled', 'An explicit professional finding was classified under its original signed report and current artifacts; the historical report and its payload hash were not rewritten.');
     return repaired;
   }
@@ -2390,9 +2410,7 @@ class Controller {
     // resolved engineering check or restored local prerequisite.
     const condition = [...(run.runtime_observations ?? [])].reverse().find(observation =>
       ['storage-sqlite-write-restored', 'known-prerequisite-restored', 'trusted-runtime-or-configuration-changed'].includes(observation.kind));
-    const checkpoint = hash(canonicalJson({ contract: run.contract_hash ?? run.request_id,
-      condition: condition?.evidence_sha256 ?? null,
-      resolved: [...new Set([...state.resolved_checks, ...progress])].sort() }));
+    const checkpoint = workforceRecoveryCheckpoint(run, condition?.evidence_sha256, progress);
     const sourceWorker = !!producer && producer.model_tier !== 'strong';
     const decision = workforceRecoveryDecision(run, kind, checkpoint, progress, sourceWorker);
     run.blocker = { kind, message: message.slice(0, 4000), owner: 'runtime' };
@@ -2662,6 +2680,7 @@ class Controller {
     const previous = run.incident_condition;
     if (!previous) return false;
     const build = createRuntimeInfo(this.root).build_fingerprint, configuration = hash(canonicalJson(routingConfigurationHashes(this.root)));
+    const confirmedAnswers = workforceConfirmedAnswerHash(run);
     let observation: { kind: string; evidence_sha256: string } | undefined;
     if (previous.code === 'storage') {
       const probe = probeOpenCodeStorage(this.root);
@@ -2682,6 +2701,12 @@ class Controller {
         const path = safePath(this.root, '.workforce/setup/model-capabilities.json');
         observation = { kind: 'provider-capability-restored', evidence_sha256: hash(readFileSync(path)) };
       }
+    } else if (previous.code === 'runtime' && confirmedAnswers &&
+        confirmedAnswers !== run.workforce_recovery?.confirmed_answers_sha256) {
+      // An issued, committed answer can resolve a semantic maintenance stop
+      // even when infrastructure is unchanged. It cannot restore a provider,
+      // storage or executable prerequisite, or establish product acceptance.
+      observation = { kind: 'confirmed-business-input-changed', evidence_sha256: confirmedAnswers };
     } else if (['protocol', 'environment', 'unknown'].includes(run.blocker?.kind ?? '') && (build !== previous.build || configuration !== previous.configuration)) {
       observation = { kind: 'trusted-runtime-or-configuration-changed', evidence_sha256: hash(canonicalJson({ build, configuration })) };
     }
