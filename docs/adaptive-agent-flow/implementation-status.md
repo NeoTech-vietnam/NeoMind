@@ -60,10 +60,11 @@ Quyết định đã hỏi: trần project lưu tại `policy.maxActiveTimeSecon
 | Kiểm chứng Windows | Kết quả |
 | --- | --- |
 | `npm test` | Chạy đầy đủ một lần: 236 test, 234 pass, 2 skip, 0 fail. Lượt này hoàn tất **trước** sửa khóa cạnh tranh khi đổi tên draft. |
-| Sau sửa khóa | Build core và 30 test liên quan (authoring, library, lock, editor API, session tools/fake runner) đều đạt; thêm test hai thao tác đổi tên cùng revision chỉ có một thao tác thắng. Chưa chạy lại toàn bộ suite để giữ yêu cầu một lượt. |
+| Sau sửa khóa | Build core và 30 test liên quan (authoring, library, lock, editor API, session tools/fake runner) đều đạt; thêm test hai thao tác đổi tên cùng revision chỉ có một thao tác thắng. |
+| Code cuối của Gói 1 (session điều phối chạy lại) | `npm test` đầy đủ: 237 test, 235 pass, 2 skip, 0 fail. |
 | TypeScript UI, build UI, build extension | Đạt sau sửa khóa; không cài extension, không chạy flow thật. Gallery `flow.html#ai,compare` và panel sáng `#panel,light,ai,insp` đã kiểm bằng Edge. |
 
-Người dùng đã chọn giữ ý nghĩa `contentHash` hiện tại: `author` là metadata như `createdAt`, không có hash xác thực riêng. Session điều phối có thể quyết định có chạy lại toàn suite trên commit cuối hay không; Gói 2–5 chưa thực hiện.
+Session điều phối quyết định giữ ý nghĩa `contentHash` hiện tại: `author` là metadata như `createdAt`, không có hash xác thực riêng (lịch sử Git đủ để truy vết ai sửa file phiên bản).
 
 ## Thiết kế lại giao diện · GĐ 5 — 06/11/2026
 
