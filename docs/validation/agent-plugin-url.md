@@ -38,6 +38,20 @@ desktop applications, edit live VS Code configuration, read catalog credentials
 or perform model inference. The focused GitHub Actions workflow repeats this
 scope on Windows and Ubuntu; its remote result is separate from the local pass.
 
+## Published-package round trip
+
+The public repository was created with default branch `main` and cloned from its
+actual GitHub URL. All 16 distribution files matched the canonical package after
+normalizing Git text line endings. The clone contained no `node_modules`.
+
+Using the clone's exact MCP manifest command, an actual stdio client connected it
+to the installed native WorkForce `0.2.0-alpha.2` release in an isolated fixture.
+`workforce_connection` returned `CONNECTED`; discovery returned the three runtime
+intake tools plus the connection tool; `request_status` returned
+`{ "requests": [] }`. No model was called and no live User/workspace settings
+were changed. Distribution commit:
+[`f1c7f34`](https://github.com/NeoTech-vietnam/WorkForce-Agent-Plugin/commit/f1c7f34).
+
 ## Acceptance boundary
 
 This update establishes the machine-independent URL package and automated MCP

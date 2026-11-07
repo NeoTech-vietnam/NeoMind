@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -35,7 +35,7 @@ test('plugin packages the real runtime profiles and exact-project MCP without co
   const mcp = JSON.parse(readFileSync(join(out, 'mcp.json')));
   assert.deepEqual(Object.keys(mcp.mcpServers), ['workforce']);
   assert.deepEqual(mcp.mcpServers.workforce, { type: 'stdio', command: 'node',
-    args: [join(runtime, 'dist/cli.js'), 'mcp', '--project', project] });
+    args: [join(realpathSync.native(runtime), 'dist/cli.js'), 'mcp', '--project', realpathSync.native(project)] });
   assert.doesNotMatch(JSON.stringify(mcp), /\$\{workspaceFolder\}/);
   const agents = files(join(out, 'com.github.copilot/agents'));
   assert.equal(agents.length, 6);
