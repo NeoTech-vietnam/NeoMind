@@ -48,7 +48,7 @@ test('facade active_agents and acceptance revision reach the active UI without i
 
 test('active extension manifest exposes one request tool and the WorkForce entry points', () => {
   const manifest = JSON.parse(readFileSync(new URL('../extensions/vscode-model-bridge/package.json', import.meta.url), 'utf8'));
-  assert.equal(manifest.name, 'workforce-model-bridge'); assert.equal(manifest.publisher, 'workforce'); assert.equal(manifest.version, '0.12.0');
+  assert.equal(manifest.name, 'workforce-model-bridge'); assert.equal(manifest.publisher, 'workforce'); assert.equal(manifest.version, '0.12.1');
   assert.equal(manifest.engines.vscode, '^1.143.0');
   assert.deepEqual(manifest.contributes.languageModelTools.map(tool => tool.name), ['workforce_request']);
   assert.ok(manifest.contributes.commands.some(command => command.command === 'workforce.pm.openLocal'));
