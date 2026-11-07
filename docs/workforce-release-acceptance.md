@@ -1,14 +1,18 @@
 # WorkForce candidate acceptance
 
-The candidate is runtime `workforce@0.2.0-alpha.1`, VSIX `workforce.workforce-model-bridge@0.12.0`, and pinned OpenCode `1.19.4`. Its intended GitHub tag is `workforce-v0.2.0-alpha.1`. Candidate packaging does not publish that tag or release.
+The candidate is runtime `workforce@0.2.0-alpha.3`, VSIX `workforce.workforce-model-bridge@0.12.1`, and pinned OpenCode `1.19.4`. Its intended GitHub tag is `workforce-v0.2.0-alpha.3`. Candidate packaging does not publish that tag or release.
 
 Start a new report from [the acceptance template](validation/workforce-release-acceptance.template.json). Every pending field needs observed evidence or an explicit limitation. Never copy an earlier release's successful result into a new source or artifact baseline.
+
+Bind this report to the frozen alpha.3 source commit, the actual alpha.3 runtime archives and 0.12.1 VSIX bytes. Alpha.2 results, earlier Agent Plugin trials and other installed fingerprints remain historical context. Publishing a prerelease must preserve pending, failed and unavailable observations; publication is distinct from a claim that every client or task family passed.
 
 The same `npm test` command runs locally and in Windows/Ubuntu CI: build succeeds first, then Node runs every `test/*.test.mjs` file with file concurrency `2`. This preserves the complete selected suite and its deadlines. `test/diagnostics/opencode-http-lifecycle.test.mjs` is a separate reproduction of the discontinued synchronous HTTP interface's long timeout; it is intentionally operator-run rather than part of the normal suite. The active asynchronous engine fault regressions remain in the normal suite.
 
 Each native CI job builds its runtime and VSIX, extracts its portable asset, exercises installed-package mechanics, and retains checksums and validation reports. Match both jobs to the same exact source commit. When assembling their artifacts, retain both native runtimes and one reviewed VSIX; verify identically named files instead of overwriting one platform's evidence with another. Keep candidate assets separate from older local builds. See [installation](install-release.md).
 
 Actual Windows acceptance uses those extracted candidate bytes and the installed matching VSIX. Record the expected, configured User, imported, and loaded runtime identities, extension fingerprint, exact project, client versions, original prompt and attachment hashes, request identity, useful final products, independent review/test evidence, preservation and reload behavior. The Local Copilot driver refuses a configured runtime other than its reviewed target and never changes permissions, approves native dialogs, or authorizes inference itself. Its synthetic tests verify driver mechanics only.
+
+Include the installation path a user actually exercises: extracted `workforce` package directory, **User** `workforce.bridge.runtimePath` as a string, then Local customendpoint catalog auto-discovery or explicit **Choose model catalog**. Exercise supported JSONC catalogs, including comments/trailing commas, and preserve the user's `top-models`/`worker-models` aliases or explicitly selected alternatives. Observe the actual model/tool capability proof; catalog parsing and alias selection alone do not establish provider access. Keys stay in the existing catalog and are excluded from public reports.
 
 The original LeetCode prompt, other representative product families, shared Codex/Universe entrypoints, existing-project upgrade and qualified reuse must meet [the accepted plan](plans/2026-10-28-workforce-final-plan.md). A successful package check or recovered fault cannot substitute for an unfinished ordinary product request. A mandatory journey that still reproduces a backend failure prevents a ready release.
 

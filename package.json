@@ -1,6 +1,6 @@
 {
   "name": "workforce",
-  "version": "0.2.0-alpha.2",
+  "version": "0.2.0-alpha.3",
   "description": "WorkForce agents, V-model engineering and independently verified deliverables.",
   "type": "module",
   "bin": {

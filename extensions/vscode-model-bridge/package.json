@@ -2,7 +2,7 @@
   "name": "workforce-model-bridge",
   "displayName": "WorkForce Universe",
   "publisher": "workforce",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "A request-centered V-model workspace with autonomous engineering agents, verified products and 9router controls.",
   "engines": {
     "vscode": "^1.143.0"

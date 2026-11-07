@@ -3,7 +3,7 @@
   "enabled": true,
   "platform": "copilot",
   "runtime_version": "0.162.1",
-  "language_models_file": "C:/Users/TYH5HC/AppData/Roaming/Code/User/chatLanguageModels.json",
+  "language_models_file": "C:/Users/YOUR_USERNAME/AppData/Roaming/Code/User/chatLanguageModels.json",
   "strong_provider": "9localrouter",
   "strong_model": "company-top-tier-model",
   "worker_provider": "Bosch Model Farm",

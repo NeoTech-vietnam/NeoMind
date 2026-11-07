@@ -50,10 +50,10 @@ jobs:
       # Reuse the successful Windows/Ubuntu regression matrix. This branch can
       # produce reviewable assets before its manual workflow reaches main.
       - name: Build native WorkForce candidate assets
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/codex/workforce-vmodel'
+        if: success() && github.event_name == 'push' && (github.ref == 'refs/heads/codex/workforce-vmodel' || github.ref == 'refs/heads/codex/workforce-release-alpha3')
         run: npm run release:artifacts
       - name: Verify the extracted native WorkForce candidate
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/codex/workforce-vmodel'
+        if: success() && github.event_name == 'push' && (github.ref == 'refs/heads/codex/workforce-vmodel' || github.ref == 'refs/heads/codex/workforce-release-alpha3')
         shell: bash
         env:
           WORKFORCE_NATIVE_TARGET: ${{ runner.os == 'Windows' && 'windows-x64' || 'linux-x64' }}
@@ -61,13 +61,13 @@ jobs:
           version=$(node -p "require('./package.json').version")
           node scripts/package-smoke.mjs --runtime-archive "artifacts/workforce-v${version}/workforce-runtime-${version}-${WORKFORCE_NATIVE_TARGET}.tgz" --report "artifacts/workforce-v${version}/package-smoke-${WORKFORCE_NATIVE_TARGET}.json"
       - name: Index native WorkForce validation reports
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/codex/workforce-vmodel'
+        if: success() && github.event_name == 'push' && (github.ref == 'refs/heads/codex/workforce-vmodel' || github.ref == 'refs/heads/codex/workforce-release-alpha3')
         shell: bash
         run: |
           version=$(node -p "require('./package.json').version")
           node --input-type=module -e "import { writeReleaseIndex } from './scripts/package-release.mjs'; await writeReleaseIndex(process.argv[1]);" "artifacts/workforce-v${version}"
       - name: Retain native WorkForce candidate assets and validation reports
-        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/codex/workforce-vmodel'
+        if: always() && github.event_name == 'push' && (github.ref == 'refs/heads/codex/workforce-vmodel' || github.ref == 'refs/heads/codex/workforce-release-alpha3')
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: workforce-candidate-${{ runner.os }}-${{ github.run_id }}

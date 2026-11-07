@@ -1,12 +1,14 @@
 # Install the WorkForce runtime and VS Code extension
 
-This guide describes candidate **`workforce-v0.2.0-alpha.2`**: runtime **`workforce@0.2.0-alpha.2`** with extension **`workforce.workforce-model-bridge@0.12.0`**. It is not a claim that the candidate has been publicly released or passed installed-client acceptance. Use the matching assets and validation report once published in the [existing GitHub repository's releases](https://github.com/NeoTech-vietnam/NeoMind/releases). Earlier releases remain unchanged.
+This guide describes candidate **`workforce-v0.2.0-alpha.3`**: runtime **`workforce@0.2.0-alpha.3`** with extension **`workforce.workforce-model-bridge@0.12.1`**. It is not a claim that the candidate has been publicly released or passed installed-client acceptance. Use the matching assets and validation report once published in the [existing GitHub repository's releases](https://github.com/NeoTech-vietnam/NeoMind/releases). Earlier releases remain unchanged.
+
+For this version, use the assets and evidence attached to [the matching alpha.3 release](https://github.com/NeoTech-vietnam/NeoMind/releases/tag/workforce-v0.2.0-alpha.3) when published. An earlier release's successful checks do not establish acceptance of these new bytes. The release report states which client journeys and platforms were actually tested.
 
 | Asset | Purpose |
 | --- | --- |
-| `workforce-runtime-0.2.0-alpha.2-windows-x64.tgz` | Native Windows x64 runtime, dependencies and engine |
-| `workforce-runtime-0.2.0-alpha.2-linux-x64.tgz` | Native Linux x64 runtime, dependencies and engine |
-| `workforce-model-bridge-0.12.0.vsix` | WorkForce Universe, Local WF.PM and workspace owner |
+| `workforce-runtime-0.2.0-alpha.3-windows-x64.tgz` | Native Windows x64 runtime, dependencies and engine |
+| `workforce-runtime-0.2.0-alpha.3-linux-x64.tgz` | Native Linux x64 runtime, dependencies and engine |
+| `workforce-model-bridge-0.12.1.vsix` | WorkForce Universe, Local WF.PM and workspace owner |
 | `SHA256SUMS` | SHA-256 digests for the paired artifacts/reports |
 | `release-manifest.json` and validation reports | Exact versions, engine pins, platform checks and acceptance evidence |
 
@@ -14,26 +16,40 @@ Portable runtimes include the pinned OpenCode **1.19.4** SDK/platform binary and
 
 ## 1. Extract the matching native runtime
 
-Keep the runtime outside your project and use a new versioned directory. Windows PowerShell:
+On Windows, download the Windows runtime `.tgz`, paired `.vsix`, `SHA256SUMS`, `release-manifest.json` and `release-validation.json` from the same release. Open PowerShell in the download folder. Keep the runtime outside your project and use a new empty versioned directory:
 
 ```powershell
-Get-FileHash .\workforce-runtime-0.2.0-alpha.2-windows-x64.tgz -Algorithm SHA256
-Get-FileHash .\workforce-model-bridge-0.12.0.vsix -Algorithm SHA256
-New-Item -ItemType Directory -Path D:\tools\WorkForce\0.2.0-alpha.2 -Force
-tar -xzf .\workforce-runtime-0.2.0-alpha.2-windows-x64.tgz -C D:\tools\WorkForce\0.2.0-alpha.2
-$wfRuntime = 'D:\tools\WorkForce\0.2.0-alpha.2\workforce'
+Get-FileHash .\workforce-runtime-0.2.0-alpha.3-windows-x64.tgz -Algorithm SHA256
+Get-FileHash .\workforce-model-bridge-0.12.1.vsix -Algorithm SHA256
+New-Item -ItemType Directory -Path D:\tools\WorkForce\0.2.0-alpha.3 -Force
+tar -xzf .\workforce-runtime-0.2.0-alpha.3-windows-x64.tgz -C D:\tools\WorkForce\0.2.0-alpha.3
+$wfRuntime = 'D:\tools\WorkForce\0.2.0-alpha.3\workforce'
 node "$wfRuntime\dist\cli.js" --version
 ```
 
 Compare the printed hashes with `SHA256SUMS`. The extracted directory must contain `package.json`, `dist`, `node_modules`, `resources/opencode-bootstrap` and `distribution-manifest.json`. Keep the original archive and checksums for repeatable installation.
 
+Expected CLI version: **`0.2.0-alpha.3`**. Extraction creates this layout:
+
+```text
+D:\tools\WorkForce\0.2.0-alpha.3\
+  workforce\                  <- this is the runtime directory to select
+    package.json
+    dist\cli.js
+    node_modules\
+    resources\opencode-bootstrap\
+    distribution-manifest.json
+```
+
+Select the extracted `workforce` subdirectory in VS Code. The archive file and its parent folder are different locations.
+
 Linux shell:
 
 ```sh
 sha256sum --check SHA256SUMS
-mkdir -p "$HOME/.local/share/workforce/0.2.0-alpha.2"
-tar -xzf workforce-runtime-0.2.0-alpha.2-linux-x64.tgz -C "$HOME/.local/share/workforce/0.2.0-alpha.2"
-wf_runtime="$HOME/.local/share/workforce/0.2.0-alpha.2/workforce"
+mkdir -p "$HOME/.local/share/workforce/0.2.0-alpha.3"
+tar -xzf workforce-runtime-0.2.0-alpha.3-linux-x64.tgz -C "$HOME/.local/share/workforce/0.2.0-alpha.3"
+wf_runtime="$HOME/.local/share/workforce/0.2.0-alpha.3/workforce"
 node "$wf_runtime/dist/cli.js" --version
 ```
 
@@ -42,10 +58,16 @@ Do not use the Windows engine asset on Linux or the Linux engine asset on Window
 ## 2. Install the paired extension
 
 ```powershell
-code --install-extension .\workforce-model-bridge-0.12.0.vsix --force
+code --install-extension .\workforce-model-bridge-0.12.1.vsix --force
 ```
 
-Alternatively use **Extensions: Install from VSIX**. Set the VS Code **User** setting `workforce.bridge.runtimePath` to the extracted `workforce` directory, such as `D:\tools\WorkForce\0.2.0-alpha.2\workforce`. Workspace overrides of this trusted runtime path are ignored.
+Alternatively press **Ctrl+Shift+P**, run **Extensions: Install from VSIX**, and select `workforce-model-bridge-0.12.1.vsix`. Then run **Preferences: Open User Settings (JSON)**. Add or update this property while preserving the rest of your settings:
+
+```json
+"workforce.bridge.runtimePath": "D:\\tools\\WorkForce\\0.2.0-alpha.3\\workforce"
+```
+
+**The value is a string containing the extracted `workforce` directory, not `true`.** If you extracted elsewhere, use its actual absolute path. Set this in **User** settings: workspace overrides of this trusted runtime path are ignored. Run **Developer: Reload Window** after replacing the VSIX.
 
 When replacing NeoMind, disconnect its previous owner and disable the previous extension in the intended workspace before connecting WorkForce. The new publisher/extension identity does not share another extension's SecretStorage: reconnect private calendar feeds or YouTube API keys from WorkForce when needed. Provider credentials in your existing custom endpoint catalog are preserved.
 
@@ -57,7 +79,7 @@ For a new project:
 node "$wfRuntime\dist\cli.js" init --local --platforms copilot,codex --name MyProject --project D:\path\to\project
 ```
 
-For an existing NeoMind project, first stop its active sessions and keep its old runtime/extension available as a backup. Then use the matching WorkForce CLI:
+For an existing WorkForce project, stop its active sessions, retain the old runtime/extension as a backup, and run `update --local` followed by `doctor` with the matching CLI. For a project still using NeoMind storage, first run the explicit migration, followed by update and doctor:
 
 ```powershell
 node "$wfRuntime\dist\cli.js" migrate --project D:\path\to\project
@@ -75,7 +97,11 @@ Open the intended folder as a trusted VS Code workspace. Run **Developer: Reload
 
 Use **Connect WorkForce**. WorkForce binds the exact project and trusted runtime, resolves the selected custom endpoint catalog, and checks the configured aliases through a real bounded model/tool probe. A successful proof is cached against the relevant build/configuration rather than repeating before every request. Configuration or an installed version alone must not appear as successful model access.
 
-Keep your existing `top-models` and `worker-models` choices in 9router. If WorkForce cannot identify a unique existing VS Code catalog, use **Choose model catalog** and select that profile's `chatLanguageModels.json` through the native picker. This retains provider keys in the catalog and stores only its selected path in project routing. It does not require manually copying credentials into chat or editing protocol payloads. Endpoint/model access belongs to your existing provider configuration; an alias does not attest the actual upstream model.
+Keep your existing `top-models` and `worker-models` choices in 9router; you control the actual models behind those aliases. Other aliases can be selected with WorkForce's role model controls when your existing catalog uses different names. This Local chat model selection remains separate from the runtime's worker routing.
+
+WorkForce attempts catalog auto-discovery from supported standard VS Code/Insiders User locations when no catalog has already been chosen. If discovery is ambiguous or you use a named profile, use **Choose model catalog** and select that profile's actual `chatLanguageModels.json` through the native picker. The reader supports VS Code **JSONC**, including comments and trailing commas. Review the selected role models so that every configured alias resolves to a supported catalog entry.
+
+Provider keys remain in the existing catalog; project routing stores only its selected path. No credential copy into chat is required. Configuration and catalog parsing are distinct from a successful actual model/tool-call probe. Endpoint/model access belongs to your existing provider configuration; an alias does not attest the actual upstream model.
 
 Use **WorkForce: Open Local WF.PM**. The command creates a **Local** Copilot chat with `WF.PM`, preserves your model picker and sets `chat.permissions.default` to `autoApprove` for that workspace where supported. VS Code Trust, first-use approvals and organization policy remain effective. It does not change global approval settings.
 
