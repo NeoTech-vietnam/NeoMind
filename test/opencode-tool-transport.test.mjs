@@ -101,7 +101,7 @@ test('real OpenCode preserves historical default/null selectors and scoped write
   await engine.close(); await gateway.close();
 });
 
-test('actual OpenCode NativeSession accepts captured Cornell evidence page fields and saves one bound final report', { timeout: 150000 }, async t => {
+test('actual OpenCode NativeSession accepts historical captured Cornell evidence page fields and saves one bound final report', { timeout: 150000 }, async t => {
   const { root, cleanup } = fixture(t), traces = [], reports = [], evidenceReads = [];
   let provider, unregister;
   t.after(async () => { await shutdownNative(root); unregister?.(); await provider?.close(); cleanup(); });
@@ -130,6 +130,7 @@ test('actual OpenCode NativeSession accepts captured Cornell evidence page field
     models: [{ id: 'worker-models', url: provider.baseURL, apiKey: 'local-fixture-only' }, { id: 'top-models', url: provider.baseURL, apiKey: 'local-fixture-only' }] }]));
   writeFileSync(safePath(root, '.workforce/routing.json'), JSON.stringify({ ...ensureRoutingPolicy(root), language_models_file: catalog }));
   const requestId = randomUUID(), binding = { workflow_id: workflow.meta.id, task_id: task.meta.id, role: 'developer', stage: 'implementation', process_contract: 'workforce/v1',
+    evidence_read_contract: 'legacy-selectors',
     implementation_paths: ['products'], verification_paths: [], read_paths: ['products'], execution_steps: [], procedure_bound: false, cornell_bound: false };
   unregister = registerControlledContext(root, requestId, { epoch_id: randomUUID(), binding, bindInvocation(id) { binding.invocation_id = id; },
     callbacks: { assertActive() {}, trace(event) { traces.push(event); },

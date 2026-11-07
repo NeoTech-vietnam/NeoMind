@@ -18,6 +18,7 @@ import { enableWorkForceHost } from '../dist/workforce-host.js';
 import { startControlledHost, startControlledWorkflow, controlledStatus, answerControlledWorkflow,
   validateControlledPlan, workforceRecoveryDecision, controlControlledWorkflow } from '../dist/controlled-workflow.js';
 import { workforcePrescribedChecksComplete, currentWorkForceCompilerFailure } from '../dist/controlled-workflow.js';
+import { artifactChangeReadCoverage } from '../dist/controlled-artifact-changes.js';
 import { verifyControlledTask } from '../dist/controlled-acceptance.js';
 import { shutdownNative, waitNative, reconcileWorkForceInvocations } from '../dist/native.js';
 import { openCodeVersion, openCodeIntegrity, openCodeProtocolHash } from '../dist/execution-attestation.js';
@@ -631,8 +632,14 @@ test('README preservation evidence exposes deleted navigation, drives FnD repair
   const promptEvidence = /Current backend workflow evidence[^\n]*\n([^\n]+)/.exec(firstReviewer.prompt);
   assert.ok(promptEvidence, 'Original-read coverage is earned by actual evidence in the WorkForce native prompt.');
   const prompted = JSON.parse(promptEvidence[1]);
-  assert.deepEqual(prompted, firstReviewer.initial_workflow_evidence, 'The prompt serializes the exact backend projection used to seed coverage.');
-  assert.deepEqual(prompted.artifact_changes, firstEvidence);
+  const expectedPublicEvidence = structuredClone(firstReviewer.initial_workflow_evidence);
+  for (const file of expectedPublicEvidence.artifact_changes.files) delete file.next_start_char;
+  assert.deepEqual(prompted, expectedPublicEvidence, 'The new contract prompt retains the exact backend evidence except obsolete numeric continuation hints.');
+  assert.deepEqual(prompted.artifact_changes, { ...firstEvidence,
+    files: firstEvidence.files.map(({ next_start_char: _historicalSelector, ...file }) => file) });
+  assert.equal(JSON.stringify(prompted).includes('"next_start_char"'), false);
+  assert.deepEqual(artifactChangeReadCoverage(prompted.artifact_changes), firstReviewer.initial_change_coverage,
+    'Removing numeric paging instructions cannot alter actual supplied original text, hashes or read coverage.');
   const initialCoverage = firstReviewer.initial_change_coverage['README.md'];
   assert.equal(initialCoverage.before_sha256, firstChange.before_sha256);
   assert.equal(initialCoverage.current_sha256, firstChange.current_sha256);

@@ -121,9 +121,9 @@ test('final synthesis can read bound execution evidence and compile notes withou
   assert.deepEqual(observed, ['Independent check']);
 });
 
-test('actual WorkForce Cornell input request tolerates irrelevant page fields without a delivery-protocol retry', async t => {
+test('historical WorkForce Cornell input request tolerates irrelevant page fields without a delivery-protocol retry', async t => {
   const observed = [], evidence = { source: 'backend-bound-cornell-input', requirement: 'Create the requested learning note.' };
-  const c = await connect(t, project(t), binding('implementation', { process_contract: 'workforce/v1' }), {
+  const c = await connect(t, project(t), binding('implementation', { process_contract: 'workforce/v1', evidence_read_contract: 'legacy-selectors' }), {
     readEvidence(title, kind, page) { observed.push({ title, kind, page }); return evidence; },
   });
   // Captured request from WF-R0008 / NM-415CCC81-KNW-0043. The selector
@@ -139,8 +139,8 @@ test('actual WorkForce Cornell input request tolerates irrelevant page fields wi
   assert.equal(c.events.some(event => event.status === 'failed'), false);
 });
 
-test('bound evidence kinds ignore unrelated page options while workflow paging and schema validation remain intact', async t => {
-  const observed = [], c = await connect(t, project(t), binding('implementation', { process_contract: 'workforce/v1' }), {
+test('historical bound evidence kinds ignore unrelated page options while workflow paging and schema validation remain intact', async t => {
+  const observed = [], c = await connect(t, project(t), binding('implementation', { process_contract: 'workforce/v1', evidence_read_contract: 'legacy-selectors' }), {
     readEvidence(title, kind, page) { observed.push({ title, kind, page }); return { source: 'assigned-evidence', kind }; },
   });
   for (const kind of ['execution', 'registration', 'cornell-input']) {
