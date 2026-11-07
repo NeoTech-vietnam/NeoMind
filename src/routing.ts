@@ -84,7 +84,8 @@ export interface NativeReceipt {
     process_contract?: 'software-tools/v2' | 'workforce/v1';
     tool_contract?: { version: 2; local_execution: boolean; qualified_procedure: boolean } |
       { version: 3; local_execution: boolean; qualified_procedure: boolean; evidence_documentation: boolean; research: boolean;
-        capabilities?: boolean; planning_result?: 'backend'; artifact_revalidation?: true; assigned_read?: true; read_contract?: 'opaque-pages' } };
+        capabilities?: boolean; planning_result?: 'backend'; artifact_revalidation?: true; assigned_read?: true; read_contract?: 'opaque-pages';
+        evidence_read_contract?: 'opaque-pages' } };
   schema_version: 1;
   issuer: 'workforce-opencode' | 'neomind-codex-app-server' | 'neomind-vscode-lm' |
     'taskforces-codex-app-server' | 'taskforces-vscode-lm' |
@@ -428,6 +429,8 @@ export function observeInvocation(
         typeof toolContract.research !== 'boolean' || toolContract.capabilities !== undefined && typeof toolContract.capabilities !== 'boolean' ||
         toolContract.assigned_read !== undefined && (toolContract.assigned_read !== true || receipt.controlled_execution?.process_contract !== 'workforce/v1') ||
         toolContract.read_contract !== undefined && (toolContract.read_contract !== 'opaque-pages' || receipt.controlled_execution?.process_contract !== 'workforce/v1') ||
+        toolContract.evidence_read_contract !== undefined && (toolContract.evidence_read_contract !== 'opaque-pages' ||
+          toolContract.read_contract !== 'opaque-pages' || receipt.controlled_execution?.process_contract !== 'workforce/v1') ||
         toolContract.artifact_revalidation !== undefined && (toolContract.artifact_revalidation !== true ||
           receipt.role !== 'developer' || receipt.controlled_execution?.stage !== 'implementation' ||
           receipt.controlled_execution.process_contract !== 'workforce/v1' || toolContract.local_execution ||
@@ -443,6 +446,7 @@ export function observeInvocation(
       const operations = controlledToolNames({ role: receipt.role, stage: receipt.controlled_execution.stage,
         process_contract: receipt.controlled_execution.process_contract,
         read_contract: toolContract.read_contract ?? 'legacy-selectors',
+        evidence_read_contract: toolContract.evidence_read_contract ?? 'legacy-selectors',
         plugin_capabilities: toolContract.capabilities === true,
         artifact_revalidation: toolContract.artifact_revalidation,
         ...(toolContract.assigned_read ? { assessment_outputs: ['backend-assigned'] } : {}),
@@ -477,6 +481,8 @@ export function observeInvocation(
         toolContract.version === 3 && (typeof toolContract.evidence_documentation !== 'boolean' || typeof toolContract.research !== 'boolean' ||
           toolContract.assigned_read !== undefined && (toolContract.assigned_read !== true || receipt.controlled_execution?.process_contract !== 'workforce/v1') ||
           toolContract.read_contract !== undefined && (toolContract.read_contract !== 'opaque-pages' || receipt.controlled_execution?.process_contract !== 'workforce/v1') ||
+          toolContract.evidence_read_contract !== undefined && (toolContract.evidence_read_contract !== 'opaque-pages' ||
+            toolContract.read_contract !== 'opaque-pages' || receipt.controlled_execution?.process_contract !== 'workforce/v1') ||
           toolContract.evidence_documentation && !/^[a-f0-9]{64}$/.test(receipt.controlled_execution?.documentation_source_sha256 ?? '') ||
           !toolContract.evidence_documentation && receipt.controlled_execution?.documentation_source_sha256 !== undefined ||
           toolContract.research && !['implementation', 'synthesis'].includes(receipt.controlled_execution!.stage) ||
@@ -488,6 +494,7 @@ export function observeInvocation(
       stage: receipt.controlled_execution.stage, workflow_id: receipt.workflow_id!, implementation_paths: [], verification_paths: [],
       process_contract: receipt.controlled_execution.process_contract,
       read_contract: toolContract?.version === 3 ? toolContract.read_contract ?? 'legacy-selectors' : 'legacy-selectors',
+      evidence_read_contract: toolContract?.version === 3 ? toolContract.evidence_read_contract ?? 'legacy-selectors' : 'legacy-selectors',
       plugin_capabilities: toolContract?.version === 3 && toolContract.capabilities === true,
       ...(toolContract?.version === 3 && toolContract.assigned_read ? { assessment_outputs: ['backend-assigned'] } : {}),
       evidence_documentation: toolContract?.version === 3 && toolContract.evidence_documentation,

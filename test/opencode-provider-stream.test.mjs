@@ -306,7 +306,7 @@ test('arguments received before identity still count when a fragmented read name
   assert.deepEqual(relay.progress, []);
 });
 
-for (const name of ['assignment_read', 'wf_assignment_read']) test(`empty-input ${name} cannot stream unbounded arguments`, async t => {
+for (const name of ['assignment_read', 'wf_assignment_read', 'check_evidence_more', 'wf_check_evidence_more']) test(`bounded read ${name} cannot stream unbounded arguments`, async t => {
   const upstream = await provider(t, (_request, response) => { response.writeHead(200, { 'content-type': 'text/event-stream' });
     response.end(chunk({ tool_calls: [{ index: 0, id: 'call_empty_read', function: { name, arguments: 'x'.repeat(8193) } }] })); });
   const relay = await stream(t, upstream);
@@ -317,6 +317,7 @@ for (const name of ['assignment_read', 'wf_assignment_read']) test(`empty-input 
 
 for (const [tool, input, limit] of [
   ['project_read_more', { cursor: '00000000-0000-4000-8000-000000000001' }, 8 * 1024],
+  ['check_evidence_more', { cursor: '00000000-0000-4000-8000-000000000001' }, 8 * 1024],
   ['project_list', { path: '\u0001'.repeat(1024), limit: 1000 }, 8 * 1024],
   ['check_evidence', { title: '\u0001'.repeat(256), path: '\u0001'.repeat(1024), kind: 'workflow', start_char: 2097152, max_chars: 64000 }, 8 * 1024],
   ['project_search', { query: '\u0001'.repeat(1000), path: '\u0001'.repeat(1024), max_matches: 100 }, 16 * 1024],

@@ -3,7 +3,7 @@ import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ChildProcess, spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,6 +57,42 @@ function assertBlockedPreserved(root, before) {
   assert.equal(after.owner_pid, before.owner_pid);
   assert.equal(after.inference_completed, false);
 }
+
+test('owner-initiated RPC closure waits for unsubscribe and process exit without orphaning validated inference', async t => {
+  const root = project(t), gate = join(root, 'completion-gate'), entered = `${gate}.entered`, executable = join(root, 'completion-server.mjs');
+  const source = readFileSync(fixture, 'utf8'), unsubscribe = "  if (method === 'thread/unsubscribe') {";
+  assert.ok(source.includes(unsubscribe));
+  writeFileSync(executable, "import { existsSync, writeFileSync } from 'node:fs';\n" + source.replace(unsubscribe, `${unsubscribe}
+    writeFileSync(process.argv[3] + '.entered', 'closing');
+    const gateDeadline = Date.now() + 5_000;
+    while (!existsSync(process.argv[3])) {
+      if (Date.now() > gateDeadline) throw new Error('Fixture completion gate timed out.');
+      await new Promise(done => setTimeout(done, 5));
+    }`));
+  const native = bridge('success', executable, gate), started = await native.start(root, { role: 'reviewer', prompt: 'Observe completed inference separately from owned RPC cleanup.' });
+  try {
+    const deadline = Date.now() + 4_000;
+    while (!existsSync(entered) && Date.now() < deadline) await new Promise(done => setTimeout(done, 5));
+    assert.equal(existsSync(entered), true);
+    const closing = readInvocation(root, started.id);
+    assert.equal(closing.state, 'running'); assert.equal(closing.inference_completed, true);
+    writeFileSync(gate, 'release');
+    const ended = await native.wait(root, started.id, 5_000);
+    assert.equal(ended.state, 'completed'); assert.equal(ended.inference_completed, true); assert.equal(ended.error, null);
+    assert.throws(() => process.kill(started.server_pid, 0), { code: 'ESRCH' });
+  } finally { writeFileSync(gate, 'release'); }
+});
+
+test('an unexpected RPC process exit still orphans an unfinished inference', async t => {
+  const root = project(t), executable = join(root, 'unexpected-exit-server.mjs');
+  const source = readFileSync(fixture, 'utf8'), hanging = "    if (scenario === 'hang') continue;";
+  assert.ok(source.includes(hanging));
+  writeFileSync(executable, source.replace(hanging, "    if (scenario === 'hang') { setTimeout(() => process.exit(17), 30); continue; }"));
+  const native = bridge('hang', executable), started = await native.start(root, { role: 'reviewer', prompt: 'Observe an unexpected exit without a model result.' });
+  const ended = await native.wait(root, started.id, 5_000);
+  assert.equal(ended.state, 'orphaned'); assert.equal(ended.inference_completed, false);
+  assert.match(ended.error, /closed|exited|exit/i);
+});
 
 test('shutdown skips an owned session removed while an earlier snapshot entry awaits transport closure', async t => {
   const root = project(t), gate = join(root, 'interrupt-gate'), executable = join(root, 'gated-server.mjs');

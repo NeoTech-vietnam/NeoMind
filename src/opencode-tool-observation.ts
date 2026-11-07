@@ -11,7 +11,7 @@ export interface OpenCodeToolObservation {
 interface ToolCall { tool: string; input: unknown }
 const mutatingTools = new Set(['workflow_plan', 'assignment_report', 'task_file_write', 'task_run', 'procedure_run',
   'cornell_research_compile', 'check_run', 'request_input']);
-const readOnlyTools = new Set(['project_read', 'project_list', 'project_search', 'runtime_context', 'check_evidence']);
+const readOnlyTools = new Set(['project_read', 'project_read_more', 'assignment_read', 'project_list', 'project_search', 'runtime_context', 'check_evidence', 'check_evidence_more']);
 function decoded(output: unknown): unknown {
   if (typeof output === 'string') { try { return decoded(JSON.parse(output)); } catch { return output; } }
   const content = Array.isArray(output) ? output : object(output) && Array.isArray(output.content) ? output.content : undefined;

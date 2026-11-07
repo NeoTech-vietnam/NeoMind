@@ -10,7 +10,7 @@ import { startNative, waitNative, shutdownNative, reconcileWorkForceInvocations 
 import { OpenCodeSession } from '../dist/opencode-session.js';
 
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
-async function ownedCompletion(t, { closeError, actualEngine = false, assessmentOutputs, readContract } = {}) {
+async function ownedCompletion(t, { closeError, actualEngine = false, assessmentOutputs, readContract, evidenceReadContract } = {}) {
   const parent = resolve('artifacts/test-temp'); mkdirSync(parent, { recursive: true });
   const root = mkdtempSync(join(parent, 'wf-native-completion-'));
   initialize(root, { execution_engine: 'opencode' }); ensureRoutingPolicy(root);
@@ -39,6 +39,7 @@ async function ownedCompletion(t, { closeError, actualEngine = false, assessment
     binding: { workflow_id: workflow.meta.id, task_id: task.meta.id, role: 'developer', stage: 'implementation', process_contract: 'workforce/v1',
       ...(assessmentOutputs ? { assessment_outputs: assessmentOutputs } : {}),
       ...(readContract ? { read_contract: readContract } : {}),
+      ...(evidenceReadContract ? { evidence_read_contract: evidenceReadContract } : {}),
       implementation_paths: ['products'], verification_paths: [], read_paths: ['products'], execution_steps: [], procedure_bound: false, cornell_bound: false },
     bindInvocation() {}, callbacks: { assertActive() {}, saveReport() { throw new Error('No model/report call is needed for this lifecycle fixture.'); } } });
   t.after(async () => {
@@ -116,6 +117,20 @@ for (const contract of [undefined, 'opaque-pages', 'legacy-selectors']) test(`si
   assert.equal(receipt.native_tool_scope.includes('project_read_more'), opaque);
   assert.equal(receipt.controlled_execution.tool_contract.assigned_read, true);
   assert.equal(receipt.native_tool_scope.includes('assignment_read'), true);
+  const problems = routingProblems(fixture.root, 'developer', receipt.id, { workflow_id: receipt.workflow_id, task_id: receipt.task_id, require_completed: false });
+  assert.deepEqual(problems.filter(problem => /tool contract|gateway|scope differs/i.test(problem)), []);
+});
+
+for (const [readContract, evidenceReadContract, opaque] of [
+  [undefined, undefined, true],
+  ['opaque-pages', 'legacy-selectors', false],
+  ['opaque-pages', 'opaque-pages', true],
+  ['legacy-selectors', undefined, false],
+]) test(`signed evidence read scope retains ${readContract ?? 'default'}/${evidenceReadContract ?? 'default'} authority`, { timeout: 5000 }, async t => {
+  const fixture = await ownedCompletion(t, { readContract, evidenceReadContract });
+  const receipt = readInvocation(fixture.root, fixture.receipt.id);
+  assert.equal(receipt.controlled_execution.tool_contract.evidence_read_contract, opaque ? 'opaque-pages' : undefined);
+  assert.equal(receipt.native_tool_scope.includes('check_evidence_more'), opaque);
   const problems = routingProblems(fixture.root, 'developer', receipt.id, { workflow_id: receipt.workflow_id, task_id: receipt.task_id, require_completed: false });
   assert.deepEqual(problems.filter(problem => /tool contract|gateway|scope differs/i.test(problem)), []);
 });

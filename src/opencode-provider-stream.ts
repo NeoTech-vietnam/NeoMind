@@ -45,7 +45,7 @@ const readArgumentLimit = 8 * 1024;
 const defaultArgumentLimit = requestLimit;
 const argumentLimit = (name: string) => {
   const tool = name.startsWith('wf_') ? name.slice(3) : name;
-  if (['project_read', 'project_read_more', 'assignment_read', 'project_list', 'check_evidence'].includes(tool)) return readArgumentLimit;
+  if (['project_read', 'project_read_more', 'assignment_read', 'project_list', 'check_evidence', 'check_evidence_more'].includes(tool)) return readArgumentLimit;
   if (tool === 'project_search') return 16 * 1024;
   if (tool === 'runtime_context') return 64 * 1024;
   return defaultArgumentLimit;

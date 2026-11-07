@@ -745,7 +745,10 @@ class NativeSession {
     this.transport = new RpcTransport(runtime, this.root, this.options.rpc_timeout_ms ?? 30000);
     this.transport.onMessage = (message) => this.onMessage(message);
     this.transport.onClose = (error) => {
-      if (!terminalStates.includes(this.receipt.state)) this.settle('orphaned', cleanError(error));
+      // Owner-issued cleanup closes a successfully observed turn while its
+      // receipt intentionally remains running until process exit. Only an
+      // unexpected close can orphan that turn; cleanup must not race itself.
+      if (!this.closing && !terminalStates.includes(this.receipt.state)) this.settle('orphaned', cleanError(error));
     };
     this.update({
       server_pid: this.transport.child.pid ?? null,
@@ -1118,6 +1121,8 @@ async function startOwned(
             research: controlledToolNames(controlled.binding).includes('cornell_research_compile'),
             ...(controlled.binding.process_contract === 'workforce/v1' && controlled.binding.read_contract !== 'legacy-selectors'
               ? { read_contract: 'opaque-pages' as const } : {}),
+            ...(controlled.binding.process_contract === 'workforce/v1' && controlled.binding.read_contract !== 'legacy-selectors' &&
+              controlled.binding.evidence_read_contract !== 'legacy-selectors' ? { evidence_read_contract: 'opaque-pages' as const } : {}),
             ...(controlled.binding.process_contract === 'workforce/v1' && controlled.binding.assessment_outputs?.length ? { assigned_read: true as const } : {}),
             ...(controlled.binding.artifact_revalidation ? { artifact_revalidation: true } : {}),
             ...(controlledToolNames(controlled.binding).includes('capability_invoke') ? { capabilities: true } : {}),

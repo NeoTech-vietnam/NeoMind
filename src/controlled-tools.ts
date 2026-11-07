@@ -34,6 +34,8 @@ export interface ControlledBinding {
   process_contract?: 'software-tools/v2' | 'workforce/v1';
   /** Backend-attested read interface; historical receipts explicitly retain their selectors. */
   read_contract?: 'opaque-pages' | 'legacy-selectors';
+  /** Independently attested because older opaque project reads retained evidence selectors. */
+  evidence_read_contract?: 'opaque-pages' | 'legacy-selectors';
   plugin_capabilities?: boolean;
   /** New planning sessions commit the semantic plan as their single result. */
   planning_result?: 'backend';
@@ -172,8 +174,12 @@ interface ToolState {
   assignment_read?: { snapshot: string; hashes: Record<string, string | null>; changed_paths: string[];
     cursors: Record<string, { snapshot: string; index: number; start_char: number }> };
   change_read_coverage?: ControlledArtifactChangeCoverageMap;
+  evidence_read_cursors?: Record<string, { title?: string; pending: EvidencePosition[]; invalidated?: true }>;
   writes: { operation: string; path: string; previous_hash: string | null; sha256: string; completed: boolean }[];
 }
+interface EvidencePosition { path: string; start_char: number; current_sha256: string | null; before_sha256?: string; evidence_sha256?: string }
+const opaqueEvidence = (binding: ControlledBinding) => binding.process_contract === 'workforce/v1' &&
+  binding.read_contract !== 'legacy-selectors' && binding.evidence_read_contract !== 'legacy-selectors';
 const key = (path: string) => process.platform === 'win32' ? path.toLowerCase() : path;
 const covers = (scope: string, path: string) => scope === '.' || key(path) === key(scope) || key(path).startsWith(`${key(scope)}/`);
 function canonical(path: string, directory = false): string {
@@ -234,8 +240,9 @@ function assertWritable(binding: ControlledBinding, path: string): void {
 export function controlledToolNames(binding: ControlledBinding): string[] {
   const assignmentRead = binding.process_contract === 'workforce/v1' && binding.assessment_outputs?.length ? ['assignment_read'] : [];
   const readMore = binding.process_contract === 'workforce/v1' && binding.read_contract !== 'legacy-selectors' ? ['project_read_more'] : [];
+  const evidenceMore = opaqueEvidence(binding) ? ['check_evidence_more'] : [];
   if (binding.process_contract === 'workforce/v1' && binding.artifact_revalidation)
-    return ['runtime_context', 'project_read', ...readMore, ...assignmentRead, 'project_list', 'project_search', 'assignment_report', 'check_evidence'];
+    return ['runtime_context', 'project_read', ...readMore, ...assignmentRead, 'project_list', 'project_search', 'assignment_report', 'check_evidence', ...evidenceMore];
   return ['runtime_context', 'project_read', ...readMore, ...assignmentRead, 'project_list', 'project_search',
     ...(binding.process_contract === 'workforce/v1' && binding.stage === 'planning' && binding.planning_result === 'backend' ? [] : ['assignment_report']),
     ...(binding.stage === 'planning' ? ['workflow_plan', 'work_prepare'] : []),
@@ -246,7 +253,7 @@ export function controlledToolNames(binding: ControlledBinding): string[] {
     ...(binding.stage === 'implementation' && binding.procedure_bound !== false ? ['procedure_run'] : []),
     ...(binding.stage === 'implementation' && (binding.execution_steps === undefined || binding.execution_steps.length) ? ['task_run'] : []),
     ...(['implementation', 'synthesis'].includes(binding.stage) && !binding.evidence_documentation && binding.cornell_bound !== false ? ['cornell_research_compile'] : []),
-    ...(['implementation', 'verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage) ? ['check_evidence'] : []),
+    ...(['implementation', 'verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage) ? ['check_evidence', ...evidenceMore] : []),
     ...(binding.stage === 'verification' ? ['check_run'] : [])];
 }
 /** Both Bridge prompt layers use the same scope so precheck cannot inherit final acceptance duties. */
@@ -274,18 +281,21 @@ export function workforceScopeInstructions(stage: ControlledStage): string {
 const workforcePlanGuide = workforceScopeInstructions('planning') + ' WorkForce planning contract workforce/v1. Supply request_kind, rationale, acceptance_criteria, allowed_paths, outputs, documentation_paths and checks [{title,command,baseline_paths}]. Supply verification_levels: exactly four {level,applicable,rationale,method,checks} rows for unit/integration/system/acceptance. Explain N/A; acceptance is always applicable. execution names actual check titles; inspection uses checks:[]. Text document/research work may use checks:[] and independent full-artifact content assessment; code/build/producer execution and data/analysis require actual executable checks. Use verification_paths:[] for existing project tests/compiler commands. Add separate verification_paths only for new independent checkers. Existing project test/compiler commands run directly; do not create wrappers. New/changed custom checker scripts need negative_controls. Use exact argv; no shell redirection. Backend captures output baselines and read-only project script/config inputs. Freeze expected outcomes before implementation. Cornell is optional and requested through cornell_output_dir; its three outputs remain compiler-owned. Do not declare specialists or internal IDs.';
 function workforceInstructions(binding: ControlledBinding): string {
   const available = controlledToolNames(binding);
+  const evidenceContinuation = opaqueEvidence(binding)
+    ? 'If original text is paged, follow the exact returned next_read through check_evidence_more; paths and page positions are backend-owned.'
+    : 'If original text is paged, continue check_evidence with kind workflow, the public output path and next_start_char.';
   const duties: Record<ControlledStage, string> = {
     planning: `WF.PM: inspect relevant project files and reusable tools; save one short workflow_plan${binding.planning_result === 'backend' ? ' as your single substantive result, then finish. The backend persists the planning receipt; no separate report is needed' : ', then one assignment_report'}. ${workforcePlanGuide}`,
     requirements: 'WF.SWSD: ' + workforceScopeInstructions('requirements') + ' State scope, measurable acceptance criteria, expected outcomes, verification strategy and minimum useful deliverable. Identify actual contradictions or missing business input; do not invent setup preconditions or edit protocol. Save one compact assignment_report; report a concrete failure only when the assigned requirements cannot be satisfied.',
     design: 'WF.P-RES: inspect project conventions and the frozen plan. State the applicable architecture/interface/module decisions, risks, and how each criterion will be checked. Keep trivial changes short and mark nonapplicable design layers with reasons. Do not create files solely for paperwork. Save one compact assignment_report.',
     implementation: 'WF.FnD: implement the actual requested outputs using scoped task_file_write and only producer operations actually assigned below. Read current files before editing; backend checks their saved hashes. Complete useful product outputs before reporting. Do not create independent checker files or claim final acceptance. Save one content result; report concrete unresolved product defects with their assigned paths in product_findings.',
-    review: binding.review_purpose === 'design' ? controlledReviewInstructions('design') : 'WF.Reviewer: independently inspect current product/specification/design against every criterion and project standards. Use backend artifact_changes original_text and diff to judge edits to existing outputs; unknown preservation is not a passing criterion. If original text is paged, continue check_evidence with kind workflow, the public output path and next_start_char. Do not try private snapshot paths or ask the user to reconstruct backend history. This review precedes independent test execution, so absence of future test evidence is expected. Do not edit implementation or invent requirements. Save one completed assignment_report with verdict pass/fail and all actionable findings, classifying product defects as implementation and checker defects as checker.',
+    review: binding.review_purpose === 'design' ? controlledReviewInstructions('design') : `WF.Reviewer: independently inspect current product/specification/design against every criterion and project standards. Use backend artifact_changes original_text and diff to judge edits to existing outputs; unknown preservation is not a passing criterion. ${evidenceContinuation} Do not try private snapshot paths or ask the user to reconstruct backend history. This review precedes independent test execution, so absence of future test evidence is expected. Do not edit implementation or invent requirements. Save one completed assignment_report with verdict pass/fail and all actionable findings, classifying product defects as implementation and checker defects as checker.`,
     verification: 'WF.Tester: independently inspect outputs and review findings, including backend artifact_changes originals for edited existing text; a link-count check alone cannot establish preservation of unrelated original content. Author only assigned checker files when needed. Run the frozen existing project tests/compiler/check commands through check_run. ' + workforceCheckPipelineInstructions + ' New/changed custom checker logic requires negative controls; existing project commands do not need invented failing fixtures. Collect all observed findings in one result and classify implementation vs checker/environment faults accurately. Save one completed assignment_report with verdict pass/fail. Do not edit product files.',
     diagnosis: 'WF.PM: diagnose the saved technical findings and actual execution evidence without changing files. Select one specific recovery direction and report failure_kind implementation/checker/protocol/environment/unknown. Never request that the user supply internal IDs, raise retry limits or change prompts.',
     synthesis: 'WF.PM: derive only requested final knowledge from actual artifacts and independent evidence. Save one compact report; do not manufacture extra documentation.',
   };
   const duty = binding.artifact_revalidation
-    ? 'WF.FnD: the product files changed externally after the previous implementation report. Read the complete current outputs and assess them against the unchanged requirement and plan. Preserve every file. Save one assignment_report describing the current product and any concrete product_findings. The backend binds this new report to the actual current bytes; independent review and tests follow. Do not claim to have recreated files or rerun previous checks.'
+    ? 'WF.FnD: the product files changed externally after the previous implementation report. Read the complete current outputs and assess them against the unchanged requirement and plan. Preserve every file. Save one assignment_report describing the current product and any concrete product_findings. The backend binds this new report to the actual current bytes; independent review and tests follow. Do not seek unassigned original history or future test receipts. Do not claim to have recreated files or rerun previous checks.'
     : duties[binding.stage];
   return `You are a WorkForce-owned ${binding.role} session using OpenCode. ${duty}\n` +
     `${workforceStageHandoff(binding, available)}\n` +
@@ -295,7 +305,8 @@ function workforceInstructions(binding: ControlledBinding): string {
       ? 'project_read takes only {path} for the first page. If truncated, follow the exact returned next_read through project_read_more; its cursor and file are backend-owned. Retry identical input to replay a lost reply. INPUT_CHANGED requires restarting with project_read and the path. Never invent a cursor or numeric position.\n'
       : 'This historical assignment retains its advertised project_read selectors. Use only its actual declared fields and returned continuation.\n') +
     (binding.assessment_outputs?.length ? `Read all content of each actual output before reporting a successful content assessment: ${JSON.stringify(binding.assessment_outputs)}. No compilation or executed-test result is implied.\n` : '') +
-    (available.includes('assignment_read') ? 'Prefer assignment_read with {} for the assigned output text. Backend selects paths and pagination. {} replays the first batch; continue only with the exact returned next_cursor as {cursor:next_cursor}. Repeat the same input after an interrupted reply; never invent a cursor. INPUT_CHANGED means restart with {} and reassess the changed bytes. Original-file history still comes from check_evidence, not assignment_read.\n' : '') +
+    (available.includes('assignment_read') ? 'Prefer assignment_read with {} for the assigned output text. Backend selects paths and pagination. {} replays the first batch; continue only with the exact returned next_cursor as {cursor:next_cursor}. Repeat the same input after an interrupted reply; never invent a cursor. INPUT_CHANGED means restart with {} and reassess the changed bytes. ' + (binding.change_assessment_outputs?.length ? 'Assigned original-file history comes from check_evidence, not assignment_read. ' : '') + '\n' : '') +
+    (available.includes('check_evidence_more') ? 'check_evidence takes only professional kind/title/path selectors, with execution as the default kind. For needed original history use kind workflow, reuse already supplied evidence, and follow the exact returned next_read; never invent cursors or numeric positions. Repeat identical input to replay an interrupted reply.\n' : '') +
     (available.includes('task_file_write') ? 'For a small change to an existing file, prefer task_file_write with edits:[{old_text,new_text}] using unique text from project_read. Backend applies the snippets atomically and preserves unrelated content and line endings; do not reconstruct a whole README to add one link. Use content for new files or an intentional complete replacement. A saved response, including replayed:true, confirms the write: continue to a different output or save your content result rather than sending identical writes.\n' : '') +
     (available.includes('cornell_research_compile') ? 'Requested Cornell note.md/exercises.md/answers.md are compiler-owned: use cornell_research_compile with semantic research or an existing input_path, never task_file_write for those renderings.\n' : '') +
     (available.includes('task_run') ? 'task_run uses declared operations. Send the declared title and optional input_path for prepared JSON; backend builds the execution payload.\n' : '') +
@@ -452,7 +463,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       let phase: ControlledDiagnosticPhase = 'assert-active';
       try {
         if (closed) throw new ControlledToolError('ACTOR_INACTIVE', 'This worker session has ended.');
-        await callbacks.assertActive(readOnly && ['project_read', 'project_read_more', 'assignment_read', 'project_list', 'project_search', 'check_evidence'].includes(name) ? 'read-only' : undefined);
+        await callbacks.assertActive(readOnly && ['project_read', 'project_read_more', 'assignment_read', 'project_list', 'project_search', 'check_evidence', 'check_evidence_more'].includes(name) ? 'read-only' : undefined);
         phase = 'request-encoding';
         await trace({ event: 'tool-request', tool: name, model_input: controlledModelInput(name, args), owner: 'runtime',
           backend_binding: { workflow_id: binding.workflow_id, task_id: binding.task_id ?? null, invocation_id: binding.invocation_id } });
@@ -816,7 +827,95 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
         if (!callbacks.invokeCapability) throw new ControlledToolError('CAPABILITY_UNAVAILABLE', 'This assignment has no authorized plug-in gateway.');
         return callbacks.invokeCapability(input);
       });
-  if (['implementation', 'verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage))
+  if (['implementation', 'verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage) && opaqueEvidence(binding)) {
+    type EvidenceCursor = NonNullable<ToolState['evidence_read_cursors']>[string];
+    function invalidateEvidence(state: ToolState, changed: string[]): never {
+      for (const cursor of Object.values(state.evidence_read_cursors ?? {}))
+        if (cursor.pending.some(position => changed.some(path => key(path) === key(position.path)))) cursor.invalidated = true;
+      for (const path of changed) {
+        delete state.reads[key(path)];
+        if (state.read_coverage) delete state.read_coverage[key(path)];
+        if (state.change_read_coverage) delete state.change_read_coverage[path];
+      }
+      saveState(state);
+      throw new ControlledToolError('INPUT_CHANGED', 'Bound original evidence or its current public artifact changed. Restart check_evidence with kind workflow and reassess the actual current bytes; never reuse an old cursor.');
+    }
+    function evidenceCurrent(state: ToolState, pending: EvidencePosition[]): void {
+      const changed = pending.filter(position => projectText(position.path).sha256 !== position.current_sha256).map(position => position.path);
+      if (changed.length) invalidateEvidence(state, changed);
+    }
+    async function readOwnedEvidence(title: string | undefined, kind: 'execution' | 'registration' | 'workflow' | 'cornell-input',
+      path?: string, issued?: EvidenceCursor, cursorId?: string): Promise<unknown> {
+      if (!callbacks.readEvidence) throw new ControlledToolError('NO_CHECK_EVIDENCE', 'No bound check evidence is available in this session.');
+      if (issued) locked(state => {
+        if (issued.invalidated || (cursorId && state.evidence_read_cursors?.[cursorId]?.invalidated)) invalidateEvidence(state, issued.pending.map(position => position.path));
+        evidenceCurrent(state, issued.pending);
+      });
+      const position = issued?.pending[0];
+      if (kind === 'workflow' && path !== undefined) { publicTarget(root, path, binding.approved_inputs); assertReadable(binding, path); }
+      const result = await callbacks.readEvidence(title, kind, kind === 'workflow'
+        ? position ? { path: position.path, start_char: position.start_char, max_chars: 64000 } : path ? { path } : {} : undefined);
+      if (kind !== 'workflow' || !result || typeof result !== 'object' || !('artifact_changes' in result)) return result;
+      const raw = result.artifact_changes;
+      if (!raw || typeof raw !== 'object' || !('files' in raw) || !Array.isArray(raw.files)) return result;
+      const observed = artifactChangeReadCoverage(raw), files = raw.files;
+      return locked(state => {
+        if (issued) {
+          if (cursorId && state.evidence_read_cursors?.[cursorId]?.invalidated) invalidateEvidence(state, issued.pending.map(entry => entry.path));
+          evidenceCurrent(state, issued.pending);
+          const actual = files.find(file => file?.path === position!.path);
+          if (!actual || actual.available !== true || actual.current_sha256 !== position!.current_sha256 ||
+            (position!.before_sha256 !== undefined && actual.before_sha256 !== position!.before_sha256) ||
+            (position!.evidence_sha256 !== undefined && actual.evidence_sha256 !== position!.evidence_sha256))
+            invalidateEvidence(state, [position!.path]);
+          if (!observed[position!.path] || actual.original_start_char !== position!.start_char ||
+            (actual.original_end_char <= position!.start_char && actual.original_end_char < actual.original_total_chars))
+            throw new ControlledToolError('NO_CHECK_EVIDENCE', 'The bound reader supplied no authenticated next original-text page. Report the unavailable original instead of claiming a preservation pass.');
+        }
+        const pending: EvidencePosition[] = [];
+        for (const file of files) {
+          if (!file || typeof file.path !== 'string' || !observed[file.path]) continue;
+          publicTarget(root, file.path, binding.approved_inputs); assertReadable(binding, file.path);
+          if (projectText(file.path).sha256 !== file.current_sha256) invalidateEvidence(state, [file.path]);
+          if (Number.isSafeInteger(file.next_start_char) && file.next_start_char >= 0 && file.next_start_char < file.original_total_chars)
+            pending.push({ path: file.path, start_char: file.next_start_char, current_sha256: file.current_sha256,
+              before_sha256: file.before_sha256, evidence_sha256: file.evidence_sha256 });
+        }
+        if (issued) pending.push(...issued.pending.slice(1));
+        else if (!path && 'omitted_count' in raw && typeof raw.omitted_count === 'number' && raw.omitted_count > 0)
+          for (const output of binding.change_assessment_outputs ?? []) if (!files.some(file => file?.path === output))
+            pending.push({ path: output, start_char: 0, current_sha256: projectText(output).sha256 });
+        const cursors = state.evidence_read_cursors ??= {};
+        // Mark obsolete tokens even on a fresh first read; reverted bytes cannot revive them.
+        for (const cursor of Object.values(cursors)) if (cursor.pending.some(prior => files.some(file => file?.path === prior.path &&
+          (file.current_sha256 !== prior.current_sha256 || (prior.before_sha256 !== undefined && file.before_sha256 !== prior.before_sha256) ||
+            (prior.evidence_sha256 !== undefined && file.evidence_sha256 !== prior.evidence_sha256))))) cursor.invalidated = true;
+        const signature = JSON.stringify({ title, pending });
+        const next = pending.length ? Object.entries(cursors).find(([, cursor]) => !cursor.invalidated &&
+          JSON.stringify({ title: cursor.title, pending: cursor.pending }) === signature)?.[0] ?? randomUUID() : undefined;
+        if (next) cursors[next] = { ...(title === undefined ? {} : { title }), pending };
+        state.change_read_coverage = mergeArtifactChangeReadCoverage(state.change_read_coverage ?? {}, observed);
+        saveState(state);
+        return { ...result, artifact_changes: { ...raw, files: files.map(file => {
+          if (!file || typeof file !== 'object') return file;
+          const { next_start_char: _legacyPosition, ...publicFile } = file; return publicFile;
+        }) }, ...(next ? { next_cursor: next, next_read: { tool: 'check_evidence_more', arguments: { cursor: next } } } : {}) };
+      });
+    }
+    register('check_evidence', 'Read actual bound execution evidence (default), registration, Cornell input, or workflow original text/history. Supply only professional kind/title/path selectors. Use already supplied evidence; if needed original text is paged, follow the exact returned next_read. New files have no original-content obligation. No private paths or caller identities.',
+      z.strictObject({ title: text.max(256).nullish(), kind: z.enum(['execution', 'registration', 'workflow', 'cornell-input']).nullish(),
+        path: z.string().min(1).max(1024).nullish() }), true,
+      args => readOwnedEvidence(args.title ?? undefined, args.kind ?? 'execution', args.path ?? undefined));
+    register('check_evidence_more', 'Continue original text using exactly the backend-issued next_read.arguments cursor. Retry identical input to replay a lost response. INPUT_CHANGED requires a fresh check_evidence with kind workflow. No caller path, page size or numeric position.',
+      z.strictObject({ cursor: z.string().uuid() }), true, args => {
+        const issued = locked(state => {
+          const cursor = state.evidence_read_cursors?.[args.cursor];
+          if (!cursor) throw new ControlledToolError('INVALID_CURSOR', 'Use the exact cursor returned by this assignment\'s check_evidence next_read.');
+          return structuredClone(cursor);
+        });
+        return readOwnedEvidence(issued.title, 'workflow', undefined, issued, args.cursor);
+      });
+  } else if (['implementation', 'verification', 'review', 'synthesis', 'diagnosis'].includes(binding.stage))
     register('check_evidence', 'Read actual bound independent-check and producer-execution evidence (default execution kind). Omit title for all assigned evidence, or select an exact frozen check or producer execution_steps title. Use kind workflow for original preservation, existing-output before text/diff and report lifecycle. If original text is truncated, select that public output path and its next_start_char to read further pages. New files have no original-content obligation. Use kind registration for the bound manifest. No private registry access or caller-provided identities.',
       z.strictObject({ title: text.max(256).optional().describe('Exact assigned check or producer operation title. Omit to inspect all bound execution evidence; unknown selectors return available canonical titles.'), kind: (binding.process_contract === 'workforce/v1' ? z.enum(['execution', 'registration', 'workflow', 'cornell-input']) : z.enum(['execution', 'registration', 'workflow'])).default('execution'),
         path: z.string().min(1).max(1024).optional().describe('Public output path for kind workflow only; ignored for other bound evidence kinds.'),

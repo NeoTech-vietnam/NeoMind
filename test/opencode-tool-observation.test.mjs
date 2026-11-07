@@ -59,6 +59,17 @@ test('three identical successful read responses ignore metadata and duplicate ev
   const stopped = guard.observe(read('read5', 'five')); assert.equal(stopped.halt, true); assert.equal(stopped.halt_reason, 'repeated-observation');
 });
 
+for (const tool of ['assignment_read', 'project_read_more', 'check_evidence_more']) test(`${tool} cursor pages retain bounded replay without allowing unchanged observation loops`, () => {
+  const guard = new OpenCodeToolFailureGuard(sid, [tool]);
+  const input = { cursor: 'backend-issued' };
+  assert.equal(guard.observe(part('first-page', 'completed', input, `wf_${tool}`)).repeated_observations, 1);
+  assert.equal(guard.observe(part('first-page', 'completed', input, `wf_${tool}`)), undefined);
+  assert.equal(guard.observe(part('different-page', 'completed', { cursor: 'different-issued-page' }, `wf_${tool}`)).repeated_observations, 1);
+  assert.equal(guard.observe(part('replay-page', 'completed', input, `wf_${tool}`)).repeated_observations, 2);
+  const stopped = guard.observe(part('unchanged-third-call', 'completed', input, `wf_${tool}`));
+  assert.equal(stopped.halt, true); assert.equal(stopped.halt_reason, 'repeated-observation');
+});
+
 test('fresh check locators and nonce fields cannot refund identical protocol failures', () => {
   const guard = new OpenCodeToolFailureGuard(sid, ['project_read', 'check_run']);
   assert.equal(guard.observe(part('error1', 'error')).repeated_failures, 1);

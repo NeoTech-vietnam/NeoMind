@@ -28,7 +28,8 @@ function fixture(t, absent = false) {
   const controlled = { schema_version: 1, epoch_id: randomUUID(), stage: 'implementation', process_contract: 'workforce/v1', routing_policy: policy,
     tool_contract: { version: 3, local_execution: false, qualified_procedure: false, evidence_documentation: false, research: false } };
   const scope = controlledToolNames({ workflow_id: 'WF-INGRESS-KNW-1', role: 'developer', stage: 'implementation',
-    process_contract: 'workforce/v1', implementation_paths: [], verification_paths: [], execution_steps: [], procedure_bound: false, cornell_bound: false });
+    // This historical signed receipt has no optional read-contract flags.
+    process_contract: 'workforce/v1', read_contract: 'legacy-selectors', implementation_paths: [], verification_paths: [], execution_steps: [], procedure_bound: false, cornell_bound: false });
   const receipt = { schema_version: 1, id, issuer: 'workforce-opencode', execution_mode: 'opencode-local', identity_provenance: 'local-opencode',
     project_id: readConfig(root).project_id, receipt_path: `.neomind/native/receipts/${id}.json`, key_id: keyId,
     role: 'developer', workflow_id: 'WF-INGRESS-KNW-1', task_id: 'WF-INGRESS-TASK-1', request_id: randomUUID(), prior_invocation_id: null,
