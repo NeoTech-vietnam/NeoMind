@@ -17,6 +17,7 @@ import { commandEnvironment } from './command-runner.js';
 import { hash } from './storage.js';
 import { secureHostPrivateDirectory } from './vscode-wire.js';
 import { invocationPolicy, roleModelPolicy, requireRoutingPolicy, type NativeReceipt, type NativeRole, type RoutingPolicy } from './routing.js';
+import { readModelCatalog } from './model-catalog-reader.js';
 import { openCodeIntegrity, openCodeProtocol, openCodeVersion } from './execution-attestation.js';
 import { adapterNodeCommand } from './adapters.js';
 
@@ -38,7 +39,9 @@ async function seedBootstrap(source: string, destination: string, signal?: Abort
   if (!bootstrapSeedSource) throw new Error('OPENCODE_BOOTSTRAP_UNAVAILABLE: reinstall the runtime; its reviewed dependency-copy helper is missing.');
   const worker = new Worker(bootstrapSeedSource, { eval: true, execArgv: [], workerData: { source, destination } });
   let outcome: { copied: boolean; code?: string } | undefined;
-  const cancel = () => { void worker.terminate(); };
+  // Stop queuing new copies, then wait for the worker to drain its already
+  // issued filesystem operations before caller-owned cleanup can begin.
+  const cancel = () => { worker.postMessage({ type: 'cancel' }); };
   try {
     await new Promise<void>((fulfill, reject) => {
       worker.once('message', value => { outcome = value; });
@@ -80,7 +83,7 @@ function endpointForPolicy(root: string, role: NativeRole, modelId: string, poli
   try {
     const info = lstatSync(catalogPath);
     if (!info.isFile() || info.size > 4 * 1024 * 1024) throw new Error();
-    catalog = JSON.parse(readFileSync(catalogPath, 'utf8'));
+    catalog = readModelCatalog(catalogPath);
   } catch { throw new Error('Configured model catalog cannot be read.'); }
   if (!Array.isArray(catalog)) throw new Error('Configured model catalog is invalid.');
   const candidates: OpenCodeEndpoint[] = [];

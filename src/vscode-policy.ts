@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { requireRoutingPolicy, roleModelPolicy, type RoutingPolicy } from './routing.js';
 import { resolveCatalogModel } from './model-catalog.js';
+import { readModelCatalog } from './model-catalog-reader.js';
 
 /** Resolve catalog labels to stable VS Code vendor/ID selectors, never endpoint credentials. */
 export function vscodeSelection(root: string, role: string, id: string, savedPolicy?: RoutingPolicy): { vendor: string; id: string } {
@@ -14,7 +15,7 @@ export function vscodeSelection(root: string, role: string, id: string, savedPol
   const path = isAbsolute(policy.language_models_file)
     ? policy.language_models_file : resolve(root, policy.language_models_file);
   if (!existsSync(path)) throw new Error('VS Code language model catalog is unavailable.');
-  const catalog: unknown = JSON.parse(readFileSync(path, 'utf8'));
+  const catalog = readModelCatalog(path);
   if (!Array.isArray(catalog)) throw new Error('VS Code language model catalog must be an array.');
   const model = resolveCatalogModel(catalog, id, provider);
   if (!model || !model.vendor || !model.id?.trim())

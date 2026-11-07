@@ -3,6 +3,7 @@ import { isAbsolute, resolve, join } from 'node:path';
 import { homedir } from 'node:os';
 import { z } from 'zod';
 import { resolveCatalogModel } from './model-catalog.js';
+import { readModelCatalog } from './model-catalog-reader.js';
 import { agentProfiles, legacyAgentProfiles } from './agent-profiles.js';
 import {
   hash, atomicWrite, readConfig, safePath, withOperationLock,
@@ -38,7 +39,7 @@ function checkedModelCatalog(root: string, path: string) {
     if (!info.isFile() || info.size > 4 * 1024 * 1024) throw new Error(); }
   catch { throw new Error('The selected VS Code model catalog is unavailable.'); }
   const policy = { ...requireRoutingPolicy(root), language_models_file: actual };
-  const catalog: unknown = JSON.parse(readFileSync(actual, 'utf8'));
+  const catalog = readModelCatalog(actual);
   if (!Array.isArray(catalog)) throw new Error('The selected VS Code model catalog must be an array.');
   const candidates = new Set<string>();
   for (const value of catalog) {
@@ -139,7 +140,7 @@ export function setRoleModel(root: string, input: {
       const path = isAbsolute(policy.language_models_file) ? policy.language_models_file
         : resolve(root, policy.language_models_file);
       if (!existsSync(path)) throw new Error('VS Code language model catalog is unavailable.');
-      const catalog: unknown = JSON.parse(readFileSync(path, 'utf8'));
+      const catalog = readModelCatalog(path);
       if (!Array.isArray(catalog)) throw new Error('VS Code language model catalog must be an array.');
       const resolved = resolveCatalogModel(catalog, model, provider);
       if (!resolved?.id?.trim() || !resolved.vendor)

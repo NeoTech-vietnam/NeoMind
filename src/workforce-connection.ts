@@ -8,6 +8,7 @@ import { createRuntimeInfo } from './runtime-info.js';
 import { configuredOpenCodeEndpoint, createOpenCodeGateway, openCodeBinary, openCodeBootstrap, openCodeConfiguration,
   startOpenCodeEngine, opencodeProviderId, opencodeRuntimeVersion, type OpenCodeEndpoint } from './opencode-engine.js';
 import { readHost } from './vscode-wire.js';
+import { createConnectionCheckBudget } from './workforce-connection-budget.js';
 
 const proofPath = '.workforce/setup/model-capabilities.json';
 /** Share preparation only within one private probe and identical credentials. */
@@ -58,7 +59,7 @@ export async function probeWorkForceConnection(root: string, signal?: AbortSigna
   const cached = workForceConnectionProof(root); if (workForceConnectionProofSatisfies(cached, options)) return cached;
   const bound = configuration(root), owner = readHost(root), observed = [];
   for (const group of groupWorkForceConnectionEndpoints(bound.endpoints)) {
-    const deadline = AbortSignal.timeout(120000), stop = signal ? AbortSignal.any([signal, deadline]) : deadline;
+    const budget = createConnectionCheckBudget(signal), stop = budget.signal;
     let current: { nonce: string; calls: number } | undefined;
     const active = () => { stop.throwIfAborted(); const current = readHost(root);
       if (current.instance !== owner.instance || current.pid !== owner.pid) throw new Error('WorkForce connection owner changed.'); };
@@ -72,7 +73,7 @@ export async function probeWorkForceConnection(root: string, signal?: AbortSigna
         return { content: [{ type: 'text', text: JSON.stringify({ connected: true, nonce }) }] };
       });
       return server;
-    }, active);
+    }, active).catch(error => { budget.dispose(); throw error; });
     let engine;
     try {
       const config = openCodeConfiguration(group[0]!, gateway, ['capability_ping']);
@@ -81,6 +82,7 @@ export async function probeWorkForceConnection(root: string, signal?: AbortSigna
       engine = await startOpenCodeEngine(root, randomUUID(), config, stop);
       const listed = await engine.client.tool.ids({ directory: engine.directory });
       const tools = { ...Object.fromEntries((listed.data ?? []).map(name => [name, false])), wf_capability_ping: true };
+      budget.beginModelCheck();
       for (const endpoint of group) {
         active(); current = { nonce: randomUUID(), calls: 0 };
         const session = await engine.client.session.create({ directory: engine.directory, agent: 'workforce', title: 'WorkForce connection check',
@@ -98,7 +100,11 @@ export async function probeWorkForceConnection(root: string, signal?: AbortSigna
           message_id: response.data.info.id, tool_calls: current.calls });
         current = undefined;
       }
-    } finally { try { await engine?.close(); } finally { await gateway.close(); } }
+    } catch (error) {
+      // Engine shutdown can race its deadline. Keep the actual phase/cancel
+      // reason instead of presenting that expected shutdown as a new crash.
+      stop.throwIfAborted(); throw error;
+    } finally { budget.dispose(); try { await engine?.close(); } finally { await gateway.close(); } }
     active();
   }
   if (configuration(root).key !== bound.key) throw new Error('WorkForce configuration changed during the connection check.');

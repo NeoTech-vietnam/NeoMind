@@ -8,6 +8,7 @@ import { readRoutingPolicy, roleModelPolicy, strongRoles } from './routing.js';
 import { roleCapabilities, toolCatalog, readToolPolicy } from './tools.js';
 import { safePath, readConfig } from './storage.js';
 import { resolveCatalogModel } from './model-catalog.js';
+import { readModelCatalog } from './model-catalog-reader.js';
 import { readRoleUpstreamInstructions } from './upstreams.js';
 import { agentProfiles, legacyAgentProfiles, legacyAgentDelegation as agentDelegation, workforceProfileFileId, nativeActivityInstructions, nativeIdentityInstructions, type AgentProfile } from './agent-profiles.js';
 import { readCodexRouting } from './codex-routing.js';
@@ -250,7 +251,7 @@ function copilotModels(root: string, role: string): string[] | null {
   const catalogPath = isAbsolute(policy.language_models_file)
     ? policy.language_models_file
     : resolve(root, policy.language_models_file);
-  const catalog: unknown = JSON.parse(readFileSync(catalogPath, 'utf8'));
+  const catalog = readModelCatalog(catalogPath);
   if (!Array.isArray(catalog))
     throw new Error('Language model catalog must contain an array of providers.');
   return models.map((id) => {
