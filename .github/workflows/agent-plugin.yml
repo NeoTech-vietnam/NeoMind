@@ -1,0 +1,38 @@
+name: Agent Plugin
+
+on:
+  push:
+    paths:
+      - 'agent-plugin/**'
+      - 'scripts/agent-plugin/**'
+      - 'scripts/build-agent-plugin.mjs'
+      - 'resources/agent-plugin-url/**'
+      - 'test/agent-plugin*.test.mjs'
+      - 'package*.json'
+      - '.github/workflows/agent-plugin.yml'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Plugin on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Build, check distribution drift and test MCP without models
+        run: npm run agent-plugin:test

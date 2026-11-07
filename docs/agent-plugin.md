@@ -1,4 +1,20 @@
-# WorkForce Agent Plugin trial
+# WorkForce Agent Plugin
+
+**Current installation: use the ready-to-install Git repository.**
+
+```text
+https://github.com/NeoTech-vietnam/WorkForce-Agent-Plugin
+```
+
+Select **Local**, run **Chat: Install Plugin from Source**, and paste that URL.
+Follow the [connection instructions](agent-plugin-url.md). The distributed package
+is machine-independent and includes its MCP launcher; you do not run a generator
+on each machine.
+
+The materializer instructions below describe the earlier optional, exact-project
+trial. They are not prerequisites for installation from the Git URL.
+
+## Earlier exact-project trial
 
 The Agent Plugins package contributes WF.PM, five specialist profiles, two skills
 and one project-bound MCP connection. It reuses the selected installed runtime's

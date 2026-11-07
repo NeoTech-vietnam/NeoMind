@@ -38,6 +38,9 @@
     "package:smoke": "node scripts/package-smoke.mjs",
     "extension:package": "node scripts/package-extension.mjs",
     "agent-plugin:package": "node scripts/package-agent-plugin.mjs",
+    "agent-plugin:build": "node scripts/build-agent-plugin.mjs",
+    "agent-plugin:check": "node scripts/build-agent-plugin.mjs --check",
+    "agent-plugin:test": "npm run build && npm run agent-plugin:check && node --test --test-concurrency=2 test/agent-plugin*.test.mjs",
     "runtime:package": "node scripts/package-runtime.mjs",
     "release:artifacts": "node scripts/package-release.mjs",
     "engine:bootstrap": "node scripts/bootstrap-engine.mjs"
@@ -68,6 +71,7 @@
   },
   "devDependencies": {
     "@types/node": "26.6.5",
+    "esbuild": "0.28.2",
     "prettier": "3.9.10",
     "typescript": "7.0.2"
   }

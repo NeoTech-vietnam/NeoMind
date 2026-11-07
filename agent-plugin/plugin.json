@@ -1,0 +1,12 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "workforce",
+  "version": "0.1.0-alpha.1",
+  "description": "WorkForce agents, skills and workspace-aware MCP for Copilot Local.",
+  "author": {
+    "name": "NeoTech Vietnam"
+  },
+  "homepage": "https://github.com/NeoTech-vietnam/WorkForce-Agent-Plugin",
+  "repository": "https://github.com/NeoTech-vietnam/WorkForce-Agent-Plugin",
+  "license": "MIT"
+}
