@@ -11,6 +11,7 @@ import { fileHash, distributionTarget, packedArchive, nativeTarCommand } from '.
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(join(repository, 'package.json'), 'utf8'));
+const expectedExtension = JSON.parse(readFileSync(join(repository, 'extensions/vscode-model-bridge/package.json'), 'utf8'));
 const args = process.argv.slice(2), supplied = name => { const at = args.indexOf(name); return at < 0 ? undefined : args[at + 1]; };
 if (args.some((value, index) => index % 2 === 0 && !['--tarball', '--runtime', '--runtime-archive', '--report'].includes(value)) || args.length % 2)
   throw new Error('Usage: node scripts/package-smoke.mjs [--tarball FILE | --runtime DIRECTORY | --runtime-archive FILE] [--report FILE]');
@@ -83,7 +84,7 @@ try {
     assert.equal(resolve(engine.openCodeBootstrap().path), resolve(installed, 'resources/opencode-bootstrap'), 'Portable setup validates its shipped dependency-copy worker.');
   }
   const extension = JSON.parse(readFileSync(join(installed, 'extensions/vscode-model-bridge/package.json'), 'utf8'));
-  assert.equal(`${extension.publisher}.${extension.name}`, 'workforce.workforce-model-bridge'); assert.equal(extension.version, '0.12.0');
+  assert.equal(`${extension.publisher}.${extension.name}`, 'workforce.workforce-model-bridge'); assert.equal(extension.version, expectedExtension.version);
   const invoke = parameters => JSON.parse(run(process.execPath, [cli, ...parameters, '--project', project, '--json'], project));
   run('git', ['init', '--quiet', project], workspace);
   const gitignore = '# Existing project ignore rules\nproducts/private/\n', agents = '# Existing project instructions\n';
