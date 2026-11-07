@@ -145,8 +145,14 @@ export async function createOpenCodeGateway(factory: () => McpServer, assertActi
     if (connections.size >= 32) { response.writeHead(503); response.end(); return; }
     let server: McpServer;
     try { server = factory(); } catch { response.writeHead(409); response.end(); return; }
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true,
-      maxRequestBodySize: 1024 * 1024 });
+    // Frozen checks can legitimately take ten minutes. JSON response mode
+    // withholds even HTTP headers until the callback completes, so the
+    // engine's underlying HTTP idle deadline can expire before its longer
+    // MCP/runner deadline. The SDK owns SSE framing and bounded keepalive
+    // cleanup; comments keep the transport alive without claiming progress
+    // or changing the actual tool result or execution deadline.
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: false,
+      keepAliveMs: 15000, maxRequestBodySize: 1024 * 1024 });
     const connection = { server, transport }; connections.add(connection);
     const cleanup = () => { connections.delete(connection); void server.close().catch(() => {}); };
     response.once('close', cleanup);

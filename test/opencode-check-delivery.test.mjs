@@ -30,7 +30,11 @@ test('idle TCP pressure cannot reset an authenticated frozen check before MCP di
     name: 'check_run', arguments: { title: 'Fresh builds, assertions and independent oracle' },
   } }) });
   assert.equal(response.status, 200);
-  const result = await response.json();
+  assert.match(response.headers.get('content-type'), /^text\/event-stream/);
+  const messages = (await response.text()).split(/\r?\n/).filter(line => line.startsWith('data:'))
+    .map(line => JSON.parse(line.slice(5).trimStart()));
+  assert.equal(messages.length, 1);
+  const result = messages[0];
   assert.equal(result.result.isError, undefined);
   assert.equal(checks, 1);
   const denied = await fetch(gateway.url, { method: 'POST', headers: { authorization: 'Bearer foreign-worker' }, body: '{}' });

@@ -648,6 +648,13 @@ class Controller {
       return await startNative(this.root, input);
     } finally { release(); }
   }
+  private async drainAttemptOperations(id: string): Promise<void> {
+    // A lost MCP response does not cancel its admitted domain work. Include
+    // queued check groups before draining through durable result persistence.
+    const queuedChecks = this.checkJobs.get(id);
+    if (queuedChecks) await Promise.allSettled([queuedChecks]);
+    await this.operationDrain.drain(id);
+  }
   submit(input: ControlledStartInput): ControlledSnapshot {
     const parsed = readConfig(this.root).execution_engine === 'opencode' ? validateControlledStartInput(input) : controlledStartSchema.parse(input);
     if (parsed.context) for (const item of parsed.context) {
@@ -1677,6 +1684,7 @@ class Controller {
         const prompt = this.prompt(run, stage, contract, binding.review_purpose, binding) + (specialist ? `\n\nBounded specialist consultation: ${specialist.objective}. Inspect and report your findings; this is a consultation, not a repair diagnosis.` : '');
         let receipt = await this.launch({ role, prompt, workflow_id: id, task_id: binding.task_id, request_id: attempt.request_id }, signal);
         while (invocationIsActive(receipt) && !signal.aborted) receipt = await waitNative(this.root, receipt.id, 1000);
+        if (!signal.aborted) await this.drainAttemptOperations(id);
         if (signal.aborted) { await interruptNative(this.root, receipt.id); return; }
         run = readState(this.root, id);
         const active = run.attempts.at(-1)!;
@@ -1822,7 +1830,11 @@ class Controller {
           if (contract && this.prepareArtifactRevalidation(run, contract)) continue;
           if (this.complete(run)) return; continue;
         }
-      } finally { attemptAbort.abort(); signal.removeEventListener('abort', abortAttempt); unregister(); }
+      } finally {
+        attemptAbort.abort();
+        try { await this.drainAttemptOperations(id); }
+        finally { signal.removeEventListener('abort', abortAttempt); unregister(); }
+      }
     }
   }
   async answer(id: string, questionId: string, answer: string): Promise<ControlledSnapshot> {

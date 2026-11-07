@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, mkdirSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -26,6 +26,8 @@ import { requestProjection } from '../dist/workforce-requests.js';
 import { researchFixture } from './cornell-research-fixture.mjs';
 import { localOpenAIProvider } from './helpers/local-openai-provider.mjs';
 import { probeWorkForceConnection } from '../dist/workforce-connection.js';
+
+const actualOpenCodeRun = OpenCodeSession.prototype.run;
 
 // Deterministic engine boundary only: no model/API inference. All request IPC,
 // signed native receipts, bound MCP operations, file writes, subprocess checks
@@ -276,6 +278,8 @@ async function deterministicEngine(t) {
   t.after(() => Object.assign(OpenCodeSession.prototype, prior));
 }
 async function fixture(t, names, options = {}) {
+  if (options.canonicalReviewProviderFailure)
+    assert.equal(OpenCodeSession.prototype.run, actualOpenCodeRun, 'Canonical provider-failure fixtures must delegate to the actual pinned engine, never a leaked deterministic model loop.');
   const parent = resolve('artifacts/test-temp'); mkdirSync(parent, { recursive: true });
   const root = realpathSync.native(mkdtempSync(join(realpathSync.native(parent), 'wf-controller-')));
   initialize(root, { project_id: 'WF-TEST', name: 'WorkForce deterministic controller', execution_engine: 'opencode', repair_attempts: 1, max_workers: options.maxWorkers ?? 3 });
@@ -328,7 +332,7 @@ async function wait(root, id, expected = 'completed', timeout = 60000, failureCo
   for (;;) {
     const state = controlledStatus(root, id);
     if (state.status === expected) return state;
-    if (['blocked', 'uncertain', 'cancelled'].includes(state.status) || Date.now() > deadline)
+    if (['blocked', 'uncertain', 'cancelled', 'completed'].includes(state.status) || Date.now() > deadline)
       assert.fail(JSON.stringify({ status: state.status, phase: state.phase, blocker: state.blocker, errors: errors.map(error => error.message),
         dependency_wait: state.dependency_wait ?? null, incident_code: state.incident_condition?.code ?? null,
         recent_events: state.events.slice(-8).map(({ kind, stage, at }) => ({ kind, stage, at })), ...failureContext() }));
@@ -789,12 +793,15 @@ test('quality escalation is reserved before the no-progress guard and cannot res
 });
 
 test('a confirmed answer resumes a blocked implementation incident from its retained typed diagnosis without another PM call', { timeout: 180000 }, async t => {
+  const nativeRun = OpenCodeSession.prototype.run;
   const name = 'confirmed-input-recovery', root = await fixture(t, [name], { repair: true });
   const priorRun = OpenCodeSession.prototype.run;
   let reviews = 0, diagnoses = 0, entered, release;
   const diagnosisEnded = new Promise(resolve => { entered = resolve; });
   const allowReturn = new Promise(resolve => { release = resolve; });
-  t.after(() => { release(); OpenCodeSession.prototype.run = priorRun; });
+  // fixture(t) already wrapped run. Restore the pre-fixture native method;
+  // restoring priorRun here would leak that fake loop into later live-engine tests.
+  t.after(() => { release(); OpenCodeSession.prototype.run = nativeRun; });
   async function boundCalls(session, operation) {
     const context = ownedContext(root, session.receipt.request_id), binding = { ...context.binding, invocation_id: session.receipt.id };
     const server = createControlledMcpServer(root, binding, context.callbacks), client = new Client({ name: 'confirmed-input-fixture', version: '1' });
@@ -866,6 +873,59 @@ test('a confirmed answer resumes a blocked implementation incident from its reta
   assert.equal(JSON.stringify(getRecord(root, diagnosis.report_id)), originalReport);
   assert.deepEqual(readFileSync(receiptPath), originalReceipt);
   assert.ok(done.checks.some(check => check.passed && !check.negative)); assert.deepEqual(errors, []);
+});
+
+for (const pause of [false, true]) test(`a lost checker delivery ${pause ? 'still permits prompt parent cancellation with durable evidence' : 'cannot let model completion cancel the admitted bounded checker'}`, { timeout: 120000 }, async t => {
+  const nativeRun = OpenCodeSession.prototype.run, name = pause ? 'lost-checker-cancel' : 'lost-checker-delivery';
+  const root = await fixture(t, [name]), priorRun = OpenCodeSession.prototype.run;
+  const serverClients = []; let finished, timedOut = false;
+  const modelFinished = new Promise(resolve => { finished = resolve; });
+  t.after(async () => {
+    OpenCodeSession.prototype.run = nativeRun;
+    for (const [client, server] of serverClients) { await client.close(); await server.close(); }
+  });
+  mkdirSync(join(root, 'artifacts'), { recursive: true });
+  atomicWrite(safePath(root, `checks/${name}.mjs`),
+    "import{existsSync,appendFileSync,writeFileSync}from'node:fs';appendFileSync('artifacts/check-starts.txt','start\\n');writeFileSync('artifacts/check-started','yes');while(!existsSync('artifacts/check-release'))await new Promise(r=>setTimeout(r,10));writeFileSync('artifacts/check-finished','yes');console.log('actual admitted checker finished');\n");
+  fixturePlans.get(name).checks[0].timeout_ms = 15000;
+  OpenCodeSession.prototype.run = async function () {
+    const context = ownedContext(root, this.receipt.request_id);
+    if (context.binding.stage !== 'verification') return priorRun.call(this);
+    const binding = { ...context.binding, invocation_id: this.receipt.id };
+    const server = createControlledMcpServer(root, binding, context.callbacks), client = new Client({ name: 'lost-checker-delivery', version: '1' });
+    const [ct, st] = InMemoryTransport.createLinkedPair(); await server.connect(st); await client.connect(ct); serverClients.push([client, server]);
+    try { await client.callTool({ name: 'check_run', arguments: {} }, undefined, { timeout: 75, maxTotalTimeout: 75 }); }
+    catch (error) { assert.match(String(error), /timed out|timeout/i); timedOut = true; }
+    assert.equal(timedOut, true);
+    const deadline = Date.now() + 10000;
+    while (!existsSync(join(root, 'artifacts/check-started')) && Date.now() < deadline) await delay(10);
+    assert.equal(existsSync(join(root, 'artifacts/check-started')), true, 'The command is actually running before the model ends.');
+    const report = await client.callTool({ name: 'assignment_report', arguments: {
+      summary: 'The check response was lost; I cannot claim a passing independent verdict.', verdict: 'fail', failure_kind: 'environment',
+      limitations: ['The admitted checker is still running; no successful tool response was received.'],
+    } });
+    assert.ok(!report.isError, JSON.stringify(parsed(report)));
+    await this.complete('completed', null); finished();
+  };
+  const started = await startControlledWorkflow(root, { requirement: `Case: ${name}\nCreate the JSON and independently verify it through the existing bounded checker.` });
+  await modelFinished;
+  if (pause) {
+    const began = Date.now();
+    await controlControlledWorkflow(root, { workflow_id: started.workflow_id, action: 'pause' });
+    assert.ok(Date.now() - began < 10000, 'Parent cancellation interrupts the bounded checker rather than waiting its natural deadline.');
+  } else atomicWrite(safePath(root, 'artifacts/check-release'), 'release');
+  const ended = await wait(root, started.workflow_id, pause ? 'paused' : 'blocked');
+  assert.equal(ended.checks.length, 1, `Lost delivery cannot replay the admitted command: ${JSON.stringify(ended.checks.map(check => ({ passed: check.passed, cancelled: check.cancelled, exit_code: check.exit_code })))}`);
+  assert.equal(readFileSync(join(root, 'artifacts/check-starts.txt'), 'utf8'), 'start\n');
+  assert.equal(ended.checks[0].cancelled, pause);
+  assert.equal(ended.checks[0].passed, !pause);
+  assert.equal(existsSync(join(root, 'artifacts/check-finished')), !pause);
+  assert.equal(ended.attempts.findLast(attempt => attempt.stage === 'verification').report.verdict, 'fail', 'Actual execution success never rewrites the independent professional verdict.');
+  assert.equal(ended.final_report_id, undefined); assert.deepEqual(errors, []);
+});
+
+test('the completed input-recovery fixture restores the actual native engine before provider-failure injection', () => {
+  assert.equal(OpenCodeSession.prototype.run, actualOpenCodeRun);
 });
 
 test('a delayed duplicate Q1 answer cannot consume or replace a newer Q2', { timeout: 90000 }, async t => {
