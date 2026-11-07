@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { codexThreadSandbox, type CodexSandboxMode } from '../domain/codex-sandbox.js';
 import { AppServerTransport } from './app-server-transport.js';
 import path from 'node:path';
 
@@ -6,19 +7,19 @@ const threadResponse = z.object({ thread: z.object({ id: z.string().min(1) }) })
 const turnResponse = z.object({ turn: z.object({ id: z.string().min(1) }) });
 const nonempty = z.string().min(1);
 const verifiedThreadResponse = z.object({ thread: z.object({ id: nonempty }), model: nonempty,
-  modelProvider: nonempty, cwd: nonempty, approvalPolicy: z.literal('never'), sandbox: z.object({ type: z.literal('readOnly') }) });
+  modelProvider: nonempty, cwd: nonempty, approvalPolicy: z.literal('never'), sandbox: z.object({ type: z.enum(['readOnly', 'dangerFullAccess']) }) });
 
-/** Initial Codex integration is deliberately read-only until write scopes and stop are verified. */
+/** Reader role; read-only access is enforced by Codex only when the run enables its sandbox. */
 export class CodexReadOnlyAdapter {
   private readonly verified = new Map<string, { model: string; provider: string; workspace: string }>();
-  constructor(private readonly transport: Pick<AppServerTransport, 'request'>) {}
+  constructor(private readonly transport: Pick<AppServerTransport, 'request'>, private readonly sandboxMode: CodexSandboxMode = 'enabled') {}
   usesTransport(transport: Pick<AppServerTransport, 'request'>): boolean { return this.transport === transport; }
 
   /** Verify the server's effective settings, rather than treating request parameters as evidence. */
   async startVerifiedThread(workspace: string, model: string, provider: string, config?: Record<string, unknown>): Promise<string> {
     nonempty.parse(workspace); nonempty.parse(model); nonempty.parse(provider);
     const id = this.verifyThread(await this.transport.request('thread/start', {
-      cwd: workspace, model, modelProvider: provider, sandbox: 'read-only', approvalPolicy: 'never', ephemeral: false, ...(config ? { config } : {}),
+      cwd: workspace, model, modelProvider: provider, sandbox: codexThreadSandbox(this.sandboxMode, false), approvalPolicy: 'never', ephemeral: false, ...(config ? { config } : {}),
     }), workspace, model, provider);
     this.verified.set(id, { model, provider, workspace: path.resolve(workspace) });
     return id;
@@ -28,7 +29,7 @@ export class CodexReadOnlyAdapter {
     nonempty.parse(threadId); nonempty.parse(workspace); nonempty.parse(model); nonempty.parse(provider);
     this.verified.delete(threadId);
     const resumed = this.verifyThread(await this.transport.request('thread/resume', {
-      threadId, cwd: workspace, model, modelProvider: provider, sandbox: 'read-only', approvalPolicy: 'never', ...(config ? { config } : {}),
+      threadId, cwd: workspace, model, modelProvider: provider, sandbox: codexThreadSandbox(this.sandboxMode, false), approvalPolicy: 'never', ...(config ? { config } : {}),
     }), workspace, model, provider);
     if (resumed !== threadId) throw new Error('Resumed thread identity mismatch');
     this.verified.set(resumed, { model, provider, workspace: path.resolve(workspace) });
@@ -37,6 +38,7 @@ export class CodexReadOnlyAdapter {
 
   private verifyThread(raw: unknown, workspace: string, model: string, provider: string): string {
     const response = verifiedThreadResponse.parse(raw);
+    if (response.sandbox.type !== (this.sandboxMode === 'disabled' ? 'dangerFullAccess' : 'readOnly')) throw new Error('Effective reader sandbox does not match the run mode');
     if (response.model !== model || response.modelProvider !== provider || path.resolve(response.cwd) !== path.resolve(workspace)) {
       throw new Error('Effective thread configuration does not match the requested binding');
     }
@@ -46,7 +48,7 @@ export class CodexReadOnlyAdapter {
   async startThread(workspace: string, model: string): Promise<string> {
     nonempty.parse(workspace); nonempty.parse(model);
     const response = await this.transport.request('thread/start', {
-      cwd: workspace, model, sandbox: 'read-only', approvalPolicy: 'never', ephemeral: false,
+      cwd: workspace, model, sandbox: codexThreadSandbox(this.sandboxMode, false), approvalPolicy: 'never', ephemeral: false,
     });
     return threadResponse.parse(response).thread.id;
   }
@@ -55,7 +57,7 @@ export class CodexReadOnlyAdapter {
     nonempty.parse(threadId); nonempty.parse(workspace); nonempty.parse(model);
     this.verified.delete(threadId);
     const response = await this.transport.request('thread/resume', {
-      threadId, cwd: workspace, model, sandbox: 'read-only', approvalPolicy: 'never',
+      threadId, cwd: workspace, model, sandbox: codexThreadSandbox(this.sandboxMode, false), approvalPolicy: 'never',
     });
     const resumed = threadResponse.parse(response).thread.id;
     if (resumed !== threadId) throw new Error('Resumed thread identity mismatch');

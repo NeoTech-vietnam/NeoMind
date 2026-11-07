@@ -1,3 +1,4 @@
+import type { CodexSandboxMode } from '../domain/codex-sandbox.js';
 import type { TurnResult } from '../adapters/codex-turn-events.js';
 import type { ScopeIdentity } from '../adapters/worker-scope.js';
 import type { TranscriptEvent } from '../core/transcript.js';
@@ -7,13 +8,13 @@ import type { BindingValues } from '../domain/resolve.js';
  * Runner-neutral contract between the NeoMind core and an agent runtime (Codex, Claude Code). Implementations must keep
  * the guarantees the core relies on; a runner that cannot prove one must fail instead of degrading silently.
  *
- * - The effective model, workspace, access and tool inventory are verified from the runtime, not from request parameters.
+ * - The effective model, workspace, sandbox mode and tool inventory are verified; role scopes are OS-enforced only in sandbox mode.
  * - Every runtime process belonging to a turn runs inside the worker scope whose identity was journaled before launch.
  * - No delegation (sub-agents, sessions) and no external tools (MCP, web) are available to the agent.
  */
 export type RunnerId = 'codex' | 'claude-code';
 
-/** What an agent may touch. Write access is limited to these existing directories inside the workspace. */
+/** Logical role and approved scope. OS enforcement depends on the run sandbox mode. */
 export type RunnerAccess = { kind: 'read' } | { kind: 'write'; writableRoots: string[] };
 
 export interface RunnerSessionRequest {
@@ -77,9 +78,9 @@ export interface AvailableRunnerModel { runner: RunnerId; provider: string; mode
 export interface AgentRunnerFactory {
   readonly runner: RunnerId;
   /** Start a runner for one dispatch in `workspace`. */
-  start(workspace: string): Promise<AgentRunner>;
+  start(workspace: string, sandboxMode?: CodexSandboxMode): Promise<AgentRunner>;
   /** Models this runner may use on this host, already filtered by NeoMind's allowlist. */
   models(): Promise<AvailableRunnerModel[]>;
-  /** Host capability probe; must prove the access limits and stop behaviour before any write is granted. */
-  verifyCapabilities(): Promise<{ sandboxVerified: true; stopVerified: true }>;
+  /** Report sandbox enforcement truthfully; verified stop is required in either execution mode. */
+  verifyCapabilities(sandboxMode?: CodexSandboxMode): Promise<{ sandboxVerified: boolean; stopVerified: true }>;
 }

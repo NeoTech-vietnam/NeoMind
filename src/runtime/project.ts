@@ -12,6 +12,8 @@ import { branchLayout } from '../domain/branches.js';
 import { projectDir } from '../storage/project-dir.js';
 import { parseRules, rulesHash, type ProjectRule } from '../domain/rules.js';
 
+export const newProjectPolicy: ProjectConfig['policy'] = { ...defaultProject.policy, allowAutoApproval: true, allowHumanReview: true };
+
 export const defaultRoles: ProjectConfig['roleDefaults'] = Object.fromEntries(['implementer', 'verifier'].map(role => [role,
   { runner: 'codex', provider: 'openai', model: 'gpt-6-luna', reasoning: 'low' }]));
 export function standaloneDiagnostics(flow: Flow): string[] {
@@ -49,7 +51,8 @@ export async function readProject(projectRoot: string): Promise<ProjectConfig> {
   try { return projectSchema.parse(JSON.parse(await readFile(path.join(projectDir(projectRoot), 'project.json'), 'utf8'))); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    return { ...structuredClone(defaultProject), projectId: `project-${hashJson(projectIdentity(projectRoot)).slice(0, 16)}`, roleDefaults: structuredClone(defaultRoles) };
+    return { ...structuredClone(defaultProject), projectId: `project-${hashJson(projectIdentity(projectRoot)).slice(0, 16)}`,
+      policy: structuredClone(newProjectPolicy), roleDefaults: structuredClone(defaultRoles) };
   }
 }
 /** The project's rules as written in the checkout now; a run pins them so replay and review use the same text. */

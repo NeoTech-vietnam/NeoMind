@@ -1,7 +1,23 @@
 # NeoMind v1 — trạng thái implementation
 
-Cập nhật: **04/11/2026**. Branch: `codex/temporary-workflow-memory`. Baseline: `3d7aedf`.
-Bàn giao hiện tại: [06/11/2026 nâng cấp Gói 1–5](session-handoff-2026-11-06-upgrade.md); [06/11/2026 thiết kế lại](session-handoff-2026-11-06.md); trước đó [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md).
+Cập nhật: **07/11/2026**. Branch: `hieu/adaptive-agent-flow`. HEAD sau đồng bộ: `7445ef3`.
+Bàn giao hiện tại: [07/11/2026 đồng bộ bản copy và cài extension](session-handoff-2026-11-07.md); [06/11/2026 nâng cấp Gói 1–5](session-handoff-2026-11-06-upgrade.md); [06/11/2026 thiết kế lại](session-handoff-2026-11-06.md); trước đó [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md).
+
+## Mặc định tắt sandbox Codex — 07/11/2026
+
+Người dùng duyệt tắt cho cả agent Codex và checks. Policy tùy chọn `codexSandbox: "enabled" | "disabled"`; run mới mặc định disabled, ghi mode vào runtime context trước dispatch; run cũ thiếu mode giữ enabled. Adapter kiểm đúng sandbox thực tế ở start/resume; command/exec dùng đúng mode. Admission vẫn kiểm approval, lease, baseline và stop; chỉ bỏ yêu cầu sandbox proof trong mode disabled của Codex, không áp dụng cho Claude. Capability cache tách theo mode; disabled báo sandboxVerified=false, stopVerified=true. Preview UI/tool nêu rõ không còn bảo đảm phạm vi đọc/ghi của OS. Cấu hình không bị tự ghi/migrate.
+
+Kiểm chứng Windows: TypeScript core, UI và extension build đạt; nhóm adapter/check/admission 14/14 pass. Probe thật chỉ metadata/lệnh node --version và dừng tiến trình con qua Job Object đạt, không inference thật. Suite đầy đủ: 262 test, 257 pass, 2 fail, 3 skip; chạy riêng lại hai ca đạt 2/2 nhưng chưa coi là đã sửa. Test resume journal cũ giữ sandbox đạt. Đã cài extension, host báo loaded; cần mở lại workspace. Lỗi được lưu để debug sau trong [tài liệu riêng](known-test-failures-2026-11-07.md). Linux chưa kiểm chứng chế độ mới.
+
+## Fast mặc định cho project chưa cấu hình — 07/11/2026
+
+Theo phương án người dùng đã duyệt, `readProject` mặc định bật `allowAutoApproval` và `allowHumanReview` khi chưa có `project.json`. Không tạo file cấu hình trong lúc đọc/preview, không bổ sung hoặc ghi đè policy của project đã có cấu hình (kể cả khi thiếu hai trường). API validate/canvas import dùng cùng policy với runtime. Compiler và policy nền của template vẫn yêu cầu opt-in cho cấu hình tường minh.
+
+Kiểm chứng Windows: `npm test -- dist/test/fast-flow.test.js` đạt 4/4 (gồm regression project mới, cấu hình cũ và API validate), TypeScript core và build extension đạt. Đã cài lại `local.neomind`; cần mở lại workspace để backend mới có hiệu lực. Suite đầy đủ (build rồi chạy scripts/run-tests.mjs với --test-concurrency=2): 255 tests, 249 pass, 3 fail, 3 skip. Hai lỗi review-impact do fixture không lưu policy của snapshot; đã bổ sung cấu hình fixture, giữ assertions. Ca reviewer đồng thời đạt khi chạy riêng. Chạy lại cả ba ca tuần tự: 3/3 pass. Chưa lặp lại toàn bộ suite sau sửa fixture; source bản cài extension không đổi sau lượt suite. Chi tiết trong bàn giao 07/11.
+
+## Đồng bộ bản copy và cài extension — 07/11/2026
+
+Fast-forward branch hiện tại từ 5404c63 tới 7445ef3, giữ lịch sử 54 commit; có nhánh backup/before-copy-import-2026-11-07. npm ci, build UI và build extension thành công trên Windows. Đã cài lại local.neomind, host báo loaded; backend mới cần mở lại workspace. npm test ngoài sandbox: 254 tests, 247 pass, 3 fail, 1 cancelled do timeout, 3 skip; chưa đạt toàn bộ suite. Chi tiết và chẩn đoán trong [bàn giao](session-handoff-2026-11-07.md).
 
 ## Nâng cấp NeoMind · Gói 5 — 06/11/2026
 

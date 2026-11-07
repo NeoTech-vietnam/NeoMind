@@ -1,4 +1,5 @@
 import path from 'node:path';
+import type { CodexSandboxMode } from '../domain/codex-sandbox.js';
 import { spawnSync } from 'node:child_process';
 import { z } from 'zod';
 import { CodexReadOnlyAdapter } from '../adapters/codex-readonly.js';
@@ -24,10 +25,10 @@ export class CodexRunner implements AgentRunner {
   private readonly writer: CodexWorkspaceWriteAdapter;
   /** Sessions this runner verified, by thread id; only the exact object returned by `openSession` is accepted. */
   private readonly sessions = new Map<string, VerifiedRunnerSession>();
-  constructor(readonly worker: RuntimeWorker) {
+  constructor(readonly worker: RuntimeWorker, sandboxMode: CodexSandboxMode = 'enabled') {
     this.scope = worker.scope;
-    this.reader = new CodexReadOnlyAdapter(worker.scope.transport);
-    this.writer = new CodexWorkspaceWriteAdapter(worker.scope.transport);
+    this.reader = new CodexReadOnlyAdapter(worker.scope.transport, sandboxMode);
+    this.writer = new CodexWorkspaceWriteAdapter(worker.scope.transport, sandboxMode);
   }
   async openSession(request: RunnerSessionRequest): Promise<VerifiedRunnerSession> {
     const { binding, access, workspace, resumeSessionId } = request;
@@ -83,7 +84,7 @@ export class CodexRunnerFactory implements AgentRunnerFactory {
   /** `modelWorkspace` is the directory whose Codex configuration applies to model discovery. */
   constructor(private readonly workers: WorkerFactory = startRuntimeWorker, private readonly modelWorkspace?: string,
     private readonly capabilities: typeof verifyRuntimeCapabilities = verifyRuntimeCapabilities) {}
-  async start(workspace: string): Promise<CodexRunner> { return new CodexRunner(await this.workers(workspace)); }
+  async start(workspace: string, sandboxMode: CodexSandboxMode = 'enabled'): Promise<CodexRunner> { return new CodexRunner(await this.workers(workspace), sandboxMode); }
   async models(): Promise<AvailableRunnerModel[]> {
     const worker = await this.workers(this.modelWorkspace);
     try {
@@ -92,7 +93,7 @@ export class CodexRunnerFactory implements AgentRunnerFactory {
         .map(model => ({ runner: 'codex', provider: 'openai', model: model.model, reasoning: model.supportedReasoningEfforts.map(effort => effort.reasoningEffort) }));
     } finally { if (!await worker.scope.stop()) throw new Error('Model discovery worker stop unconfirmed'); }
   }
-  verifyCapabilities() { return this.capabilities(); }
+  verifyCapabilities(sandboxMode: CodexSandboxMode = 'enabled') { return this.capabilities(sandboxMode); }
 }
 
 /** Cheap presence check for the Codex CLI (checks always run through Codex `command/exec`); returns why it is missing. */

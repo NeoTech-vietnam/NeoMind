@@ -89,7 +89,7 @@ export function runSummary(run: Run) {
   const handoff = (run as { handoff?: { files: string[]; applied: boolean } }).handoff;
   const flow = (run.snapshot as { configuration?: { flow?: { flowId: string; name: string } } } | undefined)?.configuration?.flow;
   return {
-    runId: run.runId, flowId: flow?.flowId, flow: flow?.name, task: run.runtimeContext?.task, phase, reason: run.runtimeState?.reason ?? '',
+    runId: run.runId, flowId: flow?.flowId, flow: flow?.name, task: run.runtimeContext?.task, codexSandbox: run.runtimeContext?.codexSandbox ?? 'enabled', phase, reason: run.runtimeState?.reason ?? '',
     activeSeconds: Math.round((run.runtimeState?.activeMs ?? 0) / 1000), tokens: run.usage.totalTokens,
     ...(plan ? { plan: { goal: plan.goal, approach: plan.approach, acceptanceCriteria: plan.acceptanceCriteria, scope: plan.scope, checks: plan.checks, riskChanges: plan.riskChanges },
       ...(run.proposedPlanHash ? { planHash: run.proposedPlanHash } : {}) } : {}),
@@ -145,7 +145,7 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
     },
     preview: async args => {
       const preview = await (await runs()).preview(text(args, 'flowId'));
-      return { flow: preview.snapshot.configuration.flow.name,
+      return { flow: preview.snapshot.configuration.flow.name, codexSandbox: preview.codexSandbox,
         steps: Object.fromEntries(Object.entries(preview.snapshot.configuration.bindings).map(([key, binding]) => [key, binding.values])),
         blockers: [...preview.runtimeDiagnostics, ...(preview.runnerPreflight?.blockers ?? [])], exceptions: preview.flowExceptions ?? [],
         rules: preview.rules.rules.map(rule => `[${rule.id}] ${rule.text}`), ...(preview.rules.warnings.length ? { ruleWarnings: preview.rules.warnings } : {}),

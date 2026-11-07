@@ -52,7 +52,7 @@ Khi tạo run đầu tiên có binding Claude, NeoMind chạy capability probe b
 
 **Cần có**
 - Claude Code CLI đã cài (`claude --version`) và đã đăng nhập: `claude auth status` báo logged in.
-- Codex CLI vẫn cần: checks luôn chạy qua sandbox của Codex, kể cả khi mọi binding dùng Claude Code. Preview báo lỗi nếu thiếu Codex.
+- Codex CLI vẫn cần: checks luôn chạy qua Codex theo chế độ sandbox của run, kể cả khi mọi binding dùng Claude Code. Preview báo lỗi nếu thiếu Codex.
 
 **Chọn runner và model**
 - Khi chạy: trong *Xem cấu hình thực tế*, mỗi binding có ô *Runner* (Codex hoặc Claude Code). Đổi runner sẽ đặt model về mặc định của runner đó; bấm *Cập nhật cấu hình* trước khi bắt đầu.
@@ -72,7 +72,8 @@ Khi tạo run đầu tiên có binding Claude, NeoMind chạy capability probe b
 
 - **Worker scope = Windows job object.** NeoMind chạy helper `neomind-job-<hash>.exe`. Helper tạo job `Global\neomind-run-<uuid>` với kill-on-close, tự vào job, rồi mới khởi động Codex app-server. Mọi tiến trình con và cháu đều thuộc job và không thể thoát ra. Stop chỉ được xác nhận khi job báo còn 0 tiến trình. Nếu NeoMind hoặc helper bị kill, Windows tự kết thúc toàn bộ job.
 - **Helper được biên dịch lúc chạy** bằng `csc.exe` của .NET Framework 4, có sẵn trên Windows 10/11, và cache ở `%LOCALAPPDATA%\neomind\bin`. Repo không chứa file binary.
-- **Capability probe** kiểm tra sandbox: ghi trong thư mục được phép phải thành công, ghi ra ngoài phải bị chặn. Probe còn chạy một lệnh sandbox kéo dài, dừng job, rồi xác nhận lệnh đó đã chết. Nếu Codex chạy lệnh ngoài job (ví dụ `[windows] sandbox = "elevated"` dùng tài khoản sandbox riêng), probe thất bại và runtime bị chặn. Đã kiểm chứng với `sandbox = "unelevated"`.
+- **Chế độ Codex:** run mới mặc định không sandbox; bật lại bằng `policy.codexSandbox: "enabled"`. Chế độ được ghim vào run; run cũ chưa có trường này giữ sandbox. Xem README mục Chế độ sandbox Codex.
+- **Capability probe khi bật sandbox** kiểm tra sandbox: ghi trong thư mục được phép phải thành công, ghi ra ngoài phải bị chặn. Probe còn chạy một lệnh sandbox kéo dài, dừng job, rồi xác nhận lệnh đó đã chết. Nếu Codex chạy lệnh ngoài job (ví dụ `[windows] sandbox = "elevated"` dùng tài khoản sandbox riêng), probe thất bại và runtime bị chặn. Đã kiểm chứng với `sandbox = "unelevated"`.
 - **Định danh scheduler** dùng PID + creation time của tiến trình + `BootId` trong registry thay cho `/proc`.
 - State nằm ở `%LOCALAPPDATA%\neomind\<project-key>`.
 
@@ -85,7 +86,7 @@ Git `core.autocrlf=true` làm worktree có CRLF. Review evidence so khớp theo 
 ### Giới hạn còn lại trên Windows
 
 - Flow Dev đầy đủ (plan → duyệt → write → `npm test` → review → commit) đã chạy thật trên Windows, kể cả Ctrl+C giữa chừng rồi resume. Chi tiết trong `docs/adaptive-agent-flow/implementation-status.md`. Commit nằm trên detached worktree của run, xem bằng `git worktree list` và merge/cherry-pick thủ công.
-- Job object không chặn được tiến trình do dịch vụ hệ thống tạo thay cho worker (WMI, Task Scheduler, COM out-of-proc). Đây là cùng loại giới hạn với systemd. Sandbox của Codex là lớp chặn chính.
+- Job object không chặn được tiến trình do dịch vụ hệ thống tạo thay cho worker (WMI, Task Scheduler, COM out-of-proc). Đây là cùng loại giới hạn với systemd. Khi bật sandbox, sandbox của Codex là lớp chặn phạm vi; khi tắt không còn bảo đảm đó.
 - Git subprocess (commit) vẫn dùng timeout/AbortSignal như trên Linux, chưa đặt trong job.
 
 WSL2 + systemd vẫn dùng được như trước nếu muốn giữ đường chạy Linux.

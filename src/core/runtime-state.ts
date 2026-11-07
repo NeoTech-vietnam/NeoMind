@@ -3,6 +3,7 @@ import { memorySelectionSchema } from '../domain/schema.js';
 
 export const runtimeContextSchema = z.strictObject({
   workspaceMode: z.enum(['isolated', 'current', 'shared']).optional(),
+  codexSandbox: z.enum(['enabled', 'disabled']).optional(),
   initialIndexTree: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/).optional(),
   projectRoot: z.string().min(1), workspace: z.string().min(1), task: z.string().min(1),
   sourceHead: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/), initialBaselineHash: z.string().min(1),

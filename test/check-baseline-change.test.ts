@@ -57,7 +57,7 @@ test('check that writes into the worktree blocks the run with the generated path
   git('init', '-q'); git('config', 'core.autocrlf', 'false'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.test');
   await writeFile(path.join(project, 'README.md'), 'Fixture\n'); git('add', '.'); git('commit', '-qm', 'baseline');
   const role = { runner: 'codex', provider: 'openai', model: 'gpt-6-luna', reasoning: 'low' };
-  const config = { ...structuredClone(defaultProject), roleDefaults: { implementer: role, verifier: role } };
+  const config = { ...structuredClone(defaultProject), policy: { ...defaultProject.policy, codexSandbox: 'enabled' as const }, roleDefaults: { implementer: role, verifier: role } };
   await mkdir(path.join(project, '.neomind')); await writeFile(path.join(project, '.neomind/project.json'), JSON.stringify(config));
   const profiles = { 'implementer@1': builtinProfile('implementer'), 'verifier@1': builtinProfile('verifier') };
   const snapshot = await materializeRun(structuredClone(templates.dev), config, profiles, project), coordinator = new WorkspaceCoordinator(path.join(state, 'coordination.sqlite'));

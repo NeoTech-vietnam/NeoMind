@@ -256,6 +256,7 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
       case 'runtime_context': {
         if (runtimeContext || attempts.size) throw new Error('Runtime context must be recorded once before dispatch');
         runtimeContext = runtimeContextSchema.parse(event.payload);
+        if (runtimeContext.codexSandbox && initial.policy.codexSandbox && runtimeContext.codexSandbox !== initial.policy.codexSandbox) throw new Error('Runtime Codex sandbox mode does not match pinned policy');
         if (runtimeContext.lease.runId !== first.runId || runtimeContext.lease.workspace !== runtimeContext.workspace) throw new Error('Runtime context lease mismatch');
         break;
       }

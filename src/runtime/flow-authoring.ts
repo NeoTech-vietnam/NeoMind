@@ -7,7 +7,7 @@ import { defaultProject, newFlowFromTemplate, templates } from '../domain/templa
 import { FlowLibrary, flowAuthorSchema, type FlowAuthor, type StoredFlowVersion } from '../storage/flow-library.js';
 import { ProfileLibrary } from '../storage/profile-library.js';
 import { projectDir } from '../storage/project-dir.js';
-import { builtinProfile, defaultRoles, readProjectRules } from './project.js';
+import { builtinProfile, defaultRoles, newProjectPolicy, readProjectRules } from './project.js';
 import { ESTIMATE_MIN_RUNS, type StatsGroup } from './run-stats.js';
 
 export { diffFlows } from '../domain/flow-diff.js';
@@ -15,7 +15,7 @@ export { diffFlows } from '../domain/flow-diff.js';
 function library(root: string) { return new FlowLibrary(path.join(projectDir(root), 'flows')); }
 export async function authoringProject(root: string) {
   try { return projectSchema.parse(JSON.parse(await readFile(path.join(projectDir(root), 'project.json'), 'utf8'))); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { ...structuredClone(defaultProject), roleDefaults: structuredClone(defaultRoles) }; throw error; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { ...structuredClone(defaultProject), policy: structuredClone(newProjectPolicy), roleDefaults: structuredClone(defaultRoles) }; throw error; }
 }
 function plainVersion(version: StoredFlowVersion): Flow {
   const { semanticHash: _semantic, contentHash: _content, createdAt: _created, author: _author, ...flow } = version;

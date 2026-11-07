@@ -85,6 +85,8 @@ test('dispatch is runner-neutral: a non-Codex runner plans, writes and reviews, 
     const report = await run.report();
     assert.equal(report.runtimeState.phase, 'completed', report.runtimeState.reason);
     assert.equal(report.commits[0]?.confirmed, true);
+    assert.equal(report.runtimeContext?.codexSandbox, 'disabled');
+    assert.deepEqual((codex.commands[0] as { sandboxPolicy: unknown }).sandboxPolicy, { type: 'dangerFullAccess' });
     assert.equal(codex.commands.length, 1); assert.equal(report.checks[0]?.status, 'passed');
     // Every agent attempt ran in a Claude session and scope, journaled with the existing event types.
     const sessions = claude.started.flatMap(runner => runner.opened), units = claude.started.map(runner => runner.scope.identity.unit);

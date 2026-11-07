@@ -159,11 +159,12 @@ export function RunStart({ initialFlow, flows, history, started }: { initialFlow
         <Button size="sm" disabled={publishing} onClick={() => void publish()}>{publishing ? 'Đang publish…' : 'Publish flow'}</Button></div></Callout>}
       {publishError && <Callout tone="danger" icon={<CircleAlert />}>Không publish được: {publishError}</Callout>}
       {previewError && !unpublished && <Callout tone="danger" icon={<CircleAlert />}>{previewError}</Callout>}
+      {preview?.codexSandbox === 'disabled' && <Callout tone="attention" icon={<TriangleAlert />}>Sandbox Codex đang tắt cho agent và checks. Worktree và cơ chế dừng process vẫn được giữ; quyền chỉ đọc và phạm vi ghi không được hệ điều hành bảo đảm.</Callout>}
       {(preview?.flowExceptions ?? []).length > 0 && <Callout tone="attention" icon={<TriangleAlert />}><strong className="font-semibold text-foreground">Flow này khác Dev:</strong><ul className="m-0 mt-1 list-disc pl-4">{preview!.flowExceptions!.map(note => <li key={note}>{note}</li>)}</ul></Callout>}
     </section>
 
     {(preview || (!previewError && loading)) && <section className="flex flex-col gap-2.5">
-      <SectionHead title="Agent cho từng bước" hint="Checks luôn chạy qua sandbox Codex">{loading && <span className="text-[12px] text-muted-foreground">Đang cập nhật…</span>}</SectionHead>
+      <SectionHead title="Agent cho từng bước" hint="Checks chạy qua Codex">{loading && <span className="text-[12px] text-muted-foreground">Đang cập nhật…</span>}</SectionHead>
       <div className="flex flex-wrap items-center gap-1.5"><span className="mr-1 text-[12px] font-medium text-fg-2">Thiết lập nhanh</span>
         {presets.map(preset => <button key={preset.id} type="button" aria-pressed={activePreset === preset.id} disabled={!preview || runners.length === 0} onClick={() => applyPreset(preset)}
           className={cn('h-6 cursor-pointer rounded-full border bg-transparent px-2.5 font-sans text-[12px] text-fg-2 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-45', activePreset === preset.id && 'border-foreground font-semibold text-foreground')}>{preset.label}</button>)}

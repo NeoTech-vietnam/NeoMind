@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 1,
+  "flowId": "test",
+  "version": 1,
+  "name": "test",
+  "description": "Dev code flow with user approval and independent verification.",
+  "definition": {
+    "startNodeId": "start",
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "type": "start"
+      },
+      {
+        "id": "plan",
+        "label": "Plan",
+        "type": "agent_task",
+        "goal": "Survey and propose a plan",
+        "profileId": "implementer",
+        "profileVersion": 1,
+        "sessionGroup": "implementation-session",
+        "bindingId": "implementer",
+        "permissions": {
+          "read": true,
+          "write": false,
+          "checks": true,
+          "gitCommit": false
+        },
+        "writeScopes": [],
+        "outputContract": "plan"
+      },
+      {
+        "id": "approval",
+        "label": "Approve plan",
+        "type": "approval",
+        "purpose": "Approve plan and scope before edits"
+      },
+      {
+        "id": "implement",
+        "label": "Implement",
+        "type": "agent_task",
+        "goal": "Implement the approved plan",
+        "profileId": "implementer",
+        "profileVersion": 1,
+        "sessionGroup": "implementation-session",
+        "bindingId": "implementer",
+        "permissions": {
+          "read": true,
+          "write": true,
+          "checks": true,
+          "gitCommit": false
+        },
+        "writeScopes": [
+          "."
+        ],
+        "outputContract": "code-artifacts"
+      },
+      {
+        "id": "repair",
+        "label": "Bounded repair",
+        "type": "repair_scope",
+        "targetReviewId": "verify",
+        "ownerNodeIds": [
+          "implement"
+        ],
+        "maxRounds": 2
+      },
+      {
+        "id": "verify",
+        "label": "Independent review",
+        "type": "review_group",
+        "targetNodeId": "implement",
+        "reviewers": [
+          {
+            "id": "required-reviewer",
+            "profileId": "verifier",
+            "profileVersion": 1,
+            "sessionGroup": "verification-session",
+            "required": true,
+            "scope": [
+              "."
+            ]
+          }
+        ],
+        "criteria": [
+          "approved plan",
+          "checks",
+          "regressions"
+        ],
+        "planStepCriteria": true
+      },
+      {
+        "id": "commit",
+        "label": "Local commit",
+        "type": "git_commit"
+      },
+      {
+        "id": "finish",
+        "label": "Finish",
+        "type": "finish"
+      }
+    ],
+    "edges": [
+      {
+        "from": "start",
+        "to": "plan",
+        "outcome": "completed"
+      },
+      {
+        "from": "plan",
+        "to": "approval",
+        "outcome": "completed"
+      },
+      {
+        "from": "approval",
+        "to": "implement",
+        "outcome": "pass"
+      },
+      {
+        "from": "implement",
+        "to": "repair",
+        "outcome": "completed"
+      },
+      {
+        "from": "repair",
+        "to": "verify",
+        "outcome": "completed"
+      },
+      {
+        "from": "verify",
+        "to": "commit",
+        "outcome": "pass"
+      },
+      {
+        "from": "commit",
+        "to": "finish",
+        "outcome": "completed"
+      }
+    ],
+    "bindings": {
+      "implementer": {
+        "runner": {
+          "mode": "inherit"
+        },
+        "provider": {
+          "mode": "inherit"
+        },
+        "model": {
+          "mode": "inherit"
+        },
+        "reasoning": {
+          "mode": "inherit"
+        },
+        "fallback": []
+      },
+      "verifier": {
+        "runner": {
+          "mode": "inherit"
+        },
+        "provider": {
+          "mode": "inherit"
+        },
+        "model": {
+          "mode": "inherit"
+        },
+        "reasoning": {
+          "mode": "inherit"
+        },
+        "fallback": []
+      }
+    },
+    "bindingDefaults": {},
+    "sessionGroups": [
+      {
+        "id": "implementation-session",
+        "bindingId": "implementer"
+      },
+      {
+        "id": "verification-session",
+        "bindingId": "verifier"
+      }
+    ],
+    "limits": {
+      "maxConcurrency": 4,
+      "maxRepairRounds": 2,
+      "activeTimeSeconds": 1800
+    },
+    "workspacePolicy": "isolated",
+    "outputContract": "accepted-code-and-local-commit"
+  },
+  "layout": {}
+}

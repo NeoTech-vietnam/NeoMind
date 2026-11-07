@@ -22,7 +22,7 @@ async function fixture(mode: 'separate' | 'overlap', workspaceMode: 'isolated' |
   git('init', '-q'); git('config', 'core.autocrlf', 'false'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.test');
   await writeFile(path.join(project, 'app.js'), 'const mode = "base";\nmodule.exports = { mode };\n');
   const role = { runner: 'codex', provider: 'openai', model: 'gpt-6-luna', reasoning: 'low' };
-  const config = { ...structuredClone(defaultProject), roleDefaults: { implementer: role, verifier: role } };
+  const config = { ...structuredClone(defaultProject), policy: { ...defaultProject.policy, codexSandbox: 'enabled' as const }, roleDefaults: { implementer: role, verifier: role } };
   await mkdir(path.join(project, '.neomind')); await writeFile(path.join(project, '.neomind/project.json'), JSON.stringify(config));
   git('add', '.'); git('commit', '-qm', 'baseline');
   await writeFile(path.join(project, 'app.js'), 'const mode = "user";\nmodule.exports = { mode };\n');

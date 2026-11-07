@@ -8,7 +8,7 @@ import { LocalRun } from '../src/runtime/local-run.js';
 import { flowExceptions } from '../src/runtime/run-manager.js';
 import { templates, defaultProject } from '../src/domain/templates.js';
 import { compileFlow } from '../src/domain/compiler.js';
-import { builtinProfile } from '../src/runtime/project.js';
+import { builtinProfile, readProject } from '../src/runtime/project.js';
 import { materializeRun, validateMaterializedRun } from '../src/domain/materialize.js';
 import { GraphScheduler } from '../src/core/graph-scheduler.js';
 import { WorkspaceCoordinator } from '../src/storage/coordination.js';
@@ -39,6 +39,28 @@ test('Fast is a quick plan approved by NeoMind, then implement, reviewed by the 
   devWithoutReview.definition.edges = [...devWithoutReview.definition.edges.filter(edge => !['verify', 'repair', 'commit'].includes(edge.to) && !['verify', 'repair', 'commit'].includes(edge.from)), { from: 'implement', to: 'finish', outcome: 'completed' }];
   assert.ok(codes(devWithoutReview, defaultProject.policy).includes('review_bypass'));
   assert.equal(flowExceptions(fast).length, 2); assert.deepEqual(flowExceptions(templates.dev), []);
+});
+
+test('projects without configuration allow Fast while existing policies remain unchanged', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'neomind-fast-policy-'));
+  execFileSync('git', ['init', '-q', root]);
+  const config = await readProject(root);
+  assert.deepEqual(codes(templates.fast, config.policy), []);
+  await assert.rejects(readFile(path.join(root, 'neomind/project.json')), /ENOENT/);
+  const { createEditorApi } = await import('../src/ui-server/server.js');
+  const api = createEditorApi(root, async () => { throw new Error('No run should start'); });
+  const validate = () => api({ method: 'POST', path: '/api/flows/fast/validate', body: { draft: templates.fast } });
+  assert.equal(((await validate()).body as { valid: boolean }).valid, true);
+  const { authoringProject } = await import('../src/runtime/flow-authoring.js');
+  assert.deepEqual(codes(templates.fast, (await authoringProject(root)).policy), []);
+  await mkdir(path.join(root, 'neomind'), { recursive: true });
+  for (const policy of [defaultProject.policy, { ...config.policy, allowAutoApproval: false, allowHumanReview: false }]) {
+    const bytes = JSON.stringify({ ...config, policy });
+    await writeFile(path.join(root, 'neomind/project.json'), bytes);
+    assert.deepEqual(codes(templates.fast, (await readProject(root)).policy).sort(), ['auto_approval_denied', 'human_review_denied']);
+    assert.equal(((await validate()).body as { valid: boolean }).valid, false);
+    assert.equal(await readFile(path.join(root, 'neomind/project.json'), 'utf8'), bytes);
+  }
 });
 
 test('a Fast run approves its own plan, implements without stopping, and the user applies the changes to the checkout once', async () => {
@@ -72,6 +94,7 @@ test('a Fast run approves its own plan, implements without stopping, and the use
   try {
     run.launch(); await run.settled();
     const report = await run.report();
+    assert.equal(report.runtimeContext?.codexSandbox, 'disabled');
     assert.equal(report.runtimeState.phase, 'completed', report.runtimeState.reason);
     assert.equal(report.approvals[0]?.approval.source, 'flow'); assert.equal(report.approvals[0]?.approval.actor, 'neomind');
     assert.deepEqual(report.attempts.map(attempt => attempt.nodeId), ['plan', 'implement']);

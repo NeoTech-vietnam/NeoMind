@@ -1,4 +1,5 @@
 import path from 'node:path';
+import type { CodexSandboxMode } from '../domain/codex-sandbox.js';
 import { lstat, realpath } from 'node:fs/promises';
 import { approvalMatches, type Approval, type Plan } from '../domain/approval.js';
 import type { ProjectPolicy } from '../domain/schema.js';
@@ -9,12 +10,12 @@ import { captureBaseline, type WorkspaceBaseline } from './baseline.js';
 export interface WorkspaceWriteGrant { workspace: string; runId: string; fence: number; baseline: WorkspaceBaseline; writableRoots: string[]; planId: string; planVersion: number }
 /**
  * Write scopes must be existing directories; file-only scopes cannot be safely bound by this adapter.
- * The trusted capability check must independently verify sandbox and stop behaviour.
+ * The trusted capability check must independently verify stop, and sandbox when the run requires it.
  */
 export async function admitIsolatedWorkspaceWrite(input: {
   workspace: string; lease: WorkspaceLease; coordinator: WorkspaceCoordinator;
   plan: Plan; approval: Approval; livePolicy: ProjectPolicy; expectedBaselineHash: string;
-  sandboxVerified: boolean; stopVerified: boolean;
+  sandboxVerified: boolean; stopVerified: boolean; codexSandbox?: CodexSandboxMode;
   repair?: { roundId: string; baselineHash: string };
   continuation?: { baselineHash: string };
   step?: { baselineHash: string };
@@ -26,7 +27,9 @@ export async function admitIsolatedWorkspaceWrite(input: {
   /** The run's recorded starting baseline, which holds imported uncommitted changes. */
   start?: { baselineHash: string };
 }): Promise<WorkspaceWriteGrant> {
-  if (!input.sandboxVerified || !input.stopVerified) throw new Error('Verified sandbox and stop capabilities required');
+  const sandboxRequired = input.codexSandbox !== 'disabled';
+  if (!sandboxRequired && input.livePolicy.codexSandbox === 'enabled') throw new Error('Project policy requires Codex sandbox');
+  if ((sandboxRequired && !input.sandboxVerified) || !input.stopVerified) throw new Error('Verified sandbox and stop capabilities required');
   if (!approvalMatches(input.approval, input.plan, input.livePolicy)) throw new Error('Approval does not match current plan and policy');
   const workspace = await realpath(input.workspace);
   if (!input.workspaceMode && workspace === primaryWorktree(workspace)) throw new Error('A separate Git worktree is required');

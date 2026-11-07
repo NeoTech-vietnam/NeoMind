@@ -6,8 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { compileFlow } from '../domain/compiler.js';
-import { projectSchema, skillReferenceSchema } from '../domain/schema.js';
-import { defaultProject, newFlowFromTemplate, templates } from '../domain/templates.js';
+import { skillReferenceSchema } from '../domain/schema.js';
+import { newFlowFromTemplate, templates } from '../domain/templates.js';
 import { FlowLibrary } from '../storage/flow-library.js';
 import { RunManager } from '../runtime/run-manager.js';
 import type { BindingOverride } from '../domain/resolve.js';
@@ -17,7 +17,7 @@ import { workerScopeSupported } from '../adapters/worker-scope.js';
 import { RevisionConflict } from '../storage/library-lock.js';
 import type { RunnerId } from '../runners/agent-runner.js';
 import { projectDir } from '../storage/project-dir.js';
-import { flowBlocks, draftFlow, getFlow, validateFlow, flowDiff, publishFlow, assess } from '../runtime/flow-authoring.js';
+import { authoringProject, flowBlocks, draftFlow, getFlow, validateFlow, flowDiff, publishFlow, assess } from '../runtime/flow-authoring.js';
 import { flowAuthorSchema } from '../storage/flow-library.js';
 import { runStats } from '../runtime/run-stats.js';
 import { createProgram, listPrograms, markPhaseDelivered, programNext, programStatus, startPhase } from '../runtime/programs.js';
@@ -46,8 +46,7 @@ async function body(request: IncomingMessage): Promise<unknown> {
   return text.trim() ? JSON.parse(text) as unknown : {};
 }
 async function policyFor(projectRoot: string) {
-  try { return projectSchema.parse(JSON.parse(await readFile(path.join(projectDir(projectRoot), 'project.json'), 'utf8'))).policy; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return defaultProject.policy; throw error; }
+  return (await authoringProject(projectRoot)).policy;
 }
 
 /** One API request of the editor, independent of how it arrived (HTTP from the browser, or a Nimbalyst panel). */

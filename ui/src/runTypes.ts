@@ -10,7 +10,7 @@ export type Run = {
   nodeData?: { nodeId: string; attemptId: string; workspace: string; promptHash: string; truncated: boolean; sources: { kind: string; id: string; fromNodeId?: string; hash: string }[]; output?: { outputHash: string; truncated: boolean; messageCount: number } }[];
   runId: string; busy: boolean; proposedPlanHash?: string; timeLimitMs?: number; timeExtensionsMs: number; tokenLimit?: number | null; tokenExtensions?: number;
   runtimeState?: { phase: string; reason: string; activeMs: number };
-  runtimeContext?: { workspaceMode?: 'isolated' | 'current' | 'shared'; task: string; workspace: string; sourceHead?: string; memory?: { root: string; text: string; selectionPolicy?: unknown; inferredPaths?: string[]; records?: { id: string; type: string; scope: string; revision: string; sources: string[]; selectionReason: string }[] }; programId?: string; phaseId?: string; rules?: { hash: string; rules: { id: string; text: string }[] } };
+  runtimeContext?: { codexSandbox?: 'enabled' | 'disabled'; workspaceMode?: 'isolated' | 'current' | 'shared'; task: string; workspace: string; sourceHead?: string; memory?: { root: string; text: string; selectionPolicy?: unknown; inferredPaths?: string[]; records?: { id: string; type: string; scope: string; revision: string; sources: string[]; selectionReason: string }[] }; programId?: string; phaseId?: string; rules?: { hash: string; rules: { id: string; text: string }[] } };
   snapshot?: MaterializedRun;
   bindingSelections: { key: string; values: BindingValues; reason: string }[];
   usage: { totalTokens: number | null; partial: boolean };
@@ -30,6 +30,7 @@ export type Run = {
 };
 
 export type Preview = {
+  codexSandbox?: 'enabled' | 'disabled';
   runtimeDiagnostics: string[]; snapshot: MaterializedRun; configurationHash: string; sourceHead: string; dirtyPaths: string[]; gitDelivery: string;
   runnerPreflight?: { blockers: string[]; checks: { available: boolean; reason?: string } };
   flowExceptions?: string[];

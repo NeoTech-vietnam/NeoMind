@@ -2,6 +2,7 @@ import { realpath } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { z } from 'zod';
+import { codexSandboxPolicy, type CodexSandboxMode } from '../domain/codex-sandbox.js';
 import type { WorkerScope } from './worker-scope.js';
 import { AppServerTransport } from './app-server-transport.js';
 import { resolveHostCommand } from './worker-environment.js';
@@ -14,7 +15,7 @@ export interface CheckResult { checkId: string; exitCode: number; stdout: string
 
 /** Checks execute as argv in the owned worktree; uncertain transport outcomes must not be retried automatically. */
 export class CodexCheckExecutor {
-  constructor(private readonly transport: Pick<AppServerTransport, 'request'>) {}
+  constructor(private readonly transport: Pick<AppServerTransport, 'request'>, private readonly sandboxMode: CodexSandboxMode = 'enabled') {}
   usesTransport(transport: Pick<AppServerTransport, 'request'>): boolean { return this.transport === transport; }
   async run(input: CheckSpec, workspaceInput: string, lease: WorkspaceLease, coordinator: WorkspaceCoordinator, scope: WorkerScope): Promise<CheckResult> {
     const spec = specSchema.parse(input), workspace = await realpath(workspaceInput), cwd = await realpath(spec.cwd);
@@ -29,7 +30,7 @@ export class CodexCheckExecutor {
         timeoutMs: spec.timeoutMs, outputBytesCap: 1024 * 1024,
         // Import-time bytecode caches would otherwise land in the worktree and change the reviewed baseline.
         env: { PYTHONDONTWRITEBYTECODE: '1' },
-        sandboxPolicy: { type: 'workspaceWrite', writableRoots: [workspace], networkAccess: false, excludeSlashTmp: true, excludeTmpdirEnvVar: true },
+        sandboxPolicy: codexSandboxPolicy(this.sandboxMode, [workspace]),
       }, spec.timeoutMs + 5000));
     } catch (error) {
       if (!await scope.stop()) coordinator.quarantine(lease);

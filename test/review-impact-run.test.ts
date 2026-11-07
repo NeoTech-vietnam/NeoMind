@@ -23,7 +23,8 @@ async function fixture(repairTouchesShared: boolean) {
   await writeFile(path.join(project, 'a', 'README'), 'a\n'); await writeFile(path.join(project, 'b', 'README'), 'b\n'); await writeFile(path.join(project, 'package.json'), '{}\n');
   git('add', '.'); git('commit', '-qm', 'baseline');
   const role = { runner: 'codex', provider: 'openai', model: 'gpt-6-luna', reasoning: 'low' };
-  const config = { ...structuredClone(defaultProject), roleDefaults: { implementer: role, verifier: role } };
+  const config = { ...structuredClone(defaultProject), policy: { ...defaultProject.policy, codexSandbox: 'enabled' as const }, roleDefaults: { implementer: role, verifier: role } };
+  await mkdir(path.join(project, 'neomind')); await writeFile(path.join(project, 'neomind/project.json'), JSON.stringify(config));
   const flow = structuredClone(templates.dev), group = flow.definition.nodes.find(node => node.type === 'review_group')!;
   if (group.type !== 'review_group') throw new Error('Bad template');
   group.reviewers = [{ ...group.reviewers[0]!, id: 'reviewer-a', scope: ['a'], instructionsOverride: 'REVIEWER-A' },

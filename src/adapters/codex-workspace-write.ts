@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { codexThreadSandbox, codexSandboxPolicy, type CodexSandboxMode } from '../domain/codex-sandbox.js';
 import { AppServerTransport } from './app-server-transport.js';
 import { admitIsolatedWorkspaceWrite } from '../workspace/write-admission.js';
 import path from 'node:path';
@@ -9,12 +10,12 @@ type Admission = Parameters<typeof admitIsolatedWorkspaceWrite>[0];
 /** The admitted workspace and its writable roots, as returned by write admission. */
 export type Grant = { workspace: string; writableRoots: string[] };
 const verifiedWriter = z.object({ thread: z.object({ id: z.string().min(1) }), model: z.string(), modelProvider: z.string(),
-  cwd: z.string(), approvalPolicy: z.literal('never'), sandbox: z.object({ type: z.literal('workspaceWrite') }) });
+  cwd: z.string(), approvalPolicy: z.literal('never'), sandbox: z.object({ type: z.enum(['workspaceWrite', 'dangerFullAccess']) }) });
 
 /** Isolated-worktree writer for approved directory scopes only; callers must journal intent and serialize run transitions. */
 export class CodexWorkspaceWriteAdapter {
   private readonly verified = new Map<string, { model: string; provider: string; workspace: string }>();
-  constructor(private readonly transport: Pick<AppServerTransport, 'request'>) {}
+  constructor(private readonly transport: Pick<AppServerTransport, 'request'>, private readonly sandboxMode: CodexSandboxMode = 'enabled') {}
   usesTransport(transport: Pick<AppServerTransport, 'request'>): boolean { return this.transport === transport; }
   async startVerifiedThread(model: string, provider: string, input: Admission, config?: Record<string, unknown>): Promise<string> {
     return this.startGrantedThread(model, provider, await admitIsolatedWorkspaceWrite(input), config);
@@ -22,7 +23,8 @@ export class CodexWorkspaceWriteAdapter {
   /** Start a writer thread for a workspace the caller has already admitted. */
   async startGrantedThread(model: string, provider: string, grant: Grant, config?: Record<string, unknown>): Promise<string> {
     const result = verifiedWriter.parse(
-      await this.transport.request('thread/start', { cwd: grant.workspace, model, modelProvider: provider, sandbox: 'workspace-write', approvalPolicy: 'never', ephemeral: false, ...(config ? { config } : {}) }));
+      await this.transport.request('thread/start', { cwd: grant.workspace, model, modelProvider: provider, sandbox: codexThreadSandbox(this.sandboxMode, true), approvalPolicy: 'never', ephemeral: false, ...(config ? { config } : {}) }));
+    if (result.sandbox.type !== (this.sandboxMode === 'disabled' ? 'dangerFullAccess' : 'workspaceWrite')) throw new Error('Effective writer sandbox does not match the run mode');
     if (result.model !== model || result.modelProvider !== provider || path.resolve(result.cwd) !== path.resolve(grant.workspace)) throw new Error('Effective writer configuration does not match the run binding');
     this.verified.set(result.thread.id, { model, provider, workspace: grant.workspace });
     return result.thread.id;
@@ -31,7 +33,7 @@ export class CodexWorkspaceWriteAdapter {
     this.verified.delete(threadId);
     const grant = await admitIsolatedWorkspaceWrite(input);
     const response = await this.transport.request('thread/resume', { threadId, cwd: grant.workspace, model,
-      sandbox: 'workspace-write', approvalPolicy: 'never' });
+      sandbox: codexThreadSandbox(this.sandboxMode, true), approvalPolicy: 'never' });
     if (threadResponse.parse(response).thread.id !== threadId) throw new Error('Resumed thread identity mismatch');
   }
   async resumeVerifiedThread(threadId: string, model: string, provider: string, input: Admission, config?: Record<string, unknown>): Promise<void> {
@@ -41,7 +43,7 @@ export class CodexWorkspaceWriteAdapter {
   async resumeGrantedThread(threadId: string, model: string, provider: string, grant: Grant, config?: Record<string, unknown>): Promise<void> {
     this.verified.delete(threadId);
     const result = verifiedWriter.parse(
-      await this.transport.request('thread/resume', { threadId, cwd: grant.workspace, model, modelProvider: provider, sandbox: 'workspace-write', approvalPolicy: 'never', ...(config ? { config } : {}) }));
+      await this.transport.request('thread/resume', { threadId, cwd: grant.workspace, model, modelProvider: provider, sandbox: codexThreadSandbox(this.sandboxMode, true), approvalPolicy: 'never', ...(config ? { config } : {}) }));
     if (result.thread.id !== threadId || result.model !== model || result.modelProvider !== provider || path.resolve(result.cwd) !== path.resolve(grant.workspace)) throw new Error('Effective writer configuration does not match the run binding');
     this.verified.set(threadId, { model, provider, workspace: grant.workspace });
   }
@@ -58,7 +60,7 @@ export class CodexWorkspaceWriteAdapter {
   async startGrantedTurn(threadId: string, prompt: string, effort: string, grant: Grant, model?: string, outputSchema?: unknown): Promise<string> {
     const response = await this.transport.request('turn/start', { threadId, cwd: grant.workspace, effort, ...(model ? { model } : {}), ...(outputSchema !== undefined ? { outputSchema } : {}),
       input: [{ type: 'text', text: prompt }],
-      sandboxPolicy: { type: 'workspaceWrite', writableRoots: grant.writableRoots, networkAccess: false, excludeSlashTmp: true, excludeTmpdirEnvVar: true } });
+      sandboxPolicy: codexSandboxPolicy(this.sandboxMode, grant.writableRoots) });
     return turnResponse.parse(response).turn.id;
   }
 }

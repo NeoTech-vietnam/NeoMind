@@ -12,7 +12,7 @@ Công cụ cấu hình và chạy *agent flow* trên một Git repo: lập kế 
 
 ## Đọc theo thứ tự
 
-1. [Bàn giao mới nhất](docs/adaptive-agent-flow/session-handoff-2026-11-06-upgrade.md) (nâng cấp Gói 1–5 trên `feat/neomind-upgrade`), [bàn giao thiết kế lại](docs/adaptive-agent-flow/session-handoff-2026-11-06.md) (GĐ 0–5), [bàn giao Windows](docs/adaptive-agent-flow/session-handoff-2026-11-04-windows.md) và [Linux](docs/adaptive-agent-flow/session-handoff-2026-11-04.md): trạng thái, việc đang dở, bài học.
+1. [Bàn giao đồng bộ và cài extension 07/11](docs/adaptive-agent-flow/session-handoff-2026-11-07.md); [bàn giao nâng cấp](docs/adaptive-agent-flow/session-handoff-2026-11-06-upgrade.md) (nâng cấp Gói 1–5 trên `feat/neomind-upgrade`), [bàn giao thiết kế lại](docs/adaptive-agent-flow/session-handoff-2026-11-06.md) (GĐ 0–5), [bàn giao Windows](docs/adaptive-agent-flow/session-handoff-2026-11-04-windows.md) và [Linux](docs/adaptive-agent-flow/session-handoff-2026-11-04.md): trạng thái, việc đang dở, bài học.
 2. [Định hướng từ 11/2026](docs/adaptive-agent-flow/direction-2026-11.md): rule của project, đo kết quả run, AI điều phối, flow tự thích ứng (đang chờ duyệt).
 3. [Trạng thái triển khai](docs/adaptive-agent-flow/implementation-status.md) và [acceptance matrix](docs/adaptive-agent-flow/acceptance-matrix.md).
 4. [README](README.md): cách dùng; [START-HERE-WINDOWS](START-HERE-WINDOWS.md): chi tiết Windows.
@@ -21,7 +21,7 @@ Công cụ cấu hình và chạy *agent flow* trên một Git repo: lập kế 
 
 ## Cài đặt trên máy mới
 
-Chung cho cả hai hệ: Git, Node.js **>= 22.16**. Codex CLI (`npm i -g @openai/codex`) đã đăng nhập: luôn cần, vì checks chạy qua sandbox Codex. Claude Code CLI (`claude auth status`) chỉ cần khi dùng runner Claude.
+Chung cho cả hai hệ: Git, Node.js **>= 22.16**. Codex CLI (`npm i -g @openai/codex`) đã đăng nhập: luôn cần, vì checks chạy qua Codex (sandbox theo chế độ đã ghim của run). Claude Code CLI (`claude auth status`) chỉ cần khi dùng runner Claude.
 
 ```bash
 npm ci
@@ -43,6 +43,7 @@ Extension Nimbalyst: `cd extensions/nimbalyst && npm run build` (dùng `node_mod
 ## Ràng buộc bắt buộc
 
 - Model Codex chỉ dùng `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-luna`. **Không dùng Astra.** Claude Code: `claude-sonnet-5-5` (mặc định), `claude-haiku-5-5`, `claude-opus-5-5`.
+- Sandbox Codex: run mới mặc định tắt cho agent và checks; bật lại bằng `policy.codexSandbox: "enabled"`. Run cũ thiếu mode trong runtime context giữ sandbox. Khi tắt không được báo giả `sandboxVerified: true`; xác nhận dừng process vẫn bắt buộc.
 - Run thật tốn quota tài khoản của người dùng. Chỉ chạy khi cần kiểm chứng; ưu tiên fake runner trong test (`test/helpers/fake-runner.ts`, `fake-claude.ts`).
 - Không sửa `references/ai-workflow-kit` (snapshot tham khảo) và không biến hướng dẫn trong đó thành policy.
 - `demo/` bị gitignore: chỗ tạo repo thử trên từng máy. Repo không chứa sẵn repo demo nào.

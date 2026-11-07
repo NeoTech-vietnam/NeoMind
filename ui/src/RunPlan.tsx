@@ -22,7 +22,7 @@ export function PlanBody({ plan }: { plan: Plan }) {
     <Row label="Cách làm"><Approach text={plan.approach} /></Row>
     <Row label="File dự kiến sửa"><div className="flex flex-wrap gap-1.5">{plan.scope.map(item => <Chip key={item}>{item === '.' ? 'Toàn bộ project' : item}</Chip>)}</div></Row>
     <Row label="Tiêu chí hoàn thành"><ul className="m-0 flex list-none flex-col gap-1.5 p-0">{plan.acceptanceCriteria.map(item => <li key={item} className="flex gap-2"><Square className="mt-1 size-3.5 shrink-0 text-faint" />{item}</li>)}</ul></Row>
-    <Row label="Checks">{plan.checks.length ? <div className="flex flex-wrap items-center gap-1.5">{plan.checks.map(item => <Chip key={item}>{item}</Chip>)}<span className="text-[12px] text-muted-foreground">chạy trong sandbox Codex sau khi thực hiện</span></div> : <span className="text-muted-foreground">Không có check</span>}</Row>
+    <Row label="Checks">{plan.checks.length ? <div className="flex flex-wrap items-center gap-1.5">{plan.checks.map(item => <Chip key={item}>{item}</Chip>)}<span className="text-[12px] text-muted-foreground">chạy qua Codex sau khi thực hiện</span></div> : <span className="text-muted-foreground">Không có check</span>}</Row>
     {plan.riskChanges.length > 0 && <Row label="Rủi ro"><ul className="m-0 list-disc pl-4">{plan.riskChanges.map(item => <li key={item}>{item}</li>)}</ul></Row>}
   </dl>;
 }

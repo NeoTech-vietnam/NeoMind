@@ -1,26 +1,36 @@
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { codexSandboxPolicy, type CodexSandboxMode } from '../domain/codex-sandbox.js';
 import { startWorkerScope, type WorkerScope } from '../adapters/worker-scope.js';
 import { windowsProcessInfo } from '../platform/windows-helper.js';
 
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const psQuote = (value: string) => `'${value.replaceAll("'", "''")}'`;
-let verified: Promise<{ sandboxVerified: true; stopVerified: true }> | undefined;
+export interface RuntimeCapabilities { sandboxVerified: boolean; stopVerified: true }
+const verified = new Map<CodexSandboxMode, Promise<RuntimeCapabilities>>();
 
 /** Probe this host using disposable files, before granting writes to a project. */
-export function verifyRuntimeCapabilities(): Promise<{ sandboxVerified: true; stopVerified: true }> {
-  return verified ??= probe().catch(error => { verified = undefined; throw error; });
+export function verifyRuntimeCapabilities(mode: CodexSandboxMode = 'enabled'): Promise<RuntimeCapabilities> {
+  let result = verified.get(mode);
+  if (!result) { result = probe(mode).catch(error => { verified.delete(mode); throw error; }); verified.set(mode, result); }
+  return result;
 }
 
-async function probe(): Promise<{ sandboxVerified: true; stopVerified: true }> {
+async function probe(mode: CodexSandboxMode): Promise<RuntimeCapabilities> {
   const root = await mkdtemp(path.join(homedir(), '.neomind-capability-'));
   const allowed = path.join(root, 'allowed'), outside = path.join(root, 'outside');
   await mkdir(allowed);
   let scope: WorkerScope | undefined;
   try {
     scope = await startWorkerScope(() => {}, () => {});
-    const sandboxPolicy = { type: 'workspaceWrite', writableRoots: [allowed], networkAccess: false, excludeSlashTmp: true, excludeTmpdirEnvVar: true };
+    const sandboxPolicy = codexSandboxPolicy(mode, [allowed]);
+    if (mode === 'disabled') {
+      if (process.platform === 'win32') await stopsSandboxedCommand(scope, root, allowed, sandboxPolicy);
+      else if (!await scope.stop()) throw new Error('Worker stop capability could not be verified');
+      scope = undefined;
+      return { sandboxVerified: false, stopVerified: true };
+    }
     const command = process.platform === 'win32'
       ? [powershell(), '-NoProfile', '-NonInteractive', '-Command', `Set-Content -LiteralPath ${psQuote(path.join(allowed, 'proof'))} -Value ok -NoNewline -ErrorAction Stop; try { Set-Content -LiteralPath ${psQuote(outside)} -Value escape -ErrorAction Stop } catch { exit 0 }; exit 71`]
       : ['/bin/sh', '-c', `printf ok > ${quote(path.join(allowed, 'proof'))}; if printf escape > ${quote(outside)} 2>/dev/null; then exit 71; fi`];

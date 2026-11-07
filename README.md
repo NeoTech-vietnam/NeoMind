@@ -102,7 +102,7 @@ NeoMind không tự chạy giai đoạn sau. Task của giai đoạn mới kèm 
 
 **Cần có**
 - Claude Code CLI đã cài (`claude --version`) và đã đăng nhập: `claude auth status` báo logged in.
-- Codex CLI vẫn cần: checks luôn chạy qua sandbox của Codex, kể cả khi mọi binding dùng Claude Code. Preview báo lỗi nếu thiếu Codex.
+- Codex CLI vẫn cần: checks luôn chạy qua Codex theo chế độ sandbox của run, kể cả khi mọi binding dùng Claude Code. Preview báo lỗi nếu thiếu Codex.
 
 **Chọn runner và model**
 - Khi chạy: trong *Xem cấu hình thực tế*, mỗi binding có ô *Runner* (Codex hoặc Claude Code). Đổi runner sẽ đặt model về mặc định của runner đó; bấm *Cập nhật cấu hình* trước khi bắt đầu.
@@ -127,7 +127,15 @@ NeoMind không tự chạy giai đoạn sau. Task của giai đoạn mới kèm 
 | **Dev song song** | Plan chia 2 gói → bạn duyệt → 2 agent code song song → ghép (agent tích hợp xử lý xung đột) → review → commit | Commit |
 | **Research** | Agent chỉ đọc, viết báo cáo có nguồn → agent review nguồn | Báo cáo, không sửa file |
 
-Fast dùng hai ngoại lệ do flow khai báo: bước duyệt tự động (`mode: "auto"`) và review do người (`review: "human"`). Khi policy yêu cầu duyệt trước sửa hoặc review độc lập, project phải chủ động đặt `"allowAutoApproval": true` và `"allowHumanReview": true` trong `policy` của `neomind/project.json` để cho phép các ngoại lệ tương ứng. Trường bị bỏ trống không nới gate bắt buộc; Fast sẽ báo lỗi validation cho tới khi policy được cập nhật. Preview ghi rõ các ngoại lệ trước khi chạy.
+Project chưa có file cấu hình (`neomind/project.json` hoặc `.neomind/project.json` cũ) được mặc định cho phép Fast, không cần tạo file cấu hình. Project đã có cấu hình riêng được giữ nguyên policy. Fast dùng hai ngoại lệ do flow khai báo: bước duyệt tự động (`mode: "auto"`) và review do người (`review: "human"`). Khi policy yêu cầu duyệt trước sửa hoặc review độc lập, project phải chủ động đặt `"allowAutoApproval": true` và `"allowHumanReview": true` trong `policy` của `neomind/project.json` để cho phép các ngoại lệ tương ứng. Trường bị bỏ trống không nới gate bắt buộc; Fast sẽ báo lỗi validation cho tới khi policy được cập nhật. Preview ghi rõ các ngoại lệ trước khi chạy.
+
+## Chế độ sandbox Codex
+
+Run mới mặc định **tắt sandbox Codex** cho cả planner, writer, reviewer và checks. Worktree, duyệt kế hoạch, review/commit gate, journal và Job Object/systemd vẫn hoạt động. Khi tắt, vai trò chỉ đọc và phạm vi ghi là chỉ dẫn cho agent, không còn được sandbox hệ điều hành bảo đảm; tiến trình có quyền của tài khoản chạy nó. Claude Code vẫn giữ giới hạn công cụ/quyền riêng của runner đó.
+
+Muốn bật lại, thêm `"codexSandbox": "enabled"` vào object `policy` hiện có trong `neomind/project.json` (hoặc `.neomind/project.json` cũ); `"disabled"` tắt tường minh. Không cần tạo file chỉ để dùng mặc định tắt. Preview nêu chế độ, và mỗi run ghi nó một lần trong runtime context. Run cũ chưa có trường này tiếp tục dùng sandbox; resume không tự chuyển sang mặc định mới. Đổi policy khi run đang dở vẫn có thể làm run dừng để đối chiếu như các thay đổi policy khác.
+
+Khi tắt, capability probe chỉ xác nhận dừng process và báo `sandboxVerified: false`; không giả sandbox đã được kiểm chứng. Khi bật, probe vẫn phải chứng minh ghi ngoài phạm vi bị chặn.
 
 ## Sửa flow bằng canvas (Nimbalyst, Obsidian)
 

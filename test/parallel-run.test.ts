@@ -31,7 +31,7 @@ async function fixture(mode: Mode, keepRunWorktrees = false, flow: Flow = templa
   await writeFile(path.join(project, 'shared.bin'), Buffer.from([0, 0]));
   git('add', '.'); git('commit', '-qm', 'baseline');
   const role = { runner: 'codex', provider: 'openai', model: 'gpt-6-luna', reasoning: 'low' };
-  const config = { ...structuredClone(defaultProject), policy: { ...defaultProject.policy, keepRunWorktrees }, roleDefaults: { implementer: role, verifier: role } };
+  const config = { ...structuredClone(defaultProject), policy: { ...defaultProject.policy, codexSandbox: 'enabled' as const, keepRunWorktrees }, roleDefaults: { implementer: role, verifier: role } };
   await mkdir(path.join(project, '.neomind')); await writeFile(path.join(project, '.neomind/project.json'), JSON.stringify(config));
   const snapshot = await materializeRun(flow, config, { 'implementer@1': builtinProfile('implementer'), 'verifier@1': builtinProfile('verifier') }, project);
   const coordinator = new WorkspaceCoordinator(path.join(state, 'coordination.sqlite'));

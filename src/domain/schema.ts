@@ -100,6 +100,7 @@ export const projectPolicySchema = z.strictObject({
   maxActiveTimeSeconds: z.number().int().positive().optional(),
   // Exceptions require explicit opt-in when the corresponding project gate is required.
   allowAutoApproval: z.boolean().optional(), allowHumanReview: z.boolean().optional(),
+  codexSandbox: z.enum(['enabled', 'disabled']).optional(),
   // Keep a run's worktrees after it delivered (commit or applied changes) instead of removing them; omitted means remove.
   keepRunWorktrees: z.boolean().optional(),
 });

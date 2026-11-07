@@ -15,14 +15,14 @@ import { RunStore } from '../src/storage/run-store.js';
 import { CodexTurnEvents } from '../src/adapters/codex-turn-events.js';
 import type { WorkerFactory } from '../src/runtime/worker.js';
 
-async function fixture(repair = false, kind: 'dev' | 'research' = 'dev', reviewers = 1, holdCheck = false, activeTimeSeconds?: number) {
+async function fixture(repair = false, kind: 'dev' | 'research' = 'dev', reviewers = 1, holdCheck = false, activeTimeSeconds?: number, legacyPolicy = false) {
   const root = await mkdtemp(path.join(tmpdir(), 'neomind-local-runtime-')), project = path.join(root, 'repo'), state = path.join(root, 'state');
   await mkdir(project); await mkdir(path.join(state, 'runs'), { recursive: true }); await mkdir(path.join(state, 'workspaces'));
   const git = (...args: string[]) => execFileSync('git', ['-C', project, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   git('init', '-q'); git('config', 'core.autocrlf', 'false'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.test');
   await writeFile(path.join(project, 'README.md'), 'Fixture\n'); git('add', '.'); git('commit', '-qm', 'baseline');
   const role = { runner: 'codex', provider: 'openai', model: 'gpt-6-luna', reasoning: 'low' };
-  const config = { ...structuredClone(defaultProject), roleDefaults: { implementer: role, verifier: role } };
+  const config = { ...structuredClone(defaultProject), policy: { ...defaultProject.policy, ...(legacyPolicy ? {} : { codexSandbox: 'enabled' as const }) }, roleDefaults: { implementer: role, verifier: role } };
   await mkdir(path.join(project, '.neomind')); await writeFile(path.join(project, '.neomind/project.json'), JSON.stringify(config));
   const profiles = { 'implementer@1': builtinProfile('implementer'), 'verifier@1': builtinProfile('verifier') };
   const flow = structuredClone(templates[kind]);
@@ -84,16 +84,35 @@ test('real orchestration services wait for approval, resume after reopen and com
   try {
     run.launch(); await run.settled();
     assert.equal((await run.report()).runtimeState.phase, 'waiting_approval'); assert.equal(f.writes(), 0);
+    assert.equal((await run.report()).runtimeContext?.codexSandbox, 'enabled');
     await run.close();
     run = await LocalRun.recover(await RunStore.open(path.join(f.state, 'runs')), f.coordinator, run.runId, f.factory, async () => ({ sandboxVerified: true, stopVerified: true }));
     await run.approve('fixture-user-simulated-approval', 'cli'); await run.settled();
     const report = await run.report();
     assert.equal(report.runtimeState.phase, 'completed', report.runtimeState.reason);
     assert.equal(report.commits[0]?.confirmed, true); assert.equal(f.writes(), 1);
+    assert.equal(report.runtimeContext?.codexSandbox, 'enabled');
     assert.equal(report.usage.totalTokens, 300); assert.equal(report.usage.partial, false);
     // The worktree is gone after delivery; the commit stays reachable under its NeoMind ref.
     assert.equal(execFileSync('git', ['-C', run.context.projectRoot, 'show', `refs/neomind/${run.runId}/delivery/${report.commits[0]!.nodeId}:proof.txt`], { encoding: 'utf8' }), 'ok\n');
     assert.ok(!existsSync(run.context.workspace) && report.workspaceCleanup?.cleaned);
+  } finally { await run.close(); f.coordinator.close(); }
+});
+
+test('a legacy run without a recorded mode resumes with sandbox enabled instead of the new disabled default', async () => {
+  const f = await fixture(false, 'dev', 1, false, undefined, true); let run = f.run;
+  try {
+    assert.equal(run.context.codexSandbox, 'disabled');
+    const journal = run.durable.journal.file;
+    await run.close();
+    const events = (await readFile(journal, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+    for (const event of events) if (event.type === 'runtime_context') delete event.payload.codexSandbox;
+    await writeFile(journal, events.map(event => JSON.stringify(event)).join('\n') + '\n');
+    run = await LocalRun.recover(await RunStore.open(path.join(f.state, 'runs')), f.coordinator, run.runId, f.factory, async () => ({ sandboxVerified: true, stopVerified: true }));
+    assert.equal(run.context.codexSandbox, undefined);
+    await run.resume(); await run.settled();
+    assert.equal((await run.report()).runtimeState.phase, 'waiting_approval', (await run.report()).runtimeState.reason);
+    assert.equal(f.writes(), 0);
   } finally { await run.close(); f.coordinator.close(); }
 });
 

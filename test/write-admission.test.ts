@@ -25,6 +25,10 @@ test('write admission requires live approval, full scope, verified runtime, curr
   const expectedBaselineHash = (await captureBaseline(workspace)).baselineHash;
   const args = { workspace, lease, coordinator, plan, approval, livePolicy: defaultProject.policy, expectedBaselineHash, sandboxVerified: true, stopVerified: true };
   assert.equal((await admitIsolatedWorkspaceWrite(args)).runId, 'run');
+  assert.equal((await admitIsolatedWorkspaceWrite({ ...args, sandboxVerified: false, codexSandbox: 'disabled' })).runId, 'run');
+  await assert.rejects(admitIsolatedWorkspaceWrite({ ...args, sandboxVerified: false, codexSandbox: 'enabled' }), /Verified sandbox/);
+  await assert.rejects(admitIsolatedWorkspaceWrite({ ...args, sandboxVerified: false, stopVerified: false, codexSandbox: 'disabled' }), /Verified sandbox/);
+  await assert.rejects(admitIsolatedWorkspaceWrite({ ...args, codexSandbox: 'disabled', livePolicy: { ...args.livePolicy, codexSandbox: 'enabled' } }), /Project policy requires Codex sandbox/);
   const scopedPlan = { ...plan, scope: ['src'] };
   const scopedApproval = recordApproval(scopedPlan, defaultProject.policy, { approvalId: 'b', actor: 'user', source: 'ui', decision: 'approved', timestamp: new Date().toISOString() });
   const scopedGrant = await admitIsolatedWorkspaceWrite({ ...args, plan: scopedPlan, approval: scopedApproval });
