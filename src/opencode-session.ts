@@ -7,7 +7,7 @@ import { closeWorkForceCapabilities } from './workforce-plugin-gateway.js';
 import { OpenCodeToolFailureGuard, type OpenCodeToolObservation } from './opencode-tool-observation.js';
 import { OpenCodeTurnObserver, OpenCodeTurnError, safeOpenCodeTransportError, type OpenCodeTurnIdentity, type OpenCodeTurnOptions } from './opencode-turn.js';
 import { canonicalOpenCodeProviderFailure } from './opencode-provider-diagnostic.js';
-import { createOpenCodeProviderStream } from './opencode-provider-stream.js';
+import { createOpenCodeProviderStream, type OpenCodeArgumentDiagnostic } from './opencode-provider-stream.js';
 import { createOpenCodeGateway, openCodeConfiguration, openCodeEndpoint, openCodeError, openCodeBinary, opencodeProtocol,
   opencodeProviderId, opencodeRuntimeVersion, opencodeRuntimeIntegrity, openCodeStorageFailure, startOpenCodeEngine, type OpenCodeEngine, type OpenCodeGateway } from './opencode-engine.js';
 
@@ -87,6 +87,12 @@ export class OpenCodeSession {
             void Promise.resolve(context.callbacks.trace?.({ ...observation, engine: 'opencode', owner: 'runtime' })).catch(() => {});
           } catch { /* Bounded transport diagnostics cannot alter owned inference. */ }
         },
+        ...(binding.process_contract === 'workforce/v1' ? { onArgumentDiagnostic: (observation: OpenCodeArgumentDiagnostic) => {
+          try {
+            void Promise.resolve(context.callbacks.trace?.({ ...observation, event: 'read-argument-overflow-shape',
+              engine: 'opencode', owner: 'provider-stream' })).catch(() => {});
+          } catch { /* Shape metadata never changes execution, refusal or recovery. */ }
+        } } : {}),
       });
       operation = 'engine-start';
       this.engine = await startOpenCodeEngine(this.root, this.receipt.id,

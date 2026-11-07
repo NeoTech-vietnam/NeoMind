@@ -19,6 +19,7 @@ test('a newly confirmed substantive answer is new input for the no-progress watc
   assert.deepEqual(workflow.workforceRecoveryDecision(run, 'implementation', 'new-confirmed-input-checkpoint', [], false),
     { allowed: true, strategy: 'repair_product', strong: false });
   assert.equal(run.workforce_recovery.no_progress, 0);
+  assert.equal(run.workforce_recovery.repair_no_progress, 0);
   assert.deepEqual(run.workforce_recovery.resolved_checks, []);
   assert.deepEqual(run.workforce_recovery.strategies, history);
   assert.equal(run.workforce_recovery.strong_implementation, true);
@@ -52,4 +53,43 @@ test('without newly confirmed input, unchanged repair exhaustion remains authori
   const run = retained();
   assert.equal(workflow.workforceRecoveryDecision(run, 'implementation', 'before-answer', [], false).allowed, false);
   assert.equal(run.workforce_recovery.no_progress, 2);
+});
+
+test('diagnosis and session reconciliation cannot consume an unused productive repair allowance', () => {
+  const run = retained();
+  run.workforce_recovery.strategies = [{ checkpoint: 'validated-revision', strategy: 'reconcile_session', kind: 'protocol' },
+    { checkpoint: 'validated-revision', strategy: 'diagnose', kind: 'unknown' }];
+  assert.deepEqual(workflow.workforceRecoveryDecision(run, 'implementation', 'validated-revision', [], false),
+    { allowed: true, strategy: 'repair_product', strong: false });
+  assert.equal(run.workforce_recovery.no_progress, 2, 'Keep the historical aggregate count instead of refunding it.');
+  assert.equal(run.workforce_recovery.repair_no_progress, 0);
+});
+
+test('the productive repair watchdog retains two actual repairs and conservative missing history', () => {
+  const run = retained();
+  run.workforce_recovery.strategies = [{ checkpoint: 'older-product', strategy: 'repair_product', kind: 'implementation' },
+    { checkpoint: 'older-checker', strategy: 'repair_checker', kind: 'checker' }];
+  assert.equal(workflow.workforceRecoveryDecision(run, 'implementation', 'new-runtime-revision', [], false).allowed, false);
+  assert.equal(run.workforce_recovery.repair_no_progress, 2);
+  run.workforce_recovery.no_progress = 0; // Runtime restoration may clear its aggregate infrastructure watchdog only.
+  assert.equal(workflow.workforceRecoveryDecision(run, 'implementation', 'another-runtime-revision', [], false).allowed, false);
+  assert.equal(run.workforce_recovery.repair_no_progress, 2);
+  const legacy = retained(); legacy.workforce_recovery.strategies = [];
+  assert.equal(workflow.workforceRecoveryDecision(legacy, 'implementation', 'new-runtime-revision', [], false).allowed, false);
+  assert.equal(legacy.workforce_recovery.repair_no_progress, 2);
+});
+
+test('a spent repair at the same checkpoint remains refused even with unused aggregate allowance', () => {
+  const run = retained(); run.workforce_recovery.no_progress = 1;
+  run.workforce_recovery.repair_no_progress = 1;
+  assert.equal(workflow.workforceRecoveryDecision(run, 'implementation', 'before-answer', [], false).allowed, false);
+});
+
+test('new independent check progress alone resets the productive watchdog without changing old strategies', () => {
+  const run = retained(); run.workforce_recovery.repair_no_progress = 2;
+  const history = structuredClone(run.workforce_recovery.strategies);
+  assert.equal(workflow.workforceRecoveryDecision(run, 'implementation', 'fresh-executed-checkpoint', ['New independent check'], false).allowed, true);
+  assert.equal(run.workforce_recovery.repair_no_progress, 0);
+  assert.deepEqual(run.workforce_recovery.resolved_checks, ['New independent check']);
+  assert.deepEqual(run.workforce_recovery.strategies, history);
 });

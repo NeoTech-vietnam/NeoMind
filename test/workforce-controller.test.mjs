@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { initialize, atomicWrite, safePath, hash, getRecord, updateRecord, createRecord } from '../dist/storage.js';
-import { ensureRoutingPolicy, readInvocation, routingProblems } from '../dist/routing.js';
+import { ensureRoutingPolicy, readInvocation, routingProblems, routingConfigurationHashes, canonicalJson } from '../dist/routing.js';
+import { createRuntimeInfo } from '../dist/runtime-info.js';
 import { OpenCodeSession } from '../dist/opencode-session.js';
 import { ownedContext } from '../dist/controlled-context.js';
 import { createControlledMcpServer, controlledInstructions, controlledPlanSchema, workforcePlanSchema } from '../dist/controlled-tools.js';
@@ -238,7 +239,10 @@ async function deterministicEngine(t) {
               ...(pass ? {} : { failure_kind: 'implementation', findings: missing.map(line => `Restore deleted README navigation: ${line}`) }) });
           } else {
             if (binding.assessment_outputs?.length) for (const path of binding.assessment_outputs) await call('project_read', { path });
-            const pass = binding.review_purpose === 'design' || product.exists && (selectedPlan.request_kind === 'document'
+            // This repair case deliberately misses the first product defect in
+            // review so the independent executable oracle must catch it. No
+            // Tester execution or final acceptance condition is suppressed.
+            const pass = binding.review_purpose === 'design' || name === 'repair' && count === 1 || product.exists && (selectedPlan.request_kind === 'document'
               ? selectedPlan.cornell_output_dir ? /Cartesian product/i.test(product.text) : /Celsius \* 9 \/ 5 \+ 32/.test(product.text) && /Practice question/.test(product.text)
               : pendingTestHandoff ? /return celsius \* 9 \/ 5 \+ 32;/.test(product.text) : JSON.parse(product.text).value === 42);
             await report({ verdict: pass ? 'pass' : 'fail', ...(pass ? {} : { failure_kind: 'implementation', findings: ['The independently expected result is 42; current output is 13.'] }) });
@@ -741,14 +745,33 @@ test('a document label cannot bypass executable verification for software and br
   remote.allowed_urls = ['http://127.0.0.1:3000/']; assert.equal(validateControlledPlan(root, remote, 'workforce/v1').allowed_urls.length, 1);
 });
 
-test('product repair uses the semantic ledger and obtains fresh independent review and tests', { timeout: 90000 }, async t => {
+test('product repair uses the semantic ledger and obtains fresh independent review and tests', { timeout: 150000 }, async t => {
   const root = await fixture(t, ['repair'], { repair: true });
+  fixturePlans.get('repair').checks[0].baseline_paths = [...fixturePlans.get('repair').outputs];
+  const checkerPath = safePath(root, 'checks/repair.mjs');
+  atomicWrite(checkerPath, "console.log('api_key=INLINE_EVIDENCE_SECRET');\n" + readFileSync(checkerPath, 'utf8'));
   const started = await startControlledWorkflow(root, { requirement: 'Case: repair\nCreate the requested JSON result.' });
-  const run = await wait(root, started.workflow_id);
+  const run = await wait(root, started.workflow_id, 'completed', 120000);
   assert.equal(run.attempts.filter(item => item.role === 'developer').length, 2);
   assert.equal(run.attempts.filter(item => item.role === 'reviewer').length, 2);
   assert.equal(run.repair_budget, undefined, 'legacy counters cannot become a WorkForce acceptance gate');
   assert.equal(run.workforce_recovery.strategies[0].strategy, 'repair_product');
+  const producerPrompts = observations.filter(item => item.name === 'repair' && item.stage === 'implementation');
+  const supplied = /Current backend execution evidence[^\n]*\n([^\n]+)/.exec(producerPrompts[1].prompt);
+  assert.ok(supplied, 'A repair receives actual saved output without asking the model to select evidence metadata again.');
+  const context = JSON.parse(supplied[1]), failed = run.checks.find(check => !check.passed);
+  assert.equal(context.source, 'backend-bound-current-execution-evidence');
+  const row = context.rows.find(item => item.receipt_id === failed.id);
+  assert.ok(row); assert.equal(row.title, failed.title); assert.equal(row.exit_code, failed.exit_code);
+  assert.equal(row.passed, false); assert.equal(row.observed_passed, false);
+  assert.equal(row.current_baseline, true); assert.equal(row.checker_scope_current, true);
+  assert.match(row.stderr, /AssertionError/);
+  assert.doesNotMatch(JSON.stringify(context), /INLINE_EVIDENCE_SECRET/);
+  assert.match(row.stdout, /redacted/);
+  assert.equal(context.omitted_count, 0);
+  const repairedReviewer = observations.filter(item => item.name === 'repair' && item.stage === 'review')[1];
+  assert.doesNotMatch(repairedReviewer.prompt, /Current backend execution evidence \(actual bound receipts and public output\)/,
+    'A modified product baseline cannot carry the earlier check as current evidence into the next review.');
   assert.equal(run.status, 'completed'); assert.deepEqual(errors, []);
 });
 
@@ -792,9 +815,9 @@ test('quality escalation is reserved before the no-progress guard and cannot res
   assert.equal(workforceRecoveryDecision(state, 'implementation', 'same-checkpoint', [], false).allowed, false);
 });
 
-test('a confirmed answer resumes a blocked implementation incident from its retained typed diagnosis without another PM call', { timeout: 180000 }, async t => {
+for (const maintenance of [false, true]) test(`${maintenance ? 'trusted runtime maintenance' : 'a confirmed answer'} resumes a blocked implementation incident from its retained typed diagnosis without another PM call`, { timeout: 180000 }, async t => {
   const nativeRun = OpenCodeSession.prototype.run;
-  const name = 'confirmed-input-recovery', root = await fixture(t, [name], { repair: true });
+  const name = maintenance ? 'runtime-maintenance-recovery' : 'confirmed-input-recovery', root = await fixture(t, [name], { repair: true });
   const priorRun = OpenCodeSession.prototype.run;
   let reviews = 0, diagnoses = 0, entered, release;
   const diagnosisEnded = new Promise(resolve => { entered = resolve; });
@@ -854,7 +877,8 @@ test('a confirmed answer resumes a blocked implementation incident from its reta
   retained.attempts.at(-1).state = 'completed'; // Its already verified native receipt completed before the fixture pause.
   retained.status = 'blocked'; retained.blocker = { kind: 'implementation', code: 'WORKFORCE_OPERATIONAL_INCIDENT', owner: 'runtime',
     message: 'No untried recovery strategy remains at this semantic checkpoint.' };
-  retained.incident_condition = { code: 'runtime', build: 'same-installed-build', configuration: 'same-configuration', free_bytes: 0, required_bytes: 0, at: new Date().toISOString() };
+  retained.incident_condition = { code: 'runtime', build: createRuntimeInfo(root).build_fingerprint,
+    configuration: hash(canonicalJson(routingConfigurationHashes(root))), free_bytes: 0, required_bytes: 0, at: new Date().toISOString() };
   const consumed = structuredClone(retained);
   workforceRecoveryDecision(consumed, 'implementation', 'fixture-consumed-input', [], false);
   consumed.workforce_recovery.no_progress = retained.workforce_recovery.no_progress;
@@ -862,9 +886,14 @@ test('a confirmed answer resumes a blocked implementation incident from its reta
   const unchanged = await controlControlledWorkflow(root, { workflow_id: started.workflow_id, action: 'resume' });
   assert.equal(unchanged.status, 'blocked', 'An already-consumed answer cannot repeatedly restore the same implementation incident.');
   assert.deepEqual(unchanged.workforce_recovery.strategies, originalStrategies);
+  if (maintenance) {
+    retained.workforce_recovery = consumed.workforce_recovery;
+    retained.incident_condition.build = '0'.repeat(64); // An older trusted runtime, not new business input or a product pass.
+    retained.workforce_recovery.repair_no_progress = 0;
+  }
   atomicWrite(statePath, JSON.stringify(retained));
   const resumed = await controlControlledWorkflow(root, { workflow_id: started.workflow_id, action: 'resume' });
-  assert.notEqual(resumed.status, 'blocked', 'A newly committed answer must pass the real Resume incident gate.');
+  assert.notEqual(resumed.status, 'blocked', 'New confirmed input or trusted runtime maintenance must reach authoritative strategy reevaluation.');
   const done = await wait(root, started.workflow_id);
   assert.equal(done.status, 'completed'); assert.equal(done.epoch_id, retained.epoch_id);
   assert.equal(diagnoses, 2, 'The completed post-answer diagnosis is reused, never dispatched again.');

@@ -310,6 +310,7 @@ function workforceInstructions(binding: ControlledBinding): string {
     (available.includes('task_file_write') ? 'For a small change to an existing file, prefer task_file_write with edits:[{old_text,new_text}] using unique text from project_read. Backend applies the snippets atomically and preserves unrelated content and line endings; do not reconstruct a whole README to add one link. Use content for new files or an intentional complete replacement. A saved response, including replayed:true, confirms the write: continue to a different output or save your content result rather than sending identical writes.\n' : '') +
     (available.includes('cornell_research_compile') ? 'Requested Cornell note.md/exercises.md/answers.md are compiler-owned: use cornell_research_compile with semantic research or an existing input_path, never task_file_write for those renderings.\n' : '') +
     (available.includes('task_run') ? 'task_run uses declared operations. Send the declared title and optional input_path for prepared JSON; backend builds the execution payload.\n' : '') +
+    (available.includes('check_run') ? 'check_run returns actual bounded stdout/stderr and freshness in execution_evidence alongside its saved receipts. Assess that supplied evidence directly; do not call check_evidence merely to fetch the same result again. Execution success alone is not a semantic passing verdict or workflow acceptance.\n' : '') +
     'Use runtime_context only if an execution fact is missing; its first successful snapshot suffices. Do not poll progress or ask the next stage. ' +
     (available.includes('request_input') ? 'Only for a genuine missing business decision, use request_input after reading the actual named sources. ' :
       'Report a genuine business-input gap in your professional findings; the backend owns any PM question. ') +
@@ -804,12 +805,26 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       });
   }
   if (binding.stage === 'verification')
-    register('check_run', 'Run a prescribed independent check. The backend selects its saved command and captures execution evidence.',
-      z.strictObject({ title: text.max(256).optional() }), false, args => {
+    register('check_run', 'Run a prescribed independent check. The backend selects its saved command and captures execution evidence.' + (binding.process_contract === 'workforce/v1' ? ' The response includes execution_evidence with actual public output; use it directly instead of fetching the same metadata again.' : ''),
+      z.strictObject({ title: text.max(256).optional() }), false, async args => {
         if (args.title && binding.check_titles && !binding.check_titles.includes(args.title))
           throw new ControlledToolError('INVALID_CHECK', 'Choose one of the prescribed check titles supplied in the assignment.');
         if (!callbacks.runCheck) throw new ControlledToolError('UNSUPPORTED_STAGE', 'Check execution is unavailable in this invocation.');
-        return callbacks.runCheck(args.title);
+        const result = await callbacks.runCheck(args.title);
+        if (binding.process_contract !== 'workforce/v1' || !callbacks.readEvidence || !result || typeof result !== 'object' || Array.isArray(result)) return result;
+        // This ancillary projection cannot turn an already persisted execution
+        // into a failed tool call and induce another command execution.
+        let evidence: unknown;
+        try {
+          const checks = 'checks' in result && Array.isArray(result.checks) ? result.checks : [];
+          const titles = new Set(checks.flatMap(check => check && typeof check.title === 'string' ? [check.title] : []));
+          // A titled positive check can also run its assigned negative controls.
+          // Include those actual returned receipts, never unrelated bound logs.
+          const actual = titles.size ? await callbacks.readEvidence(undefined, 'execution') : [];
+          evidence = Array.isArray(actual) ? actual.filter(row => row && row.evidence_kind === 'independent-check' && titles.has(row.title)) : actual;
+        }
+        catch { evidence = { available: false, limitation: 'The actual check response is retained above. Its public execution detail could not be projected; no additional command was run and no semantic passing verdict is implied.' }; }
+        return { ...result, execution_evidence: evidence };
       });
   if (binding.process_contract === 'workforce/v1' && binding.role === 'manager' && ['planning', 'diagnosis'].includes(binding.stage))
     register('request_input', 'Ask for genuinely missing business input after inspecting the named project sources. Technical runtime/tool/model/retry failures belong to WorkForce and cannot become user-input questions.', workforceQuestionSchema, false, input => {

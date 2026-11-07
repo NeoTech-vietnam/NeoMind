@@ -353,3 +353,67 @@ test('other tool calls have a finite larger bound and advisory failure callbacks
   assert.match(relay.failure?.message ?? '', /^A streamed tool call exceeded/);
   assert.doesNotMatch(JSON.stringify(relay.failure), /mutated|private-oversize-sentinel|private-observer-error|wf_task_file_write/);
 });
+
+async function argumentShape(t, fragments, tool = 'wf_check_evidence') {
+  const upstream = await provider(t, (_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    for (let index = 0; index < fragments.length; index++) response.write(chunk({ tool_calls: [{ index: 0,
+      ...(index ? {} : { id: 'call_shape' }),
+      function: { ...(index ? {} : { name: tool }), arguments: fragments[index] } }] }));
+    response.end();
+  });
+  const diagnostics = [], relay = await stream(t, upstream, { onArgumentDiagnostic: value => diagnostics.push(value) });
+  await post(relay).then(response => response.text()).catch(() => {});
+  await until(() => diagnostics.length === 1, 'An opted-in bounded-read overflow must expose one sanitized shape record.');
+  return { diagnostic: diagnostics[0], relay };
+}
+
+for (const [field, prefix, kind, digitRun] of [
+  ['title', '{"kind":"execution","title":"', 'string', false],
+  ['path', '{"path":"', 'string', false],
+  ['cursor', '{"cursor":"', 'string', true],
+  ['kind', '{"kind":"', 'string', false],
+  ['max_chars', '{"max_chars":', 'number', true],
+]) test(`opt-in bounded-read shape identifies ${field} token without retaining argument values`, async t => {
+  const privateValue = digitRun ? '7'.repeat(9000) : 'private-secret-value-'.repeat(500);
+  const { diagnostic, relay } = await argumentShape(t, [prefix, privateValue]);
+  assert.equal(diagnostic.tool, 'check_evidence'); assert.equal(diagnostic.sample_last_field, field);
+  assert.equal(diagnostic.sample_value_kind, kind); assert.ok(diagnostic.sample_known_fields.includes(field));
+  assert.equal(diagnostic.sample_characters, 8192); assert.equal(diagnostic.sample_truncated, true);
+  assert.ok(diagnostic.argument_bytes > 8192); assert.match(diagnostic.argument_sha256, /^[a-f0-9]{64}$/);
+  if (digitRun) assert.ok(diagnostic.sample_longest_digit_run > 8000);
+  if (kind === 'string') assert.ok(diagnostic.sample_longest_string_run > 8000);
+  else assert.ok(diagnostic.sample_longest_number_run > 8000);
+  assert.doesNotMatch(JSON.stringify(diagnostic), /private-secret-value|777777|upstream-private-key|configured-peer/);
+  assert.equal(relay.failure?.code, 'OPENCODE_PROVIDER_ARGUMENT_LIMIT');
+  assert.equal('tool' in relay.failure, false, 'Opt-in details never expand the public error payload.');
+});
+
+test('opt-in shape separates prefix snapshots, repeated fragments and ordinary delta fragments', async t => {
+  const growing = Array.from({ length: 160 }, (_, index) => '{"title":"private-shape-value-' + 'x'.repeat(index));
+  const snapshots = (await argumentShape(t, growing)).diagnostic;
+  assert.ok(snapshots.previous_prefix_fragments > 30); assert.ok(snapshots.near_previous_prefix_fragments > 30);
+  assert.equal(snapshots.duplicate_fragments, 0);
+  const repeated = (await argumentShape(t, ['{"title":"', ...Array(20).fill('private-repeat-value-'.repeat(30))])).diagnostic;
+  assert.ok(repeated.duplicate_fragments > 5); assert.equal(repeated.previous_prefix_fragments, 0);
+  const delta = (await argumentShape(t, ['{"title":"', ...Array.from({ length: 20 }, (_, index) =>
+    `private-delta-${index}-`.repeat(40))])).diagnostic;
+  assert.equal(delta.duplicate_fragments, 0); assert.equal(delta.previous_prefix_fragments, 0);
+  assert.doesNotMatch(JSON.stringify([snapshots, repeated, delta]), /private-shape-value|private-repeat-value|private-delta/);
+});
+
+test('shape diagnostics redact unknown keys and ignore quoted fake field syntax inside string values', async t => {
+  const { diagnostic } = await argumentShape(t, ['{"private-key-sentinel":"\\\"title\\\":\\\"', 'private-content-sentinel'.repeat(400)]);
+  assert.equal(diagnostic.sample_last_field, 'other'); assert.equal(diagnostic.sample_unknown_keys, 1);
+  assert.deepEqual(diagnostic.sample_known_fields, []);
+  assert.doesNotMatch(JSON.stringify(diagnostic), /private-key-sentinel|private-content-sentinel/);
+});
+
+test('healthy bounded reads keep exact bytes and produce no overflow shape diagnostics', async t => {
+  const bytes = Buffer.from(chunk({ tool_calls: [{ index: 0, id: 'call_healthy_shape',
+    function: { name: 'wf_check_evidence', arguments: '{"kind":"execution","title":"ordinary bound check"}' } }] }) + 'data: [DONE]\n\n');
+  const upstream = await provider(t, (_request, response) => { response.writeHead(200, { 'content-type': 'text/event-stream' }); response.end(bytes); });
+  const diagnostics = [], relay = await stream(t, upstream, { onArgumentDiagnostic: value => diagnostics.push(value) });
+  assert.deepEqual(Buffer.from(await (await post(relay)).arrayBuffer()), bytes);
+  assert.deepEqual(diagnostics, []); assert.equal(relay.failure, undefined);
+});

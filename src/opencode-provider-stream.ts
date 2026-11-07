@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import type { OpenCodeEndpoint } from './opencode-engine.js';
@@ -14,6 +14,18 @@ export interface OpenCodeProviderStreamOptions {
   onProgress(progress: OpenCodeProviderProgress): void;
   onObservation?(observation: OpenCodeProviderStreamObservation): void;
   onFailure?(failure: OpenCodeProviderStreamFailure): void;
+  /** Opt-in diagnostic metadata only; never argument text, values or unknown names. */
+  onArgumentDiagnostic?(diagnostic: OpenCodeArgumentDiagnostic): void;
+}
+export interface OpenCodeArgumentDiagnostic {
+  event: 'provider-argument-shape'; request_id: string; tool: string;
+  argument_bytes: number; argument_sha256: string; fragments: number; max_fragment_bytes: number;
+  duplicate_fragments: number; previous_prefix_fragments: number; near_previous_prefix_fragments: number; assembled_prefix_fragments: number;
+  sample_characters: number; sample_truncated: boolean; sample_last_field: string;
+  sample_value_kind: 'string' | 'number' | 'literal' | 'object' | 'array' | 'unknown';
+  sample_known_fields: string[]; sample_unknown_keys: number;
+  sample_longest_digit_run: number; sample_longest_same_character_run: number;
+  sample_longest_string_run: number; sample_longest_number_run: number;
 }
 export interface OpenCodeProviderStreamFailure {
   code: 'OPENCODE_PROVIDER_ARGUMENT_LIMIT';
@@ -52,6 +64,86 @@ const argumentLimit = (name: string) => {
 };
 const argumentLimitMessage = 'A streamed tool call exceeded its bounded argument size before completion. The owned upstream stream was stopped; retain actual messages and effects.';
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
+const diagnosticTools = new Set(['project_read', 'project_read_more', 'assignment_read', 'project_list', 'check_evidence',
+  'check_evidence_more', 'project_search', 'runtime_context']);
+const diagnosticFields = new Set(['path', 'title', 'kind', 'cursor', 'query', 'glob', 'limit', 'start_line', 'start_char',
+  'max_chars', 'max_results', 'node', 'python', 'compiler']);
+
+// This opt-in observer is deliberately not a JSON repairer or protocol parser.
+// Its bounded in-memory sample is discarded after deriving fixed shape fields;
+// no string value, unknown key, endpoint or caller credential can leave it.
+function argumentDiagnostic() {
+  const digest = createHash('sha256');
+  let sample = '', sampleTruncated = false, fragments = 0, maxFragmentBytes = 0, previous = '', previousHash = '',
+    duplicates = 0, previousPrefixes = 0, nearPreviousPrefixes = 0, assembledPrefixes = 0;
+  return {
+    add(value: string) {
+      fragments++; maxFragmentBytes = Math.max(maxFragmentBytes, Buffer.byteLength(value)); digest.update(value);
+      const fingerprint = createHash('sha256').update(value).digest('hex');
+      if (previousHash && fingerprint === previousHash) duplicates++;
+      if (previous && value.length > previous.length && value.startsWith(previous)) previousPrefixes++;
+      if (previous.length >= 32 && value.length >= previous.length) {
+        let common = 0;
+        while (common < previous.length && previous[common] === value[common]) common++;
+        if (common >= previous.length - 2 && common >= previous.length * 0.9) nearPreviousPrefixes++;
+      }
+      if (sample && !sampleTruncated && value.length >= sample.length && value.startsWith(sample)) assembledPrefixes++;
+      previous = value.length <= 8192 ? value : ''; previousHash = fingerprint;
+      const room = 8192 - sample.length;
+      if (value.length > room) sampleTruncated = true;
+      if (room > 0) sample += value.slice(0, room);
+    },
+    snapshot(requestId: string, tool: string, bytes: number): OpenCodeArgumentDiagnostic {
+      let inString = false, escaped = false, keyString = false, key = '', pendingKey = 'other', lastField = 'none',
+        valueKind: OpenCodeArgumentDiagnostic['sample_value_kind'] = 'unknown', expectingValue = false,
+        lastStructural = '', stringRun = 0, numberRun = 0, digitRun = 0, sameRun = 0, previousCharacter = '',
+        longestString = 0, longestNumber = 0, longestDigits = 0, longestSame = 0, unknownKeys = 0;
+      const containers: string[] = [], fields = new Set<string>();
+      for (const character of sample) {
+        digitRun = /[0-9]/.test(character) ? digitRun + 1 : 0; longestDigits = Math.max(longestDigits, digitRun);
+        sameRun = character === previousCharacter ? sameRun + 1 : 1; previousCharacter = character; longestSame = Math.max(longestSame, sameRun);
+        if (inString) {
+          if (escaped) { if (keyString && key.length <= 96) key += character; escaped = false; }
+          else if (character === '\\') { if (keyString && key.length <= 96) key += character; escaped = true; }
+          else if (character === '"') {
+            inString = false; lastStructural = 'value';
+            if (keyString) {
+              let decoded: unknown;
+              try { decoded = JSON.parse(`"${key}"`); } catch { /* Unknown malformed keys stay hidden. */ }
+              pendingKey = typeof decoded === 'string' && diagnosticFields.has(decoded) ? decoded : 'other';
+              if (pendingKey === 'other') unknownKeys++; else fields.add(pendingKey);
+            }
+          } else if (keyString && key.length <= 96) key += character;
+          if (!keyString && inString) { stringRun++; longestString = Math.max(longestString, stringRun); }
+          continue;
+        }
+        if (/\s/.test(character)) continue;
+        if (character === '"') {
+          inString = true; escaped = false; key = ''; stringRun = 0; numberRun = 0;
+          keyString = containers.at(-1) === '{' && ['{', ','].includes(lastStructural);
+          if (!keyString) { valueKind = 'string'; expectingValue = false; }
+          continue;
+        }
+        if (character === ':') { lastField = pendingKey; expectingValue = true; valueKind = 'unknown'; numberRun = 0; }
+        else if (character === '{' || character === '[') { containers.push(character); valueKind = character === '{' ? 'object' : 'array'; expectingValue = false; }
+        else if (character === '}' || character === ']') { containers.pop(); expectingValue = false; numberRun = 0; }
+        else if (character === ',') { expectingValue = false; numberRun = 0; }
+        else if (expectingValue || valueKind === 'number') {
+          if (/[0-9eE.+-]/.test(character)) { valueKind = 'number'; numberRun++; longestNumber = Math.max(longestNumber, numberRun); }
+          else { valueKind = 'literal'; numberRun = 0; }
+        }
+        lastStructural = character;
+      }
+      return { event: 'provider-argument-shape', request_id: requestId, tool, argument_bytes: bytes,
+        argument_sha256: digest.copy().digest('hex'), fragments, max_fragment_bytes: maxFragmentBytes,
+        duplicate_fragments: duplicates, previous_prefix_fragments: previousPrefixes,
+        near_previous_prefix_fragments: nearPreviousPrefixes, assembled_prefix_fragments: assembledPrefixes,
+        sample_characters: sample.length, sample_truncated: sampleTruncated, sample_last_field: lastField, sample_value_kind: valueKind,
+        sample_known_fields: [...fields].sort(), sample_unknown_keys: unknownKeys, sample_longest_digit_run: longestDigits,
+        sample_longest_same_character_run: longestSame, sample_longest_string_run: longestString, sample_longest_number_run: longestNumber };
+    },
+  };
+}
 
 /** The pinned engine's ordinary processor does not publish tool-input deltas.
  * Observe semantic SSE at the owned provider boundary without changing the
@@ -86,7 +178,8 @@ export async function createOpenCodeProviderStream(endpoint: OpenCodeEndpoint, o
     let pending = '', sequence = 0, enabled = true;
     // Tool-call identities are scoped to an SSE response and choice. Argument
     // fragments without an established call cannot prove useful model progress.
-    const calls = new Map<string, { id: boolean; name: boolean; toolName: string; bytes: number; limit: number }>();
+    const calls = new Map<string, { id: boolean; name: boolean; toolName: string; bytes: number; limit: number;
+      diagnosticTool?: string; diagnostic?: ReturnType<typeof argumentDiagnostic> }>();
     const semantic = (kind: OpenCodeProviderProgress['kind'], value: unknown) => {
       if (typeof value !== 'string' || !value.length) return;
       const bytes = Buffer.byteLength(value); counted(bytes);
@@ -115,7 +208,8 @@ export async function createOpenCodeProviderStream(endpoint: OpenCodeEndpoint, o
           const value = object(call.function) ? call.function.arguments : undefined;
           const bytes = typeof value === 'string' ? Buffer.byteLength(value) : 0;
           if (!current && (hasId || hasName || bytes) && calls.size < 4096) {
-            current = { id: false, name: false, toolName: '', bytes: 0, limit: defaultArgumentLimit }; calls.set(key, current);
+            current = { id: false, name: false, toolName: '', bytes: 0, limit: defaultArgumentLimit,
+              ...(options.onArgumentDiagnostic && calls.size < 16 ? { diagnostic: argumentDiagnostic() } : {}) }; calls.set(key, current);
           }
           if (!current) continue;
           current.id ||= hasId; current.name ||= hasName;
@@ -124,9 +218,18 @@ export async function createOpenCodeProviderStream(endpoint: OpenCodeEndpoint, o
             // repeating or changing its name cannot enlarge its remaining bound.
             current.toolName = (current.toolName + String(call.function.name)).slice(0, 256);
             current.limit = Math.min(current.limit, argumentLimit(current.toolName));
+            const tool = current.toolName.startsWith('wf_') ? current.toolName.slice(3) : current.toolName;
+            if (!current.diagnosticTool && diagnosticTools.has(tool)) current.diagnosticTool = tool;
           }
           current.bytes += bytes;
-          if (current.bytes > current.limit) { exceeded(requestId, current.bytes, current.limit); return; }
+          if (typeof value === 'string' && value.length) current.diagnostic?.add(value);
+          if (current.bytes > current.limit) {
+            if (current.diagnostic && current.diagnosticTool) {
+              try { options.onArgumentDiagnostic?.(current.diagnostic.snapshot(requestId, current.diagnosticTool, current.bytes)); }
+              catch { /* Optional shape diagnostics cannot suppress or change refusal. */ }
+            }
+            exceeded(requestId, current.bytes, current.limit); return;
+          }
           if (current.id && current.name) semantic('tool-arguments', value);
         }
       }
