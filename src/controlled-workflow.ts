@@ -48,7 +48,7 @@ import { openCodeStorage, probeOpenCodeStorage, configuredOpenCodeEndpoint } fro
 import { createRuntimeInfo } from './runtime-info.js';
 import { workForceConnectionProof, workForceConnectionProofSatisfies, probeWorkForceConnection } from './workforce-connection.js';
 import { runDurableCommand, readDurableCommandResult, type DurableCommandRef } from './durable-command.js';
-import { controlledCheckEnvironment } from './controlled-check-environment.js';
+import { controlledCheckEnvironment, controlledCheckTimeout } from './controlled-check-environment.js';
 import { workforceTraceability } from './workforce-traceability.js';
 import { workforceStageHandoff } from './workforce-stage-result.js';
 import { workforceProviderStallDecision, type ProviderStallHistory } from './workforce-stalls.js';
@@ -1698,8 +1698,9 @@ class Controller {
         if (receipt.state !== 'completed' || !active.report) {
           const observationLoop = receipt.error?.startsWith('CONTROLLED_OBSERVATION_LOOP:') === true;
           const deliveryProtocol = receipt.error?.startsWith('MCP_DELIVERY_PROTOCOL:') === true;
+          const argumentLimit = workforce && receipt.error?.startsWith('OPENCODE_PROVIDER_ARGUMENT_LIMIT:') === true;
           const controlSetup = workforce && receipt.error?.startsWith('OPENCODE_CONTROL_SETUP_FAILED:') === true;
-          const kind = receipt.state === 'completed' || observationLoop || deliveryProtocol || controlSetup ? 'protocol' : 'environment';
+          const kind = receipt.state === 'completed' || observationLoop || deliveryProtocol || controlSetup || argumentLimit ? 'protocol' : 'environment';
           const message = receipt.state === 'completed' ? 'Session ended without its required typed result. Saved work is retained; inspect current artifacts then save the missing compact result.'
             : receipt.error ?? 'Model session did not complete.';
           // A bound stalled engine already has provider-specific recovery. Do not
@@ -2205,9 +2206,10 @@ class Controller {
           expected_exit_code: check.expected_exit_code ?? 0, purpose } : {}),
         ...(pilotRoot ? { pilot_root: pilotRoot, pilot_nonce: pilotNonce } : {}) });
       save(this.root, run, 'check-start', check.title);
-      const deadline = Date.now() + (check.timeout_ms ?? 60000);
+      const timeout = run.process_contract === 'workforce/v1' ? controlledCheckTimeout(check.command, check.timeout_ms) : check.timeout_ms ?? 60000;
+      const deadline = Date.now() + timeout;
       const environment = run.process_contract === 'workforce/v1' ? controlledCheckEnvironment(this.root, check.command, contract.plan.checks) : undefined;
-      const commandInput = { command, cwd: this.root, signal, timeout_ms: check.timeout_ms ?? 60000, ...(environment ? { env: environment } : {}),
+      const commandInput = { command, cwd: this.root, signal, timeout_ms: timeout, ...(environment ? { env: environment } : {}),
         onStart: (pid: number) => { const current = readState(this.root, id), intent = current.check_intents!.find(item => item.id === checkId)!;
           intent.state = 'running'; intent.pid = pid; save(this.root, current); } };
       const executeCommand = () => run.process_contract === 'workforce/v1' ? runDurableCommand(this.root, { ...commandInput,
@@ -2600,7 +2602,10 @@ class Controller {
     const current = fingerprints(this.root, contract.plan.outputs);
     if (Object.values(current).includes('missing') || contract.plan.outputs.every(path => source.bound_hashes![path] === current[path])) return false;
     const receipt = readInvocation(this.root, source.invocation_id), report = getRecord(this.root, source.report_id);
-    if (!isControlledExecutionReceipt(receipt) || !receipt.inference_completed || receipt.state !== 'completed' ||
+    const finished = receipt.state === 'completed' && receipt.inference_completed;
+    const retained = receipt.state === 'interrupted' && !receipt.inference_completed &&
+      /^[a-f0-9]{64}$/.test(receipt.opencode?.interruption_proof_sha256 ?? '') && receipt.opencode?.supervision?.invocation_id === receipt.id;
+    if (!isControlledExecutionReceipt(receipt) || !finished && !retained ||
         receipt.workflow_id !== run.workflow_id || receipt.task_id !== contract.task_id || receipt.role !== 'developer' ||
         receipt.request_id !== source.request_id || receipt.controlled_execution?.epoch_id !== run.epoch_id ||
         receipt.controlled_execution.stage !== 'implementation' || report.meta.owner !== 'developer' ||
@@ -2616,10 +2621,41 @@ class Controller {
       try { new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(safePath(this.root, path))); }
       catch { return false; }
     }
+    if (retained) {
+      source.state = 'interrupted';
+      save(this.root, run, 'retained-producer-reconciled', 'The earlier producer saved an authentic report but lacks completed native execution. Its ended-process proof permits a fresh read-only assessment of the retained current files; the old signed receipt and report remain unchanged and unsubmitted.');
+    }
     run.artifact_revalidation = { source_attempt_id: source.id, hashes: current };
     run.phase = 'implementation';
     save(this.root, run, 'artifact-revalidation', 'Externally changed product bytes retained. A fresh read-only producer result, independent review and verification must bind the current revision; no historical result was rewritten.');
     return true;
+  }
+  /** Older hosts could advance a saved report before its transport finished.
+   * Reassess the frozen professional content, never promote that old report. */
+  private prepareWorkForceStageRevalidation(run: ControlledSnapshot, contract: ControlledContract): 'requirements' | 'design' | undefined {
+    for (const stage of ['requirements', 'design'] as const) {
+      const source = run.attempts.findLast(attempt => attempt.stage === stage);
+      if (!source) return stage;
+      if (!source.invocation_id || !source.report_id || !source.report || source.report.outcome !== 'completed')
+        return stage;
+      const receipt = readInvocation(this.root, source.invocation_id);
+      if (receipt.state === 'completed' && receipt.inference_completed) continue;
+      const report = getRecord(this.root, source.report_id);
+      if (!isControlledExecutionReceipt(receipt) || receipt.state !== 'interrupted' || receipt.inference_completed ||
+          !/^[a-f0-9]{64}$/.test(receipt.opencode?.interruption_proof_sha256 ?? '') || receipt.opencode?.supervision?.invocation_id !== receipt.id ||
+          receipt.workflow_id !== run.workflow_id || receipt.task_id !== contract.task_id || receipt.request_id !== source.request_id ||
+          receipt.role !== source.role || receipt.controlled_execution?.epoch_id !== run.epoch_id || receipt.controlled_execution.stage !== stage ||
+          report.meta.owner !== source.role || report.meta.data.kind !== 'controlled-work-record' || report.meta.data.task_id !== contract.task_id ||
+          report.meta.data.workflow_id !== run.workflow_id || report.meta.data.epoch_id !== run.epoch_id || report.meta.data.stage !== stage ||
+          report.meta.data.attempt_id !== source.id || report.meta.data.invocation_id !== receipt.id ||
+          report.meta.data.report_payload_hash !== hash(canonicalJson(source.report)) ||
+          evidenceRecordFingerprint(report) !== source.report_fingerprint || !same(report.meta.data.artifact_hashes, source.bound_hashes))
+        throw new ControlledToolError('STATE_UNCERTAIN', 'The retained professional stage needs authenticated identity and ended-process evidence before reassessment. Current reports and products remain preserved.');
+      source.state = 'interrupted';
+      save(this.root, run, 'retained-stage-reconciled', `The earlier ${stage} report is retained as incomplete. A fresh bounded ${stage} assessment will use the unchanged frozen plan; historical reports, products and recovery history remain unchanged.`);
+      return stage;
+    }
+    return undefined;
   }
   private async observeIncidentRestoration(run: ControlledSnapshot, signal?: AbortSignal): Promise<boolean> {
     if (this.closed || signal?.aborted) return false;
@@ -2832,6 +2868,8 @@ class Controller {
           }
         }
       }
+      const reassessment = contract ? this.prepareWorkForceStageRevalidation(run, contract) : undefined;
+      if (reassessment) run.phase = reassessment;
       run.status = 'queued'; run.owner_pid = process.pid; run.owner_instance = readHost(this.root).instance;
       delete run.dependency_wait; this.conditionRequests.delete(id);
       delete run.blocker;

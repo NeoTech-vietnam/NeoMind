@@ -154,6 +154,7 @@ export class OpenCodeSession {
       this.turn = this.createTurnObserver(engine.client, { sessionID, messageID: this.messageId!, directory: engine.directory,
         modelID: endpoint.model, providerID: opencodeProviderId }, {
         signal: this.controller.signal, assertCurrent: () => this.assertCurrent(),
+        providerFailure: () => this.providerStream?.failure,
         onToolPart: part => this.toolObservation(this.failures!.reconcile(part)),
         onObservation: event => ownedContext(this.root, this.receipt.request_id)?.callbacks.trace?.(event),
       });

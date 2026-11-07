@@ -520,7 +520,7 @@ test('technical limits cannot become user-input questions even after a source wa
 test('passing content assessment requires complete current reads, including paginated long lines', async t => {
   const root = mkdtempSync(join(tmpdir(), 'wf-content-read-')); t.after(() => rmSync(root, { recursive: true, force: true }));
   initialize(root, { project_id: 'WF-READ', name: 'Content read evidence', execution_engine: 'opencode' });
-  atomicWrite(safePath(root, 'docs/note.md'), '# Note\n' + 'A'.repeat(256) + '\nFinal factual paragraph.\n');
+  atomicWrite(safePath(root, 'docs/note.md'), '# Note\n' + 'A'.repeat(64000) + '\nFinal factual paragraph.\n');
   let saved = 0;
   const binding = { workflow_id: 'request', invocation_id: 'invocation', role: 'verifier', stage: 'verification', process_contract: 'workforce/v1',
     implementation_paths: ['docs/note.md'], verification_paths: [], read_paths: ['.'], assessment_outputs: ['docs/note.md'] };
@@ -529,16 +529,16 @@ test('passing content assessment requires complete current reads, including pagi
   await server.connect(st); await client.connect(ct); t.after(async () => { await client.close(); await server.close(); });
   const report = () => client.callTool({ name: 'assignment_report', arguments: { verdict: 'pass', summary: 'Independently assessed the complete current note.' } });
   assert.equal(parsed(await report()).code, 'READ_REQUIRED');
-  const first = parsed(await client.callTool({ name: 'project_read', arguments: { path: 'docs/note.md', max_chars: 128 } }));
+  const first = parsed(await client.callTool({ name: 'project_read', arguments: { path: 'docs/note.md' } }));
   assert.equal(first.truncated, true); assert.equal(parsed(await report()).code, 'READ_REQUIRED');
-  await client.callTool({ name: 'project_read', arguments: { path: 'docs/note.md', start_char: first.next_start_char } });
+  await client.callTool({ name: 'project_read_more', arguments: first.next_read.arguments });
   assert.equal((await report()).isError, undefined); assert.equal(saved, 1);
 });
 
-test('WorkForce reads normalize equivalent default cursors and optional nulls while rejecting actual ambiguity and required nulls', async t => {
+test('historical WorkForce reads normalize default selectors while preserving their original ambiguity checks', async t => {
   const root = mkdtempSync(join(tmpdir(), 'wf-read-position-')); t.after(() => rmSync(root, { recursive: true, force: true }));
   initialize(root, { execution_engine: 'opencode' }); atomicWrite(safePath(root, 'source.txt'), 'First line\nSecond line\nThird line\n');
-  const binding = { workflow_id: 'request', invocation_id: 'invocation', stage: 'planning', role: 'manager', process_contract: 'workforce/v1',
+  const binding = { workflow_id: 'request', invocation_id: 'invocation', stage: 'planning', role: 'manager', process_contract: 'workforce/v1', read_contract: 'legacy-selectors',
     implementation_paths: [], verification_paths: [], read_paths: ['.'] };
   const server = createControlledMcpServer(root, binding, { assertActive() {}, saveReport() {} });
   const client = new Client({ name: 'read-origin-replay', version: '1' }), [ct, st] = InMemoryTransport.createLinkedPair();
@@ -1184,42 +1184,62 @@ test('model report prose cannot authorize provider billing, a stall ledger, or a
   assert.deepEqual(errors, []);
 });
 
-test('a saved implementation report remains unsubmitted after native failure, and authenticated recovery migrates old completion flags without replaying product writes', { timeout: 150000 }, async t => {
+for (const checkpoint of ['producer', 'later-review', 'later-requirements']) test(`a saved implementation report survives native failure at ${checkpoint}, and authenticated recovery retains product writes`, { timeout: 150000 }, async t => {
   const provider = await localOpenAIProvider((_index, body) => {
     if (body.messages.at(-1).role === 'tool') return { text: 'connected' };
     const nonce = /nonce ([a-f0-9-]{36})/.exec(JSON.stringify(body.messages)); assert.ok(nonce);
     return { toolCalls: [{ name: 'wf_capability_ping', arguments: { nonce: nonce[1] } }] };
   }, 8);
   t.after(() => provider.close());
-  const root = await fixture(t, ['retained-report'], { failAfterSavedStage: 'implementation', clock: true });
+  const retainedStage = checkpoint === 'later-requirements' ? 'requirements' : 'implementation';
+  const root = await fixture(t, ['retained-report'], { failAfterSavedStage: retainedStage, clock: true });
   atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([{ name: 'fixture', vendor: 'fixture', models: [
     { id: 'top-models', url: provider.baseURL }, { id: 'worker-models', url: provider.baseURL }] }]));
   const started = await startControlledWorkflow(root, { requirement: 'Case: retained-report\nCreate the requested JSON result and run the existing project checker.' });
   const stopped = await wait(root, started.workflow_id, 'waiting');
   const retained = stopped.attempts.at(-1);
-  assert.equal(stopped.phase, 'implementation'); assert.equal(retained.state, 'interrupted');
+  assert.equal(stopped.phase, retainedStage); assert.equal(retained.state, 'interrupted');
   assert.equal(retained.report.outcome, 'completed'); assert.equal(stopped.checks.length, 0);
   assert.equal(stopped.attempts.some(attempt => ['review', 'verification'].includes(attempt.stage)), false);
   const contract = JSON.parse(readFileSync(safePath(root, `.neomind/controlled/workflows/${hash(stopped.workflow_id)}.${stopped.epoch_id}.contract.json`), 'utf8'));
   assert.notEqual(getRecord(root, contract.task_id).meta.status, 'submitted');
-  const reportBefore = JSON.stringify(getRecord(root, retained.report_id)), productBefore = readFileSync(join(root, 'products/retained-report.json'));
+  const reportBefore = JSON.stringify(getRecord(root, retained.report_id)), productBefore = retainedStage === 'implementation' ? readFileSync(join(root, 'products/retained-report.json')) : undefined;
   const terminal = await waitNative(root, retained.invocation_id, 10000);
   assert.equal(terminal.inference_completed, false); assert.match(terminal.error, /^OPENCODE_PROVIDER_UNAVAILABLE:/);
   assert.ok(terminal.opencode.supervision, 'The failing fixture owns a real engine/process guardian.');
   // Reproduce the older persisted controller bug without touching the signed
   // receipt, report, contract, product or provider-proof history.
   const legacy = controlledStatus(root, started.workflow_id); legacy.attempts.at(-1).state = 'completed';
+  if (checkpoint !== 'producer') {
+    // Reproduce an older controller advancing past a saved producer report,
+    // before its real engine shutdown changed the signed receipt to failure.
+    // The producer receipt, report and ended-process proof stay authentic.
+    legacy.phase = 'review'; legacy.status = 'paused';
+    delete legacy.dependency_wait; delete legacy.blocker;
+    legacy.attempts.push({ id: 'later-interrupted-review', request_id: 'later-interrupted-review', role: 'reviewer', stage: 'review',
+      state: 'interrupted', started_at: new Date().toISOString() });
+    if (checkpoint === 'later-review') {
+      const updated = JSON.stringify({ value: 42, comment: 'Externally reconciled documentation revision.' }) + '\n';
+      atomicWrite(join(root, 'products/retained-report.json'), updated);
+    }
+  }
   atomicWrite(safePath(root, `.neomind/controlled/workflows/${hash(started.workflow_id)}.json`), JSON.stringify(legacy, null, 2) + '\n');
-  fixtureClocks.get(root).value = Date.parse(legacy.dependency_wait.next_condition_check_at) + 1;
+  if (checkpoint !== 'producer') {
+    const resumed = await controlControlledWorkflow(root, { workflow_id: started.workflow_id, action: 'resume' });
+    assert.equal(resumed.phase, retainedStage);
+    if (checkpoint === 'later-review') assert.equal(resumed.artifact_revalidation.source_attempt_id, retained.id);
+  } else fixtureClocks.get(root).value = Date.parse(legacy.dependency_wait.next_condition_check_at) + 1;
   const completed = await wait(root, started.workflow_id, 'completed', 110000);
   assert.equal(completed.attempts.find(attempt => attempt.id === retained.id).state, 'interrupted');
-  assert.ok(completed.events.some(event => event.kind === 'incomplete-result-reconciled'));
-  assert.equal(completed.attempts.filter(attempt => attempt.stage === 'implementation').length, 2);
+  assert.ok(completed.events.some(event => event.kind === 'incomplete-result-reconciled' || checkpoint === 'later-review' && event.kind === 'retained-producer-reconciled' || checkpoint === 'later-requirements' && event.kind === 'retained-stage-reconciled'));
+  assert.equal(completed.attempts.filter(attempt => attempt.stage === retainedStage).length, 2);
   assert.equal(fixtureProductWrites.get('retained-report'), 1, 'The fresh role reads and reports the retained product instead of rewriting it.');
   assert.equal(JSON.stringify(getRecord(root, retained.report_id)), reportBefore);
-  assert.deepEqual(readFileSync(join(root, 'products/retained-report.json')), productBefore);
+  if (checkpoint === 'producer') assert.deepEqual(readFileSync(join(root, 'products/retained-report.json')), productBefore);
+  else if (checkpoint === 'later-review') assert.match(readFileSync(join(root, 'products/retained-report.json'), 'utf8'), /Externally reconciled documentation revision/);
   assert.equal(verifyControlledTask(root, getRecord(root, contract.task_id), 'accepted').ok, true);
-  assert.equal(provider.requests.length, 4); assert.deepEqual(provider.failures, []); assert.deepEqual(errors, []);
+  assert.equal(provider.requests.length, checkpoint === 'producer' ? 4 : 0, 'Explicit retained-checkpoint reassessment does not repeat a provider recovery probe.');
+  assert.deepEqual(provider.failures, []); assert.deepEqual(errors, []);
 });
 
 test('a committed business question is immediately answerable after its final native followup fails', { timeout: 90000 }, async t => {

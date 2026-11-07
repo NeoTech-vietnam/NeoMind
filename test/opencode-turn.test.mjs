@@ -91,6 +91,40 @@ test('owned provider argument progress survives pending SDK parts until the actu
   assert.equal(state.aborts, 0); assert.equal(state.submissions, 0);
 });
 
+test('provider argument overflow aborts and reconciles idle despite continuing semantic deltas', { timeout: 3000 }, async t => {
+  let failure;
+  const pending = assistant({ time: { created: 1 } }, [tool('oversized', 'pending')]);
+  const { observer, state } = fixture(t, { messages(state) {
+    observer.noteProviderProgress({ request_id: 'owned-http-request', sequence: state.reads, kind: 'tool-arguments', bytes: 1024 });
+    if (state.reads === 2) failure = { code: 'OPENCODE_PROVIDER_ARGUMENT_LIMIT', message: 'The model exceeded its bound tool argument size.' };
+    return [user, pending];
+  }, status: state => ({ [identity.sessionID]: { type: state.aborts ? 'idle' : 'busy' } }) },
+  { providerFailure: () => failure });
+  await assert.rejects(observer.wait(), error => error.code === 'OPENCODE_PROVIDER_ARGUMENT_LIMIT');
+  assert.equal(state.reads, 2); assert.equal(state.aborts, 1); assert.equal(state.submissions, 0);
+  assert.ok(state.observations.some(value => value.event === 'model-arguments-limited' && value.abort_acknowledged && value.session_idle_observed));
+});
+
+test('provider argument overflow with a lost abort reply remains delivery unknown', { timeout: 3000 }, async t => {
+  const { observer, state } = fixture(t, { abort() { throw new Error('Lost reply'); } }, {
+    providerFailure: () => ({ code: 'OPENCODE_PROVIDER_ARGUMENT_LIMIT', message: 'The model exceeded its bound tool argument size.' }),
+  });
+  await assert.rejects(observer.wait(), error => error.code === 'OPENCODE_DELIVERY_UNKNOWN');
+  assert.equal(state.aborts, 1); assert.equal(state.submissions, 0);
+  assert.equal(state.observations.some(value => value.abort_acknowledged === true), false);
+});
+
+for (const arrival of ['messages', 'status']) test(`a relay refusal during awaited ${arrival} retains its actual cause instead of a provider outage`, { timeout: 3000 }, async t => {
+  let failure;
+  const limited = () => { failure = { code: 'OPENCODE_PROVIDER_ARGUMENT_LIMIT', message: 'Bound arguments exceeded.' }; };
+  const { observer, state } = fixture(t, {
+    messages() { if (arrival === 'messages') limited(); return [user, assistant({ error: { name: 'APIError' } })]; },
+    status() { if (arrival === 'status') limited(); return { [identity.sessionID]: { type: 'idle' } }; },
+  }, { providerFailure: () => failure });
+  await assert.rejects(observer.wait(), error => error.code === 'OPENCODE_PROVIDER_ARGUMENT_LIMIT');
+  assert.equal(state.aborts, 1); assert.equal(state.submissions, 0);
+});
+
 test('duplicate provider observations, empty bytes and nonsemantic metadata cannot extend the idle deadline', { timeout: 3000 }, async t => {
   const pending = assistant({ time: { created: 1 } }, [tool('partial', 'pending')]);
   const { observer, state } = fixture(t, { messages() {

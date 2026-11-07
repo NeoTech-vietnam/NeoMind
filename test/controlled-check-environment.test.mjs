@@ -2,7 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, win32 } from 'node:path';
-import { controlledCheckEnvironment } from '../dist/controlled-check-environment.js';
+import { controlledCheckEnvironment, controlledCheckTimeout } from '../dist/controlled-check-environment.js';
+
+test('cold ESP-IDF builds receive a native-build deadline without overriding an explicit contract', () => {
+  assert.equal(controlledCheckTimeout(['idf.py', '-C', 'example', 'build']), 600000);
+  assert.equal(controlledCheckTimeout(['idf.py', 'build'], 12345), 12345);
+  assert.equal(controlledCheckTimeout(['idf.py', '--version']), 60000);
+  assert.equal(controlledCheckTimeout(['node', 'build']), 60000);
+  assert.equal(controlledCheckTimeout(['idf.py', 'not-build']), 60000);
+});
 
 function fixture(t) {
   const base = resolve('artifacts/test-temp'); mkdirSync(base, { recursive: true });

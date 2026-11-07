@@ -3,6 +3,7 @@ import { basename, delimiter, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { hash, now, resourceRoot, readConfig } from './storage.js';
 import { runCommand } from './command-runner.js';
+import { espIdfToolchain } from './esp-idf-toolchain.js';
 
 export const controlledRuntimeQuerySchema = z.strictObject({
   executables: z.strictObject({ python: z.string().max(2048).optional(),
@@ -114,6 +115,9 @@ export async function controlledToolchain(root: string, query: ControlledRuntime
         reason: 'This fixed toolchain observation could not complete. Other runtime context and program observations remain available.' };
     }
   }));
+  const sdk = installedToolchains ? espIdfToolchain() : undefined;
+  const esp_idf = sdk ? { sdk: sdk.sdk, python: sdk.python, version: sdk.version,
+    source: 'configured-installed-sdk', command: ['idf.py', '--version'] } : undefined;
   return { observed_at: now(), date_utc: new Date().toISOString().slice(0, 10),
-    local_date: new Intl.DateTimeFormat('en-GB').format(new Date()), observations };
+    local_date: new Intl.DateTimeFormat('en-GB').format(new Date()), observations, ...(esp_idf ? { esp_idf } : {}) };
 }

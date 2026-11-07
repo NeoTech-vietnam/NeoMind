@@ -27,11 +27,11 @@ function fixture(t) {
 }
 const call = (name, args) => ({ toolCalls: [{ name: `wf_${name}`, arguments: args }] });
 
-test('real OpenCode transports compatible default/null cursor reads and scoped writes while preserving range, required-null and CAS refusals', { timeout: 150000 }, async t => {
+test('real OpenCode preserves historical default/null selectors and scoped writes with range and CAS refusals', { timeout: 150000 }, async t => {
   const { root, cleanup } = fixture(t), traces = [], reports = [], events = [], startup = [];
   let provider, gateway, engine, controller;
   t.after(async () => { controller?.abort(); await engine?.close(); await gateway?.close(); await provider?.close(); cleanup(); });
-  const binding = { workflow_id: 'WF-TRANSPORT-REQUEST', invocation_id: randomUUID(), task_id: 'WF-TRANSPORT-TASK', process_contract: 'workforce/v1',
+  const binding = { workflow_id: 'WF-TRANSPORT-REQUEST', invocation_id: randomUUID(), task_id: 'WF-TRANSPORT-TASK', process_contract: 'workforce/v1', read_contract: 'legacy-selectors',
     role: 'developer', stage: 'implementation', implementation_paths: ['products'], verification_paths: [], read_paths: ['products'],
     execution_steps: [], procedure_bound: false, cornell_bound: false };
   const steps = [

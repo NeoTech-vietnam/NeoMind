@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { isAbsolute, resolve, dirname, basename, join, delimiter } from 'node:path';
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
+import { espIdfCommand, espIdfToolchain } from './esp-idf-toolchain.js';
 
 export interface CommandInput {
   command: string[];
@@ -30,7 +31,7 @@ export interface CommandResult {
 export function commandEnvironment(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   const inherited = new Set(['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR',
-    'HOME', 'USERPROFILE', 'LANG', 'LC_ALL', 'TZ']);
+    'HOME', 'USERPROFILE', 'LANG', 'LC_ALL', 'TZ', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_ARCHITEW6432']);
   for (const [key, value] of Object.entries(process.env))
     if (inherited.has(key.toUpperCase()) && value !== undefined) environment[key] = value;
   for (const [key, value] of Object.entries(extra)) {
@@ -48,6 +49,17 @@ export function commandEnvironment(extra: Record<string, string> = {}): NodeJS.P
  * with argv intact, rather than interpreting authored arguments with cmd.exe. */
 export function commandLaunch(command: string[], env: NodeJS.ProcessEnv = process.env): { executable: string; args: string[] } {
   const program = command[0]!;
+  if (espIdfCommand(command)) {
+    if (!isAbsolute(program) && /[\\/]/.test(program))
+      throw new Error('Use the bare idf.py alias or its exact installed SDK path.');
+    const toolchain = espIdfToolchain(env);
+    if (!toolchain) throw new Error('The configured ESP-IDF SDK and its Python environment are unavailable or ambiguous.');
+    const script = join(toolchain.sdk, 'tools', 'idf.py');
+    const identity = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
+    if (isAbsolute(program) && identity(program) !== identity(script))
+      throw new Error('The requested idf.py belongs to a different ESP-IDF installation.');
+    return { executable: toolchain.python, args: [script, ...command.slice(1)] };
+  }
   if (!isAbsolute(program) && program !== basename(program)) return { executable: program, args: command.slice(1) };
   if (process.platform !== 'win32' || !/^(?:npm|npx)(?:\.cmd)?$/i.test(basename(program)))
     return { executable: program, args: command.slice(1) };
@@ -87,7 +99,9 @@ export async function runCommand(input: CommandInput): Promise<CommandResult> {
   if (input.signal?.aborted) return { ...result, cancelled: true, error: 'Command cancelled before start.' };
   let launch: { executable: string; args: string[] };
   try { launch = commandLaunch(input.command, env); }
-  catch { return { ...result, error: 'The installed Windows npm launcher could not be resolved without a shell.' }; }
+  catch { return { ...result, error: espIdfCommand(input.command)
+    ? 'The ESP-IDF SDK, installed build tools and matching Python environment could not be resolved without a shell.'
+    : 'The installed Windows npm launcher could not be resolved without a shell.' }; }
   return await new Promise(resolveResult => {
     let child: ChildProcessWithoutNullStreams;
     try { child = spawn(launch.executable, launch.args, { cwd: input.cwd, shell: false,

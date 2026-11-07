@@ -7,12 +7,14 @@ import type { OpenCodeProviderProgress } from './opencode-provider-stream.js';
 export interface OpenCodeTurnIdentity { sessionID: string; messageID: string; directory: string; modelID: string; providerID: string }
 export interface OpenCodeTurnResult { info: AssistantMessage; parts: Part[] }
 export class OpenCodeTurnError extends Error {
-  constructor(readonly code: 'OPENCODE_PROVIDER_STALLED' | 'OPENCODE_PROVIDER_UNAVAILABLE' | 'OPENCODE_DELIVERY_UNKNOWN' | 'OPENCODE_TURN_IDENTITY' | 'MCP_DELIVERY_PROTOCOL', message: string) { super(message); this.name = 'OpenCodeTurnError'; }
+  constructor(readonly code: 'OPENCODE_PROVIDER_STALLED' | 'OPENCODE_PROVIDER_ARGUMENT_LIMIT' | 'OPENCODE_PROVIDER_UNAVAILABLE' | 'OPENCODE_DELIVERY_UNKNOWN' | 'OPENCODE_TURN_IDENTITY' | 'MCP_DELIVERY_PROTOCOL', message: string) { super(message); this.name = 'OpenCodeTurnError'; }
 }
 export interface OpenCodeTurnOptions {
   signal: AbortSignal; assertCurrent(): void;
   onToolPart?(part: Part): void | Promise<void>;
   onObservation?(event: Record<string, unknown>): void | Promise<void>;
+  /** Fixed metadata from the invocation-owned relay, never model-authored content. */
+  providerFailure?(): { code: 'OPENCODE_PROVIDER_ARGUMENT_LIMIT'; message: string } | undefined;
   /** Owner policy/test clock only, never worker parameters or a retry allowance. */
   model_idle_ms?: number; poll_ms?: number; http_timeout_ms?: number; now?: () => number;
 }
@@ -120,20 +122,20 @@ export class OpenCodeTurnObserver {
       return response.data[this.identity.sessionID]?.type ?? 'idle';
     } catch (error) { this.statusUnreadableSince ??= this.clock(); throw error; }
   }
-  private async stalled(): Promise<never> {
+  private async abortAndReconcile(code: 'OPENCODE_PROVIDER_STALLED' | 'OPENCODE_PROVIDER_ARGUMENT_LIMIT', message: string): Promise<never> {
     let response;
     try { response = await this.client.session.abort({ sessionID: this.identity.sessionID, directory: this.identity.directory }, { signal: this.signal() }); }
-    catch { throw new OpenCodeTurnError('OPENCODE_DELIVERY_UNKNOWN', 'The stalled-turn abort reply is unknown. Reconcile the actual session and side effects before replay.'); }
+    catch { throw new OpenCodeTurnError('OPENCODE_DELIVERY_UNKNOWN', 'The owned-turn abort reply is unknown. Reconcile the actual session and side effects before replay.'); }
     if (!response.response.ok || response.data !== true)
-      throw new OpenCodeTurnError('OPENCODE_DELIVERY_UNKNOWN', 'OpenCode did not acknowledge the owned stalled-turn abort. Preserve actual messages and operation results before another dispatch.');
+      throw new OpenCodeTurnError('OPENCODE_DELIVERY_UNKNOWN', 'OpenCode did not acknowledge the owned-turn abort. Preserve actual messages and operation results before another dispatch.');
     const deadline = this.clock() + Math.max(10000, this.httpTimeout * 2);
     while (this.clock() < deadline) {
       let status;
       try { status = await this.status(); } catch { /* Abort delivery is not completion; keep its bounded reconciliation window. */ }
       if (status === 'idle') {
-        await this.options.onObservation?.({ event: 'model-progress-stalled', engine: 'opencode', owner: 'runtime',
+        await this.options.onObservation?.({ event: code === 'OPENCODE_PROVIDER_STALLED' ? 'model-progress-stalled' : 'model-arguments-limited', engine: 'opencode', owner: 'runtime',
           admission_observed: this.admitted, model_idle_ms: this.idle, abort_acknowledged: true, session_idle_observed: true });
-        throw new OpenCodeTurnError('OPENCODE_PROVIDER_STALLED', 'No meaningful model text, reasoning or tool arguments arrived within the owned progress deadline. The engine acknowledged cancellation and returned idle; actual artifacts and messages remain.');
+        throw new OpenCodeTurnError(code, message + ' The engine acknowledged cancellation and returned idle; actual artifacts and messages remain.');
       }
       await pause(Math.min(this.poll, 250), this.options.signal);
     }
@@ -143,6 +145,8 @@ export class OpenCodeTurnObserver {
     const admissionStarted = this.clock();
     for (;;) {
       this.options.signal.throwIfAborted(); this.options.assertCurrent();
+      const providerFailure = this.options.providerFailure?.();
+      if (providerFailure) return this.abortAndReconcile(providerFailure.code, providerFailure.message);
       try {
         const response = await this.client.session.messages({ sessionID: this.identity.sessionID, directory: this.identity.directory, limit: 200 }, { signal: this.signal() });
         if (!response.response.ok || !response.data) throw new Error('OpenCode messages could not be reconciled.');
@@ -161,9 +165,14 @@ export class OpenCodeTurnObserver {
         }
         const latest = candidates.at(-1);
         if (this.admitted && latest?.info.role === 'assistant' && (latest.info.error || latest.info.time.completed && latest.info.finish === 'stop') &&
-            !latest.parts.some(part => part.type === 'tool' && ['pending', 'running'].includes(part.state.status)) && await this.status() === 'idle')
+            !latest.parts.some(part => part.type === 'tool' && ['pending', 'running'].includes(part.state.status)) && await this.status() === 'idle') {
+          const failure = this.options.providerFailure?.();
+          if (failure) return this.abortAndReconcile(failure.code, failure.message);
           return { info: latest.info, parts: latest.parts };
+        }
         if (this.admitted && this.sessionError && await this.status() === 'idle') {
+          const failure = this.options.providerFailure?.();
+          if (failure) return this.abortAndReconcile(failure.code, failure.message);
           const provider = record(this.sessionError) && /APIError|ProviderAuth|Authentication|ModelNotFound/.test(String(this.sessionError.name));
           throw new OpenCodeTurnError(provider ? 'OPENCODE_PROVIDER_UNAVAILABLE' : 'OPENCODE_DELIVERY_UNKNOWN', provider
             ? 'The owned engine reported a provider failure and returned idle; current messages and artifacts remain.'
@@ -179,7 +188,7 @@ export class OpenCodeTurnObserver {
       if (!this.admitted && this.clock() - admissionStarted >= 30000)
         throw new OpenCodeTurnError('OPENCODE_DELIVERY_UNKNOWN', 'Prompt admission has not been established from the actual saved user message. No duplicate prompt was sent.');
       if (this.admitted && this.statusUnreadableSince === undefined && !this.runningTools.size && this.clock() - this.lastProgress >= this.idle) {
-        return this.stalled();
+        return this.abortAndReconcile('OPENCODE_PROVIDER_STALLED', 'No meaningful model text, reasoning or tool arguments arrived within the owned progress deadline.');
       }
       await pause(this.poll, this.options.signal);
     }

@@ -13,6 +13,14 @@ export interface OpenCodeProviderStreamOptions {
   signal?: AbortSignal;
   onProgress(progress: OpenCodeProviderProgress): void;
   onObservation?(observation: OpenCodeProviderStreamObservation): void;
+  onFailure?(failure: OpenCodeProviderStreamFailure): void;
+}
+export interface OpenCodeProviderStreamFailure {
+  code: 'OPENCODE_PROVIDER_ARGUMENT_LIMIT';
+  message: string;
+  request_id: string;
+  argument_bytes: number;
+  limit_bytes: number;
 }
 export interface OpenCodeProviderStreamObservation {
   event: 'provider-request-started' | 'provider-response-started' | 'provider-transport-ended';
@@ -30,14 +38,29 @@ export interface OpenCodeProviderStreamObservation {
 
 const requestLimit = 4 * 1024 * 1024;
 const frameLimit = 2 * 1024 * 1024;
+// These read selectors have finite schemas, including worst-case JSON escaping:
+// one path/title, two search strings, or three 2,048-character executable paths.
+// Content tools retain the provider request ceiling for escaped/multi-edit data.
+const readArgumentLimit = 8 * 1024;
+const defaultArgumentLimit = requestLimit;
+const argumentLimit = (name: string) => {
+  const tool = name.startsWith('wf_') ? name.slice(3) : name;
+  if (['project_read', 'project_read_more', 'assignment_read', 'project_list', 'check_evidence'].includes(tool)) return readArgumentLimit;
+  if (tool === 'project_search') return 16 * 1024;
+  if (tool === 'runtime_context') return 64 * 1024;
+  return defaultArgumentLimit;
+};
+const argumentLimitMessage = 'A streamed tool call exceeded its bounded argument size before completion. The owned upstream stream was stopped; retain actual messages and effects.';
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /** The pinned engine's ordinary processor does not publish tool-input deltas.
  * Observe semantic SSE at the owned provider boundary without changing the
- * model loop, request bytes, response bytes, tools or result authority. Neither
- * a tool name nor an SSE/network heartbeat constitutes model progress. */
+ * model loop, healthy request/response bytes, tools or result authority. Neither
+ * a tool name nor an SSE/network heartbeat constitutes model progress. Growing
+ * arguments remain progress only within the bound of that individual call. */
 export async function createOpenCodeProviderStream(endpoint: OpenCodeEndpoint, options: OpenCodeProviderStreamOptions): Promise<{
   endpoint: OpenCodeEndpoint;
+  readonly failure?: OpenCodeProviderStreamFailure;
   close(): Promise<void>;
 }> {
   options.signal?.throwIfAborted();
@@ -49,13 +72,21 @@ export async function createOpenCodeProviderStream(endpoint: OpenCodeEndpoint, o
   const token = randomBytes(32).toString('hex'), authorization = Buffer.from(`Bearer ${token}`);
   const active = new Set<AbortController>();
   let closed = false, closing: Promise<void> | undefined;
+  let failure: OpenCodeProviderStreamFailure | undefined;
+  const exceeded = (requestId: string, bytes: number, limit: number) => {
+    if (failure) return;
+    failure = { code: 'OPENCODE_PROVIDER_ARGUMENT_LIMIT', message: argumentLimitMessage,
+      request_id: requestId, argument_bytes: bytes, limit_bytes: limit };
+    try { options.onFailure?.({ ...failure }); }
+    catch { /* An advisory callback cannot suppress the owned refusal. */ }
+  };
 
   function observe(requestId: string, counted: (bytes: number) => void) {
     const decoder = new TextDecoder();
     let pending = '', sequence = 0, enabled = true;
     // Tool-call identities are scoped to an SSE response and choice. Argument
     // fragments without an established call cannot prove useful model progress.
-    const calls = new Map<string, { id: boolean; name: boolean }>();
+    const calls = new Map<string, { id: boolean; name: boolean; toolName: string; bytes: number; limit: number }>();
     const semantic = (kind: OpenCodeProviderProgress['kind'], value: unknown) => {
       if (typeof value !== 'string' || !value.length) return;
       const bytes = Buffer.byteLength(value); counted(bytes);
@@ -81,20 +112,33 @@ export async function createOpenCodeProviderStream(endpoint: OpenCodeEndpoint, o
           let current = calls.get(key);
           const hasId = typeof call.id === 'string' && call.id.length > 0;
           const hasName = object(call.function) && typeof call.function.name === 'string' && call.function.name.length > 0;
-          if (!current && (hasId || hasName) && calls.size < 4096) { current = { id: false, name: false }; calls.set(key, current); }
+          const value = object(call.function) ? call.function.arguments : undefined;
+          const bytes = typeof value === 'string' ? Buffer.byteLength(value) : 0;
+          if (!current && (hasId || hasName || bytes) && calls.size < 4096) {
+            current = { id: false, name: false, toolName: '', bytes: 0, limit: defaultArgumentLimit }; calls.set(key, current);
+          }
           if (!current) continue;
           current.id ||= hasId; current.name ||= hasName;
-          if (current.id && current.name && object(call.function)) semantic('tool-arguments', call.function.arguments);
+          if (hasName && object(call.function)) {
+            // Names may arrive in fragments. Once a narrow identity is known,
+            // repeating or changing its name cannot enlarge its remaining bound.
+            current.toolName = (current.toolName + String(call.function.name)).slice(0, 256);
+            current.limit = Math.min(current.limit, argumentLimit(current.toolName));
+          }
+          current.bytes += bytes;
+          if (current.bytes > current.limit) { exceeded(requestId, current.bytes, current.limit); return; }
+          if (current.id && current.name) semantic('tool-arguments', value);
         }
       }
     };
     return (bytes: Buffer) => {
-      if (!enabled) return;
+      if (!enabled || failure) return;
       pending += decoder.decode(bytes, { stream: true });
       for (;;) {
         const separator = /\r?\n\r?\n/.exec(pending);
         if (!separator) break;
         if (separator.index <= frameLimit) frame(pending.slice(0, separator.index));
+        if (failure) { pending = ''; return; }
         pending = pending.slice(separator.index + separator[0].length);
       }
       // An unbounded malformed frame must not grow owner memory or masquerade
@@ -110,6 +154,12 @@ export async function createOpenCodeProviderStream(endpoint: OpenCodeEndpoint, o
     }
     if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
       response.writeHead(404); response.end(); return;
+    }
+    if (failure) {
+      // The engine may automatically retry a broken HTTP stream. A fresh request
+      // cannot reset an already-refused invocation's counters and spend again.
+      response.writeHead(422, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: { code: failure.code, message: failure.message } })); return;
     }
     const controller = new AbortController(); active.add(controller);
     const requestId = randomUUID(), startedAt = performance.now();
@@ -172,13 +222,21 @@ export async function createOpenCodeProviderStream(endpoint: OpenCodeEndpoint, o
           (!encoding || encoding === 'identity') ? observe(requestId, bytes => {
             semanticEvents++; semanticBytes += bytes; lastSemantic = Math.round(performance.now() - startedAt);
           }) : undefined;
-        incoming.on('data', chunk => { responseBytes += chunk.length; inspect?.(Buffer.from(chunk)); });
-        incoming.once('error', () => { response.destroy(); finish(); });
+        incoming.on('data', chunk => {
+          responseBytes += chunk.length; inspect?.(Buffer.from(chunk));
+          if (failure) {
+            // Destroy without an Error before aborting the signal. In Node's
+            // final-response-chunk path, aborting first can surface ABORT_ERR
+            // on an already-released socket after its HTTP listeners detach.
+            incoming.unpipe(response); upstream.destroy(); controller.abort(); response.destroy(); finish();
+          }
+        });
+        incoming.on('error', () => { response.destroy(); finish(); });
         incoming.once('aborted', () => { response.destroy(); finish(); });
         incoming.once('end', () => { completed = incoming.complete; finish(); });
         incoming.pipe(response);
       });
-      upstream.once('error', () => {
+      upstream.on('error', () => {
         if (!response.headersSent) { response.writeHead(502, { 'content-type': 'application/json' }); response.end('{"error":{"message":"Owned model transport did not complete."}}'); }
         else response.destroy();
         finish();
@@ -204,5 +262,6 @@ export async function createOpenCodeProviderStream(endpoint: OpenCodeEndpoint, o
   if (options.signal?.aborted) { await close(); options.signal.throwIfAborted(); }
   const address = server.address();
   if (!address || typeof address === 'string') { await close(); throw new Error('Owned model transport did not bind loopback.'); }
-  return { endpoint: { ...endpoint, baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: token }, close };
+  return { endpoint: { ...endpoint, baseURL: `http://127.0.0.1:${address.port}/v1`, apiKey: token },
+    get failure() { return failure ? { ...failure } : undefined; }, close };
 }

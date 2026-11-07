@@ -65,7 +65,7 @@ const call = (name, args) => ({ toolCalls: [{ name: `wf_${name}`, arguments: arg
 for (const lost of [false, true]) test(`real async native turn ${lost ? 'reconciles lost ACK and closed SSE' : 'completes only after the actual terminal assistant and saved report'}`, { timeout: 90000 }, async t => {
   observerPolicy(t);
   const provider = await localOpenAIProvider(index => [
-    call('project_read', { path: 'products/current.txt', max_chars: 64000, start_line: 1, start_char: 0 }),
+    call('project_read', { path: 'products/current.txt' }),
     call('task_file_write', { path: 'products/current.txt', content: 'verified 42\n' }),
     call('assignment_report', { summary: 'Saved the actual scoped output.', product_findings: [] }),
     { text: 'complete' },
@@ -263,7 +263,7 @@ test('real pinned engine automatic compaction completes the original owned invoc
     const index = requests.length - 1;
     if (index > 5) { response.writeHead(429); response.end(); return; }
     const output = [
-      call('project_read', { path: 'products/current.txt', max_chars: 64000, start_line: 1, start_char: 0 }),
+      call('project_read', { path: 'products/current.txt' }),
       { text: 'Automatic context summary: original task read products/current.txt. It was read successfully. The remaining required step is wf_assignment_report with summary and product_findings:[], then finish. No additional product changes are required.' },
       call('assignment_report', { summary: 'Read the scoped file and retained the original assignment across actual automatic compaction.', product_findings: [] }),
       { text: 'The bound professional result was saved.' },

@@ -597,6 +597,8 @@ class NativeSession {
   events: RpcMessage[] = [];
   baseConfiguration: Record<string, any> = {};
   closing: Promise<void> | null = null;
+  private settling = false;
+  private finishing: Promise<void> | null = null;
   turnResolvers = new Map<string, (value: any) => void>();
   constructor(
     readonly root: string,
@@ -613,11 +615,21 @@ class NativeSession {
     persist(this.root, this.receipt);
   }
   settle(state: NativeReceipt['state'], error: string | null = null): void {
-    this.update({ state, error, inference_completed: state === 'completed' });
-    void this.releaseTransport().finally(() => {
+    if (this.settling) return;
+    this.settling = true;
+    this.update({ state, error, inference_completed: this.receipt.inference_completed || state === 'completed' });
+    void this.releaseTransport().catch(failure => {
+      // A failed cleanup must not erase a validated model finish or reject an
+      // unobserved promise after the primary refusal has already been saved.
+      try { this.noteShutdownFailure(failure); } catch { /* Retain the primary signed refusal if diagnostics cannot be persisted. */ }
+    }).finally(() => {
       this.resolveCompletion();
       active.delete(`${this.root}:${this.receipt.id}`);
     });
+  }
+  private noteShutdownFailure(error: unknown): void {
+    if (this.receipt.opencode) this.update({ opencode: { ...this.receipt.opencode,
+      shutdown_failure: { message_sha256: hash(cleanError(error)), at: now() } } });
   }
   releaseTransport(): Promise<void> {
     if (this.closing) return this.closing;
@@ -938,7 +950,21 @@ class NativeSession {
       this.settle('blocked', cleanError(error));
     }
   }
-  async finishInference(): Promise<void> {
+  finishInference(): Promise<void> {
+    if (this.settling) return Promise.resolve();
+    return this.finishing ??= this.finishObservedInference();
+  }
+  private async finishObservedInference(): Promise<void> {
+      // The validated assistant finish is a durable observation. Engineering
+      // scheduling must still wait for the owned transport/process exit proof.
+      this.update({ inference_completed: true });
+      try { await this.releaseTransport(); }
+      catch (error) {
+        this.noteShutdownFailure(error);
+        this.settle('blocked', cleanError(error));
+        return;
+      }
+      if (this.settling) return;
       this.update({ state: 'completed', inference_completed: true, error: null });
       if (this.receipt.role === 'manager' && this.receipt.workflow_id) {
         try {
@@ -966,8 +992,6 @@ class NativeSession {
           );
         }
       }
-      // The completed receipt may now be frozen in an archive. Do not re-sign it.
-      await this.releaseTransport();
       this.resolveCompletion();
       active.delete(`${this.root}:${this.receipt.id}`);
   }
@@ -1092,6 +1116,9 @@ async function startOwned(
             qualified_procedure: controlledToolNames(controlled.binding).includes('procedure_run'),
             evidence_documentation: controlled.binding.evidence_documentation === true,
             research: controlledToolNames(controlled.binding).includes('cornell_research_compile'),
+            ...(controlled.binding.process_contract === 'workforce/v1' && controlled.binding.read_contract !== 'legacy-selectors'
+              ? { read_contract: 'opaque-pages' as const } : {}),
+            ...(controlled.binding.process_contract === 'workforce/v1' && controlled.binding.assessment_outputs?.length ? { assigned_read: true as const } : {}),
             ...(controlled.binding.artifact_revalidation ? { artifact_revalidation: true } : {}),
             ...(controlledToolNames(controlled.binding).includes('capability_invoke') ? { capabilities: true } : {}),
             ...(controlled.binding.planning_result === 'backend' ? { planning_result: 'backend' as const } : {}) } };
@@ -1243,8 +1270,14 @@ export async function reconcileWorkForceInvocations(root: string, workflowId?: s
     withOperationLock(root, 'native-dispatch', () => {
       const current = readInvocation(root, prior.id);
       if (current.signature !== prior.signature || !invocationIsActive(current) && current.state !== 'blocked' || active.has(`${root}:${prior.id}`)) return;
-      current.state = 'interrupted'; current.inference_completed = false;
-      current.error ??= 'The owned OpenCode supervisor confirmed engine/process-tree exit. Partial results are preserved for a new bounded attempt; no completed inference is inferred.';
+      // Only a previously signed validated assistant finish plus actual owned
+      // process-tree exit can settle cleanup uncertainty as completed. Earlier
+      // interrupted/blocked histories without that observation stay incomplete.
+      if (current.inference_completed) { current.state = 'completed'; current.error = null; }
+      else {
+        current.state = 'interrupted';
+        current.error ??= 'The owned OpenCode supervisor confirmed engine/process-tree exit. Partial results are preserved for a new bounded attempt; no completed inference is inferred.';
+      }
       current.opencode!.interruption_proof_sha256 = observed.proof_sha256;
       persist(root, current);
     });

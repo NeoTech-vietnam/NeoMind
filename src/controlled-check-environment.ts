@@ -1,6 +1,7 @@
 import { lstatSync } from 'node:fs';
 import { win32 } from 'node:path';
 import { legalProgram } from './controlled-runtime-context.js';
+import { espIdfCommand, espIdfToolchain } from './esp-idf-toolchain.js';
 
 interface FrozenCheck { command: readonly string[]; negative_controls?: readonly { command: readonly string[] }[] }
 const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((value, index) => value === b[index]);
@@ -9,10 +10,12 @@ const same = (a: readonly string[], b: readonly string[]) => a.length === b.leng
  * Other checks retain their inherited environment; no toolchain is guessed. */
 export function controlledCheckEnvironment(root: string, command: readonly string[], checks: readonly FrozenCheck[],
   inherited: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Record<string, string> | undefined {
-  if (platform !== 'win32' || !command.length) return undefined;
+  if (!command.length) return undefined;
   const frozen = checks.flatMap(check => [check.command, ...(check.negative_controls ?? []).map(control => control.command)]);
   const positions = frozen.flatMap((candidate, index) => same(candidate, command) ? [index] : []);
   if (!positions.length) return undefined;
+  if (espIdfCommand(command)) return espIdfToolchain(inherited, platform)?.env;
+  if (platform !== 'win32') return undefined;
   const normalize = (path: string) => win32.resolve(root, path).toLowerCase();
   const compile = (argv: readonly string[]) => {
     const executable = argv[0];
@@ -41,4 +44,9 @@ export function controlledCheckEnvironment(root: string, command: readonly strin
   if (unique.length !== 1) return undefined;
   const path = Object.entries(inherited).find(([key]) => key.toUpperCase() === 'PATH')?.[1] ?? '';
   return { PATH: `${unique[0]}${path ? `;${path}` : ''}` };
+}
+
+/** Cold native SDK builds need a build-sized default. An explicit deadline is unchanged. */
+export function controlledCheckTimeout(command: readonly string[], requested?: number): number {
+  return requested ?? (espIdfCommand(command) && command.slice(1).includes('build') ? 600000 : 60000);
 }

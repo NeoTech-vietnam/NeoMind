@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { atomicWrite, getRecord, hash, now, safePath, withOperationLock } from './storage.js';
 import { replaceWorkspaceFile, workspaceFileBytes, workspaceContentBytes, workspacePathLockKey, assertWorkspaceEditablePath, WorkspacePathPolicyError } from './workspace.js';
@@ -31,6 +32,8 @@ export interface ControlledBinding {
   stage: ControlledStage; role: string;
   /** Version selected by the backend from the saved request, never a worker. */
   process_contract?: 'software-tools/v2' | 'workforce/v1';
+  /** Backend-attested read interface; historical receipts explicitly retain their selectors. */
+  read_contract?: 'opaque-pages' | 'legacy-selectors';
   plugin_capabilities?: boolean;
   /** New planning sessions commit the semantic plan as their single result. */
   planning_result?: 'backend';
@@ -165,6 +168,9 @@ interface ToolState {
   schema_version: 1; binding_hash: string;
   reads: Record<string, string | null>;
   read_coverage?: Record<string, { sha256: string; total: number; ranges: [number, number][] }>;
+  project_read_cursors?: Record<string, { path: string; sha256: string; start_char: number; invalidated?: true }>;
+  assignment_read?: { snapshot: string; hashes: Record<string, string | null>; changed_paths: string[];
+    cursors: Record<string, { snapshot: string; index: number; start_char: number }> };
   change_read_coverage?: ControlledArtifactChangeCoverageMap;
   writes: { operation: string; path: string; previous_hash: string | null; sha256: string; completed: boolean }[];
 }
@@ -226,9 +232,11 @@ function assertWritable(binding: ControlledBinding, path: string): void {
   }
 }
 export function controlledToolNames(binding: ControlledBinding): string[] {
+  const assignmentRead = binding.process_contract === 'workforce/v1' && binding.assessment_outputs?.length ? ['assignment_read'] : [];
+  const readMore = binding.process_contract === 'workforce/v1' && binding.read_contract !== 'legacy-selectors' ? ['project_read_more'] : [];
   if (binding.process_contract === 'workforce/v1' && binding.artifact_revalidation)
-    return ['runtime_context', 'project_read', 'project_list', 'project_search', 'assignment_report', 'check_evidence'];
-  return ['runtime_context', 'project_read', 'project_list', 'project_search',
+    return ['runtime_context', 'project_read', ...readMore, ...assignmentRead, 'project_list', 'project_search', 'assignment_report', 'check_evidence'];
+  return ['runtime_context', 'project_read', ...readMore, ...assignmentRead, 'project_list', 'project_search',
     ...(binding.process_contract === 'workforce/v1' && binding.stage === 'planning' && binding.planning_result === 'backend' ? [] : ['assignment_report']),
     ...(binding.stage === 'planning' ? ['workflow_plan', 'work_prepare'] : []),
     ...(binding.process_contract === 'workforce/v1' && binding.role === 'manager' && ['planning', 'diagnosis'].includes(binding.stage) ? ['request_input'] : []),
@@ -283,7 +291,11 @@ function workforceInstructions(binding: ControlledBinding): string {
     `${workforceStageHandoff(binding, available)}\n` +
     `Available operations: ${available.join(', ')}. Identity, task, authorization, operation IDs and lifecycle are already bound. Supply professional content only.\n` +
     `${binding.artifact_revalidation ? 'Read-only product reassessment paths' : 'Producer write paths'}: ${JSON.stringify(binding.implementation_paths)}. Tester write paths: ${JSON.stringify(binding.verification_paths)}. Review/design/requirements are read-only.\n` +
+    (binding.read_contract !== 'legacy-selectors'
+      ? 'project_read takes only {path} for the first page. If truncated, follow the exact returned next_read through project_read_more; its cursor and file are backend-owned. Retry identical input to replay a lost reply. INPUT_CHANGED requires restarting with project_read and the path. Never invent a cursor or numeric position.\n'
+      : 'This historical assignment retains its advertised project_read selectors. Use only its actual declared fields and returned continuation.\n') +
     (binding.assessment_outputs?.length ? `Read all content of each actual output before reporting a successful content assessment: ${JSON.stringify(binding.assessment_outputs)}. No compilation or executed-test result is implied.\n` : '') +
+    (available.includes('assignment_read') ? 'Prefer assignment_read with {} for the assigned output text. Backend selects paths and pagination. {} replays the first batch; continue only with the exact returned next_cursor as {cursor:next_cursor}. Repeat the same input after an interrupted reply; never invent a cursor. INPUT_CHANGED means restart with {} and reassess the changed bytes. Original-file history still comes from check_evidence, not assignment_read.\n' : '') +
     (available.includes('task_file_write') ? 'For a small change to an existing file, prefer task_file_write with edits:[{old_text,new_text}] using unique text from project_read. Backend applies the snippets atomically and preserves unrelated content and line endings; do not reconstruct a whole README to add one link. Use content for new files or an intentional complete replacement. A saved response, including replayed:true, confirms the write: continue to a different output or save your content result rather than sending identical writes.\n' : '') +
     (available.includes('cornell_research_compile') ? 'Requested Cornell note.md/exercises.md/answers.md are compiler-owned: use cornell_research_compile with semantic research or an existing input_path, never task_file_write for those renderings.\n' : '') +
     (available.includes('task_run') ? 'task_run uses declared operations. Send the declared title and optional input_path for prepared JSON; backend builds the execution payload.\n' : '') +
@@ -440,7 +452,7 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       let phase: ControlledDiagnosticPhase = 'assert-active';
       try {
         if (closed) throw new ControlledToolError('ACTOR_INACTIVE', 'This worker session has ended.');
-        await callbacks.assertActive(readOnly && ['project_read', 'project_list', 'project_search', 'check_evidence'].includes(name) ? 'read-only' : undefined);
+        await callbacks.assertActive(readOnly && ['project_read', 'project_read_more', 'assignment_read', 'project_list', 'project_search', 'check_evidence'].includes(name) ? 'read-only' : undefined);
         phase = 'request-encoding';
         await trace({ event: 'tool-request', tool: name, model_input: controlledModelInput(name, args), owner: 'runtime',
           backend_binding: { workflow_id: binding.workflow_id, task_id: binding.task_id ?? null, invocation_id: binding.invocation_id } });
@@ -463,25 +475,13 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       }
     });
   }
-  const readOption = (schema: z.ZodNumber) => binding.process_contract === 'workforce/v1' ? schema.nullish() : schema.optional();
-  register('project_read', 'Read an assigned UTF-8 file. The backend retains its version for subsequent scoped edits.',
-    z.strictObject({ path: z.string().min(1).max(1024), max_chars: readOption(z.number().int().min(128).max(64000)),
-      start_line: readOption(z.number().int().min(1)),
-      start_char: readOption(z.number().int().min(0).max(2 * 1024 * 1024)).describe('Optional zero-based character offset in LF-normalized text. Use next_start_char to paginate long lines. Line1 and character0 both mean the beginning; the backend accepts equivalent defaults. Two nondefault cursors are ambiguous.') }), true, args => {
-      if (binding.process_contract === 'workforce/v1') {
-        args = { ...args, max_chars: args.max_chars ?? undefined, start_line: args.start_line ?? undefined, start_char: args.start_char ?? undefined };
-        if (args.start_line === 1) args.start_line = undefined;
-        if (args.start_char === 0 && args.start_line !== undefined) args.start_char = undefined;
-      }
-      if (args.start_char !== undefined && args.start_line !== undefined) throw new ControlledToolError('INVALID_PAYLOAD', 'Choose one nondefault cursor: start_line or the returned start_char.');
-      if (args.path === controlledGuidePath || args.path === workforceGuidePath)
-        return controlledRuntimeGuide(args.start_line ?? 1, args.max_chars ?? 64000, binding.process_contract);
-      const approved = binding.stage === 'planning' && controlledSkillInputPath(args.path)
-        ? [...(binding.approved_inputs ?? []), args.path] : binding.approved_inputs;
-      const target = publicTarget(root, args.path, approved); assertReadable(binding, args.path);
+  type ProjectText = { exists: false; sha256: null } | { exists: true; sha256: string; size_bytes: number; text: string };
+  function projectText(path: string): ProjectText {
+      const approved = binding.stage === 'planning' && controlledSkillInputPath(path)
+        ? [...(binding.approved_inputs ?? []), path] : binding.approved_inputs;
+      const target = publicTarget(root, path, approved); assertReadable(binding, path);
       if (!existsSync(target)) {
-        locked(state => { state.reads[key(args.path)] = null; saveState(state); });
-        return { path: args.path, exists: false, text: null };
+        return { exists: false, sha256: null };
       }
       const info = lstatSync(target);
       if (!info.isFile() || info.nlink > 1 || info.size > 2 * 1024 * 1024)
@@ -491,22 +491,143 @@ export function createControlledMcpServer(root: string, input: ControlledBinding
       try { content = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
       catch { throw new ControlledToolError('INVALID_FILE', 'The file is not valid UTF-8 text.'); }
       if (content.includes('\0')) throw new ControlledToolError('INVALID_FILE', 'Binary files require an appropriate artifact tool.');
-      const normalized = content.replace(/\r\n/g, '\n'), start = args.start_line ?? 1;
+      return { exists: true, sha256: hash(bytes), size_bytes: bytes.length, text: content.replace(/\r\n/g, '\n') };
+  }
+  function projectPage(args: { path: string; start_line?: number; start_char?: number; max_chars?: number }, state: ToolState,
+    file = projectText(args.path)) {
+      state.reads[key(args.path)] = file.sha256;
+      if (!file.exists) return { path: args.path, exists: false as const, text: null };
+      const normalized = file.text, start = args.start_line ?? 1;
       const lineExcerpt = normalized.split('\n').slice(start - 1).join('\n'), offset = args.start_char ?? normalized.length - lineExcerpt.length;
       const excerpt = normalized.slice(offset), maximum = args.max_chars ?? 64000;
-      const digest = hash(bytes);
-      locked(state => {
-        state.reads[key(args.path)] = digest;
+      const digest = file.sha256;
         const coverage = state.read_coverage ??= {}, prior = coverage[key(args.path)];
         const ranges = [...(prior?.sha256 === digest ? prior.ranges : []), [offset, offset + Math.min(excerpt.length, maximum)] as [number, number]].sort((a, b) => a[0] - b[0]);
         const merged: [number, number][] = [];
         for (const range of ranges) { const last = merged.at(-1); if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]); else merged.push([...range]); }
-        coverage[key(args.path)] = { sha256: digest, total: normalized.length, ranges: merged }; saveState(state);
-      });
-      return { path: args.path, exists: true, ...(binding.process_contract === 'workforce/v1' ? { sha256: digest } : {}), size_bytes: bytes.length, start_line: start,
+        coverage[key(args.path)] = { sha256: digest, total: normalized.length, ranges: merged };
+      return { path: args.path, exists: true as const, ...(binding.process_contract === 'workforce/v1' ? { sha256: digest } : {}), size_bytes: file.size_bytes, start_line: start,
         text: excerpt.slice(0, maximum), truncated: excerpt.length > maximum,
         ...(excerpt.length > maximum ? { next_start_char: offset + maximum } : {}) };
+  }
+  function opaqueProjectPage(requestedPath: string, state: ToolState,
+    issued?: NonNullable<ToolState['project_read_cursors']>[string]) {
+        const logicalGuide = requestedPath === controlledGuidePath || requestedPath === workforceGuidePath;
+        const path = logicalGuide ? workforceGuidePath : requestedPath, selected = key(path);
+        const cursors = state.project_read_cursors ??= {};
+        const guide = logicalGuide ? controlledRuntimeGuide(1, Number.MAX_SAFE_INTEGER, binding.process_contract) : undefined;
+        const file: ProjectText = guide ? { exists: true, sha256: guide.sha256, size_bytes: guide.size_bytes, text: guide.text } : projectText(path);
+        for (const cursor of Object.values(cursors)) if (key(cursor.path) === selected && cursor.sha256 !== file.sha256) cursor.invalidated = true;
+        const coverage = state.read_coverage?.[selected];
+        if (coverage && coverage.sha256 !== file.sha256) { delete state.read_coverage![selected]; delete state.reads[selected]; }
+        if (issued && (issued.invalidated || issued.sha256 !== file.sha256)) {
+          saveState(state);
+          throw new ControlledToolError('INPUT_CHANGED', 'This file changed after its cursor was issued. Restart project_read with only the path and assess the current bytes.');
+        }
+        const page = projectPage({ path, start_char: issued?.start_char ?? 0, max_chars: 64000 }, state, file);
+        let next: string | undefined;
+        if (page.exists && page.truncated) {
+          const offset = page.next_start_char!;
+          next = Object.entries(cursors).find(([, cursor]) => !cursor.invalidated && key(cursor.path) === selected && cursor.sha256 === file.sha256 && cursor.start_char === offset)?.[0] ?? randomUUID();
+          cursors[next] = { path, sha256: file.sha256!, start_char: offset };
+        }
+        const result = page.exists ? { path: page.path, exists: true, sha256: page.sha256, size_bytes: page.size_bytes,
+          text: page.text, truncated: page.truncated, ...(next ? { next_cursor: next, next_read: { tool: 'project_read_more', arguments: { cursor: next } } } : {}),
+          ...(guide ? { source: guide.source, project_private_file_read: false } : {}) } : page;
+        saveState(state); return result;
+  }
+  const ownedRead = binding.process_contract === 'workforce/v1' && binding.read_contract !== 'legacy-selectors';
+  const readOption = (schema: z.ZodNumber) => binding.process_contract === 'workforce/v1' ? schema.nullish() : schema.optional();
+  const readSchema = ownedRead ? z.strictObject({ path: z.string().min(1).max(1024) })
+    : z.strictObject({ path: z.string().min(1).max(1024), max_chars: readOption(z.number().int().min(128).max(64000)),
+      start_line: readOption(z.number().int().min(1)),
+      start_char: readOption(z.number().int().min(0).max(2 * 1024 * 1024)).describe('Optional zero-based character offset in LF-normalized text. Use next_start_char to paginate long lines. Line1 and character0 both mean the beginning; the backend accepts equivalent defaults. Two nondefault cursors are ambiguous.') });
+  register('project_read', ownedRead
+    ? 'Read the first page of an assigned UTF-8 file with only path. Backend returns at most 64000 characters. Repeat the same path to replay the first page. If truncated, call the returned next_read tool with its exact arguments. Backend owns scopes, hashes and paging.'
+    : 'Read an assigned UTF-8 file. The backend retains its version for subsequent scoped edits.', readSchema, true, args => {
+      if (ownedRead) return locked(state => opaqueProjectPage(args.path, state));
+      if (binding.process_contract === 'workforce/v1') {
+        args = { ...args, max_chars: args.max_chars ?? undefined, start_line: args.start_line ?? undefined, start_char: args.start_char ?? undefined };
+        if (args.start_line === 1) args.start_line = undefined;
+        if (args.start_char === 0 && args.start_line !== undefined) args.start_char = undefined;
+      }
+      if (args.start_char !== undefined && args.start_line !== undefined) throw new ControlledToolError('INVALID_PAYLOAD', 'Choose one nondefault cursor: start_line or the returned start_char.');
+      if (args.path === controlledGuidePath || args.path === workforceGuidePath)
+        return controlledRuntimeGuide(args.start_line ?? 1, args.max_chars ?? 64000, binding.process_contract);
+      return locked(state => { const page = projectPage(args, state); saveState(state); return page; });
     });
+  if (ownedRead) register('project_read_more',
+    'Continue an assigned file using only the exact cursor returned by project_read or project_read_more. Backend supplies its path and position. Retry the same cursor to replay a page. INPUT_CHANGED requires restarting project_read with the path.',
+    z.strictObject({ cursor: z.uuid() }), true, args => locked(state => {
+      const issued = state.project_read_cursors?.[args.cursor];
+      if (!issued) throw new ControlledToolError('INVALID_CURSOR', 'Use only the exact issued project_read_more cursor from this assignment; start a file with project_read and its path.');
+      return opaqueProjectPage(issued.path, state, issued);
+    }));
+  if (controlledToolNames(binding).includes('assignment_read')) register('assignment_read',
+    'Read assigned output files, returning at most 64000 text characters total. {} replays the first batch. Continue with the exact returned next_cursor; retry the same input to replay a lost reply. INPUT_CHANGED invalidates old cursors: restart with {}. No caller paths or numeric positions. Original-file evidence still requires check_evidence.',
+    z.strictObject({ cursor: z.uuid().nullish().describe('Exact opaque next_cursor returned by this assignment. Omit or use null for the first batch; never construct a cursor.') }), true, args => locked(state => {
+      const outputs = binding.assessment_outputs!;
+      const requestedCursor = args.cursor ?? undefined;
+      const issued = requestedCursor === undefined ? undefined : state.assignment_read?.cursors[requestedCursor];
+      if (requestedCursor !== undefined && !issued) throw new ControlledToolError('INVALID_CURSOR', 'Use only the exact next_cursor returned by this assigned reader, or restart with {}.');
+      const hashes: Record<string, string | null> = {}, cached = new Map<string, ProjectText>();
+      let cachedChars = 0;
+      // Snapshot inspection does not grant read coverage. Cache only a small
+      // bounded amount of text, rather than retaining every assigned large file.
+      for (const path of outputs) {
+        const file = projectText(path);
+        hashes[key(path)] = file.sha256;
+        if (!file.exists || cachedChars + file.text.length <= 64000) {
+          cached.set(key(path), file); if (file.exists) cachedChars += file.text.length;
+        }
+      }
+      const snapshot = hash(JSON.stringify(hashes));
+      const changed: string[] = [];
+      const previous = state.assignment_read;
+      if (previous && previous.snapshot !== snapshot) {
+        for (const path of outputs) if (previous.hashes[key(path)] !== hashes[key(path)]) {
+          changed.push(path);
+          delete state.reads[key(path)]; delete state.read_coverage?.[key(path)];
+        }
+      }
+      const progress = state.assignment_read = previous?.snapshot === snapshot ? previous
+        : { snapshot, hashes, changed_paths: changed, cursors: previous?.cursors ?? {} };
+      if (issued && issued.snapshot !== snapshot) {
+        saveState(state);
+        throw new ControlledToolError('INPUT_CHANGED', 'Assigned outputs changed after this cursor was issued. Restart assignment_read with {} and assess the current text.');
+      }
+      let index = issued?.index ?? 0, start = issued?.start_char ?? 0;
+      const pages: ReturnType<typeof projectPage>[] = [];
+      let remaining = 64000;
+      while (index < outputs.length && remaining > 0) {
+        const path = outputs[index]!;
+        const file = cached.get(key(path)) ?? projectText(path);
+        if (file.sha256 !== hashes[key(path)]) throw new ControlledToolError('INPUT_CHANGED', 'Assigned output changed during the read. Restart assignment_read with {}.');
+        const page = projectPage({ path, max_chars: remaining, start_char: start }, state, file);
+        pages.push(page);
+        if (page.exists) remaining -= page.text.length;
+        if (page.exists && page.truncated) { start = page.next_start_char!; break; }
+        index++; start = 0;
+      }
+      let next: string | undefined;
+      if (index < outputs.length) {
+        next = Object.entries(progress.cursors).find(([, position]) => position.snapshot === snapshot && position.index === index && position.start_char === start)?.[0] ?? randomUUID();
+        progress.cursors[next] = { snapshot, index, start_char: start };
+      }
+      const missing = outputs.filter(path => hashes[key(path)] === null);
+      const delivered = pages.map(page => {
+        if (!page.exists) return page;
+        const { next_start_char: _internalCursor, ...visible } = page;
+        return visible;
+      });
+      const result = { pages: delivered, complete: index === outputs.length && !missing.length,
+        ...(next ? { next_cursor: next } : {}), ...(progress.changed_paths.length ? { changed_paths: progress.changed_paths } : {}),
+        ...(missing.length ? { missing_paths: missing } : {}) };
+      // One commit after the complete response is prepared: a later rejected
+      // file cannot mark earlier, undelivered batch content as observed.
+      saveState(state);
+      return result;
+    }));
   register('runtime_context', 'Read one backend-attested session snapshot with actual toolchain versions. Completed preflight leads to professional work, not repeated discovery. Identical queries reuse that snapshot. Optional executable paths must come from observed configuration; only fixed --version is executed. Invalid optional paths return per-tool diagnostics without invalidating the session.',
     controlledRuntimeQuerySchema, true, query => {
       if (!callbacks.runtimeContext) throw new ControlledToolError('UNSUPPORTED_STAGE', 'Runtime observations require an active backend-owned session.');

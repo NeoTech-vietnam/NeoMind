@@ -16,6 +16,8 @@
   try { saved = vscode.getState?.() ?? {}; } catch { saved = {}; }
   let selected = saved.selectedRequest ?? null, selectedStage = null, requests = [], roles = [], intake = null, renderedQuestion = null;
   let enabled = false, busy = false, connectionBusy = false, stale = false, motion = saved.motionEnabled !== false, controlsUnavailable = true;
+  let pendingControl = null, controlFeedback = null;
+  const pendingLabels = { pause: 'Pausing…', resume: 'Resuming…', cancel: 'Cancelling…' };
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)'), requestRows = new Map(), roleRows = new Map();
   const element = (tag, content, className) => {
     const node = document.createElement(tag); if (content !== undefined) node.textContent = content;
@@ -37,7 +39,48 @@
     vscode.setState?.({ ...existing, selectedRequest: selected, motionEnabled: motion, draft: byId('requirement').value });
   }
   byId('requirement').value = text(saved.draft);
-  const action = (name, extra = {}) => vscode.postMessage({ type: 'controlled-action', action: name, ...extra });
+  const action = (name, extra = {}) => {
+    if (pendingLabels[name]) {
+      if (pendingControl || busy || !enabled || stale) return;
+      pendingControl = { action: name, workflow_id: extra.workflow_id };
+      controlFeedback = { workflow_id: extra.workflow_id, message: `${pendingLabels[name]} Waiting for the backend response.` };
+      byId('notice').textContent = controlFeedback.message;
+      render();
+    }
+    vscode.postMessage({ type: 'controlled-action', action: name, ...extra });
+  };
+  function controlResult(name, request) {
+    const state = request?.status, detail = text(request?.blocker?.message ?? request?.current_action ?? request?.runtime_health?.message);
+    if (name === 'resume') {
+      if (state === 'queued') return 'Resume accepted. Request is queued; agent execution has not yet been reported.';
+      if (state === 'running') return 'Resume accepted. Backend status: running.';
+      if (state === 'paused') return `Resume did not start. Request is still paused.${detail ? ` ${detail}` : ' Refresh to inspect the saved checkpoint.'}`;
+      if (state === 'waiting') return `Request is waiting.${detail ? ` ${detail}` : ' Check the reported dependency before resuming again.'}`;
+      if (request?.question && request.question.status !== 'answered') return 'Request needs an answer to its displayed product question before it can continue.';
+      if (state === 'completed') return request.accepted === true ? 'Request is already completed and accepted.'
+        : 'Backend reports completed, but acceptance of the current revision is not confirmed. Review its findings.';
+      return `Resume did not confirm execution. Backend status: ${text(state, 'unavailable').replaceAll('_', ' ')}.${detail ? ` ${detail}` : ' Refresh to reconcile the saved request before retrying.'}`;
+    }
+    if (name === 'pause' && state === 'paused') return 'Request is paused at its saved checkpoint.';
+    if (name === 'cancel' && ['cancelled', 'canceled'].includes(state)) return 'Request is cancelled. Saved products remain available.';
+    return `${name === 'pause' ? 'Pause' : 'Cancel'} returned backend status: ${text(state, 'unavailable').replaceAll('_', ' ')}.${detail ? ` ${detail}` : ' Refresh to inspect the saved request.'}`;
+  }
+  function refreshControlFeedback() {
+    if (pendingControl || !controlFeedback?.resumeAccepted) return;
+    const request = requests.find(item => requestId(item) === controlFeedback.workflow_id);
+    if (!request?.status) return;
+    const detail = text(request.blocker?.message ?? request.current_action ?? request.runtime_health?.message);
+    let current;
+    if (request.status === 'queued') current = 'Request is queued; agent execution has not yet been reported.';
+    else if (request.status === 'running') current = `Backend status: running.${detail ? ` ${detail}` : ''}`;
+    else if (request.status === 'completed') current = request.accepted === true ? 'Request completed and the current revision is accepted.'
+      : request.accepted === false ? 'Backend reports completed, but the current revision is not accepted. Review its findings.'
+        : 'Backend reports completed, but acceptance of the current revision is not confirmed. Review its saved evidence.';
+    else if (request.status === 'blocked') current = `WorkForce is blocked; the request is not completed.${detail ? ` ${detail}` : ' Inspect its saved findings.'}`;
+    else current = `Current backend status: ${request.status.replaceAll('_', ' ')}.${detail ? ` ${detail}` : ' Inspect its saved request state.'}`;
+    controlFeedback.message = `Resume was accepted. ${current}`;
+    if (selected === controlFeedback.workflow_id) byId('notice').textContent = controlFeedback.message;
+  }
   let universe;
   const diagram = window.WorkForceUniverse;
   const sceneFor = request => diagram?.buildScene?.(request) ?? { stages: [], review: null };
@@ -118,15 +161,20 @@
     byId('request-status').dataset.state = request?.status ?? 'none';
     const controls = byId('request-controls'); controls.replaceChildren();
     if (request) for (const control of ['pause', 'resume', 'cancel']) {
-      const button = element('button', control[0].toUpperCase() + control.slice(1)); button.type = 'button';
-      button.disabled = busy || !enabled || stale || terminal(request);
+      const pending = pendingControl && pendingControl.workflow_id === requestId(request) && pendingControl.action === control;
+      const button = element('button', pending ? pendingLabels[control] : control[0].toUpperCase() + control.slice(1)); button.type = 'button';
+      button.disabled = busy || Boolean(pendingControl) || !enabled || stale || terminal(request);
       button.addEventListener('click', () => action(control, { workflow_id: requestId(request) })); controls.append(button);
+    }
+    if (controlFeedback && controlFeedback.workflow_id === requestId(request)) {
+      const feedback = element('p', controlFeedback.message, 'hint');
+      feedback.setAttribute('role', 'status'); feedback.setAttribute('aria-live', 'polite'); controls.append(feedback);
     }
     const health = request?.runtime_health;
     if (dependency) controls.append(element('p', dependency.message, 'hint'));
     else if (health?.message) controls.append(element('p', health.message, 'hint'));
     else if (request?.blocker?.message) controls.append(element('p', `WorkForce needs to resolve an execution issue: ${request.blocker.message}`, 'hint'));
-    byId('submit').disabled = busy || !enabled || stale || intake?.state === 'accepted';
+    byId('submit').disabled = busy || Boolean(pendingControl) || !enabled || stale || intake?.state === 'accepted';
     byId('submit').textContent = intake?.state === 'acknowledged' ? 'Start another request'
       : ['unknown', 'prepared'].includes(intake?.state) && intake?.requirement ? 'Continue saved submission' : 'Start request';
     const question = request?.question;
@@ -135,7 +183,7 @@
     byId('question-panel').hidden = !question || question.status === 'answered';
     byId('question-text').textContent = text(question?.text ?? question?.missing);
     byId('question-reason').textContent = text(question?.reason);
-    byId('answer-submit').disabled = busy || !enabled || stale || !question?.id;
+    byId('answer-submit').disabled = busy || Boolean(pendingControl) || !enabled || stale || !question?.id;
     const scene = sceneFor(request), review = scene.review;
     const reviewState = diagram?.stageState?.(review?.state ?? review?.status) ?? 'pending';
     byId('review-milestone').dataset.state = reviewState;
@@ -173,15 +221,27 @@
       enabled = value.enabled === true; intake = value.intake ?? null; stale = false;
       if (!requests.some(item => requestId(item) === selected)) selected = requestId(requests[0]) ?? null;
       if (intake?.requirement && !byId('requirement').value) byId('requirement').value = intake.requirement;
+      refreshControlFeedback();
       render();
     } else if (value.type === 'controlled-receipt') {
       const request = value.workflows?.[0];
+      if (pendingControl && pendingLabels[value.action] && (value.action !== pendingControl.action ||
+          request && requestId(request) !== pendingControl.workflow_id)) {
+        if (request) requests = [request, ...requests.filter(item => requestId(item) !== requestId(request))];
+        render(); return;
+      }
       if (request) { selected = requestId(request); requests = [request, ...requests.filter(item => requestId(item) !== selected)]; }
       if (['submit', 'submit_new'].includes(value.action)) {
         intake = value.intake ?? intake; byId('requirement').value = '';
         if (intake?.generation && request) vscode.postMessage({ type: 'controlled-receipt-ack', generation: intake.generation, workflow_id: requestId(request) });
         byId('notice').textContent = 'Request saved. WorkForce is preparing your product.';
-      } else byId('notice').textContent = 'Your action was recorded.';
+      } else {
+        const target = requestId(request) ?? pendingControl?.workflow_id;
+        const message = controlResult(value.action, request);
+        pendingControl = null; controlFeedback = { workflow_id: target, message,
+          resumeAccepted: value.action === 'resume' && ['queued', 'running'].includes(request?.status) };
+        byId('notice').textContent = message;
+      }
       render();
     } else if (value.type === 'controlled-busy') { busy = value.busy === true; render(); }
     else if (value.type === 'connection-busy') {
@@ -189,7 +249,14 @@
       byId('setup-connect').textContent = connectionBusy ? 'Checking connection…' : enabled ? 'Disconnect WorkForce' : 'Connect WorkForce';
     }
     else if (value.type === 'error' || value.type === 'controlled-error') {
-      stale = value.type === 'error'; byId('notice').textContent = text(value.message, 'WorkForce could not complete this action. Your saved outputs were preserved.'); render();
+      let message = text(value.message, 'WorkForce could not complete this action. Your saved outputs were preserved.');
+      if (pendingControl) {
+        const label = pendingControl.action[0].toUpperCase() + pendingControl.action.slice(1);
+        const code = typeof value.code === 'string' && /^[A-Z0-9_]{1,80}$/.test(value.code) ? ` [${value.code}]` : '';
+        message = `${label} was not confirmed.${code} ${message} Refresh to inspect the actual saved state before retrying.`;
+        controlFeedback = { workflow_id: pendingControl.workflow_id, message }; pendingControl = null;
+      }
+      stale = value.type === 'error'; byId('notice').textContent = message; render();
     }
   });
   byId('submit').addEventListener('click', () => {

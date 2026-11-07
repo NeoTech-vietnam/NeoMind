@@ -84,7 +84,7 @@ export interface NativeReceipt {
     process_contract?: 'software-tools/v2' | 'workforce/v1';
     tool_contract?: { version: 2; local_execution: boolean; qualified_procedure: boolean } |
       { version: 3; local_execution: boolean; qualified_procedure: boolean; evidence_documentation: boolean; research: boolean;
-        capabilities?: boolean; planning_result?: 'backend'; artifact_revalidation?: true } };
+        capabilities?: boolean; planning_result?: 'backend'; artifact_revalidation?: true; assigned_read?: true; read_contract?: 'opaque-pages' } };
   schema_version: 1;
   issuer: 'workforce-opencode' | 'neomind-codex-app-server' | 'neomind-vscode-lm' |
     'taskforces-codex-app-server' | 'taskforces-vscode-lm' |
@@ -93,7 +93,8 @@ export interface NativeReceipt {
   host_instance?: string;
   identity_provenance?: 'local-vscode-extension-host' | 'local-opencode';
   opencode?: { version: string; binary_sha256: string; gateway_instance: string; protocol?: string; response_message_id?: string;
-    supervision?: OpenCodeSupervisionRef; interruption_proof_sha256?: string; provider_failure?: OpenCodeProviderFailure };
+    supervision?: OpenCodeSupervisionRef; interruption_proof_sha256?: string; provider_failure?: OpenCodeProviderFailure;
+    shutdown_failure?: { message_sha256: string; at: string } };
   effort_support?: 'unavailable';
   id: string;
   receipt_path: string;
@@ -425,6 +426,8 @@ export function observeInvocation(
     if (!toolContract || toolContract.version !== 3 || typeof toolContract.local_execution !== 'boolean' ||
         typeof toolContract.qualified_procedure !== 'boolean' || typeof toolContract.evidence_documentation !== 'boolean' ||
         typeof toolContract.research !== 'boolean' || toolContract.capabilities !== undefined && typeof toolContract.capabilities !== 'boolean' ||
+        toolContract.assigned_read !== undefined && (toolContract.assigned_read !== true || receipt.controlled_execution?.process_contract !== 'workforce/v1') ||
+        toolContract.read_contract !== undefined && (toolContract.read_contract !== 'opaque-pages' || receipt.controlled_execution?.process_contract !== 'workforce/v1') ||
         toolContract.artifact_revalidation !== undefined && (toolContract.artifact_revalidation !== true ||
           receipt.role !== 'developer' || receipt.controlled_execution?.stage !== 'implementation' ||
           receipt.controlled_execution.process_contract !== 'workforce/v1' || toolContract.local_execution ||
@@ -439,8 +442,10 @@ export function observeInvocation(
     if (receipt.controlled_execution && toolContract?.version === 3) {
       const operations = controlledToolNames({ role: receipt.role, stage: receipt.controlled_execution.stage,
         process_contract: receipt.controlled_execution.process_contract,
+        read_contract: toolContract.read_contract ?? 'legacy-selectors',
         plugin_capabilities: toolContract.capabilities === true,
         artifact_revalidation: toolContract.artifact_revalidation,
+        ...(toolContract.assigned_read ? { assessment_outputs: ['backend-assigned'] } : {}),
         ...(toolContract.planning_result ? { planning_result: toolContract.planning_result } : {}),
         workflow_id: receipt.workflow_id!, implementation_paths: [], verification_paths: [],
         evidence_documentation: toolContract.evidence_documentation, cornell_bound: toolContract.research,
@@ -470,6 +475,8 @@ export function observeInvocation(
     if (toolContract && ((toolContract.version !== 2 && toolContract.version !== 3) ||
         typeof toolContract.local_execution !== 'boolean' || typeof toolContract.qualified_procedure !== 'boolean' ||
         toolContract.version === 3 && (typeof toolContract.evidence_documentation !== 'boolean' || typeof toolContract.research !== 'boolean' ||
+          toolContract.assigned_read !== undefined && (toolContract.assigned_read !== true || receipt.controlled_execution?.process_contract !== 'workforce/v1') ||
+          toolContract.read_contract !== undefined && (toolContract.read_contract !== 'opaque-pages' || receipt.controlled_execution?.process_contract !== 'workforce/v1') ||
           toolContract.evidence_documentation && !/^[a-f0-9]{64}$/.test(receipt.controlled_execution?.documentation_source_sha256 ?? '') ||
           !toolContract.evidence_documentation && receipt.controlled_execution?.documentation_source_sha256 !== undefined ||
           toolContract.research && !['implementation', 'synthesis'].includes(receipt.controlled_execution!.stage) ||
@@ -480,7 +487,9 @@ export function observeInvocation(
     const controlledOperations = receipt.controlled_execution ? controlledToolNames({ role: receipt.role,
       stage: receipt.controlled_execution.stage, workflow_id: receipt.workflow_id!, implementation_paths: [], verification_paths: [],
       process_contract: receipt.controlled_execution.process_contract,
+      read_contract: toolContract?.version === 3 ? toolContract.read_contract ?? 'legacy-selectors' : 'legacy-selectors',
       plugin_capabilities: toolContract?.version === 3 && toolContract.capabilities === true,
+      ...(toolContract?.version === 3 && toolContract.assigned_read ? { assessment_outputs: ['backend-assigned'] } : {}),
       evidence_documentation: toolContract?.version === 3 && toolContract.evidence_documentation,
       ...(toolContract?.version === 3 ? { cornell_bound: toolContract.research } : {}),
       ...(toolContract ? { execution_steps: toolContract.local_execution ? undefined : [], procedure_bound: toolContract.qualified_procedure } : {}) }) : [];

@@ -31,7 +31,7 @@ async function stream(t, upstream, options = {}) {
   const relay = await createOpenCodeProviderStream({ model: 'bound-model', provider: 'configured-peer',
     baseURL: upstream.baseURL, apiKey: 'upstream-private-key' }, { onProgress: value => progress.push(value), ...options });
   t.after(() => relay.close());
-  return { ...relay, progress };
+  return Object.assign(relay, { progress });
 }
 const post = (relay, payload = JSON.stringify(body), { headers, ...options } = {}) => fetch(`${relay.endpoint.baseURL}/chat/completions`, {
   method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${relay.endpoint.apiKey}`, ...headers },
@@ -209,4 +209,146 @@ test('concurrent provider streams keep separate request identity and sequence, a
   for (const response of responses) assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
   const ids = [...new Set(observed.map(value => value.request_id))]; assert.equal(ids.length, 2);
   for (const id of ids) assert.deepEqual(observed.filter(value => value.request_id === id).map(value => value.sequence), [1, 2]);
+});
+
+test('an endlessly growing read argument is stopped at its per-call byte bound without resetting progress forever', async t => {
+  const frames = [chunk({ tool_calls: [{ index: 0, id: 'call_runaway', type: 'function', function: { name: 'wf_project_read', arguments: '{"path":"' } }] }),
+    ...Array.from({ length: 32 }, () => chunk({ tool_calls: [{ index: 0, function: { arguments: 'private-argument-sentinel'.repeat(45) } }] })),
+    'data: [DONE]\r\n\r\n'];
+  const upstream = await provider(t, async (_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    for (const frame of frames) { if (response.destroyed) break; response.write(frame); await delay(1); }
+    if (!response.destroyed) response.end();
+  });
+  const failures = [], observations = [], relay = await stream(t, upstream, {
+    onFailure: value => failures.push(value), onObservation: value => observations.push(value),
+  });
+  const response = await post(relay), received = [];
+  let transportStopped = false;
+  try { for await (const part of response.body) received.push(Buffer.from(part)); }
+  catch { transportStopped = true; }
+  assert.equal(failures.length, 1, 'Runaway semantic arguments must produce one owned failure.');
+  assert.equal(transportStopped, true);
+  assert.equal(failures[0].code, 'OPENCODE_PROVIDER_ARGUMENT_LIMIT');
+  assert.equal(failures[0].limit_bytes, 8192);
+  assert.ok(failures[0].argument_bytes > failures[0].limit_bytes);
+  assert.deepEqual(relay.failure, failures[0]);
+  const forwarded = Buffer.concat(received), original = Buffer.from(frames.join(''));
+  assert.deepEqual(forwarded, original.subarray(0, forwarded.length), 'Bytes before owned cancellation must remain exact.');
+  assert.ok(forwarded.length < original.length);
+  assert.ok(relay.progress.filter(value => value.kind === 'tool-arguments').reduce((sum, value) => sum + value.bytes, 0) <= 8192);
+  assert.doesNotMatch(JSON.stringify(failures), /private-argument-sentinel|upstream-private-key|wf_project_read|configured-peer/);
+  await until(() => observations.some(value => value.event === 'provider-transport-ended'), 'The refused upstream must finish its observation.');
+  assert.equal(observations.at(-1).completed, false); assert.equal(observations.at(-1).aborted, true);
+  await until(() => upstream.sockets.size === 0, 'Oversized arguments must close the upstream socket.');
+  const retry = await post(relay);
+  assert.equal(retry.status, 422);
+  assert.equal((await retry.json()).error.code, 'OPENCODE_PROVIDER_ARGUMENT_LIMIT');
+  assert.equal(upstream.requests.length, 1, 'Engine automatic retries must not restart the same runaway stream.');
+});
+
+test('large write and plan calls retain their exact bytes under their separate larger argument bound', async t => {
+  const write = JSON.stringify({ path: 'products/generic.txt', edits: Array.from({ length: 2 }, () => ({
+    old_text: 'a'.repeat(128 * 1024), new_text: 'b'.repeat(128 * 1024),
+  })) });
+  const plan = JSON.stringify({ tasks: Array.from({ length: 32 }, () => ({ title: 'step',
+    objective: 'x'.repeat(8000), rationale: 'y'.repeat(8000), acceptance_criteria: ['done'] })) });
+  assert.ok(Buffer.byteLength(write) > 512 * 1024); assert.ok(Buffer.byteLength(plan) > 500 * 1024);
+  const bytes = Buffer.from(chunk({ tool_calls: [{ index: 0, id: 'call_write', type: 'function',
+    function: { name: 'wf_task_file_write', arguments: write } }] }) +
+    chunk({ tool_calls: [{ index: 1, id: 'call_plan', type: 'function', function: { name: 'wf_workflow_plan', arguments: plan } }] }) + 'data: [DONE]\n\n');
+  const upstream = await provider(t, (_request, response) => { response.writeHead(200, { 'content-type': 'text/event-stream' }); response.end(bytes); });
+  const relay = await stream(t, upstream), response = await post(relay);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+  assert.equal(relay.failure, undefined);
+  assert.deepEqual(relay.progress.map(value => value.bytes), [Buffer.byteLength(write), Buffer.byteLength(plan)]);
+});
+
+test('argument bounds are independent per choice and call, and reset after a healthy provider response', async t => {
+  const argument = JSON.stringify({ path: 'p'.repeat(6000) });
+  const frames = [0, 1].map(choiceIndex => `data: ${JSON.stringify({ choices: [{ index: choiceIndex, delta: {
+    tool_calls: [{ index: 0, id: `call_choice_${choiceIndex}`, function: { name: 'wf_project_read', arguments: argument } }],
+  } }] })}\n\n`);
+  frames.push(chunk({ tool_calls: [{ index: 1, id: 'call_second', function: { name: 'wf_project_read', arguments: argument } }] }));
+  const bytes = Buffer.from(frames.join('') + 'data: [DONE]\n\n');
+  const upstream = await provider(t, (_request, response) => { response.writeHead(200, { 'content-type': 'text/event-stream' }); response.end(bytes); });
+  const relay = await stream(t, upstream);
+  for (let index = 0; index < 2; index++) {
+    const response = await post(relay);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+    assert.equal(relay.failure, undefined);
+  }
+  assert.equal(relay.progress.length, 6);
+});
+
+test('read argument limits count UTF-8 bytes rather than JavaScript character length', async t => {
+  const argument = JSON.stringify({ path: 'ế'.repeat(3000) });
+  assert.ok(argument.length < 8192); assert.ok(Buffer.byteLength(argument) > 8192);
+  const upstream = await provider(t, (_request, response) => { response.writeHead(200, { 'content-type': 'text/event-stream' });
+    response.end(chunk({ tool_calls: [{ index: 0, id: 'call_utf8', function: { name: 'wf_project_read', arguments: argument } }] })); });
+  const failures = [], relay = await stream(t, upstream, { onFailure: value => failures.push(value) });
+  await assert.rejects(async () => { const response = await post(relay); await response.arrayBuffer(); });
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].argument_bytes, Buffer.byteLength(argument));
+  assert.equal(failures[0].limit_bytes, 8192);
+  assert.deepEqual(relay.progress, []);
+});
+
+test('arguments received before identity still count when a fragmented read name establishes the narrow bound', async t => {
+  const bytes = Buffer.from(chunk({ tool_calls: [{ index: 0, function: { arguments: 'x'.repeat(9000) } }] }) +
+    chunk({ tool_calls: [{ index: 0, id: 'call_late', function: { name: 'wf_project_' } }] }) +
+    chunk({ tool_calls: [{ index: 0, function: { name: 'read', arguments: '' } }] }));
+  const upstream = await provider(t, (_request, response) => { response.writeHead(200, { 'content-type': 'text/event-stream' }); response.end(bytes); });
+  const relay = await stream(t, upstream);
+  await assert.rejects(async () => { const response = await post(relay); await response.arrayBuffer(); });
+  assert.equal(relay.failure?.code, 'OPENCODE_PROVIDER_ARGUMENT_LIMIT');
+  assert.equal(relay.failure?.argument_bytes, 9000); assert.equal(relay.failure?.limit_bytes, 8192);
+  assert.deepEqual(relay.progress, []);
+});
+
+for (const name of ['assignment_read', 'wf_assignment_read']) test(`empty-input ${name} cannot stream unbounded arguments`, async t => {
+  const upstream = await provider(t, (_request, response) => { response.writeHead(200, { 'content-type': 'text/event-stream' });
+    response.end(chunk({ tool_calls: [{ index: 0, id: 'call_empty_read', function: { name, arguments: 'x'.repeat(8193) } }] })); });
+  const relay = await stream(t, upstream);
+  await assert.rejects(async () => { const response = await post(relay); await response.arrayBuffer(); });
+  assert.equal(relay.failure?.code, 'OPENCODE_PROVIDER_ARGUMENT_LIMIT');
+  assert.equal(relay.failure?.argument_bytes, 8193); assert.equal(relay.failure?.limit_bytes, 8192);
+});
+
+for (const [tool, input, limit] of [
+  ['project_read_more', { cursor: '00000000-0000-4000-8000-000000000001' }, 8 * 1024],
+  ['project_list', { path: '\u0001'.repeat(1024), limit: 1000 }, 8 * 1024],
+  ['check_evidence', { title: '\u0001'.repeat(256), path: '\u0001'.repeat(1024), kind: 'workflow', start_char: 2097152, max_chars: 64000 }, 8 * 1024],
+  ['project_search', { query: '\u0001'.repeat(1000), path: '\u0001'.repeat(1024), max_matches: 100 }, 16 * 1024],
+  ['runtime_context', { executables: { python: '\u0001'.repeat(2048), c11: '\u0001'.repeat(2048), cpp17: '\u0001'.repeat(2048) } }, 64 * 1024],
+]) for (const name of [tool, `wf_${tool}`]) test(`${name} allows its maximum escaped schema-shaped selectors and refuses overflow`, async t => {
+  const healthy = JSON.stringify(input);
+  assert.ok(Buffer.byteLength(healthy) < limit);
+  const frames = [healthy, 'x'.repeat(limit + 1)].map(argumentsText => Buffer.from(chunk({ tool_calls: [{ index: 0,
+    id: 'call_read_selector', function: { name, arguments: argumentsText } }] })));
+  const upstream = await provider(t, (_request, response) => { response.writeHead(200, { 'content-type': 'text/event-stream' });
+    response.end(frames[upstream.requests.length - 1]); });
+  const relay = await stream(t, upstream);
+  const response = await post(relay);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), frames[0]);
+  assert.equal(relay.failure, undefined);
+  await assert.rejects(async () => { const response = await post(relay); await response.arrayBuffer(); });
+  assert.equal(relay.failure?.code, 'OPENCODE_PROVIDER_ARGUMENT_LIMIT');
+  assert.equal(relay.failure?.argument_bytes, limit + 1); assert.equal(relay.failure?.limit_bytes, limit);
+});
+
+test('other tool calls have a finite larger bound and advisory failure callbacks cannot alter or suppress refusal', async t => {
+  const fragment = 'private-oversize-sentinel'.repeat(30000);
+  const upstream = await provider(t, async (_request, response) => { response.writeHead(200, { 'content-type': 'text/event-stream' });
+    response.write(chunk({ tool_calls: [{ index: 0, id: 'call_large', function: { name: 'wf_task_file_write', arguments: fragment } }] }));
+    for (let index = 1; index < 6; index++) { await delay(2); if (response.destroyed) break;
+      response.write(chunk({ tool_calls: [{ index: 0, function: { arguments: fragment } }] })); }
+    if (!response.destroyed) response.end(); });
+  const relay = await stream(t, upstream, { onFailure(value) { value.message = 'mutated callback value'; throw new Error('private-observer-error'); } });
+  await assert.rejects(async () => { const response = await post(relay); await response.arrayBuffer(); });
+  assert.equal(relay.failure?.code, 'OPENCODE_PROVIDER_ARGUMENT_LIMIT');
+  assert.equal(relay.failure?.limit_bytes, 4 * 1024 * 1024);
+  assert.equal(relay.failure?.argument_bytes, Buffer.byteLength(fragment) * 6);
+  assert.match(relay.failure?.message ?? '', /^A streamed tool call exceeded/);
+  assert.doesNotMatch(JSON.stringify(relay.failure), /mutated|private-oversize-sentinel|private-observer-error|wf_task_file_write/);
 });

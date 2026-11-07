@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { runCommand } from '../dist/command-runner.js';
+import { runCommand, commandEnvironment } from '../dist/command-runner.js';
 import { createRecord, hash } from '../dist/storage.js';
 import { runCheck, runCheckAsync } from '../dist/engineering.js';
 
@@ -27,6 +27,16 @@ test('command runner captures argv without a shell and filters inherited environ
   assert.deepEqual(JSON.parse(result.stdout), { provided: 'explicit', args: ['literal; $() & value'] });
   assert.equal(result.cancelled, false);
   assert.equal(result.timed_out, false);
+});
+
+test('minimal child environments retain the Windows architecture used by Python SDK discovery', t => {
+  const keys = ['PROCESSOR_ARCHITECTURE', 'PROCESSOR_ARCHITEW6432'];
+  const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  t.after(() => { for (const key of keys) if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key]; });
+  process.env.PROCESSOR_ARCHITECTURE = 'x86'; process.env.PROCESSOR_ARCHITEW6432 = 'AMD64';
+  const env = commandEnvironment();
+  assert.equal(env.PROCESSOR_ARCHITECTURE, 'x86');
+  assert.equal(env.PROCESSOR_ARCHITEW6432, 'AMD64');
 });
 
 test('nonzero exits and spawn failures are results, not false successes', async t => {

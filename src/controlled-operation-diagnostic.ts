@@ -5,7 +5,7 @@ import { hash } from './storage.js';
 
 export type ControlledDiagnosticPhase = 'assert-active' | 'request-encoding' | 'operation' | 'result-encoding' | 'host-dispatch';
 const phases = new Set<string>(['assert-active', 'request-encoding', 'operation', 'result-encoding', 'host-dispatch']);
-const operations = new Set(['runtime_context', 'project_read', 'project_list', 'project_search', 'task_file_write',
+const operations = new Set(['runtime_context', 'project_read', 'project_read_more', 'assignment_read', 'project_list', 'project_search', 'task_file_write',
   'workflow_plan', 'work_prepare', 'check_run', 'check_evidence', 'task_run', 'procedure_run',
   'cornell_research_compile', 'assignment_report', 'open', 'run', 'poll', 'result', 'cancel', 'close']);
 const classes = new Set(['Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'URIError',
