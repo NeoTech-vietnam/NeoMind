@@ -8,11 +8,11 @@ import { runInNewContext } from 'node:vm';
 const require = createRequire(import.meta.url);
 const source = readFileSync(new URL('../extensions/vscode-model-bridge/managed-gateway-host.cjs', import.meta.url), 'utf8');
 
-test('packaged token-saving setting is an opt-in machine/User enum, never a workspace permission', () => {
+test('native-core release defers gateway settings and activation while retaining the reviewed future implementation', () => {
   const manifest = JSON.parse(readFileSync(new URL('../extensions/vscode-model-bridge/package.json', import.meta.url), 'utf8'));
-  const policy = manifest.contributes.configuration.properties['workforce.gateway.tokenSaving'];
-  assert.equal(policy.scope, 'machine'); assert.equal(policy.default, 'off'); assert.deepEqual(policy.enum, ['off', 'upstream-rtk']);
-  assert.match(policy.description, /workspace overrides are ignored/i); assert.match(policy.description, /without blocking/i);
+  assert.equal(manifest.contributes.configuration.properties['workforce.gateway.tokenSaving'], undefined);
+  assert.equal(manifest.files.includes('managed-gateway-host.cjs'), false);
+  assert.match(source, /configureTokenSaving/);
 });
 
 function fixture(t, { globalMode, workspaceMode = 'upstream-rtk', configure, runtimeGate, acquireHook } = {}) {

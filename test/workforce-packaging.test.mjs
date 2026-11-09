@@ -56,17 +56,14 @@ test('every core CI entry keeps the complete suite and fails before testing a fa
     const core = steps.filter(step => step.run === 'npm test');
     assert.equal(core.length, 1, `${file} runs one complete core regression.`);
     const direct = steps.filter(step => step.run?.includes('node --test'));
-    assert.equal(direct.length, file === 'ci.yml' ? 2 : 0, 'Only Ubuntu transport diagnostics and required post-prepack offline gateway qualification supplement canonical core validation.');
+    assert.equal(direct.length, file === 'ci.yml' ? 1 : 0, 'Only separate Ubuntu transport diagnostics supplement canonical core validation.');
   }
 });
 
-test('Windows and Ubuntu execute the actual offline gateway after prepack creates the pinned archive, without allowing a silent skip', () => {
+test('native-core CI does not require deferred M7 gateway preparation, model access or service qualification', () => {
   const ci = parseYaml(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
-  const steps = ci.jobs.verify.steps, gateway = steps.find(step => step.name === 'Verify the offline managed gateway service and upstream RTK');
-  assert.ok(gateway); assert.equal(gateway.run, 'node --test test/managed-gateway-service.test.mjs');
-  assert.equal(gateway.env.WF_REQUIRE_GATEWAY_ARCHIVE, '1'); assert.equal(gateway.if, undefined);
-  assert.ok(steps.indexOf(gateway) > steps.findIndex(step => step.name === 'Build local package'));
-  assert.ok(steps.indexOf(gateway) < steps.findIndex(step => step.name === 'Verify installed package lifecycle and MCP'));
+  const steps = ci.jobs.verify.steps;
+  assert.equal(steps.some(step => /managed-gateway|WF_REQUIRE_GATEWAY_ARCHIVE|prepare-managed/.test(JSON.stringify(step))), false);
   assert.equal(ci.jobs.verify.strategy.matrix.os.length, 2);
 });
 
@@ -109,6 +106,18 @@ test('native distribution excludes legacy execution dependencies and rejects acc
     'node_modules/ordinary/node_modules/@opencode-ai/sdk': { version: '1.19.4' },
   } }));
   assert.throws(() => runtimePackaging.assertNativeOnlyRuntime(root), /legacy|OpenCode/i, 'A nested installed engine dependency cannot hide behind a regular package.');
+});
+
+test('native-core runtime rejects accidentally bundled deferred M7 activation and gateway resources', t => {
+  const root = mkdtempSync(join(tmpdir(), 'workforce-deferred-m7-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, 'package.json'), '{"dependencies":{}}');
+  for (const path of ['resources/managed-gateway', 'extensions/vscode-model-bridge/managed-gateway-host.cjs',
+    'extensions/vscode-model-bridge/native-rea-provider.cjs', 'scripts/prepare-managed-gateway.mjs']) {
+    const target = join(root, path); mkdirSync(join(target, '..'), { recursive: true });
+    if (path === 'resources/managed-gateway') mkdirSync(target); else writeFileSync(target, 'Deferred M7 sentinel');
+    assert.throws(() => runtimePackaging.assertNativeOnlyRuntime(root), /deferred M7|managed gateway/i);
+    rmSync(target, { recursive: true, force: true });
+  }
 });
 test('real installed-package smoke isolation cannot borrow the checkout development SDK through Node parent lookup', t => {
   assert.match(import.meta.resolve('@opencode-ai/sdk/v2/client'), /\/node_modules\/@opencode-ai\/sdk\//,

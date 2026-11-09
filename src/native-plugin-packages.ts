@@ -1,5 +1,5 @@
 /** Owned full Agent Plugins packages. Native VS Code reads the unchanged pinned
- * package through documented workspace registration; no private host cache or
+ * package through documented User registration; no private host cache or
  * global enablement database is read or edited here. */
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
@@ -35,8 +35,9 @@ export interface NativePluginPackageReceipt {
   license: { path: string; sha256: string };
   components: { skills: { name: string; path: string }[]; agents: { name: string; path: string }[]; mcp_servers: string[] };
   state: 'staged' | 'registered' | 'disabled' | 'removed';
-  history: { at: string; state: NativePluginPackageReceipt['state']; configuration_sha256?: string }[];
-  cache_retained: true; registration: 'owned-workspace-plugin-location';
+  history: { at: string; state: NativePluginPackageReceipt['state']; configuration_sha256?: string;
+    registration_key?: string; registration?: 'owned-user-plugin-location' }[];
+  cache_retained: true; registration: 'owned-user-plugin-location' | 'owned-workspace-plugin-location';
   loaded: 'not-observed'; used: 'not-observed'; verified: 'not-observed'; integrity: string;
 }
 const base = '.neomind/native/plugin-packages', digest = /^[a-f0-9]{64}$/, name = /^[a-z0-9][a-z0-9._-]{0,99}$/;
@@ -78,7 +79,9 @@ function read(root: string, id: string): NativePluginPackageReceipt | undefined 
   if (!valid(value) || value.schema_version !== 1 || value.id !== id || value.kind !== 'owned-native-plugin-package' || value.root_sha256 !== rootHash(root) ||
       !name.test(value.name) || !digest.test(value.approval_sha256) || !Array.isArray(value.files) || !value.files.length || value.files.length > 256 ||
       !['staged', 'registered', 'disabled', 'removed'].includes(value.state) || !Array.isArray(value.history) || value.history.length > 1000 ||
-      value.location !== relative(root, safePath(root, `${base}/assets/${id}`)).replaceAll('\\', '/') || value.registration_key !== `./${value.location}`)
+      value.location !== relative(root, safePath(root, `${base}/assets/${id}`)).replaceAll('\\', '/') ||
+      !(value.registration === 'owned-workspace-plugin-location' && value.registration_key === `./${value.location}` ||
+        value.registration === 'owned-user-plugin-location' && value.registration_key === resolve(realpathSync.native(root), value.location).replaceAll('\\', '/')))
     fail('NATIVE_PACKAGE_INVALID_RECEIPT');
   return value;
 }
@@ -137,9 +140,10 @@ function publish(root: string, source: NativePluginPackageReceipt['source'], con
       ordinary(root, `${location}/${file.path}`, true); writeFileSync(selected, contents.get(file.path)!, { flag: 'wx' });
     }
     const receipt: NativePluginPackageReceipt = sealed({ schema_version: 1, id, kind: 'owned-native-plugin-package', root_sha256: rootHash(root),
-      name: manifest.name as string, version: manifest.version as string, source, approval_sha256, location, registration_key: `./${location}`, files,
+      name: manifest.name as string, version: manifest.version as string, source, approval_sha256, location,
+      registration_key: resolve(realpathSync.native(root), location).replaceAll('\\', '/'), files,
       license: { path: licensePath, sha256: sha(license) }, components, state: 'staged', history: [{ at: new Date().toISOString(), state: 'staged' }],
-      cache_retained: true, registration: 'owned-workspace-plugin-location', loaded: 'not-observed', used: 'not-observed', verified: 'not-observed' });
+      cache_retained: true, registration: 'owned-user-plugin-location', loaded: 'not-observed', used: 'not-observed', verified: 'not-observed' });
     assertNativePluginPackageCurrent(root, receipt); save(root, receipt); return receipt;
   });
 }
@@ -237,10 +241,14 @@ export function prepareNativePluginPackageFixture(root: string, directory: strin
   if (sha(stable(inventory)) !== expectedTreeSha256) fail('NATIVE_PACKAGE_SOURCE_PIN_MISMATCH');
   return publish(root, { kind: 'local-fixture', name: 'explicitly-approved-native-package-fixture' }, contents, 'LICENSE', false);
 }
-export function recordNativePluginPackageRegistration(root: string, id: string, state: 'registered' | 'disabled' | 'removed', proof: { configuration_sha256: string }) {
+export function recordNativePluginPackageRegistration(root: string, id: string, state: 'registered' | 'disabled' | 'removed', proof: {
+  configuration_sha256: string; registration_key?: string; registration?: 'owned-user-plugin-location';
+}) {
   if (!['registered', 'disabled', 'removed'].includes(state) || !digest.test(proof.configuration_sha256)) fail('NATIVE_PACKAGE_REGISTRATION_INVALID');
   return withOperationLock(root, 'native-plugin-staging', () => {
     const receipt = read(root, id); if (!receipt) fail('NATIVE_PACKAGE_NOT_FOUND');
+    if (proof.registration_key !== undefined && (proof.registration !== 'owned-user-plugin-location' ||
+        proof.registration_key !== resolve(realpathSync.native(root), receipt.location).replaceAll('\\', '/'))) fail('NATIVE_PACKAGE_REGISTRATION_INVALID');
     if (state === 'registered') assertNativePluginPackageCurrent(root, receipt);
     if (receipt.history.length >= 1000) fail('NATIVE_PACKAGE_BOUNDS');
     if (receipt.state !== state || receipt.history.at(-1)?.configuration_sha256 !== proof.configuration_sha256) {

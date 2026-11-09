@@ -28,19 +28,20 @@ function fixture(t, options = {}) {
   const parent = fs.realpathSync.native(tmpdir()), root = fs.mkdtempSync(join(parent, 'wf-native-package-'));
   t.after(() => { assert.ok(resolve(root).startsWith(parent + sep)); fs.rmSync(root, { recursive: true, force: true }); });
   api.initialize(root, { project_id: 'WF-NATIVE-PACKAGE' });
-  let own = { './authored-package': true }, global = { '/user/authored-package': true }, writes = 0, update;
+  let own = { './authored-package': true, '/user/authored-package': true }, writes = 0, update;
   const folder = { uri: { scheme: 'file', fsPath: root, toString: () => `file:///${root.replaceAll('\\', '/')}` } };
-  const config = { inspect: () => ({ workspaceFolderValue: structuredClone(own), globalValue: structuredClone(global) }),
-    get: key => key === 'plugins.enabled' ? options.pluginsEnabled !== false : { ...global, ...own },
-    async update(key, next, target) { assert.equal(key, 'pluginLocations'); assert.equal(target, 3); writes++;
+  const config = { inspect: () => ({ workspaceFolderValue: { './ignored-folder': true }, globalValue: structuredClone(own) }),
+    get: key => key === 'plugins.enabled' ? options.pluginsEnabled !== false : structuredClone(own),
+    async update(key, next, target) { assert.equal(key, 'pluginLocations'); assert.equal(target, 1); writes++;
       if (update) return update(next, () => { own = structuredClone(next); }); own = structuredClone(next); },
   };
-  const vscode = { Uri: { file: () => folder.uri }, ConfigurationTarget: { WorkspaceFolder: 3, Workspace: 2 },
-    workspace: { isTrusted: true, workspaceFile: { scheme: 'file' }, workspaceFolders: [folder], getWorkspaceFolder: () => folder, getConfiguration: () => config } };
+  const vscode = { Uri: { file: () => folder.uri }, ConfigurationTarget: { Global: 1, WorkspaceFolder: 3, Workspace: 2 },
+    workspace: { isTrusted: true, workspaceFile: { scheme: 'file' }, workspaceFolders: [folder], getWorkspaceFolder: () => folder,
+      getConfiguration: (section, resource) => { assert.equal(section, 'chat'); assert.equal(resource, undefined, 'Native machine-scoped discovery reads without resource.'); return config; } } };
   const host = createNativePluginPackageHost(vscode, api, root);
   const receipt = api.prepareNativePluginPackageFixture(root, fixtureRoot, treeHash, { allow_fixture: true });
   return { root, host, receipt, vscode, get own() { return own; }, get writes() { return writes; },
-    setOwn: value => { own = value; }, setGlobal: value => { global = value; }, setUpdate: value => { update = value; } };
+    setOwn: value => { own = value; }, setGlobal: value => { own = value; }, setUpdate: value => { update = value; } };
 }
 test('production full-package preparation verifies every approved source file pin before native registration', async t => {
   const f = fixture(t), policy = { name: 'approved-git-source', package: 'wf-native-package-fixture', repository: 'https://github.com/example/native-package', commit: 'a'.repeat(40),
@@ -58,19 +59,21 @@ test('production full-package preparation verifies every approved source file pi
   await assert.rejects(api.prepareNativePluginPackage(f.root, selection, { sources: [{ ...policy, commit: 'b'.repeat(40) }], reader: async input => ({ ...await reader(input), commit: 'c'.repeat(40) }), authorize: () => true }), /SOURCE_PIN_MISMATCH/);
   await assert.rejects(api.prepareNativePluginPackage(f.root, selection, { sources: [{ ...policy, commit: 'c'.repeat(40) }], reader: () => new Promise(() => {}), authorize: () => true, timeout_ms: 20 }), /TIMEOUT/);
 });
-test('single-folder host uses native Workspace configuration without touching a global profile', async t => {
+test('native machine scope uses one absolute User key and ignores workspace and folder overrides', async t => {
   const f = fixture(t); delete f.vscode.workspace.workspaceFile;
   let own = { './authored-single-folder': true };
-  f.vscode.workspace.getConfiguration = () => ({ inspect: () => ({ workspaceValue: own, globalValue: {} }),
+  f.vscode.workspace.getConfiguration = (section, resource) => ({ inspect: () => { assert.equal(section, 'chat'); assert.equal(resource, undefined);
+    return { workspaceValue: { './ignored-workspace': true }, workspaceFolderValue: { './ignored-folder': true }, globalValue: own }; },
     get: key => key === 'plugins.enabled' ? true : own,
-    async update(key, value, target) { assert.equal(key, 'pluginLocations'); assert.equal(target, 2); own = value; } });
+    async update(key, value, target) { assert.equal(key, 'pluginLocations'); assert.equal(target, 1); own = value; } });
   const host = createNativePluginPackageHost(f.vscode, api, f.root);
   await host.control(f.receipt.id, 'enable'); assert.equal(own[f.receipt.registration_key], true); assert.equal(own['./authored-single-folder'], true);
   await host.control(f.receipt.id, 'remove'); assert.equal(Object.hasOwn(own, f.receipt.registration_key), false); assert.equal(own['./authored-single-folder'], true);
 });
-test('native registration owns only its workspace key, preserves external entries and never claims native loading from configuration', async t => {
+test('native registration owns only its absolute machine User key, preserves external entries and never claims native loading from configuration', async t => {
   const f = fixture(t), result = await f.host.control(f.receipt.id, 'enable');
-  assert.equal(result.state, 'configuration-observed'); assert.equal(result.loaded, 'not-observed'); assert.equal(result.registration, 'owned-workspace-plugin-location');
+  assert.equal(result.state, 'configuration-observed'); assert.equal(result.loaded, 'not-observed'); assert.equal(result.registration, 'owned-user-plugin-location');
+  assert.equal(f.receipt.registration_key, fs.realpathSync.native(join(f.root, f.receipt.location)).replaceAll('\\', '/'));
   assert.equal(f.own['./authored-package'], true); assert.equal(f.own[f.receipt.registration_key], true); assert.equal(f.writes, 1);
   assert.equal(f.host.resolve([f.receipt.name]).resources[0].key, `plugin:${f.receipt.id}`);
   assert.equal(f.receipt.source.kind, 'local-fixture'); assert.equal('commit' in f.receipt.source, false);
@@ -109,6 +112,42 @@ test('awaited native config mutation closes admission durably without holding a 
   assert.equal(completed.length, 1);
   assert.throws(() => api.completeNativeCapabilityAsyncControl(f.root, ticket, { observed_sha256: sha('different') }), /CONFLICT/);
 });
+
+test('owned User map updates from two workspace hosts merge serially without losing either absolute key', async t => {
+  const a = fixture(t), b = fixture(t); let map = { '/user/authored-package': true }, writes = 0, release, started;
+  const waiting = new Promise(resolve => { started = resolve; });
+  const config = { inspect: () => ({ globalValue: structuredClone(map) }), get: key => key === 'plugins.enabled' ? true : structuredClone(map),
+    async update(key, next, target) { assert.equal(key, 'pluginLocations'); assert.equal(target, 1);
+      if (++writes === 1) { started(); await new Promise(resolve => { release = resolve; }); } map = structuredClone(next); } };
+  a.vscode.workspace.getConfiguration = b.vscode.workspace.getConfiguration = () => config;
+  const first = a.host.control(a.receipt.id, 'enable'); await waiting;
+  const second = b.host.control(b.receipt.id, 'enable'); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(writes, 1); release(); await Promise.all([first, second]);
+  assert.equal(writes, 2); assert.equal(map[a.receipt.registration_key], true); assert.equal(map[b.receipt.registration_key], true);
+  assert.equal(map['/user/authored-package'], true); assert.notEqual(a.receipt.registration_key, b.receipt.registration_key);
+});
+
+test('an observed concurrent User map edit is retained and leaves the owned mutation uncertain rather than replaying it', async t => {
+  const f = fixture(t);
+  f.setUpdate((_next, apply) => { apply(); f.setOwn({ ...f.own, '/user/added-during-write': false }); });
+  await assert.rejects(f.host.control(f.receipt.id, 'enable'), /CONFIGURATION_CHANGED/);
+  assert.equal(f.own['/user/added-during-write'], false); assert.equal(f.writes, 1);
+  assert.equal(api.readNativeCapabilityControl(f.root, `plugin:${f.receipt.id}`).new_admissions, false);
+});
+
+test('historical relative registration receipts remain byte-identical until explicit User registration appends its actual scope', async t => {
+  const f = fixture(t), path = api.safePath(f.root, `.neomind/native/plugin-packages/receipts/${f.receipt.id}.json`);
+  const { integrity: _integrity, ...legacy } = JSON.parse(fs.readFileSync(path, 'utf8'));
+  legacy.registration_key = `./${legacy.location}`; legacy.registration = 'owned-workspace-plugin-location';
+  fs.writeFileSync(path, JSON.stringify({ ...legacy, integrity: sha(stable(legacy)) }, null, 2) + '\n'); const before = fs.readFileSync(path);
+  assert.equal(api.readNativePluginPackages(f.root)[0].registration_key, legacy.registration_key);
+  assert.deepEqual(fs.readFileSync(path), before);
+  await f.host.control(f.receipt.id, 'enable'); const current = api.readNativePluginPackages(f.root)[0];
+  assert.equal(current.registration_key, legacy.registration_key, 'The historical receipt key is not silently rewritten.');
+  assert.equal(current.history.at(-1).registration, 'owned-user-plugin-location');
+  assert.equal(current.history.at(-1).registration_key, f.receipt.registration_key);
+  assert.equal(f.own[f.receipt.registration_key], true); assert.equal(Object.hasOwn(f.own, legacy.registration_key), false);
+});
 test('an outstanding asynchronous ticket cannot be replaced, replayed or acknowledged from another workspace', async t => {
   const f = fixture(t), other = fixture(t); let release, started;
   const waiting = new Promise(resolve => { started = resolve; });
@@ -136,8 +175,8 @@ test('authored registration, global ownership and disabled native support are pr
   const authored = fixture(t); authored.setOwn({ [authored.receipt.registration_key]: true });
   await assert.rejects(authored.host.control(authored.receipt.id, 'enable'), /NOT_OWNED/); assert.equal(authored.writes, 0);
   const global = fixture(t); global.setGlobal({ [global.receipt.registration_key]: true });
-  await assert.rejects(global.host.control(global.receipt.id, 'enable'), /EXTERNAL_REGISTRATION/); assert.equal(global.writes, 0);
-  const alias = fixture(t); alias.setGlobal({ [join(alias.root, alias.receipt.location)]: true });
+  await assert.rejects(global.host.control(global.receipt.id, 'enable'), /NOT_OWNED/); assert.equal(global.writes, 0);
+  const alias = fixture(t); alias.setGlobal({ [`./${alias.receipt.location}`]: true });
   await assert.rejects(alias.host.control(alias.receipt.id, 'enable'), /EXTERNAL_REGISTRATION/); assert.equal(alias.writes, 0);
   const disabled = fixture(t, { pluginsEnabled: false });
   await assert.rejects(disabled.host.control(disabled.receipt.id, 'enable'), /PLUGINS_DISABLED/); assert.equal(disabled.writes, 0);

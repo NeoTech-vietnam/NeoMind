@@ -13,10 +13,17 @@ const require = createRequire(import.meta.url);
 const { nativeToolNames, nativeRoleToolNames } = require('../extensions/vscode-model-bridge/native-entry.cjs');
 const path = fileURLToPath(new URL('../extensions/vscode-model-bridge/package.json', import.meta.url));
 const manifest = JSON.parse(readFileSync(path, 'utf8'));
-manifest.contributes.configuration.properties['workforce.gateway.tokenSaving'] = {
-  type: 'string', scope: 'machine', enum: ['off', 'upstream-rtk'], default: 'off',
-  description: 'Optional pinned upstream RTK for qualified routine progress tool output only. Read from User settings; workspace overrides are ignored. Diagnostics, assertions, acceptance evidence, source text and unfamiliar output remain uncompressed. Active calls retain their policy; pending configuration uses off without blocking the product. Byte savings do not establish billed-token savings.',
-};
+// Native-core edition defers M7. Keep its reviewed source for future work, but
+// never advertise or auto-activate the new REA/provider gateway in this VSIX.
+manifest.description = 'VS Code Local agents, reusable engineering tools and an evidence-backed V-model. Native-core edition uses your existing native model providers.';
+manifest.activationEvents = manifest.activationEvents.filter(event => !['onLanguageModelChatProvider:workforce', 'onCommand:workforce.gateway.manage', 'onMcpServerDefinitionProvider:workforce-rea'].includes(event));
+manifest.files = manifest.files.filter(file => !['native-rea-provider.cjs', 'managed-gateway-host.cjs', 'managed-gateway-provider.cjs'].includes(file));
+manifest.contributes.commands = manifest.contributes.commands.filter(command => command.command !== 'workforce.gateway.manage');
+for (const key of Object.keys(manifest.contributes.configuration.properties)) if (key.startsWith('workforce.gateway.')) delete manifest.contributes.configuration.properties[key];
+for (const [key, field, value] of [['languageModelChatProviders', 'vendor', 'workforce'], ['mcpServerDefinitionProviders', 'id', 'workforce-rea']]) {
+  if (Array.isArray(manifest.contributes[key])) manifest.contributes[key] = manifest.contributes[key].filter(row => row[field] !== value);
+  if (manifest.contributes[key]?.length === 0) delete manifest.contributes[key];
+}
 manifest.contributes.configuration.properties['workforce.capabilities.mcpConnectors'] = {
   ...nativeMcpApprovedConnectorsJsonSchema, scope: 'machine', default: [],
   description: 'User-approved exact native MCP tool names and references by professional role. Workspace overrides cannot grant tools. Availability means registered tools were observed, not that a server or model call succeeded.',

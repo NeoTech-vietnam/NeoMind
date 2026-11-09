@@ -8,9 +8,8 @@ const { activateVModelPanel } = require('./v-model-panel.cjs');
 const { activatePluginPanel } = require('./plugin-panel.cjs');
 const { activateAutomationPanel } = require('./automation-panel.cjs');
 const { registerNativeLocalChat } = require('./native-local-chat.cjs');
-const { activateNativeReaProvider } = require('./native-rea-provider.cjs');
 const { activateNativeFocus } = require('./native-focus.cjs');
-let nativeEntry, gateway, closing;
+let nativeEntry, closing;
 
 function activate(context) {
   closing = undefined;
@@ -33,13 +32,10 @@ function activate(context) {
   activateAutomationPanel(vscode, context, loadRuntime);
   activateNativeFocus(vscode, context, loadRuntime);
   const local = registerNativeLocalChat(vscode, context);
-  activateNativeReaProvider(vscode, context, loadRuntime, installed);
-  // Registering the optional provider starts no service or inference.
-  gateway = require('./managed-gateway-host.cjs').activateManagedGateway(vscode, context, loadRuntime, installed);
   context.subscriptions.push(local, { dispose: deactivate },
     ...['workforce.monitor.open', 'workforce.monitor.legacy', 'neomind.monitor.open', 'workforce.workflows.open', 'neomind.workflows.open']
       .map(id => vscode.commands.registerCommand(id, () => vscode.commands.executeCommand('workforce.vModel.open'))),
     vscode.commands.registerCommand('workforce.bridge.disable', () => nativeEntry.dispose()));
 }
-function deactivate() { return closing ??= Promise.all([nativeEntry?.dispose(), gateway?.dispose()]).then(() => {}); }
+function deactivate() { return closing ??= Promise.resolve(nativeEntry?.dispose()).then(() => {}); }
 module.exports = { activate, deactivate };

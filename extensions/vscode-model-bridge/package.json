@@ -3,7 +3,7 @@
   "displayName": "WorkForce Universe",
   "publisher": "workforce",
   "version": "0.13.0",
-  "description": "VS Code Local agents, reusable engineering tools and an evidence-backed V-model, with an optional managed provider gateway.",
+  "description": "VS Code Local agents, reusable engineering tools and an evidence-backed V-model. Native-core edition uses your existing native model providers.",
   "engines": {
     "vscode": "^1.143.0"
   },
@@ -21,8 +21,6 @@
     "onLanguageModelTool:workforce_native_role_tester",
     "onLanguageModelTool:workforce_native_capabilities",
     "onCommand:workforce.capabilities.manage",
-    "onLanguageModelChatProvider:workforce",
-    "onCommand:workforce.gateway.manage",
     "onCommand:workforce.nativePackages.manage"
   ],
   "capabilities": {
@@ -75,9 +73,6 @@
     "native-capability-session.cjs",
     "native-capability-controls.cjs",
     "native-local-chat.cjs",
-    "native-rea-provider.cjs",
-    "managed-gateway-host.cjs",
-    "managed-gateway-provider.cjs",
     "native-plugin-packages.cjs",
     "native-focus.cjs",
     "resources/monitor/native-focus.js"
@@ -1071,10 +1066,6 @@
         "title": "WorkForce: Manage Native Capabilities"
       },
       {
-        "command": "workforce.gateway.manage",
-        "title": "WorkForce: Manage Provider Gateway"
-      },
-      {
         "command": "workforce.focus.open",
         "title": "WorkForce: Open Focus Space"
       },
@@ -1230,71 +1221,6 @@
           "default": [],
           "description": "User-approved exact native MCP tool names and references by professional role. Workspace overrides cannot grant tools. Availability means registered tools were observed, not that a server or model call succeeded."
         },
-        "workforce.gateway.nodePath": {
-          "type": "string",
-          "default": "",
-          "scope": "machine",
-          "description": "Optional absolute supported Node.js executable for the owned managed provider. Read from User settings; workspace overrides are ignored."
-        },
-        "workforce.gateway.routingPolicy": {
-          "type": "object",
-          "scope": "machine",
-          "default": {},
-          "additionalProperties": false,
-          "properties": {
-            "models": {
-              "type": "array",
-              "uniqueItems": true,
-              "items": {
-                "type": "string",
-                "minLength": 1
-              }
-            },
-            "combos": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "array",
-                "minItems": 1,
-                "uniqueItems": true,
-                "items": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              }
-            },
-            "vision_fallback": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "description": "Exact authorized managed model/combination pools. No models array permits directly selected routes. Combos require explicit pinned members; vision fallback must be explicit. Workspace overrides cannot broaden routing."
-        },
-        "workforce.gateway.modelDeclarations": {
-          "type": "object",
-          "scope": "machine",
-          "default": {},
-          "additionalProperties": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "context_length": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "max_output_tokens": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "tools": {
-                "type": "boolean"
-              },
-              "vision": {
-                "type": "boolean"
-              }
-            }
-          },
-          "description": "Optional explicit User capacity and tool/vision declarations for exact connected gateway IDs when upstream metadata is missing. Existing upstream declarations are retained. This does not verify upstream identity or grant native tool permissions."
-        },
         "workforce.capabilities.nativePackageSources": {
           "type": "array",
           "scope": "machine",
@@ -1375,32 +1301,9 @@
             }
           },
           "description": "User-approved full canonical native package sources with immutable Git commit and exact reviewed file inventory. Read only from User settings; workspace overrides are ignored. Empty disables remote full-package preparation. Packages use owned workspace chat.pluginLocations registration; no private native install cache or global security settings are changed. MCP tool grants remain separately approved. Explicit User disable/remove is retained."
-        },
-        "workforce.gateway.tokenSaving": {
-          "type": "string",
-          "scope": "machine",
-          "enum": [
-            "off",
-            "upstream-rtk"
-          ],
-          "default": "off",
-          "description": "Optional pinned upstream RTK for qualified routine progress tool output only. Read from User settings; workspace overrides are ignored. Diagnostics, assertions, acceptance evidence, source text and unfamiliar output remain uncompressed. Active calls retain their policy; pending configuration uses off without blocking the product. Byte savings do not establish billed-token savings."
         }
       }
-    },
-    "languageModelChatProviders": [
-      {
-        "vendor": "workforce",
-        "displayName": "WorkForce Managed Providers",
-        "managementCommand": "workforce.gateway.manage"
-      }
-    ],
-    "mcpServerDefinitionProviders": [
-      {
-        "id": "workforce-rea",
-        "label": "WorkForce REA"
-      }
-    ]
+    }
   },
   "license": "MIT",
   "repository": {

@@ -6,6 +6,18 @@ Ngày chốt: **08/11/2026**, múi giờ Asia/Saigon. Trạng thái: **đang tri
 
 Nhánh triển khai: `codex/workforce-vscode-native`. Lưu tài liệu và chia milestones không đồng nghĩa với triển khai phần mềm hoặc phát hành.
 
+## Quyết định phát hành mới — 10/11/2026
+
+**Theo quyết định mới của người dùng, phát hành native core M0–M6 rồi M8; hoãn M7 sang đợt riêng.** Bản này dùng VS Code Local cùng models/providers đã được người dùng cấu hình, bao gồm custom endpoint của 9router đang chạy bên ngoài. Không yêu cầu REA hoặc managed gateway mới để cài đặt, nghiệm thu hay sử dụng native core. Không bắt buộc hai alias `top-models`/`worker-models`.
+
+M7a/M7b và các ca gateway/REA trong kế hoạch dài hạn bên dưới được giữ làm backlog cùng evidence cũ; **không phải gate phát hành này, cũng không được đánh dấu completed/N/A giả**. Source hoặc nghiên cứu M7 còn trong repository không đồng nghĩa tính năng đó đã được nghiệm thu hay được cam kết trong native-core release.
+
+Checklist phát hành hiện hành nằm ở đầu [milestones](2026-11-08-workforce-local-milestones.md#checklist-phát-hành-native-core-hiện-hành--10112026). Nó thay thế điều kiện M8 yêu cầu toàn bộ M7 trong phần lịch sử bên dưới. Vẫn bắt buộc nghiệm thu Local trên gói cài thật, prompt LeetCode nguyên bản với Cornell/C/C++ và kiểm chứng độc lập, full-package lifecycle M6, reuse hợp lệ và bảo toàn dữ liệu. Một lượt M6 trên đúng installed candidate được dùng đồng thời cho M6/M8, không chạy lại trên source fixture chỉ để nhân bằng chứng.
+
+Đối soát hồi quy theo phần bị ảnh hưởng: giữ các proof native đã có với phạm vi/build gốc; chạy lại đường thay đổi và các giao điểm bắt buộc trên gói cuối, không lặp mọi direct role hoặc nghiên cứu cũ bằng model. Không chuyển proof checkout thành proof installed, không bỏ qua kết quả chưa rõ, và không tăng giới hạn để làm đẹp trạng thái.
+
+M6 full native package dùng cơ chế được host hỗ trợ. Trên VS Code 1.145.2, `chat.pluginLocations` là setting **MACHINE/User**, nên registration dùng absolute path riêng do WorkForce sở hữu trong User settings và giữ nguyên entries khác. Đây là functional registration, không phải thay đổi security/auth; không gọi nó là discovery chỉ trong workspace. Capability binding và lease của WorkForce vẫn gắn với đúng project/owned invocation; không suy ra quyền đóng băng mọi external native MCP session.
+
 ## 1. Kiến trúc và phạm vi đã chốt
 
 ### Nguyên tắc vận hành

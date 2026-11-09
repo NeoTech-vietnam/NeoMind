@@ -27,7 +27,12 @@
     "LICENSE",
     "!resources/opencode-bootstrap",
     "!scripts/bootstrap-engine.mjs",
-    "!extensions/vscode-model-bridge/legacy-extension.cjs"
+    "!extensions/vscode-model-bridge/legacy-extension.cjs",
+    "!resources/managed-gateway",
+    "!scripts/prepare-managed-gateway.mjs",
+    "!extensions/vscode-model-bridge/native-rea-provider.cjs",
+    "!extensions/vscode-model-bridge/managed-gateway-host.cjs",
+    "!extensions/vscode-model-bridge/managed-gateway-provider.cjs"
   ],
   "engines": {
     "node": ">=24.0.0 <25 || >=26.0.0"

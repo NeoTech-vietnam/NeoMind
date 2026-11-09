@@ -20,16 +20,15 @@ test('native activation registers native surfaces without importing or connectin
     if (name === './automation-panel.cjs') return { activateAutomationPanel() { calls.push('reuse'); } };
     if (name === './native-focus.cjs') return { activateNativeFocus() { calls.push('focus'); } };
     if (name === './native-local-chat.cjs') return { registerNativeLocalChat() { calls.push('local'); return { dispose() {} }; } };
-    if (name === './native-rea-provider.cjs') return { activateNativeReaProvider() { calls.push('rea-definition'); } };
-    if (name === './managed-gateway-host.cjs') return { activateManagedGateway() { calls.push('gateway-definition'); return { async dispose() { closed++; } }; } };
     throw Error(`Unexpected activation dependency: ${name}`);
   } });
   module.exports.activate(context);
-  assert.deepEqual(calls, ['native', 'v-model', 'plugins', 'reuse', 'focus', 'local', 'rea-definition', 'gateway-definition']);
+  assert.deepEqual(calls, ['native', 'v-model', 'plugins', 'reuse', 'focus', 'local']);
   commands.get('workforce.monitor.open')(); assert.equal(calls.at(-1), 'workforce.vModel.open');
-  await Promise.all([module.exports.deactivate(), module.exports.deactivate()]); assert.equal(closed, 2);
+  await Promise.all([module.exports.deactivate(), module.exports.deactivate()]); assert.equal(closed, 1);
 });
 test('native entry contains no engine/controller/session restore or required alias/catalog bootstrap', () => {
   assert.doesNotMatch(source, /activateControlled|enableWorkForceHost|startControlledHost|probeWorkForce|showOpenDialog|top-models|worker-models|OpenCode/);
+  assert.doesNotMatch(source, /native-rea-provider|managed-gateway|activateNativeReaProvider/);
   assert.match(source, /activateNativeEntry/);
 });

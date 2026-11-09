@@ -1,13 +1,12 @@
 // Installed-package checks only. This does not replace client/model acceptance.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { parse as parseYaml } from 'yaml';
-import { tmpdir } from 'node:os';
 import { fileHash, distributionTarget, packedArchive, nativeTarCommand, assertNativeOnlyRuntime, packageSmokeWorkspace, assertPackageRuntimeIsolated } from './package-runtime.mjs';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -25,7 +24,7 @@ function run(executable, parameters, cwd, timeout = 180000) {
   return result.stdout;
 }
 const workspace = packageSmokeWorkspace(), temporaryRoot = dirname(workspace);
-let tarball, installed, gatewayPrivate;
+let tarball, installed;
 try {
   if (supplied('--runtime')) {
     installed = realpathSync.native(resolve(supplied('--runtime'))); assertPackageRuntimeIsolated(installed);
@@ -74,19 +73,6 @@ try {
   assert.equal(typeof host.enableWorkForceHost, 'function');
   for (const name of ['opencode-ai', '@opencode-ai/sdk']) assert.equal(existsSync(join(dependencyRoot, 'node_modules', name)), false,
     'The installed native product has no legacy engine or SDK, including hoisted npm dependencies.');
-  const gatewayModule = await import(pathToFileURL(join(installed, 'dist/managed-gateway-artifact.js')).href);
-  const gatewayManifest = JSON.parse(readFileSync(join(installed, 'resources/managed-gateway/manifest.json'), 'utf8'));
-  assert.deepEqual(gatewayManifest.pin, gatewayModule.MANAGED_GATEWAY_PIN);
-  assert.equal(gatewayManifest.archive, `9router-${gatewayModule.MANAGED_GATEWAY_PIN.version}.tgz`);
-  const gatewayArchive = join(installed, 'resources/managed-gateway', gatewayManifest.archive);
-  assert.equal(await fileHash(gatewayArchive), gatewayManifest.archive_sha256);
-  gatewayPrivate = mkdtempSync(join(tmpdir(), 'workforce-installed-gateway-'));
-  const gatewayArtifact = await gatewayModule.installManagedGateway(join(gatewayPrivate, 'private'), {
-    allowDownload: false, archivePath: gatewayArchive, nodeCommand: process.execPath,
-    fetch() { throw new Error('Installed package smoke cannot download gateway dependencies.'); },
-  });
-  assert.equal(gatewayModule.verifyManagedGatewayArtifact(join(gatewayPrivate, 'private'), gatewayArtifact.id).fingerprint, gatewayArtifact.fingerprint);
-  assert.ok(gatewayArtifact.files.length > 1000, 'The real pinned standalone dependency closure was validated offline.');
   const extension = JSON.parse(readFileSync(join(installed, 'extensions/vscode-model-bridge/package.json'), 'utf8'));
   assert.equal(`${extension.publisher}.${extension.name}`, 'workforce.workforce-model-bridge'); assert.equal(extension.version, expectedExtension.version);
   const invoke = parameters => JSON.parse(run(process.execPath, [cli, ...parameters, '--project', project, '--json'], project));
@@ -206,9 +192,8 @@ try {
     source: supplied('--runtime') ? 'extracted-runtime' : supplied('--runtime-archive') ? 'portable-runtime-archive' : 'npm-tarball',
     ...(tarball ? { archive: relative(repository, tarball).replaceAll('\\', '/'), archive_sha256: await fileHash(tarball) } : {}),
     node: process.version, ...(buildFingerprint ? { build_fingerprint: buildFingerprint } : {}),
-    execution: 'vscode-native/v1', transport: 'vscode-local', gateway: { pin: gatewayManifest.pin, archive_sha256: gatewayManifest.archive_sha256,
-      offline_verified_files: gatewayArtifact.files.length }, status: 'passed',
-    checks: ['installed-cli-and-resource-resolution', 'legacy-engine-sdk-bootstrap-absent', 'optional-pinned-gateway-offline-install', 'six-visible-and-five-hidden-native-profiles',
+    execution: 'vscode-native/v1', transport: 'vscode-local', edition: 'native-core', deferred_features: ['native-rea-provider', 'managed-gateway'], status: 'passed',
+    checks: ['installed-cli-and-resource-resolution', 'legacy-engine-sdk-bootstrap-absent', 'deferred-M7-activation-and-archive-absent', 'six-visible-and-five-hidden-native-profiles',
       'native-root-worker-tool-boundaries', 'native-model-inheritance', 'Local-project-integration',
       'gitignore-untouched-and-local-exclusions-preserved', 'native-default-and-no-required-model-alias', 'request-status-and-honest-setup',
       'retained-local-config-native-public-entrypoints-no-engine-probe', 'native-hook-instructions-match-exposed-tools',
@@ -217,7 +202,6 @@ try {
   const reportPath = resolve(supplied('--report') ?? join(repository, 'artifacts/package-smoke.json')); mkdirSync(dirname(reportPath), { recursive: true });
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`); console.log(JSON.stringify(report, null, 2));
 } finally {
-  if (gatewayPrivate) rmSync(gatewayPrivate, { recursive: true, force: true });
   const child = relative(temporaryRoot, resolve(workspace));
   assert.ok(!isAbsolute(child) && /^workforce-package-[^\\/]+$/.test(child)); rmSync(workspace, { recursive: true, force: true });
 }

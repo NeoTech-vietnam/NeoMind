@@ -62,6 +62,10 @@ if (nativeEntry) {
   const product = JSON.parse(readFileSync(join(repository, 'extensions/vscode-model-bridge/package.json'), 'utf8'));
   manifest.contributes.languageModelTools = product.contributes.languageModelTools.filter(tool => tool.name.startsWith('workforce_native_'));
   if (manifest.contributes.languageModelTools.length !== 10) throw new Error('The product native tool manifest is incomplete.');
+  const packageCommands = product.contributes.commands.filter(command => command.command === 'workforce.nativePackages.manage');
+  if (packageCommands.length !== 1) throw new Error('The product native package-management command is missing or ambiguous.');
+  manifest.contributes.commands = [...(manifest.contributes.commands ?? []).filter(command => command.command !== 'workforce.nativePackages.manage'),
+    ...packageCommands];
 }
 for (const name of ['extension.cjs', 'v-model-fixture.cjs', 'native-pilot.cjs']) copyFileSync(join(here, name), join(extension, name));
 copyFileSync(join(here, 'hook.cjs'), join(fixture.workspace, 'm2-hook.cjs'));

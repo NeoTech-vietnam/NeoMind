@@ -6,7 +6,6 @@ import { createReadStream, createWriteStream, copyFileSync, existsSync, mkdirSyn
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
-import { prepareManagedGateway } from './prepare-managed-gateway.mjs';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 
@@ -49,6 +48,9 @@ export function assertNativeOnlyRuntime(root) {
       existsSync(join(root, 'node_modules/@opencode-ai')) ||
       nestedLegacy || (existsSync(join(root, 'node_modules')) && readdirSync(join(root, 'node_modules')).some(legacy)))
     throw new Error('Native distribution must not bundle legacy OpenCode execution dependencies or bootstrap.');
+  if (existsSync(join(root, 'resources/managed-gateway')) || existsSync(join(root, 'scripts/prepare-managed-gateway.mjs')) ||
+      ['native-rea-provider.cjs', 'managed-gateway-host.cjs', 'managed-gateway-provider.cjs'].some(file => existsSync(join(root, 'extensions/vscode-model-bridge', file))))
+    throw new Error('Native-core distribution must not bundle deferred M7 provider activation or the managed gateway archive.');
   return true;
 }
 export async function fileHash(path) {
@@ -100,7 +102,6 @@ export async function buildRuntime({ outputDirectory = join(repository, 'artifac
   mkdirSync(output, { recursive: true }); mkdirSync(root);
   try {
     execute(process.execPath, [npm, 'run', 'build'], repository);
-    await prepareManagedGateway();
     const cache = join(repository, 'artifacts/npm-build-cache');
     const packed = packedArchive(JSON.parse(execute(process.execPath, [npm, 'pack', '--ignore-scripts', '--json', '--cache', cache, '--pack-destination', staging], repository)));
     execute(nativeTarCommand(), ['-xzf', join(staging, packed.filename), '-C', root, '--strip-components=1'], repository);
@@ -113,24 +114,16 @@ export async function buildRuntime({ outputDirectory = join(repository, 'artifac
     if (cliVersion !== pkg.version) throw new Error('Bundled CLI does not match the release version.');
     const info = await import(pathToFileURL(join(root, 'dist/index.js')).href);
     if (typeof info.requestStatus !== 'function' || typeof info.requestSubmit !== 'function') throw new Error('Bundled request facade cannot be loaded.');
-    const gateway = JSON.parse(readFileSync(join(root, 'resources/managed-gateway/manifest.json'), 'utf8'));
-    const { MANAGED_GATEWAY_PIN: pin } = await import(pathToFileURL(join(root, 'dist/managed-gateway-artifact.js')).href);
-    if (JSON.stringify(gateway.pin) !== JSON.stringify(pin) || gateway.archive !== `9router-${pin.version}.tgz` ||
-        gateway.archive_sha256 !== await fileHash(join(root, 'resources/managed-gateway', gateway.archive)) ||
-        `sha512-${createHash('sha512').update(readFileSync(join(root, 'resources/managed-gateway', gateway.archive))).digest('base64')}` !== pin.integrity ||
-        gateway.license_sha256 !== pin.license_sha256 || gateway.license_sha256 !== await fileHash(join(root, 'resources/managed-gateway/LICENSE.9router.txt')))
-      throw new Error('Bundled offline gateway archive or notices differ from the reviewed pin.');
     const distribution = { schema_version: 1, package: pkg.name, version: pkg.version, ...target,
       build_fingerprint: info.createRuntimeInfo(root).build_fingerprint,
       source_build_fingerprint: info.getRuntimeBuildFingerprint(repository),
-      node: pkg.engines.node, dependencies, gateway: { path: `resources/managed-gateway/${gateway.archive}`, pin: gateway.pin,
-        sha256: gateway.archive_sha256, license_sha256: gateway.license_sha256, optional: true },
+      node: pkg.engines.node, dependencies, edition: 'native-core', deferred_features: ['native-rea-provider', 'managed-gateway'],
       limitations: ['Node.js is a prerequisite; no Node executable is bundled.', 'Linux core packaging is not Linux VS Code desktop acceptance.', 'No model inference is run by the packaging check.'] };
     writeFileSync(join(root, 'distribution-manifest.json'), `${JSON.stringify(distribution, null, 2)}\n`);
     const filename = `workforce-runtime-${pkg.version}-${target.target}.tgz`, path = join(output, filename);
     await archiveRuntime(staging, path);
     const result = { path, version: pkg.version, target: target.target, sha256: await fileHash(path), execution: target.execution,
-      gateway_sha256: gateway.archive_sha256 };
+      edition: 'native-core' };
     writeFileSync(join(output, `${filename}.json`), `${JSON.stringify({ ...result, path: filename, distribution }, null, 2)}\n`);
     return result;
   } finally {

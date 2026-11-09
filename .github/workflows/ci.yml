@@ -45,11 +45,6 @@ jobs:
         run: npm pack --dry-run --json
       - name: Build local package
         run: npm pack
-      - name: Verify the offline managed gateway service and upstream RTK
-        timeout-minutes: 8
-        env:
-          WF_REQUIRE_GATEWAY_ARCHIVE: '1'
-        run: node --test test/managed-gateway-service.test.mjs
       - name: Verify installed package lifecycle and MCP
         run: npm run package:smoke
       # Reuse the successful Windows/Ubuntu regression matrix. This branch can

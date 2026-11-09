@@ -4,6 +4,24 @@ Ngày: **08/11/2026**. Nhánh: `codex/workforce-vscode-native`. Baseline: `ad774
 
 [Kế hoạch đầy đủ](2026-11-08-workforce-local-final-plan.md) là nguồn phạm vi và quyết định. Tài liệu này chia công việc thành milestones để triển khai, quan sát kết quả và kiểm chứng từng bước. Trạng thái milestone không phải trạng thái `draft/accepted` của records trong project người dùng.
 
+## Checklist phát hành native core hiện hành — 10/11/2026
+
+**Quyết định mới của người dùng: hoàn tất native core M0–M6, sau đó M8 và phát hành; M7a/M7b hoãn sang đợt riêng.** Sử dụng VS Code Local và custom endpoint/9router bên ngoài đã cấu hình. Không yêu cầu chạy REA, đăng nhập managed gateway mới hoặc nghiệm thu RTK/combo/vision cho bản này. Các checkbox/evidence M7 và M8 đầy đủ phía dưới được giữ nguyên như lịch sử/backlog, không tự đổi thành pass; checklist này là phạm vi release hiện hành.
+
+- [x] Lưu quyết định thu hẹp release: M7 deferred, không tuyên bố toàn bộ kế hoạch dài hạn đã hoàn tất.
+- [ ] Chốt một candidate runtime + VSIX + Agent Plugin cùng native contract, versions và hashes; không dùng source checkout làm backend khi thử gói cài.
+- [ ] Nghiệm thu M6 ngay trên installed candidate: package được cài/nạp/dùng thật; Disable/Enable/Remove khi owned role đang chạy giữ resource đã chốt, rồi actual drain sau ended outcome. Một lượt này tính cho M6 và M8, không cần lặp source C3 trước.
+- [ ] Gửi prompt LeetCode nguyên bản với folder attachment trong Local; tạo Cornell note và code C/C++, có review/test độc lập, commands/evidence thực và request đóng accepted.
+- [ ] Fresh chat tự tìm và thực sự dùng lại công cụ phù hợp, kiểm tra eligibility tại root hiện tại. Giữ qualification thật; không copy `eligible` hoặc biến runs ở project cũ thành runs mới.
+- [ ] Đối soát native model controls, direct-role scope, V-model/theme/motion/keyboard và recovery theo phần bị ảnh hưởng; giữ proof cũ đúng build/phạm vi, dùng regression cho các negative branches, không suy pass từ UI hoặc gọi lại mọi role không cần thiết.
+- [ ] CI Windows/Ubuntu và smoke gói cuối đạt; CLI/MCP/hooks mới và config Local cũ cùng native contract. Giữ IDs/history, `.git/info/exclude`, `.gitignore`, user-edited files; không khởi động OpenCode.
+- [ ] Install/update/uninstall runtime/VSIX/URL plug-in giữ sản phẩm và history; không đọc private chat storage, sao chép accounts hoặc đổi security/model permissions để nghiệm thu.
+- [ ] Chỉ phát hành GitHub sau các tiêu chí native-core trên; release notes ghi models/providers thực sự đã thử, giới hạn Windows/Linux và M7 deferred. Linux core CI không phải Linux desktop acceptance.
+
+Registration M6 hiện hành dùng **owned User `chat.pluginLocations` absolute entry**, vì installed VS Code khai báo scope MACHINE. Không đổi security/auth hoặc entries không thuộc WorkForce, không mô tả discovery là workspace-only; project binding/owned leases và external native-server ownership là các phạm vi khác nhau.
+
+Để giảm lặp, chạy full-package M6 trong fixture installed cuối rồi dùng tiếp fixture đó cho prompt LeetCode và fresh-chat reuse. Các proof native M1–M5 trước đây tiếp tục là evidence có giới hạn; chúng không được đổi nhãn thành installed proof. Việc hoãn M7 không xóa lỗi hoặc viết lại lịch sử các lượt REA chưa hoàn thành.
+
 ## Kết quả hiện hành — đối chiếu 09/11/2026
 
 **Đợt tiếp tục 10/11:** đang hoàn tất toàn bộ M0–M8, chưa tuyên bố toàn bộ đạt. Candidate runtime `0.3.0-alpha.1` / VSIX `0.13.0` / URL plug-in `0.2.0-alpha.1` đã có native-only activation, MCP/CLI thống nhất, full-package lifecycle và gateway pin offline. Batch chọn lọc hiện có 101/101 và một npm installed smoke thật, nhưng chưa thay thế CI/gói cài/nghiệm thu Local cuối. Actual REA facade static analysis đã đạt; native R0045 vẫn incomplete vì provider trả no choices. Xem [ledger 10/11](../validation/2026-11-10-native-candidate-acceptance.md) để phân biệt source, package và actual client proof. Không đánh dấu M7/M8 hoàn tất từ những kết quả từng phần này.

@@ -27,7 +27,7 @@ function proofScript(channel) {
       const snapshot_sha256 = snapshot ? [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(snapshot))))]
         .map(byte => byte.toString(16).padStart(2, '0')).join('') : null;
       if (snapshot !== observedSnapshot) return;
-      const svg = document.querySelector('svg.v-model'), focus = document.activeElement;
+      const svg = document.querySelector('svg.v-model'), focus = document.activeElement, repair = document.querySelector('.v-rework');
       vscode.postMessage({ type: 'wf-vmodel-style-observation', channel, id: data.id, snapshot_sha256,
         body_classes: text(document.body.className, 1024), os_reduce_motion: matchMedia('(prefers-reduced-motion: reduce)').matches,
         svg_motion: svg?.getAttribute('data-motion') ?? null,
@@ -40,7 +40,7 @@ function proofScript(channel) {
           id: node.getAttribute('data-stage'), state: node.getAttribute('data-state'),
           aria_pressed: node.getAttribute('aria-pressed'), shape: style(node.querySelector('path')) })),
         review: { state: document.getElementById('review')?.getAttribute('data-state'), style: style(document.getElementById('review')) },
-        repair: { state: document.querySelector('.v-rework')?.getAttribute('data-state'), style: style(document.querySelector('.v-rework')) }
+        repair: { state: repair?.getAttribute('data-state'), style: style(repair), path_style: style(repair?.querySelector('path')) }
       });
     }));
   });
