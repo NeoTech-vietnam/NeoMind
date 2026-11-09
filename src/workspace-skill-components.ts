@@ -23,7 +23,7 @@ type Code = 'INVALID_APPROVAL' | 'INVALID_QUERY' | 'UNSAFE_PATH' | 'BOUND_EXCEED
   'CANCELLED' | 'TIMEOUT' | 'FILESYSTEM_FAILED' | 'POLICY_CHANGED';
 export class WorkspaceSkillError extends Error {
   readonly code: Code;
-  constructor(code: Code) { super(`Workspace skill selection failed: ${code}.`); this.name = 'WorkspaceSkillError'; this.code = code; }
+  constructor(code: Code, options?: ErrorOptions) { super(`Workspace skill selection failed: ${code}.`, options); this.name = 'WorkspaceSkillError'; this.code = code; }
 }
 function fail(code: Code): never { throw new WorkspaceSkillError(code); }
 const hash = (bytes: string | Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -585,7 +585,7 @@ export async function installWorkspaceSkillComponents(rootPath: string, input: W
       // A complete renamed component may remain if its final receipt write failed;
       // retain that honest state. Never remove user content to make rollback pass.
       try { save(root, receipt); } catch { /* Original failure remains meaningful. */ }
-      throw error instanceof WorkspaceSkillError ? error : new WorkspaceSkillError('FILESYSTEM_FAILED');
+      throw error instanceof WorkspaceSkillError ? error : new WorkspaceSkillError('FILESYSTEM_FAILED', { cause: error });
     }
   }
   return result(completed, changed);

@@ -343,6 +343,39 @@ test('publication failure is durable partial state and never authorizes deleting
   assert.deepEqual(fs.readFileSync(join(f.target, 'SKILL.md')), skill);
 });
 
+test('publication filesystem errors retain a private original cause while public errors and durable receipts stay redacted', async t => {
+  const f = fixture(t), original = fs.renameSync;
+  const cause = Object.assign(new Error('PRIVATE native filesystem diagnostic'), {
+    code: 'EACCES', errno: -4092, syscall: 'rename', path: join(f.root, 'PRIVATE-staged-directory'), dest: f.target,
+  });
+  fs.renameSync = function(from, ...args) {
+    if (String(from).replaceAll('\\', '/').includes('/staging/')) throw cause;
+    return original.call(this, from, ...args);
+  };
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(installWorkspaceSkillComponents(f.root, f.approval, f.reader), error => {
+      assert.equal(error.code, 'FILESYSTEM_FAILED');
+      assert.equal(error.message, 'Workspace skill selection failed: FILESYSTEM_FAILED.');
+      assert.equal(error.name, 'WorkspaceSkillError');
+      assert.equal(error.cause, cause, 'Private diagnostics must retain the actual native exception unchanged.');
+      assert.equal(Object.getOwnPropertyDescriptor(error, 'cause').enumerable, false);
+      assert.equal(error.cause.errno, -4092); assert.equal(error.cause.syscall, 'rename');
+      assert.deepEqual(JSON.parse(JSON.stringify(error)), { code: 'FILESYSTEM_FAILED', name: 'WorkspaceSkillError' });
+      assert.doesNotMatch(JSON.stringify({ message: error.message, code: error.code, error }), /PRIVATE|EACCES|rename|staged-directory/);
+      return true;
+    });
+  } finally { fs.renameSync = original; syncBuiltinESMExports(); }
+  assert.equal(fs.existsSync(f.target), false);
+  const directory = join(f.root, '.workforce', 'capabilities');
+  const receipts = fs.readdirSync(directory).filter(path => /^workspace-skill-.*\.json$/.test(path));
+  assert.equal(receipts.length, 1);
+  const receipt = JSON.parse(fs.readFileSync(join(directory, receipts[0])));
+  assert.equal(receipt.state, 'partial'); assert.equal(receipt.published, false);
+  assert.ok(receipt.history.some(event => event.action === 'publication-failed'));
+  assert.doesNotMatch(JSON.stringify(receipt), /PRIVATE|EACCES|rename/);
+});
+
 test('multi-skill failure retains the already installed component and truthful separate receipts', async t => {
   const f = fixture(t, true), original = fs.renameSync;
   fs.renameSync = function(from, to) {

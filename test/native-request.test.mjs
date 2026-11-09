@@ -413,11 +413,13 @@ test('host interruption between roles retains actual results and a late callback
   recordNativeResult(root, callback(saved.request_ref, implementation));
   const review = nextNativeAssignment(root, saved.request_ref);
   const interrupted = interruptNativeRequest(root, saved.request_ref, { code: 'EDITOR_CLOSED', category: 'cancellation' });
-  assert.equal(interrupted.status, 'cancelled');
+  assert.equal(interrupted.status, 'uncertain', 'An issued Reviewer without a retained outcome does not prove the old host ended');
+  assert.equal(interrupted.interruption.editor_checkpoint, undefined);
   assert.equal(interrupted.assignments[0].state, 'completed');
   const late = recordNativeResult(root, callback(saved.request_ref, review));
-  assert.equal(late.status, 'cancelled');
-  assert.equal(late.assignments[1].state, 'completed', 'The actual late outcome is retained as history');
+  assert.equal(late.status, 'uncertain');
+  assert.equal(late.assignments[1].state, 'uncertain', 'The late outcome is retained as a draft, without current completion authority');
+  assert.equal(getRecord(root, late.assignments[1].report_record_id).meta.status, 'draft');
   assert.equal(late.accepted, false);
   assert.equal(nextNativeAssignment(root, saved.request_ref), undefined);
   assert.throws(() => finishNativeRequest(root, saved.request_ref), /interrupted|current product|independent/i);
