@@ -3,7 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initialize, safePath, hash, loadRecords, requestFolderForWorkflow } from '../dist/storage.js';
@@ -161,4 +162,40 @@ test('host-declared Linux Node, GCC and Python native images stay separate from 
   writeFileSync(executables[2], '#!/usr/bin/env python\nprint(1)\n');
   assert.deepEqual(nativeSkillReceiptDependencies(root, contexts, [], arguments_, executables), expected,
     'An unknown outside wrapper is still conservative even when it is a declared program');
+});
+
+test('valid extensionless checker filenames retain ordinary receipt dependencies without an alphabet whitelist', async t => {
+  const { root, install } = project(t); await install();
+  const contexts = resolveNativeSkills(root, ['checking']), expected = [contexts[0].receipt_path];
+  for (const name of ['history~check', 'history@check', 'history[check]', 'history(check)', 'history+check', '-history-check']) {
+    writeFileSync(join(root, name), `readFileSync(${JSON.stringify(contexts[0].receipt_path)});`);
+    for (const path of [name, join(root, name)])
+      assert.deepEqual(nativeSkillReceiptDependencies(root, contexts, [], [process.execPath, ...(path.startsWith('-') ? ['--', path] : [path])]), expected, path);
+  }
+  assert.deepEqual(nativeSkillReceiptDependencies(root, contexts, [], [process.execPath, '-e', '1 + 1']), []);
+  assert.deepEqual(nativeSkillReceiptDependencies(root, contexts, [], [process.execPath, '-e', 'const ok = true;\nif (ok) {}']), [],
+    'A missing inline-expression pathname is not an unknown committed script.');
+});
+
+test('real short-root aliases never exempt a canonical workspace binary while allowing an outside native runtime', async t => {
+  if (process.platform !== 'win32') return t.skip('Requires the native Windows short-path API.');
+  const { root, install } = project(t); await install();
+  const canonical = realpathSync.native(root);
+  const script = String.raw`Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; using System.Text; public static class WFDependencyShortPath { [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern uint GetShortPathName(string path, StringBuilder value, uint length); }'; $value=New-Object System.Text.StringBuilder 32768; $length=[WFDependencyShortPath]::GetShortPathName($env:WF_DEPENDENCY_SHORT_ROOT,$value,32768); if($length -eq 0 -or $length -ge 32768){exit 7}; $value.ToString()`;
+  const queried = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
+    { encoding: 'utf8', windowsHide: true, timeout: 15000, env: { ...process.env, WF_DEPENDENCY_SHORT_ROOT: canonical } });
+  const alias = queried.stdout?.trim();
+  if (queried.status !== 0 || !alias?.includes('~') || alias.toLowerCase() === canonical.toLowerCase())
+    return t.skip('No distinct NTFS 8.3 spelling is available; volume settings were not changed.');
+  assert.equal(realpathSync.native(alias), canonical);
+  t.diagnostic(JSON.stringify({ short_root: alias, canonical_root: canonical, volume_settings_changed: false }));
+  const contexts = resolveNativeSkills(alias, ['checking']), expected = [contexts[0].receipt_path];
+  const outside = realpathSync.native(mkdtempSync(join(tmpdir(), 'wf-dependency-outside-runtime-')));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  const image = Buffer.alloc(64); image.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]); image.writeUInt16LE(2, 16);
+  const runtime = join(outside, 'node'), workspaceImage = join(canonical, 'workspace-node');
+  writeFileSync(runtime, image); writeFileSync(workspaceImage, image);
+  assert.deepEqual(nativeSkillReceiptDependencies(alias, contexts, [], [runtime, '-e', 'process.exit(0)'], [runtime]), []);
+  assert.deepEqual(nativeSkillReceiptDependencies(alias, contexts, [], [runtime, workspaceImage], [runtime, workspaceImage]), expected,
+    'Canonical spelling inside the same physical workspace cannot gain an external-native-image exemption.');
 });

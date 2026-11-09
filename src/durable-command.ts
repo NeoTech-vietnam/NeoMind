@@ -10,7 +10,8 @@ import { secureHostPrivateDirectory } from './vscode-wire.js';
 
 export interface DurableCommandBinding { workflow_id: string; epoch_id: string; attempt_id: string; operation_id: string; kind: 'check' | 'producer' }
 export interface DurableCommandRef { schema_version: 1; id: string; spec_sha256: string; binding_sha256: string; spec_hmac: string }
-export interface DurableCommandResult extends CommandResult { durable_job: DurableCommandRef; durable_state: 'completed' | 'interrupted' }
+export interface DurableCommandResult extends CommandResult { durable_job: DurableCommandRef; durable_state: 'completed' | 'interrupted';
+  durable_reason: 'completed' | 'owner-disconnected' | 'cancelled' }
 export interface DurableCommandInput extends CommandInput { binding: DurableCommandBinding }
 export interface DurableCommandOptions { onPrepared?(job: DurableCommandRef): void | Promise<void> }
 const digest = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
@@ -97,7 +98,7 @@ export function readDurableCommandResult(root: string, ref: DurableCommandRef, e
       typeof result.stdout !== 'string' || typeof result.stderr !== 'string' || result.error !== null && typeof result.error !== 'string' ||
       !Number.isFinite(result.duration_ms) || result.duration_ms < 0 || Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr) > spec.max_output_bytes ||
       payload.reason !== 'completed' && !result.cancelled) throw new Error('Durable command result shape or limits are invalid.');
-  return { ...result, durable_job: { ...ref }, durable_state: payload.reason === 'completed' ? 'completed' : 'interrupted' };
+  return { ...result, durable_job: { ...ref }, durable_state: payload.reason === 'completed' ? 'completed' : 'interrupted', durable_reason: payload.reason };
 }
 
 /** onPrepared commits the controller intent before a supervisor or command can start. */

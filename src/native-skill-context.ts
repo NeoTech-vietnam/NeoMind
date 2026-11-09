@@ -153,14 +153,14 @@ function nativeHostProgram(root: string, argument: string, executables: Readonly
   if (!isAbsolute(argument)) return false;
   const key = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
   if (!executables.has(key(argument))) return false;
-  const outside = (path: string) => { const rel = relative(resolve(root), path).replaceAll('\\', '/'); return rel === '..' || rel.startsWith('../') || isAbsolute(rel); };
+  const outside = (base: string, path: string) => { const rel = relative(base, path).replaceAll('\\', '/'); return rel === '..' || rel.startsWith('../') || isAbsolute(rel); };
   // A workspace-authored checker never becomes infrastructure because of its
   // name, ELF bytes, or placement in command[0]. Keep it conservative.
-  if (!outside(resolve(argument))) return false;
+  if (!outside(resolve(root), resolve(argument))) return false;
   let descriptor: number | undefined;
   try {
     const physical = realpathSync.native(argument);
-    if (!outside(physical)) return false;
+    if (!outside(realpathSync.native(root), physical)) return false;
     const info = lstatSync(physical);
     if (!info.isFile()) return false;
     descriptor = openSync(physical, 'r');
@@ -189,14 +189,24 @@ export function nativeSkillReceiptDependencies(root: string, contexts: readonly 
   const texts = [...commandArguments], inspected = new Set<string>();
   let inspectedBytes = 0, uncertainScript = false;
   const interpreted = commandArguments.some(argument => /(?:^|[\\/])(?:node|python(?:3)?|pwsh|powershell|bash|sh|cmd)(?:\.exe)?$/i.test(argument));
-  for (const argument of commandArguments) {
+  for (const [index, argument] of commandArguments.entries()) {
     const knownText = /\.(?:[cm]?js|[cm]?ts|py|ps1|sh|bash|cmd|bat)$/i.test(argument);
-    const extensionless = interpreted && !extname(argument) && !argument.startsWith('-') && /^[\p{L}\p{N}\p{M}_. :/\\-]+$/u.test(argument);
+    const option = argument.startsWith('-') && commandArguments[index - 1] !== '--';
+    const extensionless = interpreted && !!argument && !extname(argument) && !option;
     if (!knownText && !extensionless) continue;
-    if (argument.length > 1024 || /[\x00-\x1f]/.test(argument)) { uncertainScript = true; continue; }
+    if (argument.length > 1024) { uncertainScript = true; continue; }
     if (nativeHostProgram(root, argument, executables)) continue;
     try {
-      const file = safePath(root, relative(resolve(root), resolve(root, argument)).replaceAll('\\', '/'));
+      const candidate = resolve(root, argument), relativePath = relative(resolve(root), candidate).replaceAll('\\', '/');
+      if (extensionless && !knownText && relativePath !== '..' && !relativePath.startsWith('../') && !isAbsolute(relativePath)) {
+        // A filename alphabet excludes valid NTFS aliases and punctuation. Probe
+        // bounded ordinary candidates instead, without walking metadata for
+        // missing inline expressions or probing arbitrary outside paths.
+        try { if (lstatSync(candidate).isDirectory()) continue; }
+        catch (error) { if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) continue; throw error; }
+      }
+      if (/[\x00-\x1f]/.test(argument)) { uncertainScript = true; continue; }
+      const file = safePath(root, relativePath);
       if (inspected.has(key(file))) continue;
       inspected.add(key(file));
       if (!existsSync(file)) { if (knownText) uncertainScript = true; continue; }

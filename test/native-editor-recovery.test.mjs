@@ -215,7 +215,7 @@ test('recovered editor generation fences old callbacks and duplicate recovery do
   assert.equal(app.saved().assignments.length, current.assignments.length); assert.equal(app.saved().accepted, false);
 });
 
-test('a saved cancellation without an observed checker process close cannot authorize replay', { timeout: 30000 }, async t => {
+test('saved cancellation, timeout and output-limit outcomes without an observed process close cannot authorize replay', { timeout: 60000 }, async t => {
   const app = project(t), { plan, ...request } = app.request, opened = domain.openNativeRequest(app.root, request);
   domain.planNativeRequest(app.root, opened.request_ref, plan);
   for (const role of ['WF.FnD', 'WF.Reviewer', 'WF.Tester']) {
@@ -232,11 +232,17 @@ test('a saved cancellation without an observed checker process close cannot auth
   Object.assign(saved.checks[0], { state: 'uncertain', execution_id: randomUUID(), log_path: logPath, log_sha256: hash(readFileSync(join(app.root, logPath))),
     result: { exit_code: null, signal: null, stdout: '', stderr: '', cancelled: true, timed_out: false, output_limited: false, error: null, duration_ms: 2000 } });
   writeFileSync(metadataPath, JSON.stringify(saved, null, 2) + '\n');
-  domain.interruptNativeRequest(app.root, opened.request_ref, { code: 'EDITOR_CLOSED', category: 'cancellation' });
   const calls = [], runner = app.runner(async role => { calls.push(role); assert.fail('Unconfirmed checker effects cannot spawn another worker'); });
-  const result = await runner.control({ request_key: opened.request_key, action: 'recheck' }, opaque);
-  assert.equal(result.error.code, 'EDITOR_EFFECTS_UNCONFIRMED'); assert.equal(result.status, 'uncertain'); assert.deepEqual(calls, []);
-  assert.equal(app.saved().checks[0].execution_id, saved.checks[0].execution_id); assert.equal(app.saved().check_history, undefined);
+  for (const flags of [{ cancelled: true }, { timed_out: true }, { output_limited: true }]) {
+    const actual = JSON.parse(readFileSync(metadataPath, 'utf8'));
+    Object.assign(actual.checks[0].result, { cancelled: false, timed_out: false, output_limited: false }, flags);
+    writeFileSync(metadataPath, JSON.stringify(actual, null, 2) + '\n');
+    domain.interruptNativeRequest(app.root, opened.request_ref, { code: 'EDITOR_CLOSED', category: 'cancellation' });
+    assert.equal(app.saved().interruption.editor_checkpoint, undefined, JSON.stringify(flags));
+    const result = await runner.control({ request_key: opened.request_key, action: 'recheck' }, opaque);
+    assert.equal(result.error.code, 'EDITOR_EFFECTS_UNCONFIRMED'); assert.equal(result.status, 'uncertain'); assert.deepEqual(calls, []);
+    assert.equal(app.saved().checks[0].execution_id, saved.checks[0].execution_id); assert.equal(app.saved().check_history, undefined);
+  }
 });
 
 test('a late old FnD outcome after lost ownership is retained without changing current baseline or context', t => {

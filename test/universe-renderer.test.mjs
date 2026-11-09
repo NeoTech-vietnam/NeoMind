@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { universe, documentFixture, descendants } from './helpers/workforce-ui.mjs';
 
 test('V-model has the nine supplied engineering stages with specification-test pairs', () => {
@@ -52,4 +53,25 @@ test('renderer exposes actual milestone state with keyboard interaction and redu
   renderer.focus('coding'); assert.equal(document.activeElement, coding);
   renderer.resetView(); assert.equal(coding.getAttribute('aria-pressed'), 'false');
   renderer.destroy(); assert.equal(elements.get('diagram').children.length, 0);
+});
+
+test('monitor motion styles honor the VS Code body preference independently of the preserved OS preference', () => {
+  const css = readFileSync(new URL('../extensions/vscode-model-bridge/resources/monitor/monitor.css', import.meta.url), 'utf8');
+  const blocks = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)];
+  const editor = blocks.find(block => block[1].split(',').some(selector => selector.trim() === 'body.vscode-reduce-motion'));
+  assert.ok(editor, 'VS Code workbench.reduceMotion uses its injected body class, independently of the OS media query.');
+  const depth = [...css.slice(0, editor.index)].reduce((value, char) => value + (char === '{' ? 1 : char === '}' ? -1 : 0), 0);
+  assert.equal(depth, 0, 'The editor preference must not remain gated behind an OS media query.');
+  const editorSelectors = editor[1].split(',').map(selector => selector.trim());
+  for (const selector of ['body.vscode-reduce-motion', 'body.vscode-reduce-motion *',
+    'body.vscode-reduce-motion::before', 'body.vscode-reduce-motion::after',
+    'body.vscode-reduce-motion *::before', 'body.vscode-reduce-motion *::after']) assert.ok(editorSelectors.includes(selector), selector);
+  const system = /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{\s*([^{}]+)\{([^{}]+)\}\s*\}/.exec(css);
+  assert.ok(system, 'Keep the ordinary operating-system preference fallback.');
+  assert.deepEqual(system[1].split(',').map(selector => selector.trim()), ['*', '*::before', '*::after']);
+  for (const block of [editor[2], system[2]]) {
+    const declarations = new Map(block.split(';').filter(value => value.trim()).map(value => value.split(':').map(part => part.trim())));
+    for (const [property, value] of [['animation', 'none'], ['transition', 'none'], ['scroll-behavior', 'auto']])
+      assert.match(declarations.get(property), new RegExp(`^${value}\\s*!important$`), property);
+  }
 });

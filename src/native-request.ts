@@ -5,7 +5,9 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { nativeContextFiles, normalizeNativeProjectPaths as projectPaths } from './native-project-paths.js';
-import { runCommand, type CommandResult } from './command-runner.js';
+import { type CommandResult } from './command-runner.js';
+import { runDurableCommand, readDurableCommandResult, type DurableCommandBinding, type DurableCommandRef,
+  type DurableCommandResult } from './durable-command.js';
 import { nativeLocalContractVersion, nativePlanSchema, nativeProfessionalReportInstructions, nativeReportSchema,
   nativeRequestOpenSchema, nativeWorkerProfiles, type NativeRequestOpenInput, type NativeRequestPlan, type NativeProfessionalReport } from './native-local-contract.js';
 import { atomicWrite, createRecord, getRecord, hash, loadRecords, now, requestFolderForWorkflow,
@@ -67,6 +69,8 @@ interface Check {
   generated_inputs?: Fingerprints;
   generated_outputs?: Fingerprints;
   execution_id?: string;
+  durable_job?: DurableCommandRef;
+  durable_generation?: number;
   state: 'pending' | 'running' | 'passed' | 'failed' | 'uncertain';
   evidence_id?: string;
   log_path?: string;
@@ -99,6 +103,7 @@ interface State {
   interruption_history?: NativeInterruption[];
   editor_generation?: number;
   editor_recovery?: { generation: number; interruption_at: string; mode: 'roles' | 'checks'; status: 'prepared' | 'started'; assignment_ref?: string };
+  durable_reconciliation?: { generation: number; executions: string[]; inputs: Fingerprints; membership: string[] };
   accepted_hashes?: Fingerprints;
   final_report_id?: string;
   preservation_baseline?: Fingerprints;
@@ -639,6 +644,8 @@ export async function prepareNativeImplementation(root: string, requestRef: stri
 /** Explicit host continuation after a corrected contract/environment. Retain
  * old reports and current products; never rewrite a failed callback as pass. */
 export function resumeNativeRequest(root: string, requestRef: string) {
+  const reconciled = reconcileNativeCheckReceipts(root, requestRef);
+  if (reconciled) return reconciled;
   return continueNativeRequest(root, requestRef, false);
 }
 
@@ -821,6 +828,8 @@ async function performTesterReassessment(root: string, requestRef: string, optio
  * independent inspections are reusable only while their exact inputs remain
  * unchanged. Product/checker edits still require the ordinary repair path. */
 export function recheckNativeRequest(root: string, requestRef: string) {
+  const reconciled = reconcileNativeCheckReceipts(root, requestRef);
+  if (reconciled) return reconciled;
   return locked(root, requestRef, state => {
     if (recoverEditorInterruption(root, state, true)) return view(root, state);
     if (state.status === 'accepted' && view(root, state).accepted) return view(root, state);
@@ -857,9 +866,12 @@ export function getNativeRequestByKey(root: string, requestKey: string) {
 function editorEffectsHash(root: string, state: State): string | undefined {
   try {
     if (!state.plan || state.plan_hash !== hash(canonical(state.plan)) || state.reuse_execution?.status === 'running') return;
+    const records = new Map(loadRecords(root).map(saved => [saved.meta.id, saved]));
     const assignments = state.assignments.map(job => {
       if (job.state === 'issued' || !job.result_hash || !job.report_record_id) throw new Error('Unobserved invocation');
-      const saved = getRecord(root, job.report_record_id), data = saved.meta.data;
+      const saved = records.get(job.report_record_id);
+      if (!saved) throw new Error('Outcome record missing');
+      const data = saved.meta.data;
       if (data.workflow_id !== state.request_ref || data.native_assignment_ref !== job.assignment_ref) throw new Error('Unbound outcome');
       if (job.invocation) {
         if (job.invocation.invoked !== true || !['returned', 'rejected', 'cancelled'].includes(job.invocation.status) ||
@@ -872,7 +884,7 @@ function editorEffectsHash(root: string, state: State): string | undefined {
       if (!check.execution_id) return { record_id: check.record_id, state: check.state };
       if (!check.result || check.state === 'running' || !check.log_path || !check.log_sha256 ||
           fingerprints(root, [check.log_path])[check.log_path] !== check.log_sha256) throw new Error('Unknown check effects');
-      if (check.result.cancelled && check.result.exit_code === null && check.result.signal === null)
+      if (check.result.exit_code === null && check.result.signal === null)
         throw new Error('Checker process close was not observed');
       return { record_id: check.record_id, execution_id: check.execution_id, state: check.state,
         result: check.result, log_path: check.log_path, log_sha256: check.log_sha256 };
@@ -1101,23 +1113,190 @@ export function recordNativeDispatchFailure(root: string, input: {
 /** Cancellation/editor shutdown is a host event, including between native
  * calls. It preserves real results while preventing a late callback from closing
  * an interrupted request. The host still drains/cancels its actual processes. */
-export function interruptNativeRequest(root: string, requestRef: string, input: { code: string; category: string }) {
+export function interruptNativeRequest(root: string, requestRef: string, input: { code: string; category: string; editor_generation?: number }) {
   if (![input.code, input.category].every(value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(value)))
     fail('Request interruption requires a bounded host code and category.');
   return locked(root, requestRef, state => {
-    if (state.status === 'accepted' || state.interruption) return view(root, state);
-    state.interruption = { ...input, at: now() };
+    if (input.editor_generation !== undefined && (!Number.isSafeInteger(input.editor_generation) || input.editor_generation < 0 ||
+        input.editor_generation !== (state.editor_generation ?? 0)))
+      throw Object.assign(new Error('A newer controller owns the retained request.'), { code: 'EDITOR_OWNERSHIP_CHANGED' });
+    if (state.status === 'accepted') return view(root, state);
+    if (state.interruption) {
+      if (input.code === 'EDITOR_CLOSED' && input.category === 'cancellation' && state.interruption.code === 'EDITOR_CLOSED' &&
+          state.interruption.category === 'cancellation' && !state.interruption.editor_checkpoint) {
+        const effects = editorEffectsHash(root, state);
+        if (effects) {
+          state.interruption.editor_checkpoint = { generation: state.editor_generation ?? 0, effects_hash: effects,
+            inputs: checkInputs(root, state), membership: sourceMembership(root, state) };
+          save(root, state);
+          record(root, state, `editor-ended-${state.editor_generation ?? 0}`, 'knowledge', `${state.title}: stopped editor effects reconciled`,
+            'The retained editor stop intent now has actual settled native/checker outcomes. Original interruption and earlier evidence remain.\n',
+            { interruption: state.interruption });
+          save(root, state);
+        }
+      }
+      return view(root, state);
+    }
+    state.interruption = { code: input.code, category: input.category, at: now() };
     const effects = input.code === 'EDITOR_CLOSED' && input.category === 'cancellation' ? editorEffectsHash(root, state) : undefined;
     if (effects) state.interruption.editor_checkpoint = { generation: state.editor_generation ?? 0, effects_hash: effects,
       inputs: checkInputs(root, state), membership: sourceMembership(root, state) };
     state.status = input.code === 'EDITOR_CLOSED' && !effects ? 'uncertain'
       : input.category === 'cancellation' || input.code === 'CANCELLED' ? 'cancelled' : 'uncertain';
-    record(root, state, `interruption-${state.editor_generation ?? 0}`, 'knowledge', `${state.title}: execution interrupted`,
+    // Publish the stop intent before slower human-readable record indexing.
+    // A guardian receipt, not this intent alone, proves checker termination.
+    if (input.code === 'EDITOR_CLOSED') save(root, state);
+    record(root, state, `interruption-${state.editor_generation ?? 0}-${input.code}`, 'knowledge', `${state.title}: execution interrupted`,
       `Code: ${input.code}\nCategory: ${input.category}\n\nSaved products and observed outcomes are retained. This interruption is not a missing product input.\n`,
       { interruption: state.interruption });
     save(root, state);
     return view(root, state);
   });
+}
+
+function checkBinding(state: State, check: Check): DurableCommandBinding {
+  if (!check.execution_id || !Number.isSafeInteger(check.durable_generation) || check.durable_generation! < 0)
+    fail('The durable check binding is incomplete; no command was replayed.');
+  return { workflow_id: state.request_ref, epoch_id: `${state.plan_hash}:${check.durable_generation}`, attempt_id: check.execution_id,
+    operation_id: check.record_id, kind: 'check' };
+}
+function plainCommandResult(result: CommandResult): CommandResult {
+  const { exit_code, signal, stdout, stderr, cancelled, timed_out, output_limited, error, duration_ms } = result;
+  return { exit_code, signal, stdout, stderr, cancelled, timed_out, output_limited, error, duration_ms };
+}
+function finalizeNativeCheck(root: string, requestRef: string, index: number, execution: Check, supplied: CommandResult) {
+  const result = plainCommandResult(supplied);
+  return locked(root, requestRef, state => {
+    const check = state.checks[index]!;
+    if (check.execution_id !== execution.execution_id) fail('Check execution identity changed; its late result was not assigned elsewhere.');
+    if (check.result) {
+      if (same(check.result, result)) return check.state;
+      fail('This check already retains a different actual result; no evidence was overwritten.');
+    }
+    if (execution.durable_generation !== (state.editor_generation ?? 0))
+      throw Object.assign(new Error('A newer controller owns the retained request; this earlier outcome cannot mutate it.'), { code: 'EDITOR_OWNERSHIP_CHANGED' });
+    let current = inputMapsMatch(root, state, checkInputs(root, state), execution.baseline) && currentMembership(root, state) && matching(root, state, execution.generated_inputs ?? {});
+    const ended = result.exit_code !== null || result.signal !== null;
+    const folder = requestFolderForWorkflow(root, requestRef)!;
+    check.log_path = `.workforce/${folder.directory}/native/checks/${execution.execution_id}.log`;
+    const key = `evidence-${execution.execution_id}`;
+    const prior = loadRecords(root).find(saved => saved.meta.data.workflow_id === requestRef && saved.meta.data.native_operation === key);
+    const body = (observed: Check['state']) => `Check log: ${check.log_path}\n\nExit code: ${result.exit_code}\n\nState: ${observed}\n`;
+    const log = (observed: Check['state']) => `Command argv: ${JSON.stringify(check.command)}\nExit: ${result.exit_code}\nState: ${observed}\nGenerated outputs: ${JSON.stringify(check.generated_outputs ?? {})}\n\n${result.stdout}\n${result.stderr}`;
+    let observed: Check['state'];
+    check.result = result;
+    if (prior) {
+      // Evidence can commit just before the execution-state write is lost. Its
+      // original outcome is immutable, even when the user changed inputs since.
+      const data = prior.meta.data;
+      const retained = (['passed', 'failed', 'uncertain'] as const).find(value => prior.body.replaceAll('\r\n', '\n').trim() === body(value).trim());
+      if (!retained || prior.meta.type !== 'evidence' || data.check_id !== check.record_id || data.execution_id !== execution.execution_id ||
+          data.log_path !== check.log_path || data.passed !== (retained === 'passed') || !same(data.result, result) ||
+          !same(data.output_hashes, execution.baseline) || !same(data.generated_inputs, execution.generated_inputs))
+        fail('The retained command evidence does not match this exact outcome; no log or evidence was overwritten.');
+      if (data.generated_outputs !== undefined) {
+        if (!data.generated_outputs || typeof data.generated_outputs !== 'object' || Array.isArray(data.generated_outputs) ||
+            !same(Object.keys(data.generated_outputs).sort(), compilerOutputsFor(root, check).sort()) ||
+            Object.values(data.generated_outputs).some(value => value !== null && (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value))))
+          fail('The retained generated-artifact receipt is invalid; no evidence was overwritten.');
+        check.generated_outputs = structuredClone(data.generated_outputs) as Fingerprints;
+      }
+      const path = safePath(root, check.log_path), info = lstatSync(path), expected = log(retained);
+      if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > 2 * 1024 * 1024 || readFileSync(path, 'utf8') !== expected)
+        fail('The retained command log changed; no historical evidence was overwritten.');
+      // record() below also verifies its original content digest, title, body
+      // and exact professional data before the state can adopt this receipt.
+      observed = retained;
+      current &&= matching(root, state, check.generated_outputs ?? {});
+      check.state = !current || !ended ? 'uncertain' : retained;
+      check.log_sha256 = hash(expected);
+    } else {
+      check.state = !current || !ended || result.cancelled ? 'uncertain'
+        : result.exit_code === 0 && !result.error && !result.timed_out && !result.output_limited ? 'passed' : 'failed';
+      if (check.state === 'passed') {
+        try {
+          check.generated_outputs = fingerprints(root, compilerOutputsFor(root, check));
+          if (Object.values(check.generated_outputs).some(value => value === null)) check.state = 'failed';
+        } catch { check.state = 'uncertain'; }
+      }
+      observed = check.state;
+      const bytes = log(observed); atomicWrite(safePath(root, check.log_path), bytes); check.log_sha256 = hash(bytes);
+    }
+    const evidence = record(root, state, `evidence-${execution.execution_id}`, 'evidence', check.title,
+      body(observed),
+      { check_id: check.record_id, execution_id: execution.execution_id, output_hashes: execution.baseline, generated_inputs: check.generated_inputs,
+        generated_outputs: check.generated_outputs, passed: observed === 'passed', log_path: check.log_path, result });
+    check.evidence_id = evidence.meta.id;
+    const status = observed === 'passed' ? 'verified' : 'draft';
+    if (evidence.meta.status !== status) saveStatus(root, evidence.meta.id, status);
+    if (check.state === 'passed') state.generated_hashes = { ...(state.generated_hashes ?? {}), ...check.generated_outputs };
+    if (check.state !== 'passed' && !state.interruption)
+      state.status = !current || !ended || check.state === 'uncertain' && !result.cancelled ? 'uncertain' : result.cancelled ? 'cancelled' : 'findings';
+    save(root, state); return check.state;
+  });
+}
+
+function resolveKnownCheckUncertainty(root: string, requestRef: string): State {
+  return locked(root, requestRef, current => {
+    if (current.interruption?.code !== 'EDITOR_EFFECTS_UNCONFIRMED' || !editorEffectsHash(root, current)) return current;
+    current.interruption_history ??= []; current.interruption_history.push(structuredClone(current.interruption));
+    delete current.interruption;
+    current.status = current.checks.some(check => check.result?.cancelled) ? 'cancelled'
+      : current.checks.some(check => check.state === 'failed') ? 'findings' : 'working';
+    record(root, current, `durable-known-effects-${hash(canonical(current.checks.map(check => check.execution_id)))}`, 'knowledge', `${current.title}: check effects authenticated`,
+      'The previously unavailable exact guardian outcome is now authenticated. Earlier uncertainty is retained as history; no command or specialist was replayed.\n');
+    save(root, current); return current;
+  });
+}
+
+/** Reattach an authenticated outcome, never relaunch an unknown execution. The
+ * guardian owns these bytes after editor death; PID absence is not evidence. */
+function reconcileNativeCheckReceipts(root: string, requestRef: string): ReturnType<typeof view> | undefined {
+  let state = load(root, requestRef), imported = false, ownerDisconnected = false;
+  for (const [index, check] of state.checks.entries()) {
+    if (!check.execution_id || check.result) continue;
+    if (!check.durable_job) editorRecoveryFailure(root, state, 'EDITOR_EFFECTS_UNCONFIRMED');
+    let result: DurableCommandResult | undefined;
+    try { result = readDurableCommandResult(root, check.durable_job, checkBinding(state, check)); }
+    catch { editorRecoveryFailure(root, state, 'EDITOR_EFFECTS_UNCONFIRMED'); }
+    if (!result || result.exit_code === null && result.signal === null)
+      editorRecoveryFailure(root, state, 'EDITOR_EFFECTS_UNCONFIRMED');
+    finalizeNativeCheck(root, requestRef, index, check, result); imported = true;
+    state = load(root, requestRef);
+    if (!inspectionsCurrent(root, state) || !checkCurrent(root, state, state.checks[index]!) ||
+        state.preservation_baseline && !matching(root, state, state.preservation_baseline))
+      editorRecoveryFailure(root, state, 'EDITOR_INPUTS_CHANGED');
+    if (state.interruption?.code === 'EDITOR_EFFECTS_UNCONFIRMED') state = resolveKnownCheckUncertainty(root, requestRef);
+    if (result.durable_reason === 'cancelled' && state.interruption?.code !== 'EDITOR_CLOSED')
+      throw Object.assign(new Error('The retained checker was cancelled by its caller, not observed editor loss.'), { code: 'NATIVE_CHECK_CANCELLED' });
+    ownerDisconnected ||= result.durable_reason === 'owner-disconnected';
+    if (ownerDisconnected || state.interruption?.code === 'EDITOR_CLOSED') {
+      interruptNativeRequest(root, requestRef, { code: 'EDITOR_CLOSED', category: 'cancellation' });
+      state = load(root, requestRef);
+    }
+  }
+  if (state.interruption) return;
+  if (imported && inspectionsCurrent(root, state) && checksCurrentAndPassed(root, state)) return finishNativeRequest(root, requestRef);
+  if (imported && state.checks.some(check => check.result?.cancelled)) return;
+  if (imported && inspectionsCurrent(root, state) && state.checks.every(check => !check.execution_id || check.state === 'passed' && checkCurrent(root, state, check))) {
+    return locked(root, requestRef, current => {
+      current.editor_generation = (current.editor_generation ?? 0) + 1;
+      current.durable_reconciliation = { generation: current.editor_generation,
+        executions: current.checks.flatMap(check => check.execution_id ? [check.execution_id] : []), inputs: checkInputs(root, current), membership: sourceMembership(root, current) };
+      current.resume_checks = true; delete current.resume_role; current.status = 'working';
+      record(root, current, `durable-check-reconciliation-${current.editor_generation}`, 'knowledge', `${current.title}: retain authenticated check outcome`,
+        'Authenticated completed command outcomes were reattached to the same request. Passed effects are retained; only unstarted checks continue. No specialist or completed command was repeated.\n',
+        { executions: current.durable_reconciliation.executions, editor_generation: current.editor_generation });
+      save(root, current); return view(root, current);
+    });
+  }
+  if (state.status === 'working' && state.resume_checks && state.durable_reconciliation) {
+    if (state.durable_reconciliation.generation !== state.editor_generation || !inspectionsCurrent(root, state) ||
+        !inputMapsMatch(root, state, checkInputs(root, state), state.durable_reconciliation.inputs) ||
+        !currentMembership(root, state, state.durable_reconciliation.membership)) editorRecoveryFailure(root, state, 'EDITOR_INPUTS_CHANGED');
+    return view(root, state);
+  }
+  return;
 }
 
 export async function runNativeChecks(root: string, requestRef: string, options: { signal?: AbortSignal; purpose?: 'tester-diagnostic';
@@ -1128,12 +1307,14 @@ export async function runNativeChecks(root: string, requestRef: string, options:
     if (!(options.purpose === 'tester-diagnostic' ? diagnosticInspectionCurrent(root, state) : inspectionsCurrent(root, state)))
       failInputRevision('Current independent Reviewer and Tester inspection of source and checker inputs is required before executing acceptance checks.');
     if (state.checks.some(check => check.state === 'running')) return;
-    return state.checks.map((check, index) => ({ index, check: structuredClone(check) }));
+    return state.checks.map((check, index) => ({ index, check: structuredClone(check), generation: state.editor_generation ?? 0 }));
   });
   if (!prepared) return getNativeRequest(root, requestRef);
   for (const item of prepared) {
     const execution = locked(root, requestRef, state => {
       if (state.interruption) return false;
+      if ((state.editor_generation ?? 0) !== item.generation)
+        throw Object.assign(new Error('A newer controller owns the request.'), { code: 'EDITOR_OWNERSHIP_CHANGED' });
       assertNativeSkillsCurrent(root, selectedSkills(state));
       const check = state.checks[item.index]!;
       if (!(options.purpose === 'tester-diagnostic' ? diagnosticInspectionCurrent(root, state) : inspectionsCurrent(root, state)) || !knownGeneratedCurrent(root, state)) {
@@ -1144,43 +1325,27 @@ export async function runNativeChecks(root: string, requestRef: string, options:
       }
       if (check.state === 'passed' && checkCurrent(root, state, check)) return;
       if (check.execution_id) fail('A prior check execution is retained; automatic replay requires explicit reconciliation.');
-      check.execution_id = randomUUID(); check.baseline = checkInputs(root, state);
-      if (state.editor_recovery) state.editor_recovery.status = 'started';
-      check.generated_inputs = { ...(state.generated_hashes ?? {}) }; check.state = 'running'; save(root, state);
-      return { ...structuredClone(check), cwd: root };
+      return { ...structuredClone(check), execution_id: randomUUID(), baseline: checkInputs(root, state),
+        generated_inputs: { ...(state.generated_hashes ?? {}) }, durable_generation: item.generation, cwd: root };
     });
     if (execution === false) break;
     if (!execution) continue;
-    const result = await runCommand({ command: execution.command, cwd: execution.cwd, signal: options.signal,
-      timeout_ms: 60_000, max_output_bytes: 512 * 1024 });
-    const outcome = locked(root, requestRef, state => {
-      const check = state.checks[item.index]!;
-      if (check.execution_id !== execution.execution_id) fail('Check execution identity changed; its late result was not assigned elsewhere.');
-      const current = inputMapsMatch(root, state, checkInputs(root, state), execution.baseline) && currentMembership(root, state) && matching(root, state, execution.generated_inputs ?? {});
-      check.result = result; check.state = !current || result.cancelled ? 'uncertain'
-        : result.exit_code === 0 && !result.error && !result.timed_out && !result.output_limited ? 'passed' : 'failed';
-      if (check.state === 'passed') {
-        try {
-          check.generated_outputs = fingerprints(root, compilerOutputsFor(root, check));
-          if (Object.values(check.generated_outputs).some(value => value === null)) check.state = 'failed';
-          else state.generated_hashes = { ...(state.generated_hashes ?? {}), ...check.generated_outputs };
-        } catch { check.state = 'uncertain'; }
-      }
-      const folder = requestFolderForWorkflow(root, requestRef)!;
-      check.log_path = `.workforce/${folder.directory}/native/checks/${execution.execution_id}.log`;
-      const log = `Command argv: ${JSON.stringify(check.command)}\nExit: ${result.exit_code}\nState: ${check.state}\nGenerated outputs: ${JSON.stringify(check.generated_outputs ?? {})}\n\n${result.stdout}\n${result.stderr}`;
-      atomicWrite(safePath(root, check.log_path), log);
-      check.log_sha256 = hash(log);
-      const evidence = record(root, state, `evidence-${execution.execution_id}`, 'evidence', check.title,
-        `Check log: ${check.log_path}\n\nExit code: ${result.exit_code}\n\nState: ${check.state}\n`,
-        { check_id: check.record_id, execution_id: execution.execution_id, output_hashes: execution.baseline, generated_inputs: check.generated_inputs,
-          generated_outputs: check.generated_outputs, passed: check.state === 'passed', log_path: check.log_path, result });
-      check.evidence_id = evidence.meta.id;
-      saveStatus(root, evidence.meta.id, check.state === 'passed' ? 'verified' : 'draft');
-      if (check.state !== 'passed' && !state.interruption) state.status = result.cancelled ? 'cancelled' : current ? 'findings' : 'uncertain';
-      save(root, state);
-      return check.state;
+    const boundState = load(root, requestRef);
+    const result = await runDurableCommand(root, { command: execution.command, cwd: execution.cwd, signal: options.signal,
+      binding: checkBinding(boundState, execution), timeout_ms: 60_000, max_output_bytes: 512 * 1024 }, {
+      onPrepared: job => locked(root, requestRef, state => {
+        const check = state.checks[item.index]!;
+        if (state.interruption || (state.editor_generation ?? 0) !== execution.durable_generation || check.execution_id)
+          throw Object.assign(new Error('The prepared command no longer owns admission.'), { code: 'EDITOR_OWNERSHIP_CHANGED' });
+        if (!inputMapsMatch(root, state, checkInputs(root, state), execution.baseline) || !currentMembership(root, state))
+          failInputRevision('Checker inputs changed before durable command admission.');
+        Object.assign(check, { execution_id: execution.execution_id, baseline: execution.baseline,
+          generated_inputs: execution.generated_inputs, durable_generation: execution.durable_generation, durable_job: job, state: 'running' });
+        if (state.editor_recovery) state.editor_recovery.status = 'started';
+        save(root, state);
+      }),
     });
+    const outcome = finalizeNativeCheck(root, requestRef, item.index, execution, result);
     // Later commands may execute an older binary after a failed build. Retain
     // their pending status until a fresh successful prerequisite run.
     try { options.onCheckComplete?.({ index: item.index, title: execution.title, state: outcome }); } catch { /* Observation cannot change the execution outcome. */ }

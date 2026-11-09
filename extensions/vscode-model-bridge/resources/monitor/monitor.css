@@ -20,6 +20,7 @@ button:hover { border-color: var(--accent); } button:disabled { cursor: default;
 @media (max-width: 760px) { body { padding: 12px; } .workspace { display: block; } .request-sidebar { min-height: auto; margin-bottom: 14px; } #requests { max-height: 210px; overflow: auto; } .project-heading { border: 0; padding: 0; } .deliverables-grid { grid-template-columns: 1fr; } .setup-card { align-items: start; flex-wrap: wrap; } h1 span { display: none; } .v-node text { font-size: 16px; } .request-heading { flex-wrap: wrap; } }
 @media (max-width: 420px) { #roles { grid-template-columns: repeat(2,minmax(0,1fr)); } .header-actions button { padding: 7px 9px; font-size: 11px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+body.vscode-reduce-motion, body.vscode-reduce-motion *, body.vscode-reduce-motion::before, body.vscode-reduce-motion::after, body.vscode-reduce-motion *::before, body.vscode-reduce-motion *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 
 .v-model-view main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
 .v-model-view main > * { min-width: 0; }

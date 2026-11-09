@@ -11,6 +11,8 @@ const editorRecoveryIssue = error => {
     EDITOR_INPUTS_CHANGED: 'Source, products, checker inputs or selected guidance changed after the editor stopped. Retained work needs reconciliation; no evidence was reused or files overwritten.',
     EDITOR_CHECK_RECONCILIATION_REQUIRED: 'The interrupted checker has unresolved non-cancellation findings or stale independent inspections. No check or model was replayed.',
     NATIVE_REPAIR_ALLOWANCE_EXHAUSTED: 'The configured implementation repair allowance is spent. Retained products and findings were preserved; no new worker was started.',
+    EDITOR_OWNERSHIP_CHANGED: 'A newer controller owns the retained request. This earlier call did not change its current work or acceptance.',
+    NATIVE_CHECK_CANCELLED: 'The checker was explicitly cancelled. Its actual result and products were retained; editor recovery did not restart it.',
   };
   return Object.hasOwn(messages, error?.code) ? issue(error.code,
     error.code === 'NATIVE_REPAIR_ALLOWANCE_EXHAUSTED' ? 'product-repair' : 'interruption', messages[error.code]) : undefined;
@@ -130,9 +132,11 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
   async function execute(input, toolInvocationToken, operation, requestToResume, recheckOnly = false) {
     let parsed, state, requestRef;
     const privateValues = new Set();
-    function remember(value) {
+    function remember(value, followNewOwner = false) {
       state = value;
       if (!state) return;
+      if (!followNewOwner && operation.ownsGeneration !== undefined && operation.ownsGeneration !== (state.editor_generation ?? 0))
+        throw Object.assign(new Error('A newer controller owns this request.'), { code: 'EDITOR_OWNERSHIP_CHANGED' });
       if (typeof state.request_ref === 'string' && !operation.requestRef) {
         operation.requestRef = state.request_ref; owners.set(state.request_ref, operation);
       }
@@ -156,8 +160,10 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
       'Execution was cancelled; retained work is not a claim of verified delivery.');
     async function interrupt(error) {
       if (requestRef) {
-        try { remember(await runtime.interruptNativeRequest(root, requestRef, { code: error.code, category: error.category })); }
-        catch { return sanitize({ ...result(issue('NATIVE_STATE_UNAVAILABLE', 'backend', 'The latest saved state could not be confirmed. Existing work has not been reported as accepted.')),
+        try { remember(await runtime.interruptNativeRequest(root, requestRef, { code: error.code, category: error.category,
+          ...(operation.ownsGeneration === undefined ? {} : { editor_generation: operation.ownsGeneration }) })); }
+        catch (failure) { if (failure?.code === 'EDITOR_OWNERSHIP_CHANGED') return result(editorRecoveryIssue(failure));
+          return sanitize({ ...result(issue('NATIVE_STATE_UNAVAILABLE', 'backend', 'The latest saved state could not be confirmed. Existing work has not been reported as accepted.')),
           status: 'uncertain', saved_state_confirmed: false }); }
       }
       return result(error);
@@ -221,6 +227,7 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
       if (typeof runtime.prepareNativeImplementation === 'function')
         remember(await runtime.prepareNativeImplementation(root, requestRef, { signal: operation.abort.signal }));
       if (cancelled()) return interrupt(cancellationIssue());
+      operation.ownsGeneration = state.editor_generation ?? 0;
       let sequence = requestToResume ? state.resume_checks ? [] : roles.slice(roles.indexOf(state.resume_role)) : roles;
       if (requestToResume && !state.resume_checks && !roles.includes(state.resume_role)) return interrupt(backendIssue());
       async function repair() {
@@ -295,10 +302,11 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
       }
       if (!completedRoles(state)) return interrupt(issue('NATIVE_ROLES_INCOMPLETE', 'backend', 'The current request does not have all required independent specialist results.'));
       const endChecks = observeNativeChecks(root, requestRef);
+      operation.checking = true;
       let checkFailure;
       try { remember(await runtime.runNativeChecks(root, requestRef, { signal: operation.abort.signal })); }
       catch (error) { checkFailure = error; }
-      finally { endChecks(); }
+      finally { operation.checking = false; endChecks(); }
       if (cancelled()) return interrupt(cancellationIssue());
       if (checkFailure) {
         if (checkFailure.code !== 'NATIVE_INPUT_REVISION_CHANGED') throw checkFailure;
@@ -323,7 +331,10 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
       }
     } catch (error) {
       const recovery = editorRecoveryIssue(error);
-      if (!cancelled() && recovery?.code === 'NATIVE_REPAIR_ALLOWANCE_EXHAUSTED') return result(recovery);
+      if (recovery && ['NATIVE_REPAIR_ALLOWANCE_EXHAUSTED', 'EDITOR_OWNERSHIP_CHANGED', 'NATIVE_CHECK_CANCELLED'].includes(recovery.code)) {
+        if (requestRef) { try { remember(await runtime.getNativeRequest(root, requestRef), true); } catch { /* No mutation or fallback replay. */ } }
+        return result(recovery);
+      }
       return interrupt(cancelled() ? cancellationIssue() : selectedSkillIssue(error) ?? recovery ?? backendIssue());
     }
   }
@@ -354,7 +365,14 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
     if (disposing) return disposing;
     disposed = true;
     const pending = [...active];
-    for (const operation of pending) operation.cancel('editor');
+    for (const operation of pending) {
+      if (operation.checking && !operation.reason && operation.requestRef) {
+        try { runtime.interruptNativeRequest(root, operation.requestRef, { code: 'EDITOR_CLOSED', category: 'cancellation',
+          ...(operation.ownsGeneration === undefined ? {} : { editor_generation: operation.ownsGeneration }) }); }
+        catch { /* Cancellation still drains; missing durable intent never proves termination. */ }
+      }
+      operation.cancel('editor');
+    }
     disposing = Promise.allSettled(pending.map(operation => operation.done)).then(() => {});
     return disposing;
   }

@@ -101,17 +101,41 @@ try {
   const squad = [['coordinator', 'pm', 'WF.PM'], ['planner', 'swsd', 'WF.SWSD'], ['architect', 'p-res', 'WF.P-RES'],
     ['implementer', 'fnd', 'WF.FnD'], ['reviewer', 'reviewer', 'WF.Reviewer'], ['verifier', 'tester', 'WF.Tester']];
   assert.deepEqual(core.agentProfiles.map(({ id, name }) => [id, name]), squad.map(([id, _file, name]) => [id, name]));
+  const specialists = squad.slice(1), workerNames = specialists.map(([_id, _file, name]) => `${name} Worker`);
+  assert.deepEqual(core.nativeRoles, squad.map(([_id, _file, name]) => name));
+  assert.deepEqual(core.nativeWorkerProfiles, Object.fromEntries(specialists.map(([_id, _file, name]) => [name, `${name} Worker`])));
   const files = readdirSync(join(project, '.github/agents')).filter(path => path.startsWith('workforce-') && path.endsWith('.agent.md')).sort();
-  assert.deepEqual(files, squad.map(([_id, file]) => `workforce-${file}.agent.md`).sort());
+  assert.deepEqual(files, [...squad.map(([_id, file]) => `workforce-${file}.agent.md`),
+    ...specialists.map(([_id, file]) => `workforce-worker-${file}.agent.md`)].sort());
+  const profileMetadata = file => {
+    const contents = readFileSync(join(project, `.github/agents/${file}`), 'utf8');
+    assert.match(contents, /Execution contract: vscode-native\/v1\./);
+    assert.doesNotMatch(contents, /^model:|assignment_claim|assignment_progress|reported_assignment/m);
+    return parseYaml(contents.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)[1]);
+  };
   for (const [_id, suffix, name] of squad) {
-    const contents = readFileSync(join(project, `.github/agents/workforce-${suffix}.agent.md`), 'utf8');
-    const metadata = parseYaml(contents.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)[1]);
-    assert.equal(metadata.name, name); assert.equal(metadata['user-invocable'], suffix === 'pm');
-    assert.deepEqual(metadata.agents, [], `${name} cannot spawn a second client-owned team.`);
-    assert.equal(metadata.model, suffix === 'pm' ? 'top-models' : undefined, `${name} is a runtime responsibility, not a native worker model selection.`);
-    if (suffix !== 'pm') assert.deepEqual(metadata.tools, ['workforce/request_status']);
+    const metadata = profileMetadata(`workforce-${suffix}.agent.md`);
+    assert.equal(metadata.name, name); assert.equal(metadata['user-invocable'], true);
+    assert.equal(metadata['disable-model-invocation'], true, 'Visible entries cannot be recursively delegated as workers.');
+    assert.equal(metadata.model, undefined, `${name} inherits the native model instead of requiring a routing alias.`);
+    assert.deepEqual(metadata.agents, suffix === 'pm' ? workerNames : [`${name} Worker`]);
+    assert.deepEqual(metadata.tools, suffix === 'pm'
+      ? ['read', 'search', 'workforceNativeRequest', 'workforcePrepare', 'workforceRoleJob', 'workforceRequestControl', 'workforceCapabilities']
+      : ['read', 'search', `workforceRole${name.slice(3).replaceAll('-', '')}`]);
   }
-  assert.equal(readdirSync(join(project, '.codex/agents')).filter(path => path.endsWith('.toml')).length, 6);
+  for (const [_id, suffix, name] of specialists) {
+    const metadata = profileMetadata(`workforce-worker-${suffix}.agent.md`);
+    assert.equal(metadata.name, `${name} Worker`); assert.equal(metadata['user-invocable'], false);
+    assert.equal(metadata.model, undefined, 'Worker model selection belongs to the native invocation.');
+    assert.deepEqual(metadata.agents, [], 'Hidden workers cannot recursively delegate.');
+    assert.deepEqual(metadata.tools, ['read', 'search', ...(suffix === 'fnd' ? ['edit', 'execute'] : suffix === 'tester' ? ['execute'] : [])]);
+    assert.ok(metadata.tools.every(tool => !/workforce|runSubagent|^agent$|tool_search|assignment|claim|recover|lifecycle/i.test(tool)),
+      'Hidden workers have no request, authentication or lifecycle tools.');
+  }
+  assert.deepEqual(readdirSync(join(project, '.codex/agents')).filter(path => path.endsWith('.toml')).sort(),
+    squad.map(([_id, suffix]) => `workforce-${suffix}.toml`).sort());
+  // Retained historical routing is checked independently; native profiles above
+  // must inherit and do not require these legacy custom-endpoint aliases.
   const routing = core.readRoutingPolicy(project); assert.equal(routing.strong_model, 'top-models'); assert.deepEqual(routing.worker_models, ['worker-models']);
   for (const profile of core.agentProfiles)
     assert.deepEqual(core.roleModelPolicy(project, profile.modelRole).models, [profile.id === 'implementer' ? 'worker-models' : 'top-models']);
@@ -137,8 +161,9 @@ try {
     ...(tarball ? { archive: relative(repository, tarball).replaceAll('\\', '/'), archive_sha256: await fileHash(tarball) } : {}),
     node: process.version, ...(buildFingerprint ? { build_fingerprint: buildFingerprint } : {}),
     engine: { version: '1.19.4', binary_sha256: binary.sha256 }, status: 'passed',
-    checks: ['installed-cli-and-resource-resolution', 'pinned-engine-and-sdk-present-before-request', 'six-agent-catalog', 'Local-project-integration',
-      'gitignore-untouched-and-local-exclusions-preserved', 'top-and-worker-aliases', 'request-status-and-honest-setup', 'MCP-request-only-discovery-and-status', 'edited-profile-and-routing-preserving-update'],
+    checks: ['installed-cli-and-resource-resolution', 'pinned-engine-and-sdk-present-before-request', 'six-visible-and-five-hidden-native-profiles',
+      'native-root-worker-tool-boundaries', 'native-model-inheritance', 'Local-project-integration',
+      'gitignore-untouched-and-local-exclusions-preserved', 'preserved-legacy-routing', 'request-status-and-honest-setup', 'MCP-request-only-discovery-and-status', 'edited-profile-and-routing-preserving-update'],
     limitations: ['No model inference, client interaction or product workflow is run by package smoke.', 'This is core/package evidence; Copilot Local, Codex and installed extension acceptance are separate.', 'Linux desktop is not certified by Linux package smoke.'] };
   const reportPath = resolve(supplied('--report') ?? join(repository, 'artifacts/package-smoke.json')); mkdirSync(dirname(reportPath), { recursive: true });
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`); console.log(JSON.stringify(report, null, 2));
