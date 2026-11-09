@@ -104,16 +104,23 @@ test('a cancellation queued before worker startup is acknowledged through the ac
   assert.deepEqual(entries(destination), afterExit, 'The exited sole writer must not change its copy afterward.');
 });
 
-test('actual worker script bounds asynchronous copies and drains active I/O before cancellation completes', async t => {
+for (const delayedMetadata of [false, true]) test(`actual worker script bounds asynchronous copies and drains active I/O before cancellation completes${delayedMetadata ? ' after delayed filesystem startup' : ''}`, { timeout: 10_000 }, async t => {
   const { from, destination } = fixture(t, 64);
   const port = new EventEmitter(), results = [], processState = { platform: process.platform };
   let active = 0, maximum = 0, started = 0, synchronous = 0, cancelled = false, closed = false;
   const releases = [];
+  let signalOverlap, releaseMetadata;
+  const overlap = new Promise(resolve => { signalOverlap = resolve; });
+  const metadataGate = new Promise(resolve => { releaseMetadata = resolve; });
   port.postMessage = value => { results.push(value); };
   port.close = () => { assert.equal(active, 0, 'The worker must drain its copies before reporting exit.'); closed = true; };
-  const fsPromises = { ...promises, copyFile: async (...args) => {
+  const fsPromises = { ...promises, realpath: async (...args) => {
+    if (delayedMetadata) await metadataGate;
+    return promises.realpath(...args);
+  }, copyFile: async (...args) => {
     assert.equal(cancelled, false, 'Cancellation must stop queued copies from starting.');
     active++; started++; maximum = Math.max(maximum, active);
+    if (started === 2) signalOverlap();
     await new Promise(fulfill => { releases.push(fulfill); });
     try { return await promises.copyFile(...args); } finally { active--; }
   } };
@@ -127,18 +134,31 @@ test('actual worker script bounds asynchronous copies and drains active I/O befo
     },
     process: processState, setImmediate, Buffer,
   }, { filename: 'actual-bootstrap-worker.cjs' });
-  // Observe overlap at a controlled I/O seam; do not depend on disk speed.
-  for (let tick = 0; tick < 200 && releases.length < 2 && !results.length; tick++) await new Promise(setImmediate);
-  assert.equal(synchronous, 0, 'A synchronous full-tree copy prevents cancellation from being serviced.');
-  assert.ok(releases.length >= 2, 'Independent copies must overlap rather than block the worker loop.');
-  assert.ok(maximum <= 8, 'Preparation must keep its bounded resource limit.');
-  cancelled = true; port.emit('message', { type: 'cancel' });
-  const startedAtCancellation = started;
-  releases.forEach(release => release());
-  await completion;
-  assert.equal(started, startedAtCancellation);
-  assert.equal(active, 0);
-  assert.equal(closed, true);
-  assert.deepEqual(JSON.parse(JSON.stringify(results)), [{ copied: false, code: 'BOOTSTRAP_COPY_CANCELLED' }]);
-  assert.equal(processState.exitCode, 1);
+  let timer;
+  try {
+    if (delayedMetadata) {
+      // Negative control for the former readiness oracle: even 200 immediate
+      // turns cannot establish that a real filesystem operation has completed.
+      for (let tick = 0; tick < 200; tick++) await new Promise(setImmediate);
+      assert.equal(started, 0); releaseMetadata();
+    }
+    await Promise.race([overlap, completion.then(() => { throw Error('Worker completed before overlapping copy I/O was observed.'); }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(Error('Independent copy I/O did not overlap within the test readiness deadline.')), 5000); })]);
+    assert.equal(synchronous, 0, 'A synchronous full-tree copy prevents cancellation from being serviced.');
+    assert.ok(releases.length >= 2, 'Independent copies must overlap rather than block the worker loop.');
+    assert.ok(maximum <= 8, 'Preparation must keep its bounded resource limit.');
+    cancelled = true; port.emit('message', { type: 'cancel' });
+    const startedAtCancellation = started;
+    releases.forEach(release => release());
+    await completion;
+    assert.equal(started, startedAtCancellation);
+    assert.equal(active, 0);
+    assert.equal(closed, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(results)), [{ copied: false, code: 'BOOTSTRAP_COPY_CANCELLED' }]);
+    assert.equal(processState.exitCode, 1);
+  } finally {
+    clearTimeout(timer); releaseMetadata();
+    if (!cancelled) { cancelled = true; port.emit('message', { type: 'cancel' }); }
+    releases.forEach(release => release()); await completion;
+  }
 });
