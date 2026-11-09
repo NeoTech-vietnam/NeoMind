@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 const require = createRequire(import.meta.url);
@@ -15,7 +16,14 @@ const delay = milliseconds => new Promise(resolve => setTimeout(resolve, millise
 async function fixture(t, gated = false) {
   const root = mkdtempSync(join(tmpdir(), 'wf-native-mcp-protocol-')), evidence = join(root, 'evidence'); mkdirSync(evidence);
   const client = new Client({ name: 'owned-native-fixture-test', version: '1.0.0' });
-  const gate = join(evidence, 'release-echo.flag');
+  let gate = join(evidence, 'release-echo.flag');
+  if (gated && process.platform === 'win32') {
+    const alias = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+      '$folder = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:WF_FIXTURE_GATE_PARENT); [Console]::Write($folder.ShortPath)'],
+    { encoding: 'utf8', windowsHide: true, timeout: 10000, env: { ...process.env, WF_FIXTURE_GATE_PARENT: evidence } });
+    assert.equal(alias.status, 0, alias.error?.message ?? alias.stderr);
+    assert.ok(alias.stdout.trim()); gate = join(alias.stdout.trim(), 'release-echo.flag');
+  }
   const args = [server, '--nonce', nonce, '--evidence', evidence, ...(gated ? ['--gate-file', gate] : [])];
   const transport = new StdioClientTransport({ command: process.execPath, args, stderr: 'pipe' });
   t.after(async () => { await client.close(); rmSync(root, { recursive: true, force: true }); });
@@ -52,6 +60,15 @@ test('an owned gate provides a deterministic active tool window for lifecycle te
   assert.equal(f.events().some(event => event.event === 'tool-completed'), false);
   writeFileSync(f.gate, 'release\n', { flag: 'wx' });
   assert.equal(JSON.parse((await call).content[0].text).nonce, nonce);
+});
+
+test('a gate outside the actual owned evidence directory is refused before MCP admission', t => {
+  const root = mkdtempSync(join(tmpdir(), 'wf-native-mcp-gate-scope-')), evidence = join(root, 'evidence'); mkdirSync(evidence);
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const child = spawnSync(process.execPath, [server, '--nonce', nonce, '--evidence', evidence, '--gate-file', join(root, 'outside.flag')],
+    { input: '', encoding: 'utf8', windowsHide: true, timeout: 5000 });
+  assert.equal(child.status, 2, child.stderr); assert.equal(child.stdout, '');
+  assert.equal(existsSync(join(evidence, 'events.ndjson')), false, 'An unowned gate never enters the protocol or records a running tool.');
 });
 
 test('fixture provider uses only public registration and requires explicit enable flag plus trusted owned root', t => {

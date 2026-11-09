@@ -13,6 +13,10 @@ const require = createRequire(import.meta.url);
 const { nativeToolNames, nativeRoleToolNames } = require('../extensions/vscode-model-bridge/native-entry.cjs');
 const path = fileURLToPath(new URL('../extensions/vscode-model-bridge/package.json', import.meta.url));
 const manifest = JSON.parse(readFileSync(path, 'utf8'));
+manifest.contributes.configuration.properties['workforce.gateway.tokenSaving'] = {
+  type: 'string', scope: 'machine', enum: ['off', 'upstream-rtk'], default: 'off',
+  description: 'Optional pinned upstream RTK for qualified routine progress tool output only. Read from User settings; workspace overrides are ignored. Diagnostics, assertions, acceptance evidence, source text and unfamiliar output remain uncompressed. Active calls retain their policy; pending configuration uses off without blocking the product. Byte savings do not establish billed-token savings.',
+};
 manifest.contributes.configuration.properties['workforce.capabilities.mcpConnectors'] = {
   ...nativeMcpApprovedConnectorsJsonSchema, scope: 'machine', default: [],
   description: 'User-approved exact native MCP tool names and references by professional role. Workspace overrides cannot grant tools. Availability means registered tools were observed, not that a server or model call succeeded.',

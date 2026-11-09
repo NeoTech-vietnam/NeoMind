@@ -16,7 +16,8 @@ function gatewayNodeCommand(vscode) {
 function activateManagedGateway(vscode, context, loadRuntime, installedRuntime) {
   if (typeof vscode.lm?.registerLanguageModelChatProvider !== 'function') return { dispose: async () => {} };
   const changed = new vscode.EventEmitter();
-  let service, initializing, currentApi, closed = false;
+  const admissions = new Set();
+  let service, initializing, currentApi, lastTokenSavingControl, closed = false;
   const enabled = () => !closed && vscode.workspace.isTrusted && context.globalState.get('workforce.gateway.enabled') === true;
   const root = () => {
     const folders = (vscode.workspace.workspaceFolders ?? []).filter(folder => folder.uri.scheme === 'file');
@@ -45,12 +46,42 @@ function activateManagedGateway(vscode, context, loadRuntime, installedRuntime) 
       return service;
     })().finally(() => { initializing = undefined; });
   }
-  const lazyService = { async acquire(signal) { return (await ensure()).acquire(signal); } };
+  const lazyService = { acquire(signal) {
+    const operation = (async () => {
+    const live = () => { if (closed || signal?.aborted) { const error = new Error('GATEWAY_CANCELLED'); error.code = 'GATEWAY_CANCELLED'; error.name = 'CancellationError'; throw error; } };
+    live();
+    // Read User policy once. A setting changed while this call is preparing
+    // belongs to the next invocation, never the currently selected lease.
+    const configured = vscode.workspace.getConfiguration('workforce.gateway').inspect('tokenSaving')?.globalValue ?? 'off';
+    const requested = configured === 'upstream-rtk' ? 'upstream-rtk' : 'off';
+    const active = await ensure();
+    live();
+    let control = { requested, effective: 'off', deferred: true,
+      reason: configured === 'off' || configured === 'upstream-rtk' ? 'runtime-control-unavailable' : 'invalid-user-policy', fingerprint: null, scope: 'routine-progress-only' };
+    if ((configured === 'off' || configured === 'upstream-rtk') && typeof active.configureTokenSaving === 'function') {
+      try {
+        const result = await active.configureTokenSaving(requested);
+        const effective = requested === 'upstream-rtk' && result?.effective === 'upstream-rtk' && result.deferred === false ? 'upstream-rtk' : 'off';
+        control = { requested, effective, deferred: result?.deferred !== false,
+          reason: typeof result?.reason === 'string' && /^[a-z-]{1,80}$/.test(result.reason) ? result.reason : 'optional-configuration-unavailable',
+          fingerprint: typeof result?.fingerprint === 'string' && /^[a-f0-9]{64}$/.test(result.fingerprint) ? result.fingerprint : null, scope: 'routine-progress-only' };
+      } catch { control.reason = 'optional-configuration-unavailable'; }
+    }
+    live();
+    const lease = await active.acquire(signal);
+    if (closed || signal?.aborted) { try { await lease.release(); } catch {} live(); }
+    lastTokenSavingControl = Object.freeze(control);
+    return Object.freeze({ ...lease, tokenSaving: control.effective, tokenSavingPolicy: lastTokenSavingControl });
+    })();
+    admissions.add(operation);
+    return operation.finally(() => admissions.delete(operation));
+  } };
   const client = endpoint => currentApi.createManagedGatewayClient(endpoint, {
     getApiKey: () => service.getApiKey(), getAdminCookie: () => service.getAdminCookie(),
     prepareCombo: (name, members, signal) => service.prepareCombo(name, members, signal),
     validateCombo: name => service.validateCombo(name),
     modelDeclarations: vscode.workspace.getConfiguration('workforce.gateway').inspect('modelDeclarations')?.globalValue,
+    tokenSaving: endpoint.tokenSaving === 'upstream-rtk' ? 'upstream-rtk' : 'off',
     // Only the selected route is admitted. More complex fallback pools require
     // the explicit managed routing policy, never guessed top/worker aliases.
     policy: vscode.workspace.getConfiguration('workforce.gateway').inspect('routingPolicy')?.globalValue,
@@ -82,7 +113,7 @@ function activateManagedGateway(vscode, context, loadRuntime, installedRuntime) 
         const access = await active.dashboardAccess(); await vscode.env.openExternal(vscode.Uri.parse(access.url));
       } else if (choice.action === 'usage') {
         const endpoint = await active.ensureStarted();
-        const view = await client(endpoint).status();
+        const view = { ...await client(endpoint).status(), ...(lastTokenSavingControl ? { token_saving_control: lastTokenSavingControl } : {}) };
         const document = await vscode.workspace.openTextDocument({ language: 'json', content: JSON.stringify(view, null, 2) });
         await vscode.window.showTextDocument(document, { preview: true });
       } else {
@@ -91,6 +122,7 @@ function activateManagedGateway(vscode, context, loadRuntime, installedRuntime) 
       }
     } catch (error) { await vscode.window.showErrorMessage(error.code ? `${error.code}: ${error.message}` : 'WorkForce gateway could not complete this operation. Existing accounts and request results remain saved.'); }
   }));
-  return { async dispose() { if (closed) return; closed = true; await initializing?.catch(() => {}); await service?.dispose(); } };
+  return { async dispose() { if (closed) return; closed = true; await initializing?.catch(() => {});
+    await Promise.allSettled([...admissions]); await service?.dispose(); } };
 }
 module.exports = { activateManagedGateway, gatewayNodeCommand };

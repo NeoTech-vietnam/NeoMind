@@ -5,15 +5,25 @@
 // environment variables, model context or credentials.
 const { createHash } = require('node:crypto');
 const { appendFileSync, existsSync, realpathSync, statSync } = require('node:fs');
-const { dirname, isAbsolute, join, relative, resolve } = require('node:path');
+const { basename, dirname, isAbsolute, join, resolve } = require('node:path');
 const { createInterface } = require('node:readline');
 const argumentsByName = new Map();
 for (let index = 2; index < process.argv.length; index += 2) argumentsByName.set(process.argv[index], process.argv[index + 1]);
 const nonce = argumentsByName.get('--nonce'), evidence = argumentsByName.get('--evidence'), selectedGate = argumentsByName.get('--gate-file');
 if (typeof nonce !== 'string' || !/^[a-f0-9]{16,128}$/.test(nonce) || !isAbsolute(evidence ?? '') || !statSync(evidence).isDirectory()) process.exit(2);
 const root = realpathSync.native(evidence), events = join(root, 'events.ndjson');
-const gate = selectedGate === undefined ? undefined : resolve(selectedGate);
-if (gate && (!isAbsolute(selectedGate) || relative(root, gate).startsWith('..') || dirname(gate) !== root)) process.exit(2);
+let gate;
+if (selectedGate !== undefined) {
+  try {
+    if (!isAbsolute(selectedGate)) process.exit(2);
+    const selected = resolve(selectedGate), parent = realpathSync.native(dirname(selected));
+    // The gate does not exist yet. Resolve its actual existing parent so a
+    // Windows TEMP 8.3 alias cannot be mistaken for another evidence root.
+    const same = process.platform === 'win32' ? parent.toLowerCase() === root.toLowerCase() : parent === root;
+    if (!same) process.exit(2);
+    gate = join(root, basename(selected));
+  } catch { process.exit(2); }
+}
 const hash = value => createHash('sha256').update(value).digest('hex');
 const record = (event, fields = {}) => appendFileSync(events, JSON.stringify({ at: new Date().toISOString(), event, ...fields }) + '\n', { mode: 0o600 });
 const reply = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n');

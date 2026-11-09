@@ -303,7 +303,13 @@ test('a completed independent review can deliver findings without pretending tha
   assert.equal(saved.completion, 'role-completed');
   assert.equal(saved.status, 'findings');
   assert.equal(saved.accepted, false);
-  assert.equal(runtime.nativeRoleListForMonitor(root)[0].review.state, 'failed');
+  assert.equal(saved.report.verdict, 'findings');
+  assert.deepEqual(saved.report.findings, ['A concrete correctness defect']);
+  assert.match(readFileSync(join(root, saved.report_path), 'utf8'), /A concrete correctness defect/);
+  const observation = runtime.nativeRoleListForMonitor(root)[0];
+  assert.equal(observation.review.state, 'completed', 'The independent review finished; findings remain a professional result.');
+  assert.equal(observation.accepted, false, 'Role completion does not accept the defective product.');
+  assert.equal(observation.status, 'role-completed');
 });
 
 test('context edits during a read-only role and later report tampering invalidate scoped completion', { timeout: 60000 }, t => {

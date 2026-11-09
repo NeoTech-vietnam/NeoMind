@@ -96,6 +96,23 @@ function createGatewayChatProvider(vscode, { service, client, onDidChangeLanguag
           if (signal.aborted) { const error = new Error('GATEWAY_CANCELLED'); error.name = 'CancellationError'; throw error; }
           if (event.type === 'text') progress.report(new vscode.LanguageModelTextPart(event.text));
           else if (event.type === 'tool-call') progress.report(new vscode.LanguageModelToolCallPart(event.id, event.name, event.args));
+          else if (event.type === 'token-saving') {
+            const policy = event.policy ?? {}, control = lease.tokenSavingPolicy;
+            // An observation is metadata, never a prompt, tool result, provider
+            // response body or a claim of billed-token savings.
+            try { observe({ type: 'token-saving', model: model.id, generation: lease.generation,
+              ...(control ? { control: { requested: control.requested === 'upstream-rtk' ? 'upstream-rtk' : 'off',
+                effective: control.effective === 'upstream-rtk' ? 'upstream-rtk' : 'off', deferred: control.deferred === true,
+                reason: typeof control.reason === 'string' && /^[a-z-]{1,80}$/.test(control.reason) ? control.reason : 'unknown',
+                fingerprint: typeof control.fingerprint === 'string' && /^[a-f0-9]{64}$/.test(control.fingerprint) ? control.fingerprint : null,
+                scope: 'routine-progress-only' } } : {}), policy: {
+                mode: policy.mode === 'upstream-rtk' ? 'upstream-rtk' : 'off', header: policy.header === 'on' ? 'on' : 'off',
+                reason: typeof policy.reason === 'string' && /^[a-z-]{1,80}$/.test(policy.reason) ? policy.reason : 'unknown',
+                raw_tool_results_sha256: typeof policy.raw_tool_results_sha256 === 'string' && /^[a-f0-9]{64}$/.test(policy.raw_tool_results_sha256) ? policy.raw_tool_results_sha256 : null,
+                raw_tool_result_bytes: Number.isSafeInteger(policy.raw_tool_result_bytes) && policy.raw_tool_result_bytes >= 0 ? policy.raw_tool_result_bytes : null,
+                scope: 'routine-progress-only', outbound_compressed_bytes: null, token_savings: 'not-measured', raw_evidence_required: true,
+              } }); } catch { /* Optional metadata cannot interrupt model execution. */ }
+          }
           else if (event.type === 'usage' || event.type === 'routing') {
             // Metadata only; do not persist prompts, tool results or auth.
             try { observe({ type: event.type, model: model.id, generation: lease.generation, ...event }); } catch { /* Telemetry is optional. */ }

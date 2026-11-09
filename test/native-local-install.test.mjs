@@ -27,8 +27,8 @@ test('Local installation generates only the native process instructions and pres
   assert.equal(profile.tools.includes('workforce/request_submit'), false);
   assert.equal(profile.model, undefined, 'Native Local inherits the current model; aliases are not required');
   assert.equal(profile['user-invocable'], true);
-  assert.equal(profile.agents.length, 5);
-  assert.deepEqual(profile.agents, Object.values(nativeWorkerProfiles));
+  assert.deepEqual(profile.agents, ['*'], 'Host-owned versioned workers must pass native parent admission.');
+  assert.ok(profile.tools.every(tool => !/^(?:agent|runSubagent)$/.test(tool)), 'Only backend role tools may launch workers.');
   const installedProfiles = readdirSync(join(root, '.github/agents')).filter(file => file.endsWith('.agent.md'))
     .map(file => parse(readFileSync(join(root, '.github/agents', file), 'utf8').split('---')[1]));
   assert.equal(installedProfiles.filter(item => item['user-invocable']).length, 6);

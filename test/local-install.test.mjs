@@ -59,7 +59,8 @@ test('legacy local CLI updates and model changes preserve shared files and bind 
   assert.equal(example.servers.neomind.command, process.execPath);
   assert.deepEqual(example.servers.neomind.args, [cli, 'mcp', '--project', root]);
   const observation = doctor(root);
-  assert.ok(observation.warnings.some(warning => warning.includes('example metadata only')));
+  assert.ok(observation.warnings.some(warning => warning.includes('Use WF.PM in VS Code Local')));
+  assert.ok(observation.warnings.some(warning => warning.includes('no Model Bridge connection, catalog file or routing alias is required')));
   assert.equal(observation.platforms[0].capabilities.find(capability => capability.capability === 'user-profile-mcp').status, 'unverified');
   const again = run(root, ['update']);
   assert.deepEqual(again.updated, []);
@@ -86,7 +87,7 @@ test('fresh CLI local init registers WorkForce for the exact project while prese
   write(root, '.gitignore', gitignore);
   write(root, '.vscode/mcp.json', '{"servers":{"existing":{"command":"authored-server"}}}\n');
   const initialized = run(root, ['init', '--local', '--platforms', 'copilot']);
-  assert.equal(initialized.config.execution_engine, 'opencode');
+  assert.equal(initialized.config.execution_engine, 'vscode-native');
   assert.equal(initialized.config.copilot_integration, 'local');
   assert.deepEqual(initialized.installation.conflicts, []);
   assert.equal(read(root, '.github/copilot-instructions.md'), instructions);

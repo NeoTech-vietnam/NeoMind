@@ -9,6 +9,11 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { parse } from 'yaml';
 const root = fileURLToPath(new URL('./fixtures/native-agent-plugin/', import.meta.url));
 const nonce = 'WF_NATIVE_PACKAGE_FIXTURE_VALIDATED';
+function frontmatter(source) {
+  const header = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
+  assert.ok(header, 'The checked-out fixture has a valid YAML frontmatter boundary.');
+  return parse(header[1]);
+}
 function baseline() {
   return readdirSync(root, { recursive: true }).filter(path => statSync(join(root, path)).isFile()).sort()
     .map(path => [path, createHash('sha256').update(readFileSync(join(root, path))).digest('hex')]);
@@ -27,10 +32,12 @@ test('canonical native fixture packages portable skills/MCP and a nonrecursive C
   assert.equal(manifest.name, 'wf-native-package-fixture'); assert.equal(manifest.license, 'MIT');
   assert.deepEqual(mcp.mcpServers['wf-native-package-fixture'], { type: 'stdio', command: 'node', args: ['${PLUGIN_ROOT}/bin/package-fixture.mjs'] });
   const agent = readFileSync(join(root, 'com.github.copilot/agents/package-researcher.agent.md'), 'utf8');
-  const header = parse(/^---\n([\s\S]*?)\n---/.exec(agent)[1]);
+  const header = frontmatter(agent);
+  assert.deepEqual(frontmatter(agent.replace(/\r\n/g, '\n')), header);
+  assert.deepEqual(frontmatter(agent.replace(/\r?\n/g, '\r\n')), header);
   assert.deepEqual(header.agents, []); assert.deepEqual(header.tools, ['read', 'search']); assert.equal(header.model, undefined);
   const skill = readFileSync(join(root, 'skills/package-evidence/SKILL.md'), 'utf8');
-  assert.equal(parse(/^---\n([\s\S]*?)\n---/.exec(skill)[1]).name, 'package-evidence');
+  assert.equal(frontmatter(skill).name, 'package-evidence');
   assert.match(skill, /WF_NATIVE_PACKAGE_GUIDANCE_V1/);
   assert.match(readFileSync(join(root, 'skills/package-evidence/references/evidence.md'), 'utf8'), /Registered means/);
   assert.equal(baseline().some(([path]) => /(?:^|[\\/])(?:hooks|node_modules|\.git)(?:[\\/]|$)/.test(path)), false);

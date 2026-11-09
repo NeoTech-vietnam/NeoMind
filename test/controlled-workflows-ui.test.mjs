@@ -464,13 +464,15 @@ test('runtime/provider errors are not copied into chat or webview', async t => {
   assert.equal(JSON.stringify(unsupported).includes('PRIVATE'), false);
 });
 
-test('controlled panel uses isolated CSP, safe rendering and packaged tool registration', () => {
+test('historical controlled panel retains isolated rendering without contributing removed execution tools', () => {
   const html = renderControlledPanel({ cspSource: 'vscode-resource:', script: 'controlled.js', style: 'controlled.css', nonce: 'safe-nonce' });
   assert.match(html, /default-src 'none'/); assert.match(html, /script-src 'nonce-safe-nonce'/); assert.match(html, /form-action 'none'/);
   const source = readFileSync(new URL('../extensions/vscode-model-bridge/resources/monitor/controlled.js', import.meta.url), 'utf8');
   assert.equal(source.includes('innerHTML'), false);
   const manifest = JSON.parse(readFileSync(new URL('../extensions/vscode-model-bridge/package.json', import.meta.url), 'utf8'));
-  assert.ok(manifest.contributes.languageModelTools.some(value => value.name === TOOL_NAME));
+  assert.equal(manifest.contributes.languageModelTools.some(value => value.name === TOOL_NAME), false);
+  assert.equal(manifest.activationEvents.includes(`onLanguageModelTool:${TOOL_NAME}`), false);
+  assert.ok(manifest.contributes.languageModelTools.some(value => value.name === 'workforce_native_request'));
   assert.ok(manifest.contributes.commands.some(value => value.command === 'workforce.monitor.open'));
   assert.equal(manifest.contributes.commands.some(value => value.command.endsWith('.workflows.open')), false);
   assert.ok(manifest.contributes.commands.some(value => value.command === LOCAL_COORDINATOR_COMMAND && value.title === 'WorkForce: Open Local WF.PM'));

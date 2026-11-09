@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { routerBaseUrl } from './router-probe.js';
 import { ManagedGatewayError } from './managed-gateway-artifact.js';
-import { sanitizeManagedGatewayQuota } from './managed-gateway-policy.js';
+import { sanitizeManagedGatewayQuota, managedGatewayTokenSavingPolicy, type ManagedGatewayTokenSavingMode } from './managed-gateway-policy.js';
 
 export interface ManagedGatewayModel {
   id: string; name: string; family: string; owned_by: string | null; context_length: number | null; max_output_tokens: number | null;
@@ -22,6 +22,7 @@ export type ManagedGatewayChatEvent =
   | { type: 'tool-call'; id: string; name: string; args: Record<string, unknown> }
   | { type: 'usage'; input_tokens: number | null; output_tokens: number | null; total_tokens: number | null; source: 'gateway-response'; observed_at: string }
   | { type: 'routing'; requested_model: string; selected_model: string; returned_model: string | null; reason: 'selected' | 'authorized-vision-fallback'; upstream_verified: false }
+  | { type: 'token-saving'; policy: ReturnType<typeof managedGatewayTokenSavingPolicy> }
   | { type: 'done'; finish_reason: string; request_id: string; request_sha256: string; raw_tool_results_preserved: true };
 export interface ManagedGatewayClientOptions {
   getApiKey(): string | undefined | Promise<string | undefined>;
@@ -29,6 +30,7 @@ export interface ManagedGatewayClientOptions {
   policy?: ManagedGatewayPolicy;
   /** Host-supplied User settings only. Model input and workspace settings are not authority. */
   modelDeclarations?: unknown;
+  tokenSaving?: ManagedGatewayTokenSavingMode;
   fetch?: typeof globalThis.fetch;
   prepareCombo?(name: string, members: readonly string[], signal?: AbortSignal): Promise<string>;
   validateCombo?(shadowName: string): Promise<boolean>;
@@ -69,6 +71,8 @@ function failure(status: number): ManagedGatewayError {
 export function createManagedGatewayClient(endpoint: ManagedGatewayEndpoint, options: ManagedGatewayClientOptions) {
   const base = routerBaseUrl(endpoint.baseUrl), origin = new URL(base).origin, request = options.fetch ?? globalThis.fetch;
   const declarations = validateManagedGatewayModelDeclarations(options.modelDeclarations);
+  if (options.tokenSaving !== undefined && !['off', 'upstream-rtk'].includes(options.tokenSaving))
+    throw new ManagedGatewayError('GATEWAY_TOKEN_POLICY', 'Choose off or upstream-rtk in User settings.');
   const declarationFingerprint = createHash('sha256').update(JSON.stringify(declarations)).digest('hex');
   async function headers(admin = false): Promise<Record<string, string>> {
     const key = await options.getApiKey(), cookie = admin ? await options.getAdminCookie?.() : undefined;
@@ -158,7 +162,10 @@ export function createManagedGatewayClient(endpoint: ManagedGatewayEndpoint, opt
     // explicitly configured compression; this adapter never replaces evidence.
     const body = JSON.stringify({ ...input, model: selection.id, stream: true, stream_options: { include_usage: true } });
     const digest = createHash('sha256').update(body).digest('hex');
-    const response = await call('/v1/chat/completions', { method: 'POST', signal, headers: { 'content-type': 'application/json' }, body });
+    const tokenSaving = managedGatewayTokenSavingPolicy(input.messages, options.tokenSaving);
+    const response = await call('/v1/chat/completions', { method: 'POST', signal,
+      headers: { 'content-type': 'application/json', 'x-9router-token-saver': tokenSaving.header }, body });
+    yield { type: 'token-saving', policy: tokenSaving };
     if (!(response.headers.get('content-type') ?? '').includes('text/event-stream')) { await response.body?.cancel(); throw new ManagedGatewayError('GATEWAY_PROTOCOL', 'The gateway did not return a streaming response.'); }
     const reader = response.body?.getReader();
     if (!reader) throw new ManagedGatewayError('GATEWAY_PROTOCOL', 'The gateway returned no stream.');

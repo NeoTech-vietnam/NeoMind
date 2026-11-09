@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 const base = process.env.WF_GATEWAY_MODULE_BASE ?? new URL('../dist/', import.meta.url).href;
 const load = name => import(new URL(name, base.endsWith('/') ? base : base + '/').href);
 const { createManagedGatewayClient, validateManagedGatewayModelDeclarations } = await load('managed-gateway-client.js');
-const { sanitizeManagedGatewayQuota, assessManagedGatewayCompression } = await load('managed-gateway-policy.js');
+const { sanitizeManagedGatewayQuota, assessManagedGatewayCompression, managedGatewayTokenSavingPolicy } = await load('managed-gateway-policy.js');
 const { initializeManagedGatewayRoot, managedGatewayPath, MANAGED_GATEWAY_PIN } = await load('managed-gateway-artifact.js');
 const { createManagedGatewayService } = await load('managed-gateway-service.js');
 const sse = (values, chunk = 1, onCancel = () => {}) => {
@@ -30,6 +30,7 @@ function fixture(extra = {}) {
   };
   return { calls, endpoint, client: createManagedGatewayClient(endpoint, { getApiKey: () => 'owned-key', getAdminCookie: () => 'auth_token=owned-cookie', fetch,
     ...(extra.modelDeclarations !== undefined ? { modelDeclarations: extra.modelDeclarations } : {}),
+    ...(extra.tokenSaving !== undefined ? { tokenSaving: extra.tokenSaving } : {}),
     ...(extra.policy ? { policy: extra.policy } : {}), ...(extra.prepareCombo ? { prepareCombo: extra.prepareCombo } : {}), ...(extra.validateCombo ? { validateCombo: extra.validateCombo } : {}) }) };
 }
 const collect = async stream => { const output = []; for await (const value of stream) output.push(value); return output; };
@@ -187,6 +188,24 @@ test('quota unknown and RTK byte observations do not fabricate balances or token
   const good = assessManagedGatewayCompression(raw, 'error: missing semicolon\nassertion failed at case 7\n');
   assert.equal(good.diagnostics_preserved, true); assert.equal(good.raw_evidence_required, true); assert.equal(good.token_savings, 'not-measured');
   assert.equal(assessManagedGatewayCompression(raw, 'all fine').diagnostics_preserved, false);
+  assert.equal(assessManagedGatewayCompression('Acceptance evidence: all scoped cases passed\n', 'summary only').diagnostics_preserved, false);
+});
+
+test('upstream RTK is opt-in and only qualified routine progress can bypass the explicit saver opt-out', async () => {
+  const progress = 'Compiling library_123 v1.0.0\n'.repeat(100), messages = [{ role: 'tool', tool_call_id: 'saved', content: progress }];
+  const ordinary = fixture(); await collect(ordinary.client.chat({ model: 'gh/model', messages }));
+  assert.equal(ordinary.calls.find(call => call.path === '/v1/chat/completions').init.headers['x-9router-token-saver'], 'off');
+  const opted = fixture({ tokenSaving: 'upstream-rtk' }), events = await collect(opted.client.chat({ model: 'gh/model', messages }));
+  const request = opted.calls.find(call => call.path === '/v1/chat/completions').init;
+  assert.equal(request.headers['x-9router-token-saver'], 'on'); assert.deepEqual(JSON.parse(request.body).messages, messages);
+  assert.equal(events.find(event => event.type === 'token-saving').policy.token_savings, 'not-measured');
+  for (const content of [progress + 'main.c:9: error: missing symbol\n', progress + 'assertion failed: actual != expected\n',
+    progress + 'Acceptance: all cases passed; evidence saved\n', 'ordinary source code that must remain complete\n'.repeat(30)]) {
+    const guarded = fixture({ tokenSaving: 'upstream-rtk' }); await collect(guarded.client.chat({ model: 'gh/model', messages: [{ ...messages[0], content }] }));
+    assert.equal(guarded.calls.find(call => call.path === '/v1/chat/completions').init.headers['x-9router-token-saver'], 'off');
+  }
+  assert.equal(managedGatewayTokenSavingPolicy([{ role: 'tool', content: [{ type: 'image_url', image_url: { url: 'data:unchanged' } }] }], 'upstream-rtk').header, 'off');
+  assert.throws(() => fixture({ tokenSaving: 'guessed' }), error => error.code === 'GATEWAY_TOKEN_POLICY');
 });
 
 test('private root refuses repository paths and adoption of existing unowned data', t => {

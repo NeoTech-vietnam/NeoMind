@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 const require = createRequire(import.meta.url);
@@ -29,7 +29,7 @@ function fixture(t) {
   const observer = createInstalledEntryObserver(vscode, { nativeInstalledEntry: true, repository, workspace, installedProduct, evidence: base }, {
     requireTrustedFixture() { calls.trust++; }, write(file, value) { outputs.push({ file, value }); }, async importRuntime(url) { imported.push(url); return {
       createRuntimeInfo() { return info; },
-      requestListForMonitor(root) { assert.equal(resolve(root), resolve(workspace)); calls.snapshot++; return { requests: [{ workflow_id: 'real-reader-fixture', accepted: false,
+      requestListForMonitor(root) { assert.equal(realpathSync.native(root), realpathSync.native(workspace)); calls.snapshot++; return { requests: [{ workflow_id: 'real-reader-fixture', accepted: false,
         artifacts: [{ path: 'product.c' }], evidence: [], stages: [{ id: 'coding', state: 'pending' }] }] }; },
     }; } });
   return { ...calls, calls, base, repository, runtimeRoot, extensionRoot, workspace, installedProduct, settings, outputs, imported, entry, vscode, observer, info };
@@ -37,7 +37,7 @@ function fixture(t) {
 test('installed observer uses the exact active product and global runtime, imports only installed code, and snapshots read-only artifacts', async t => {
   const f = fixture(t), value = await f.observer.inspect();
   assert.equal(value.active, true); assert.equal(value.entry, 'installed-vsix'); assert.equal(value.backend_registration, false); assert.equal(value.model_calls, 0);
-  assert.equal(f.calls.activation, 1); assert.deepEqual(f.imported, [pathToFileURL(join(f.runtimeRoot, 'dist/index.js')).href]);
+  assert.equal(f.calls.activation, 1); assert.deepEqual(f.imported, [pathToFileURL(join(realpathSync.native(f.runtimeRoot), 'dist/index.js')).href]);
   const result = await f.observer.snapshot('final'); assert.equal(result.observed, true);
   assert.equal(f.calls.activation, 1); assert.equal(f.calls.snapshot, 1); assert.equal(f.outputs[0].value.snapshot.requests[0].accepted, false);
   assert.equal(f.outputs[0].value.files[0].bytes, readFileSync(join(f.workspace, 'product.c')).length);

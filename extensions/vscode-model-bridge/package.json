@@ -1375,6 +1375,16 @@
             }
           },
           "description": "User-approved full canonical native package sources with immutable Git commit and exact reviewed file inventory. Read only from User settings; workspace overrides are ignored. Empty disables remote full-package preparation. Packages use owned workspace chat.pluginLocations registration; no private native install cache or global security settings are changed. MCP tool grants remain separately approved. Explicit User disable/remove is retained."
+        },
+        "workforce.gateway.tokenSaving": {
+          "type": "string",
+          "scope": "machine",
+          "enum": [
+            "off",
+            "upstream-rtk"
+          ],
+          "default": "off",
+          "description": "Optional pinned upstream RTK for qualified routine progress tool output only. Read from User settings; workspace overrides are ignored. Diagnostics, assertions, acceptance evidence, source text and unfamiliar output remain uncompressed. Active calls retain their policy; pending configuration uses off without blocking the product. Byte savings do not establish billed-token savings."
         }
       }
     },

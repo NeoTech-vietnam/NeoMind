@@ -575,12 +575,15 @@ test('CLI hooks use each native response schema and CLI gates work without hooks
   );
 });
 
-test('MCP performs a real stdio handshake, discovery, record mutation and core gate validation', async (t) => {
+test('explicit historical MCP API performs real stdio discovery, record mutation and core gate validation', async (t) => {
   const root = project(t);
   const client = new Client({ name: 'neomind-test', version: '1.0.0' });
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [resolve('dist/cli.js'), 'mcp', '--project', root],
+    // Public CLI MCP intentionally exposes only native status/experience. Keep
+    // historical core coverage through its explicit developer API, not intake.
+    args: ['--input-type=module', '--eval',
+      `import { startMcp } from ${JSON.stringify(new URL('../dist/mcp.js', import.meta.url).href)}; await startMcp(process.argv[1]);`, root],
     stderr: 'pipe',
   });
   await client.connect(transport);

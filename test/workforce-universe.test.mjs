@@ -79,9 +79,9 @@ test('facade active_agents and acceptance revision reach the active UI without i
 
 test('active extension manifest separates native tools from the historical request entry', () => {
   const manifest = JSON.parse(readFileSync(new URL('../extensions/vscode-model-bridge/package.json', import.meta.url), 'utf8'));
-  assert.equal(manifest.name, 'workforce-model-bridge'); assert.equal(manifest.publisher, 'workforce'); assert.equal(manifest.version, '0.12.1');
+  assert.equal(manifest.name, 'workforce-model-bridge'); assert.equal(manifest.publisher, 'workforce'); assert.equal(manifest.version, '0.13.0');
   assert.equal(manifest.engines.vscode, '^1.143.0');
-  assert.deepEqual(manifest.contributes.languageModelTools.map(tool => tool.name), ['workforce_request',
+  assert.deepEqual(manifest.contributes.languageModelTools.map(tool => tool.name), [
     'workforce_native_request', 'workforce_native_role', 'workforce_native_prepare', 'workforce_native_control',
     'workforce_native_capabilities',
     'workforce_native_role_swsd', 'workforce_native_role_p_res', 'workforce_native_role_fnd',

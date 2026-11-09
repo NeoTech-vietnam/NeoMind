@@ -37,10 +37,15 @@ test('actual CLI configures only a validated catalog pointer and does not echo o
   assert.equal(readFileSync(join(root, '.workforce/routing.json'), 'utf8').includes(credential), false);
 });
 
-test('actual CLI rejects incomplete submit and answer protocol before any workflow admission', t => {
+test('actual CLI rejects incomplete submit and hands control to native Local without historical answer admission', t => {
   const root = project(t);
   const submit = invoke(root, 'request', 'submit'); assert.notEqual(submit.status, 0); assert.match(submit.stderr, /--requirement is required/);
   const answer = invoke(root, 'request', 'resume', 'missing-request', '--answer', 'A source path');
-  assert.notEqual(answer.status, 0); assert.match(answer.stderr, /--question-id is required/);
+  assert.equal(answer.status, 0, answer.stderr);
+  const handoff = JSON.parse(answer.stdout);
+  assert.equal(handoff.state, 'native-local-handoff'); assert.equal(handoff.applied, false);
+  assert.equal(handoff.request_key, 'missing-request'); assert.equal(handoff.action, 'resume');
+  assert.match(handoff.next_action, /actual Local chat/);
+  const incomplete = invoke(root, 'request', 'resume'); assert.notEqual(incomplete.status, 0); assert.match(incomplete.stderr, /REQUEST_ID is required/);
   assert.deepEqual(JSON.parse(invoke(root, 'request', 'status').stdout).requests, []);
 });

@@ -68,3 +68,25 @@ test('optional gateway discovery failure cannot remove other native providers or
   assert.deepEqual(await provider.provideLanguageModelChatInformation({ silent: true }), []);
   assert.equal(calls, 0); assert.equal(released, 1);
 });
+
+test('RTK observations contain policy hashes and deferred controls, never raw tool evidence or invented usage', async () => {
+  const { createGatewayChatProvider } = load(); const observed = [], parts = []; let released = 0;
+  const provider = createGatewayChatProvider(vscode, {
+    service: { async acquire() { return { generation: 'owned-generation', tokenSaving: 'off',
+      tokenSavingPolicy: { requested: 'upstream-rtk', effective: 'off', deferred: true, reason: 'active-calls', fingerprint: 'b'.repeat(64),
+        raw: 'SECRET_CONTROL_BODY' }, release() { released++; } }; } },
+    observe(value) { observed.push(value); },
+    client: lease => ({ async *chat() {
+      assert.equal(lease.tokenSaving, 'off');
+      yield { type: 'token-saving', policy: { mode: 'off', header: 'off', reason: 'protected-evidence',
+        raw_tool_results_sha256: 'a'.repeat(64), raw_tool_result_bytes: 1000, raw: 'SECRET_TOOL_BODY', billed_tokens: 9999 } };
+      yield { type: 'text', text: 'Actual provider response.' };
+    } }),
+  });
+  await provider.provideLanguageModelChatResponse({ id: 'exact', capabilities: {} }, [{ role: 1, content: [new Text('x')] }], {},
+    { report: value => parts.push(value) }, { isCancellationRequested: false });
+  assert.equal(released, 1); assert.equal(parts.length, 1); assert.equal(parts[0].value, 'Actual provider response.');
+  assert.equal(observed[0].control.deferred, true); assert.equal(observed[0].policy.token_savings, 'not-measured');
+  assert.equal(observed[0].policy.outbound_compressed_bytes, null);
+  assert.equal(JSON.stringify(observed).includes('SECRET'), false); assert.equal(JSON.stringify(observed).includes('9999'), false);
+});

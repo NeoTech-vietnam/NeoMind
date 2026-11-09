@@ -5,6 +5,7 @@ import { copyFileSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, readF
 import { dirname, isAbsolute, join } from 'node:path';
 import { createManagedGatewayClient, type ManagedGatewayPolicy } from './managed-gateway-client.js';
 import { routerBaseUrl } from './router-probe.js';
+import type { ManagedGatewayTokenSavingMode } from './managed-gateway-policy.js';
 import { gatewayHash, initializeManagedGatewayRoot, managedGatewayPath, ManagedGatewayError,
   readManagedGatewayJson, verifyManagedGatewayArtifact, writeManagedGatewayJson } from './managed-gateway-artifact.js';
 
@@ -316,7 +317,52 @@ if(!files.some(name=>{try{return alive(JSON.parse(fs.readFileSync(path.join(clie
     })().finally(() => preparingCombos.delete(shadow));
     preparingCombos.set(shadow, operation); return operation;
   }
-  return { ensureStarted, acquire, stop, activateArtifact, rollback, prepareCombo, validateCombo,
+  async function configureTokenSaving(mode: ManagedGatewayTokenSavingMode, expectedFingerprint?: string) {
+    if (!['off', 'upstream-rtk'].includes(mode)) throw new ManagedGatewayError('GATEWAY_TOKEN_POLICY', 'Choose off or upstream-rtk in User settings.');
+    const outcome = (effective: ManagedGatewayTokenSavingMode, deferred: boolean, reason: string, fingerprint: string | null) =>
+      ({ requested: mode, effective, deferred, reason, fingerprint, scope: 'routine-progress-only' });
+    const policy = (settings: any) => ({ rtk: settings.rtkEnabled === true,
+      other_savers: ['headroomEnabled', 'cavemanEnabled', 'ponytailEnabled', 'customPromptEnabled', 'pxpipeEnabled'].filter(key => settings[key] === true) });
+    const lockName = 'token-saving-lock.json', lock = managedGatewayPath(root, lockName), token = randomUUID();
+    let ownedLock = false, frozen: any;
+    try {
+      await ensureStarted();
+      const before = policy(await admin('/api/settings')), fingerprint = gatewayHash(JSON.stringify(before));
+      if (expectedFingerprint !== undefined && expectedFingerprint !== fingerprint) return outcome('off', true, 'policy-changed', fingerprint);
+      if (mode === 'upstream-rtk' && before.other_savers.length) return outcome('off', true, 'other-upstream-savers-enabled', fingerprint);
+      if (before.rtk === (mode === 'upstream-rtk')) return outcome(mode, false, 'unchanged', fingerprint);
+      if (leases().length) return outcome('off', true, 'active-calls', fingerprint);
+      if (existsSync(lock)) {
+        const existing = readManagedGatewayJson(root, lockName);
+        if (alive(existing.owner_pid)) return outcome('off', true, 'configuration-in-progress', fingerprint);
+        try { unlinkSync(lock); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      }
+      const candidateName = `token-saving-${token}.candidate`, candidate = managedGatewayPath(root, candidateName);
+      writeManagedGatewayJson(root, candidateName, { schema_version: 1, owner_pid: process.pid, token });
+      try { linkSync(candidate, lock); ownedLock = true; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+      finally { unlinkSync(candidate); }
+      if (!ownedLock) return outcome('off', true, 'configuration-in-progress', fingerprint);
+      const saved = metadata();
+      if (saved?.state !== 'ready' || saved.generation !== endpoint?.generation || leases().length) return outcome('off', true, 'active-calls-or-generation-change', fingerprint);
+      frozen = saved;
+      writeManagedGatewayJson(root, 'service.json', { ...saved, state: 'draining', owner_pid: process.pid, token_saving_control: token });
+      if (leases().length || metadata()?.token_saving_control !== token) return outcome('off', true, 'active-calls-or-generation-change', fingerprint);
+      if (gatewayHash(JSON.stringify(policy(await admin('/api/settings')))) !== fingerprint) return outcome('off', true, 'policy-changed', fingerprint);
+      await admin('/api/settings', { method: 'PATCH', body: JSON.stringify({ rtkEnabled: mode === 'upstream-rtk' }) });
+      const actual = policy(await admin('/api/settings')), after = gatewayHash(JSON.stringify(actual));
+      if (actual.rtk !== (mode === 'upstream-rtk') || mode === 'upstream-rtk' && actual.other_savers.length)
+        return outcome('off', true, 'policy-changed', after);
+      writeManagedGatewayJson(root, 'token-saving.json', { schema_version: 1, mode, fingerprint: after,
+        scope: 'routine-progress-only', raw_evidence_required: true, token_savings: 'not-measured' });
+      return outcome(mode, false, 'configured', after);
+    } catch { return outcome('off', true, 'optional-configuration-unavailable', null); }
+    finally {
+      if (frozen && metadata()?.token_saving_control === token) { try { writeManagedGatewayJson(root, 'service.json', frozen); } catch { /* Disk failure is not a permission to replay inference. */ } }
+      if (ownedLock) { try { if (readManagedGatewayJson(root, lockName).token === token) unlinkSync(lock); } catch {} }
+    }
+  }
+  return { ensureStarted, acquire, stop, activateArtifact, rollback, prepareCombo, validateCombo, configureTokenSaving,
     status: () => { const saved = metadata(); return { state: ['starting', 'ready', 'draining', 'stopped'].includes(saved?.state) ? saved.state : 'stopped',
       generation: typeof saved?.generation === 'string' && /^[a-f0-9-]{36}$/.test(saved.generation) ? saved.generation : null,
       artifact: typeof saved?.artifact === 'string' && /^9router-[0-9.a-z-]+$/.test(saved.artifact) ? saved.artifact : null,

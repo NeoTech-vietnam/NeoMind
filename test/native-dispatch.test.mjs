@@ -286,7 +286,6 @@ test('legacy dispatch remains sanitized when explicitly invoked but is not contr
   const contribution = manifest.contributes.languageModelTools.find(tool => tool.name === TOOL_NAME);
   assert.equal(contribution, undefined, 'Legacy assignment dispatch is not contributed to new Local chats.');
   assert.deepEqual(manifest.contributes.languageModelTools.map(tool => tool.name), [
-    'workforce_request', // Historical request compatibility remains separate.
     'workforce_native_request', 'workforce_native_role', 'workforce_native_prepare', 'workforce_native_control',
     'workforce_native_capabilities',
     'workforce_native_role_swsd', 'workforce_native_role_p_res', 'workforce_native_role_fnd',
