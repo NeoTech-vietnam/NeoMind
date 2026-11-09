@@ -9,6 +9,14 @@ const canonical = value => value === null || typeof value !== 'object' ? JSON.st
 const same = (a, b) => canonical(a) === canonical(b);
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 function failure(code) { const error = new Error(code); error.code = code; throw error; }
+function booleanMap(value) {
+  let entries;
+  try { if (object(value)) entries = Object.entries(value); } catch { /* A revoked/invalid host view is not configuration authority. */ }
+  if (!entries || entries.some(([, enabled]) => typeof enabled !== 'boolean')) failure('NATIVE_PACKAGE_CONFIGURATION_INVALID');
+  // VS Code's effective configuration is a read-only Proxy. It is not
+  // structured-cloneable; copy only its validated primitive map entries.
+  return Object.fromEntries(entries);
+}
 // A User setting is shared across open roots in this extension host. Serialize
 // our own map updates; a backend synchronous lock is never held across await.
 let userWrites = Promise.resolve();
@@ -31,9 +39,8 @@ function createNativePluginPackageHost(vscode, api, workspaceRoot, options = {})
     if (config.get('plugins.enabled') === false) failure('NATIVE_PACKAGE_PLUGINS_DISABLED');
     // Installed VS Code declares MACHINE scope and discovery reads getValue
     // without a resource. Workspace/folder values cannot install a plugin.
-    const own = inspected.globalValue ?? {}, effective = config.get('pluginLocations') ?? {};
-    if (!object(own) || !object(effective) || Object.values(own).some(value => typeof value !== 'boolean')) failure('NATIVE_PACKAGE_CONFIGURATION_INVALID');
-    return { config, own: structuredClone(own), effective: structuredClone(effective),
+    const own = booleanMap(inspected.globalValue ?? {}), effective = booleanMap(config.get('pluginLocations') ?? {});
+    return { config, own, effective,
       target: vscode.ConfigurationTarget.Global, scope: 'machine-user' };
   }
   const nativeKey = receipt => path.resolve(root, receipt.location).replaceAll('\\', '/');

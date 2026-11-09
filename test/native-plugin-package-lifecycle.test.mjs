@@ -70,6 +70,33 @@ test('native machine scope uses one absolute User key and ignores workspace and 
   await host.control(f.receipt.id, 'enable'); assert.equal(own[f.receipt.registration_key], true); assert.equal(own['./authored-single-folder'], true);
   await host.control(f.receipt.id, 'remove'); assert.equal(Object.hasOwn(own, f.receipt.registration_key), false); assert.equal(own['./authored-single-folder'], true);
 });
+
+test('actual-style noncloneable configuration proxies support Manage status and owned registration through validated plain boolean maps', async t => {
+  const f = fixture(t); let writes = 0;
+  const proxy = map => new Proxy(map, {});
+  assert.throws(() => structuredClone(proxy(f.own)), { name: 'DataCloneError' });
+  f.vscode.workspace.getConfiguration = (section, resource) => {
+    assert.equal(section, 'chat'); assert.equal(resource, undefined);
+    return { inspect: () => ({ globalValue: proxy(f.own) }), get: key => key === 'plugins.enabled' ? true : proxy(f.own),
+      async update(key, next, target) { assert.equal(key, 'pluginLocations'); assert.equal(target, 1);
+        assert.doesNotThrow(() => structuredClone(next)); f.setOwn(next); writes++; } };
+  };
+  let picks = 0;
+  f.vscode.window = { async showQuickPick(rows) { picks++; return typeof rows[0] === 'string' ? 'Enable' : rows[0]; }, showInformationMessage() {} };
+  await f.host.manage(); assert.equal(picks, 2); assert.equal(writes, 1);
+  assert.equal(f.host.status()[0].observed_user_registration, true);
+  assert.equal(f.own[f.receipt.registration_key], true); assert.equal(f.own['./authored-package'], true);
+});
+
+test('configuration proxy values must still be booleans and malformed settings are rejected without copying their content', async t => {
+  const f = fixture(t);
+  f.vscode.workspace.getConfiguration = () => ({ inspect: () => ({ globalValue: f.own }),
+    get: key => key === 'plugins.enabled' ? true : new Proxy({ '/invalid': { secret: 'PRIVATE_PROXY_VALUE' } }, {}) });
+  await assert.rejects(f.host.control(f.receipt.id, 'enable'), error => {
+    assert.equal(error.code, 'NATIVE_PACKAGE_CONFIGURATION_INVALID'); assert.doesNotMatch(error.message, /PRIVATE_PROXY_VALUE/); return true;
+  });
+  assert.equal(f.writes, 0); assert.deepEqual(api.readNativeCapabilityPendingControls(f.root, 'plugin:'), []);
+});
 test('native registration owns only its absolute machine User key, preserves external entries and never claims native loading from configuration', async t => {
   const f = fixture(t), result = await f.host.control(f.receipt.id, 'enable');
   assert.equal(result.state, 'configuration-observed'); assert.equal(result.loaded, 'not-observed'); assert.equal(result.registration, 'owned-user-plugin-location');
