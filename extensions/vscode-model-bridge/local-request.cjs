@@ -13,6 +13,9 @@ const editorRecoveryIssue = error => {
     NATIVE_REPAIR_ALLOWANCE_EXHAUSTED: 'The configured implementation repair allowance is spent. Retained products and findings were preserved; no new worker was started.',
     EDITOR_OWNERSHIP_CHANGED: 'A newer controller owns the retained request. This earlier call did not change its current work or acceptance.',
     NATIVE_CHECK_CANCELLED: 'The checker was explicitly cancelled. Its actual result and products were retained; editor recovery did not restart it.',
+    NATIVE_CANCELLED_EFFECTS_UNCONFIRMED: 'The cancelled native call does not retain a bound, unchanged ended outcome. Existing work was preserved; no call was replayed.',
+    NATIVE_CANCELLED_INPUTS_CHANGED: 'Products, inputs or selected guidance changed after the cancelled native call. Retained work needs reconciliation before explicit continuation.',
+    NATIVE_CANCELLED_ROLE_RECONCILIATION_REQUIRED: 'Explicit native-call continuation requires an unfinished observed role and no started checks. Existing results were retained; no work was replayed.',
   };
   return Object.hasOwn(messages, error?.code) ? issue(error.code,
     error.code === 'NATIVE_REPAIR_ALLOWANCE_EXHAUSTED' ? 'product-repair' : 'interruption', messages[error.code]) : undefined;

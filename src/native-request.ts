@@ -102,7 +102,8 @@ interface State {
   interruption?: NativeInterruption;
   interruption_history?: NativeInterruption[];
   editor_generation?: number;
-  editor_recovery?: { generation: number; interruption_at: string; mode: 'roles' | 'checks'; status: 'prepared' | 'started'; assignment_ref?: string };
+  editor_recovery?: { generation: number; interruption_at: string; mode: 'roles' | 'checks'; status: 'prepared' | 'started'; assignment_ref?: string;
+    origin?: 'native-cancelled' };
   durable_reconciliation?: { generation: number; executions: string[]; inputs: Fingerprints; membership: string[] };
   accepted_hashes?: Fingerprints;
   final_report_id?: string;
@@ -129,6 +130,9 @@ interface NativeInterruption {
   at: string;
   /** Host-only, captured after actual native promises/check processes drained. */
   editor_checkpoint?: { generation: number; effects_hash: string; inputs: Fingerprints; membership: string[] };
+  /** An explicit continuation of an observed native cancellation makes no
+   * claim about whether an editor reload or a caller caused that outcome. */
+  native_checkpoint?: { generation: number; effects_hash: string; inputs: Fingerprints; membership: string[] };
 }
 const requestPattern = /^[A-Z][A-Z0-9-]{1,100}-KNW-\d{4,}$/;
 const opaque = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{8,160}$/.test(value);
@@ -863,7 +867,7 @@ export function getNativeRequestByKey(root: string, requestKey: string) {
 
 /** A checkpoint is evidence of a settled host channel, not an inference that a
  * missing editor or process must have stopped. No model supplies this proof. */
-function editorEffectsHash(root: string, state: State): string | undefined {
+function editorEffectsHash(root: string, state: State, verifyResultRecords = false): string | undefined {
   try {
     if (!state.plan || state.plan_hash !== hash(canonical(state.plan)) || state.reuse_execution?.status === 'running') return;
     const records = new Map(loadRecords(root).map(saved => [saved.meta.id, saved]));
@@ -876,6 +880,22 @@ function editorEffectsHash(root: string, state: State): string | undefined {
       if (job.invocation) {
         if (job.invocation.invoked !== true || !['returned', 'rejected', 'cancelled'].includes(job.invocation.status) ||
             !same(data.native_invocation, job.invocation)) throw new Error('Unconfirmed native end');
+        if (verifyResultRecords) {
+          const text = job.raw_text ?? '';
+          if (job.invocation.agentName !== job.agentName || job.invocation.native_agent_name !== undefined &&
+              job.invocation.native_agent_name !== nativeWorkerProfiles[job.agentName] ||
+              job.result_hash !== hash(canonical({ invocation: job.invocation, text, adapter_error: job.adapter_error })))
+            throw new Error('Native outcome digest changed');
+          const extra = { task_id: state.task_id, native_assignment_ref: job.assignment_ref, native_invocation: job.invocation,
+            professional_report: job.report ?? null, output_hashes: job.baseline, result_state: job.state, adapter_error: job.adapter_error };
+          const canonicalBody = (body: string) => body.replaceAll('\r\n', '\n').trim() + '\n';
+          const expected = { type: job.agentName === 'WF.Reviewer' ? 'review' : 'knowledge', title: `${job.agentName}: ${state.title}`,
+            body: canonicalBody(text || '(No professional report returned.)'), data: extra };
+          const observed = { type: saved.meta.type, title: saved.meta.title, body: canonicalBody(saved.body),
+            data: Object.fromEntries(Object.keys(extra).map(key => [key, data[key]])) };
+          if (data.native_content_hash !== hash(canonical(expected)) || hash(canonical(observed)) !== data.native_content_hash)
+            throw new Error('Native outcome record changed');
+        }
       } else if (data.invoked !== false || !data.dispatch_failure) throw new Error('Unconfirmed preflight');
       return { assignment_ref: job.assignment_ref, state: job.state, result_hash: job.result_hash,
         invocation: job.invocation ?? null, record_sha256: hash(readFileSync(safePath(root, saved.path))) };
@@ -898,14 +918,27 @@ const editorRecoveryMessages = {
   EDITOR_INPUTS_CHANGED: 'Source, products, checker inputs or selected guidance changed after the editor stopped. Retained work needs reconciliation; no evidence was reused or files overwritten.',
   EDITOR_CHECK_RECONCILIATION_REQUIRED: 'The interrupted checker has unresolved non-cancellation findings or stale independent inspections. No check or model was replayed.',
 } as const;
-function editorRecoveryFailure(root: string, state: State, code: keyof typeof editorRecoveryMessages): never {
+const nativeCancellationIssues = {
+  EDITOR_EFFECTS_UNCONFIRMED: { code: 'NATIVE_CANCELLED_EFFECTS_UNCONFIRMED', message: 'The cancelled native call does not retain a bound, unchanged ended outcome. Existing work was preserved; no call was replayed.' },
+  EDITOR_INPUTS_CHANGED: { code: 'NATIVE_CANCELLED_INPUTS_CHANGED', message: 'Products, inputs or selected guidance changed after the cancelled native call. Retained work needs reconciliation before explicit continuation.' },
+  EDITOR_CHECK_RECONCILIATION_REQUIRED: { code: 'NATIVE_CANCELLED_ROLE_RECONCILIATION_REQUIRED', message: 'Explicit native-call continuation requires an unfinished observed role and no started checks. Existing results were retained; no work was replayed.' },
+} as const;
+function editorRecoveryFailure(root: string, state: State, code: keyof typeof editorRecoveryMessages,
+  nativeCancelled = state.editor_recovery?.origin === 'native-cancelled'): never {
   if (state.status !== 'uncertain') { state.status = 'uncertain'; save(root, state); }
-  throw Object.assign(new Error(editorRecoveryMessages[code]), { code });
+  const issue = nativeCancelled ? nativeCancellationIssues[code] : { code, message: editorRecoveryMessages[code] };
+  throw Object.assign(new Error(issue.message), { code: issue.code });
 }
 function assertEditorRecoveryInputs(root: string, state: State): void {
   const recovery = state.editor_recovery, interruption = state.interruption_history?.findLast(item => item.at === recovery?.interruption_at);
-  const checkpoint = interruption?.editor_checkpoint;
+  const nativeCancelled = recovery?.origin === 'native-cancelled';
+  const checkpoint = nativeCancelled
+    ? interruption?.code === 'NATIVE_CALL_CANCELLED' ? interruption.native_checkpoint : undefined
+    : interruption?.code === 'EDITOR_CLOSED' ? interruption.editor_checkpoint : undefined;
   if (!recovery || !checkpoint || recovery.generation !== state.editor_generation || checkpoint.generation + 1 !== recovery.generation)
+    editorRecoveryFailure(root, state, 'EDITOR_EFFECTS_UNCONFIRMED');
+  if (nativeCancelled && checkpoint.effects_hash !== editorEffectsHash(root, { ...state, editor_generation: checkpoint.generation,
+    assignments: state.assignments.filter(job => job.assignment_ref !== recovery.assignment_ref) }, true))
     editorRecoveryFailure(root, state, 'EDITOR_EFFECTS_UNCONFIRMED');
   if (!selectedSkillsCurrent(root, state) || !inputMapsMatch(root, state, checkInputs(root, state), checkpoint.inputs) ||
       !currentMembership(root, state, checkpoint.membership) ||
@@ -933,26 +966,32 @@ function recoverEditorInterruption(root: string, state: State, recheckOnly: bool
       !currentMembership(root, state, checkpoint.membership) ||
       state.preservation_baseline && !matching(root, state, state.preservation_baseline))
     editorRecoveryFailure(root, state, 'EDITOR_INPUTS_CHANGED');
+  return prepareStoppedRecovery(root, state, interruption, checkpoint, recheckOnly);
+}
+
+function prepareStoppedRecovery(root: string, state: State, interruption: NativeInterruption,
+  checkpoint: NonNullable<NativeInterruption['editor_checkpoint']>, recheckOnly: boolean, nativeCancelled = false): boolean {
   const roles: Role[] = ['WF.FnD', 'WF.Reviewer', 'WF.Tester'];
   let unfinished: Role | undefined;
   for (const role of roles) {
     const job = state.assignments.findLast(item => item.agentName === role);
     if (job?.state === 'completed' && job.report?.verdict === 'pass' && !job.report.findings.length) {
       if (!matching(root, state, job.baseline) || !currentMembership(root, state, job.context_membership))
-        editorRecoveryFailure(root, state, 'EDITOR_INPUTS_CHANGED');
+        editorRecoveryFailure(root, state, 'EDITOR_INPUTS_CHANGED', nativeCancelled);
     } else { unfinished = role; break; }
   }
-  if (recheckOnly && unfinished) editorRecoveryFailure(root, state, 'EDITOR_CHECK_RECONCILIATION_REQUIRED');
+  if (recheckOnly && unfinished) editorRecoveryFailure(root, state, 'EDITOR_CHECK_RECONCILIATION_REQUIRED', nativeCancelled);
   const passedCurrent = (check: Check) => check.state === 'passed' && !!check.evidence_id && !!check.result &&
     check.result.exit_code === 0 && !check.result.cancelled && !check.result.timed_out && !check.result.output_limited &&
     !check.result.error && checkCurrent(root, state, check);
   if (!unfinished && (!inspectionsCurrent(root, state) || state.checks.some(check => check.execution_id &&
       (!check.result?.cancelled && !passedCurrent(check)))))
-    editorRecoveryFailure(root, state, 'EDITOR_CHECK_RECONCILIATION_REQUIRED');
+    editorRecoveryFailure(root, state, 'EDITOR_CHECK_RECONCILIATION_REQUIRED', nativeCancelled);
   const generation = (state.editor_generation ?? 0) + 1;
   state.interruption_history ??= []; state.interruption_history.push(structuredClone(interruption));
   state.editor_generation = generation;
-  state.editor_recovery = { generation, interruption_at: interruption.at, mode: unfinished ? 'roles' : 'checks', status: 'prepared' };
+  state.editor_recovery = { generation, interruption_at: interruption.at, mode: unfinished ? 'roles' : 'checks', status: 'prepared',
+    ...(nativeCancelled ? { origin: 'native-cancelled' as const } : {}) };
   if (unfinished) { state.resume_role = unfinished; delete state.resume_checks; }
   else {
     state.checks = state.checks.map((check, index) => {
@@ -966,15 +1005,37 @@ function recoverEditorInterruption(root: string, state: State, recheckOnly: bool
   }
   delete state.interruption;
   state.status = 'working';
-  record(root, state, `editor-recovery-${generation}`, 'knowledge', `${state.title}: reconcile stopped editor`,
-    `The actual editor-owned native channel or checker ended. Continue ${unfinished ?? 'current independent checks'} with unchanged criteria, retained partial products and unchanged repair allowance.\n`,
+  record(root, state, `${nativeCancelled ? 'native-cancelled' : 'editor'}-recovery-${generation}`, 'knowledge',
+    `${state.title}: ${nativeCancelled ? 'explicitly continue cancelled native call' : 'reconcile stopped editor'}`,
+    `${nativeCancelled ? 'An explicit same-request resume follows an observed native cancellation; its origin is not inferred.' : 'The actual editor-owned native channel or checker ended.'} Continue ${unfinished ?? 'current independent checks'} with unchanged criteria, retained partial products and unchanged repair allowance.\n`,
     { editor_generation: generation, interruption, effects_hash: checkpoint.effects_hash, repair_attempt: state.repair_attempts ?? 0 });
   save(root, state); return true;
 }
 
+/** A native cancellation may arrive before any host stop token. Only explicit
+ * Resume authorizes continuation, never an invented editor origin or retry. */
+function recoverNativeCancellation(root: string, state: State): boolean {
+  if (state.status !== 'cancelled' || state.interruption || !state.plan) return false;
+  const prior = state.assignments.at(-1);
+  if (prior?.state !== 'cancelled' || prior.invocation?.status !== 'cancelled' || prior.invocation.invoked !== true)
+    editorRecoveryFailure(root, state, 'EDITOR_EFFECTS_UNCONFIRMED', true);
+  if (state.checks.some(check => check.execution_id))
+    editorRecoveryFailure(root, state, 'EDITOR_CHECK_RECONCILIATION_REQUIRED', true);
+  const effects = editorEffectsHash(root, state, true);
+  if (!effects) editorRecoveryFailure(root, state, 'EDITOR_EFFECTS_UNCONFIRMED', true);
+  if (!matching(root, state, prior.baseline) || prior.agentName !== 'WF.FnD' &&
+      !currentMembership(root, state, prior.context_membership) || !selectedSkillsCurrent(root, state) ||
+      state.preservation_baseline && !matching(root, state, state.preservation_baseline))
+    editorRecoveryFailure(root, state, 'EDITOR_INPUTS_CHANGED', true);
+  const checkpoint = { generation: state.editor_generation ?? 0, effects_hash: effects,
+    inputs: checkInputs(root, state), membership: sourceMembership(root, state) };
+  return prepareStoppedRecovery(root, state, { code: 'NATIVE_CALL_CANCELLED', category: 'cancellation', at: now(),
+    native_checkpoint: checkpoint }, checkpoint, false, true);
+}
+
 function continueNativeRequest(root: string, requestRef: string, automatic: boolean) {
   return locked(root, requestRef, state => {
-    if (!automatic && recoverEditorInterruption(root, state, false)) return view(root, state);
+    if (!automatic && (recoverEditorInterruption(root, state, false) || recoverNativeCancellation(root, state))) return view(root, state);
     if (automatic && (!state.plan || state.interruption || !['findings', 'uncertain'].includes(state.status))) return view(root, state);
     if (!state.plan || state.interruption || !['findings', 'uncertain'].includes(state.status))
       fail('This continuation requires a retained unfinished native role result.');

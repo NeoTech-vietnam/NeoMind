@@ -200,6 +200,74 @@ test('explicit user cancellation does not acquire editor recovery authority', { 
   assert.equal(after.editor_generation, undefined); assert.equal(after.assignments.length, 1);
 });
 
+test('an explicitly resumed native cancellation continues only its unfinished role without guessing editor origin or spending repair allowance', { timeout: 60000 }, async t => {
+  const app = project(t), initialCalls = []; let implementations = 0;
+  const first = app.runner(async (role, _input, token) => {
+    initialCalls.push(role);
+    if (role === 'WF.FnD') {
+      writeFileSync(join(app.root, 'product.txt'), ++implementations === 1 ? 'initial\n' : 'complete\n');
+      return report(implementations === 1 ? 'findings' : 'pass');
+    }
+    if (role === 'WF.Tester') {
+      assert.equal(token.isCancellationRequested, false, 'The actual native callback can cancel before host cancellation is observed');
+      throw Object.assign(new Error('Native callback cancelled independently of the host token'), { name: 'CancellationError' });
+    }
+    return report();
+  });
+  const stopped = await first.run(app.request, opaque), before = app.saved();
+  assert.equal(stopped.status, 'cancelled'); assert.equal(stopped.error.code, 'CANCELLED');
+  assert.equal(before.interruption, undefined, 'An ambiguous native cancellation is not invented editor or caller-stop intent');
+  assert.equal(before.repair_attempts, 1); assert.equal(before.assignments.at(-1).invocation.status, 'cancelled');
+  assert.equal(before.assignments.at(-1).agentName, 'WF.Tester');
+  assert.deepEqual(initialCalls, ['WF.FnD', 'WF.FnD', 'WF.Reviewer', 'WF.Tester']);
+  const stoppedAssignment = before.assignments.at(-1), stoppedBytes = readFileSync(join(app.root, getRecord(app.root, stoppedAssignment.report_record_id).path));
+  const product = readFileSync(join(app.root, 'product.txt')), calls = [];
+  assert.equal(domain.prepareNativeRepair(app.root, before.request_ref).status, 'cancelled', 'Automatic repair does not restart cancelled work');
+  const second = app.runner(async role => { calls.push(role); assert.equal(role, 'WF.Tester'); return report(); });
+  const resumed = await second.control({ request_key: before.request_key, action: 'resume' }, opaque);
+  assert.equal(resumed.status, 'accepted', JSON.stringify(resumed));
+  const after = app.saved();
+  assert.equal(after.request_ref, before.request_ref); assert.equal(after.request_key, before.request_key);
+  assert.deepEqual(calls, ['WF.Tester']); assert.equal(after.assignments.length, before.assignments.length + 1);
+  assert.equal(after.repair_attempts, 1); assert.equal(after.interruption, undefined);
+  assert.equal(after.interruption_history?.some(item => item.code === 'EDITOR_CLOSED') ?? false, false);
+  for (const old of before.assignments) {
+    const kept = after.assignments.find(item => item.assignment_ref === old.assignment_ref);
+    assert.deepEqual(kept, old, 'Actual earlier role outcomes are retained unchanged');
+  }
+  assert.deepEqual(readFileSync(join(app.root, getRecord(app.root, stoppedAssignment.report_record_id).path)), stoppedBytes);
+  assert.deepEqual(readFileSync(join(app.root, 'product.txt')), product);
+  assert.equal(after.checks[0].result.exit_code, 0);
+  assert.equal(loadRecords(app.root).filter(saved => saved.meta.data.kind === 'workforce-request').length, 1);
+});
+
+test('explicit native-cancellation resume rejects changed inputs or an altered outcome record without dispatch', { timeout: 60000 }, async t => {
+  for (const changed of ['inputs', 'outcome']) {
+    const app = project(t), { plan, ...request } = app.request, opened = domain.openNativeRequest(app.root, request);
+    domain.planNativeRequest(app.root, opened.request_ref, plan);
+    for (const role of ['WF.FnD', 'WF.Reviewer', 'WF.Tester']) {
+      const job = domain.nextNativeAssignment(app.root, opened.request_ref);
+      if (role === 'WF.FnD') writeFileSync(join(app.root, 'product.txt'), 'complete\n');
+      domain.recordNativeResult(app.root, { request_ref: opened.request_ref, assignment_ref: job.assignment_ref,
+        invocation: { transport: 'vscode-native', tool: 'runSubagent', invoked: true, agentName: role,
+          native_agent_name: nativeWorkerProfiles[role], host_call_id: randomUUID(), status: role === 'WF.Tester' ? 'cancelled' : 'returned' },
+        ...(role === 'WF.Tester' ? { adapter_error: { code: 'CANCELLED', category: 'cancellation' } } : { raw_result: report() }) });
+    }
+    const before = app.saved(), outcomePath = join(app.root, getRecord(app.root, before.assignments.at(-1).report_record_id).path);
+    if (changed === 'inputs') writeFileSync(join(app.root, 'product.txt'), 'new user product\n');
+    else writeFileSync(outcomePath, readFileSync(outcomePath, 'utf8') + '\nUnbound edited outcome.\n');
+    const productBytes = readFileSync(join(app.root, 'product.txt')), outcomeBytes = readFileSync(outcomePath), calls = [];
+    const runner = app.runner(async role => { calls.push(role); assert.fail('An unavailable retained baseline cannot authorize another native call'); });
+    const result = await runner.control({ request_key: before.request_key, action: 'resume' }, opaque);
+    assert.equal(result.error.code, changed === 'inputs' ? 'NATIVE_CANCELLED_INPUTS_CHANGED' : 'NATIVE_CANCELLED_EFFECTS_UNCONFIRMED');
+    assert.equal(result.status, 'uncertain'); assert.deepEqual(calls, []);
+    const after = app.saved(); assert.equal(after.assignments.length, 3); assert.equal(after.editor_generation, undefined);
+    assert.equal(after.interruption_history, undefined); assert.equal(after.checks[0].execution_id, undefined);
+    assert.deepEqual(readFileSync(join(app.root, 'product.txt')), productBytes);
+    assert.deepEqual(readFileSync(outcomePath), outcomeBytes);
+  }
+});
+
 test('recovered editor generation fences old callbacks and duplicate recovery does not create a second assignment', { timeout: 30000 }, t => {
   const app = project(t), { before, packet } = retainedCancelledRole(app);
   const resumed = domain.resumeNativeRequest(app.root, before.request_ref);
