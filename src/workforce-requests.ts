@@ -14,6 +14,9 @@ import { workForceConnectionProof } from './workforce-connection.js';
 import { controlledFingerprints, verifyControlledTask } from './controlled-acceptance.js';
 import { prepareWorkForceIntake, recordWorkForceAdmission } from './workforce-intake.js';
 import { observeWorkForceClient, workForceClientStatus } from './workforce-clients.js';
+import { nativeRequestListForMonitor, type NativeMonitorOwnership } from './native-request.js';
+import { nativeRoleListForMonitor } from './native-role-job.js';
+import { NativeMonitorSnapshot } from './native-monitor-snapshot.js';
 
 const roleNames: Record<string, string> = { manager: 'WF.PM', requirements: 'WF.SWSD', architect: 'WF.P-RES',
   'component-owner': 'WF.P-RES', developer: 'WF.FnD', reviewer: 'WF.Reviewer', verifier: 'WF.Tester', 'check-executor': 'WF.Tester' };
@@ -177,6 +180,45 @@ export function requestStatus(root: string, id?: string) {
     try { recordWorkForceAdmission(root, run.request_id, run.workflow_id, true); } catch { /* Observation still returns canonical request/artifact state. */ }
     return requestProjection(root, run); }
   return { requests: (controlledStatus(root) as ControlledSnapshot[]).map(run => requestProjection(root, run)) };
+}
+
+/** A view of saved work without admission acknowledgment or runtime dispatch. */
+export function requestListForMonitor(root: string, ownership: NativeMonitorOwnership = {}) {
+  const requests = (controlledStatus(root) as ControlledSnapshot[]).map(run => {
+    const folder = requestFolderForWorkflow(root, run.workflow_id);
+    try {
+      const view = requestProjection(root, run);
+      const evidence = run.checks.filter(check => check.evidence_id).map(check => ({
+        label: check.title, path: check.log_path, passed: check.passed, exit_code: check.exit_code,
+      }));
+      const activeRoles = new Set(view.active_agents.filter(agent => agent.state === 'running' || agent.state === 'starting').map(agent => agent.name));
+      const stages = view.stages.map(stage => {
+        if (stage.state !== 'running') return stage;
+        if (!stage.role || !activeRoles.has(stage.role)) return { ...stage, state: 'uncertain' };
+        if (['unit', 'integration', 'system', 'acceptance'].includes(stage.id)) return {
+          ...stage, state: 'uncertain',
+          rationale: 'The saved journal observes WF.Tester, but does not identify a running check at this level.',
+        };
+        return stage;
+      });
+      const currentAction = run.status === 'uncertain' && !activeRoles.size
+        ? 'Last saved checkpoint. Current execution could not be confirmed.'
+        : view.current_action;
+      return { ...view, current_action: currentAction, stages, evidence, source: 'saved-workforce' as const };
+    } catch {
+      return {
+        workflow_id: run.workflow_id, request_id: run.request_id, request_key: folder?.display_id ?? run.workflow_id,
+        title: run.title.replace(/^Workflow:\s*/i, ''), revision: run.revision, updated_at: run.updated_at,
+        folder: folder ? `.workforce/${folder.directory}` : undefined,
+        status: 'uncertain', current_action: 'Saved evidence could not be read. Refresh after current file changes finish.',
+        accepted: false, active_agents: [], stages: [], artifacts: [], evidence: [], source: 'saved-workforce' as const,
+      };
+    }
+  });
+  const snapshot = new NativeMonitorSnapshot(root);
+  const native = [...nativeRequestListForMonitor(root, ownership, snapshot), ...nativeRoleListForMonitor(root, ownership, snapshot)]
+    .sort((a, b) => String(b.updated_at ?? '').localeCompare(String(a.updated_at ?? '')));
+  return { requests: [...native, ...requests] };
 }
 export async function requestControl(root: string, input: { request_id?: string; workflow_id?: string; action: 'pause' | 'resume' | 'cancel'; answer?: string | null; question_id?: string | null }) {
   const id = input.workflow_id ?? input.request_id; if (!id) throw new Error('Select the saved request to control.');

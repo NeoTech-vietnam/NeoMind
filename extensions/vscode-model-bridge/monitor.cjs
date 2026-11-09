@@ -47,7 +47,7 @@ function renderMonitorHtml({ cspSource, script, style, universe = 'universe.js',
 }
 
 /** Connection enablement is an explicit user action, independent of opening the view. */
-function activateMonitor(vscode, context, loadRuntime, { enabled = () => false } = {}) {
+function activateMonitor(vscode, context, loadRuntime, { enabled = () => false, restore } = {}) {
   let panel, timer, generation = 0, refreshBusy = false, opening = false;
   function stop() {
     generation++;
@@ -56,7 +56,7 @@ function activateMonitor(vscode, context, loadRuntime, { enabled = () => false }
     const current = panel; panel = undefined;
     current?.dispose();
   }
-  async function open() {
+  async function open(forceLegacy = false) {
     if (opening) return;
     opening = true;
     try {
@@ -67,8 +67,15 @@ function activateMonitor(vscode, context, loadRuntime, { enabled = () => false }
       const folder = folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick();
       if (token !== generation || !folder || folder.uri.scheme !== 'file') return;
       const root = realpathSync.native(folder.uri.fsPath);
-      const runtime = await loadRuntime(root), requestRuntime = adaptRuntime(runtime);
+      const runtime = await loadRuntime(root);
       if (token !== generation || !vscode.workspace.isTrusted) return;
+      if (forceLegacy !== true && runtime.nativeLocalContractVersion === 'vscode-native/v1') {
+        const config = runtime.readConfig(root);
+        if (config.platforms.includes('copilot') && config.copilot_integration === 'local') {
+          await vscode.commands.executeCommand('workforce.vModel.open', root); return;
+        }
+      }
+      const requestRuntime = adaptRuntime(runtime);
       const resources = vscode.Uri.file(join(__dirname, 'resources', 'monitor'));
       const current = vscode.window.createWebviewPanel('workforce.monitor', 'WorkForce Universe', vscode.ViewColumn?.One ?? 1,
         { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [resources] });
@@ -259,13 +266,15 @@ function activateMonitor(vscode, context, loadRuntime, { enabled = () => false }
       timer = setInterval(() => { void refresh(); }, 2500);
       timer.unref?.();
       await refresh();
+      if (alive() && restore) void restore(root).then(() => refresh());
     } catch (error) {
       vscode.window.showErrorMessage(error instanceof Error ? error.message : 'WorkForce monitor could not open.');
     } finally { opening = false; }
   }
   const disposable = { dispose: stop };
-  context.subscriptions.push(vscode.commands.registerCommand('workforce.monitor.open', open),
-    vscode.commands.registerCommand('neomind.monitor.open', open),
+  context.subscriptions.push(vscode.commands.registerCommand('workforce.monitor.open', () => open()),
+    vscode.commands.registerCommand('workforce.monitor.legacy', () => open(true)),
+    vscode.commands.registerCommand('neomind.monitor.open', () => open()),
     vscode.workspace.onDidChangeWorkspaceFolders(stop), disposable);
   return disposable;
 }

@@ -92,6 +92,16 @@ export async function runCommand(input: CommandInput): Promise<CommandResult> {
   if (!Number.isSafeInteger(cap) || cap < 1 || cap > 10 * 1024 * 1024)
     throw new Error('Command output limit must be between 1 byte and 10 MiB.');
   const env = commandEnvironment(input.env), started = Date.now();
+  // On Windows, GCC's cc1/cc1plus live below lib/gcc and load DLLs from
+  // the toolchain's bin directory. An absolute gcc.exe alone is insufficient.
+  // Scope this PATH adjustment to the selected compiler's child process.
+  const compiler = input.command[0]!;
+  if (process.platform === 'win32' && isAbsolute(compiler) &&
+      /^(?:[a-z0-9_]+-)*(?:gcc|g\+\+|clang|clang\+\+)(?:-\d+)?\.exe$/i.test(basename(compiler)) && existsSync(compiler)) {
+    const key = Object.keys(env).find(key => key.toUpperCase() === 'PATH') ?? 'PATH';
+    const directory = dirname(compiler);
+    env[key] = [directory, ...(env[key] ?? '').split(delimiter).filter(path => path && resolve(path).toLowerCase() !== resolve(directory).toLowerCase())].join(delimiter);
+  }
   if (input.stdin !== undefined && (typeof input.stdin !== 'string' || Buffer.byteLength(input.stdin) > 1024 * 1024))
     throw new Error('Command input exceeds one MiB.');
   const result: CommandResult = { exit_code: null, signal: null, stdout: '', stderr: '', cancelled: false,

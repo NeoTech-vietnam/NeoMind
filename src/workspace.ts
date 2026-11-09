@@ -173,7 +173,10 @@ export function workspaceContentBytes(content: string): Buffer {
  * This cannot provide kernel CAS against a noncooperating external editor.
  */
 export function replaceWorkspaceFile(root: string, input: {
-  path: string; content: string; expected_hash: string | null; mode?: number; authorize: () => void;
+  path: string; content: string; expected_hash: string | null; mode?: number;
+  /** The second check may exclude this exact host-created staging file from
+   * source membership. This is never supplied by a model or a caller's payload. */
+  authorize: (temporaryPath?: string) => void;
   /** Trusted controller choice, never accepted from a model tool payload. */
   policy?: 'workforce-product';
 }): { sha256: string; previous_hash: string | null } {
@@ -192,7 +195,7 @@ export function replaceWorkspaceFile(root: string, input: {
   try {
     writeFileSync(temporary, next, { flag: 'wx' });
     chmodSync(temporary, mode);
-    input.authorize();
+    input.authorize(temporary);
     expected(root, input.path, input.expected_hash);
     renameSync(temporary, target);
   } catch (error) {

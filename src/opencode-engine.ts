@@ -389,22 +389,34 @@ function authenticatedEnginePayload(path: string, key: Buffer, ref: OpenCodeSupe
   return envelope.payload;
 }
 /** No PID disappearance, current PID reuse or health request can prove shutdown. */
-export async function reconcileOpenCodeOwner(root: string, ref: OpenCodeSupervisionRef): Promise<OpenCodeOwnerReconciliation> {
+export async function reconcileOpenCodeOwner(root: string, ref: OpenCodeSupervisionRef,
+  options: { waitForEnded?: boolean } = {}): Promise<OpenCodeOwnerReconciliation> {
   try {
     const { path, key, spec } = engineProof(root, ref), deadline = Date.now() + 4000;
     let ownerMatches: boolean | undefined;
-    do {
+    const stopped = (): OpenCodeOwnerReconciliation | undefined => {
       const ended = authenticatedEnginePayload(path, key, ref, 'ended');
       if (ended && ended.root === spec.root && (ended.actual_exit_observed === true || ended.engine_never_started === true && ended.engine === null) && ended.process_tree_closed === true &&
           (!ref.engine || ended.engine?.pid === ref.engine.pid && ended.engine?.created_at === ref.engine.created_at && ended.engine?.executable_sha256 === ref.engine.executable_sha256) &&
           (ended.engine === null || Number.isSafeInteger(ended.engine?.pid) && ended.engine.pid > 0 && typeof ended.engine.created_at === 'string' && ended.engine.executable_sha256 === spec.binary.sha256))
         return { state: 'stopped', proof_sha256: hash(enginePrivateFile(join(path, 'ended.json'), 65536)), ...(ownerMatches === undefined ? {} : { owner_matches: ownerMatches }) };
+      return undefined;
+    };
+    do {
+      const ended = stopped(); if (ended) return ended;
       ownerMatches ??= ownerBirth(spec.owner.pid) === spec.owner.created_at;
-      if (ownerMatches) break;
+      // Status reads stay immediate for a live owner. An owned close already
+      // requested stop and may use this existing bounded proof window while the
+      // supervisor drains cleanup writers before publishing its signed result.
+      if (ownerMatches && !options.waitForEnded) break;
       await new Promise(done => setTimeout(done, 50));
     } while (Date.now() < deadline);
     const ready = authenticatedEnginePayload(path, key, ref, 'ready'), observed = ready?.root === spec.root ? ready.engine : undefined;
-    return { state: observed && processBirth(observed.pid, spec.binary.path) === observed.created_at ? 'still_live' : 'uncertain', owner_matches: ownerMatches };
+    const live = observed && processBirth(observed.pid, spec.binary.path) === observed.created_at;
+    // An OS identity query can overlap the final authenticated publication.
+    // Re-read that actual proof instead of treating a vanished PID as shutdown.
+    const ended = stopped(); if (ended) return ended;
+    return { state: live ? 'still_live' : 'uncertain', owner_matches: ownerMatches };
   } catch { return { state: 'uncertain' }; }
 }
 
@@ -590,7 +602,7 @@ async function startSupervisedEngine(root: string, invocationId: string, directo
     if (!exited && child.connected) child.send({ type: 'stop', instance }, () => {});
     let timer: NodeJS.Timeout | undefined;
     await Promise.race([exit, new Promise<void>(done => { timer = setTimeout(done, 10000); })]); clearTimeout(timer);
-    const state = await reconcileOpenCodeOwner(root, ref);
+    const state = await reconcileOpenCodeOwner(root, ref, { waitForEnded: true });
     if (state.state !== 'stopped') throw new Error('OpenCode shutdown has no authenticated ended proof; preserve the invocation for reconciliation.');
   })().finally(async () => { await dispatcher?.destroy().catch(() => {}); });
   const abort = () => { void close().catch(() => {}); };

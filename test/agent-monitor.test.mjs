@@ -48,9 +48,21 @@ function setup(t, overrides = {}, options = {}) {
   });
   t.after(() => { monitor.dispose(); for (const item of context.subscriptions) item.dispose(); rmSync(root, { recursive: true, force: true }); });
   return { root, vscode, runtime, control, calls, open: () => commands.get('workforce.monitor.open')(),
+    openLegacy: () => commands.get('workforce.monitor.legacy')(),
     changeFolders: () => workspaceChanged(), message: value => received(value),
     get panel() { return current; }, get reads() { return readCount; }, get panelCount() { return panelCount; } };
 }
+
+test('the primary entry for a native Local project opens the compact V-model without legacy connection or model catalog UI', async t => {
+  const env = setup(t, { nativeLocalContractVersion: 'vscode-native/v1',
+    readConfig: () => ({ platforms: ['copilot'], copilot_integration: 'local' }) });
+  await env.open();
+  assert.equal(env.panelCount, 0);
+  assert.equal(env.reads, 0);
+  assert.deepEqual(env.calls, [['workforce.vModel.open', realpathSync.native(env.root)]]);
+  await env.openLegacy();
+  assert.equal(env.panelCount, 1, 'historical request access remains explicit');
+});
 
 test('monitor opens a workspace created through a real temp-directory alias using its canonical root', async t => {
   const temporary = mkdtempSync(join(tmpdir(), 'neomind-monitor-alias-'));

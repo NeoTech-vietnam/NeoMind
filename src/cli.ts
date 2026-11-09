@@ -18,6 +18,7 @@ import { rebuildIndex, searchMemory } from './indexing.js';
 import { registerProcedure, listProcedures, discoverProcedureScripts, resolveProcedure,
   reviewProcedure, runProcedure, qualifyProcedure, suspendProcedure } from './procedures.js';
 import { prepareWork, rebuildProcedureIndex } from './procedure-reuse.js';
+import { nativeLocalToolReferences } from './native-local-contract.js';
 import { runPreparedWork } from './work-runtime.js';
 import { openAssignment, assignmentContext, assignmentProgress, assignmentResult } from './assignment-runtime.js';
 import {
@@ -704,7 +705,9 @@ async function main(): Promise<void> {
       const platform = String(o.platform ?? 'codex');
       if (!['codex', 'claude', 'copilot'].includes(platform))
         throw new Error('Unknown hook platform.');
-      const message = `WorkForce ${config.profile} project ${config.project_id}. Use WF.PM to submit the complete requirement once through workforce/request_submit or the WorkForce Request tool. WorkForce owns agent sessions, implementation, independent review/testing and recovery. Follow saved work through request_status; do not implement the same accepted request separately or use legacy assignment credentials. Project instructions live under .workforce. This hook is advisory.`;
+      const message = config.execution_engine === 'opencode' && config.platforms.includes('copilot') && config.copilot_integration === 'local'
+        ? `WorkForce ${config.profile} project ${config.project_id}, vscode-native/v1. Use Local WF.PM and ${nativeLocalToolReferences.request} for one faithful requirement and professional plan. Backend owns native specialist calls, records and actual checks. Reuse ${nativeLocalToolReferences.prepare} before planning; use ${nativeLocalToolReferences.control} for retained results, not a replacement request. Native assignments do not use the historical workflow protocol. See .workforce/guides/native-local.md. This hook is advisory.`
+        : `WorkForce ${config.profile} project ${config.project_id}. Use WF.PM to submit the complete requirement once through workforce/request_submit or the WorkForce Request tool. WorkForce owns agent sessions, implementation, independent review/testing and recovery. Follow saved work through request_status; do not implement the same accepted request separately or use legacy assignment credentials. Project instructions live under .workforce. This hook is advisory.`;
       console.log(
         json(
           event !== 'session-start'

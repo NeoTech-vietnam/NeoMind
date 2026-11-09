@@ -186,7 +186,7 @@ function createControlledPanelHost({ runtime, root, post, alive = () => true, en
 }
 /** Compatibility entry renders the same product surface as Universe. */
 function renderControlledPanel(options) { return require('./monitor.cjs')._test.renderMonitorHtml(options); }
-function activateControlledWorkflows(vscode, context, loadRuntime, { enabled = () => false } = {}) {
+function activateControlledWorkflows(vscode, context, loadRuntime, { enabled = () => false, restore } = {}) {
   let generation = 0;
   const invocationContexts = new WeakMap();
   const invocationOwner = randomUUID();
@@ -204,16 +204,21 @@ function activateControlledWorkflows(vscode, context, loadRuntime, { enabled = (
         openRoot(vscode, root);
       };
       guard();
+      let nativeLocal = false;
       try {
         const profile = join(root, '.github', 'agents', 'workforce-pm.agent.md'), info = lstatSync(profile);
-        if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > 128000 || !samePath(realpathSync.native(profile), profile) ||
-            !/^name:\s*["']?WF\.PM["']?\s*$/m.test(readFileSync(profile, 'utf8')))
+        if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > 128000 || !samePath(realpathSync.native(profile), profile))
           throw new Error('Invalid profile.');
+        const profileText = readFileSync(profile, 'utf8');
+        if (!/^name:\s*["']?WF\.PM["']?\s*$/m.test(profileText)) throw new Error('Invalid profile.');
+        nativeLocal = /^Execution contract: vscode-native\/v1\./m.test(profileText);
       } catch { fail('COORDINATOR_PROFILE_REQUIRED', 'Run workforce update --local for this project and review the WorkForce Coordinator profile before opening it.'); }
       const commands = typeof vscode.commands.getCommands === 'function' ? await vscode.commands.getCommands(true) : [];
       guard();
       if (!['workbench.action.chat.openInSidebar', 'workbench.action.chat.newLocalChat', 'workbench.action.chat.open'].every(command => commands.includes(command)))
         fail('LOCAL_CHAT_UNAVAILABLE', 'This VS Code installation does not expose the Chat view and Local Copilot commands required by WorkForce. Enable or update Copilot Chat; WorkForce will not open another session type.');
+      if (!nativeLocal && restore) await restore(root);
+      guard();
       const permissions = vscode.workspace.getConfiguration('chat', folder.uri);
       if (permissions.get('permissions.default') !== 'autoApprove') {
         try { await permissions.update('permissions.default', 'autoApprove', vscode.ConfigurationTarget.Workspace); }
@@ -260,6 +265,7 @@ function activateControlledWorkflows(vscode, context, loadRuntime, { enabled = (
       try {
         if (token?.isCancellationRequested) fail('REQUEST_CANCELLED', 'The request was cancelled before WorkForce accepted it.');
         const input = inputValue(options?.input), root = openRoot(vscode, input.workspace_folder), runtime = await loadRuntime(root);
+        if (input.action !== 'status' && restore && !token?.isCancellationRequested) await restore(root);
         if (token?.isCancellationRequested) fail('REQUEST_CANCELLED', 'The request was cancelled before WorkForce accepted it.');
         const opaque = options?.toolInvocationToken;
         let invocation;

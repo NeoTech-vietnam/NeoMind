@@ -3,10 +3,15 @@ const { realpathSync, readFileSync } = require('node:fs');
 const { isAbsolute, join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { activateMonitor } = require('./monitor.cjs');
+const { activateVModelPanel } = require('./v-model-panel.cjs');
 const { activatePluginPanel } = require('./plugin-panel.cjs');
 const { activateAutomationPanel } = require('./automation-panel.cjs');
 const { activateControlledWorkflows } = require('./controlled-workflows.cjs');
-let bridge, bridgeRoot, connecting, generation = 0, closing = Promise.resolve();
+const { activateNativeEntry } = require('./native-entry.cjs');
+let bridge, bridgeRoot, connecting, nativeEntry, shutdownPromise, generation = 0, closing = Promise.resolve();
+function shutdown() {
+  return shutdownPromise ??= Promise.all([disable(), nativeEntry?.dispose()]).then(() => {});
+}
 function disable() {
   generation++;
   connecting?.abort(); connecting = undefined;
@@ -18,7 +23,8 @@ function disable() {
   return closing;
 }
 function activate(context) {
-  let enabling = false, approvalWrites = Promise.resolve();
+  shutdownPromise = undefined;
+  let enabling = false, restoration, approvalWrites = Promise.resolve();
   function saveConnection(value) {
     const operation = approvalWrites.then(() => context.workspaceState.update('workforce.connection', value));
     approvalWrites = operation.catch(() => {});
@@ -41,7 +47,18 @@ function activate(context) {
     if (!vscode.workspace.isTrusted || !selectedRoot(root)) throw new Error('WorkForce requires the exact open trusted workspace.');
     return import(pathToFileURL(join(installed(), 'dist/index.js')).href);
   };
-  const connection = { enabled: root => Boolean(bridge) && bridgeRoot === root };
+  function restore(root) {
+    if (bridge || context.workspaceState.get('workforce.connection')?.root !== root) return Promise.resolve();
+    if (restoration) return restoration;
+    const token = generation;
+    restoration = approvalWrites.then(() => {
+      if (token === generation && context.workspaceState.get('workforce.connection')?.root === root) return connect(root, true);
+    }).finally(() => { restoration = undefined; });
+    return restoration;
+  }
+  const connection = { enabled: root => Boolean(bridge) && bridgeRoot === root, restore };
+  nativeEntry = activateNativeEntry(vscode, context, loadRuntime);
+  activateVModelPanel(vscode, context, loadRuntime);
   activateMonitor(vscode, context, loadRuntime, connection);
   activatePluginPanel(vscode, context, loadRuntime);
   activateAutomationPanel(vscode, context, loadRuntime);
@@ -121,9 +138,7 @@ function activate(context) {
       await saveConnection(undefined); await stopped;
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(disable),
-    { dispose: disable },
+    { dispose: shutdown },
   );
-  const saved = context.workspaceState.get('workforce.connection');
-  if (saved?.root) void connect(saved.root, true);
 }
-module.exports = { activate, deactivate: disable };
+module.exports = { activate, deactivate: shutdown };

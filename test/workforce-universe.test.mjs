@@ -1,9 +1,40 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { requestListForMonitor } from '../dist/workforce-requests.js';
 const require = createRequire(import.meta.url);
 const { publicStatus, adaptRuntime } = require('../extensions/vscode-model-bridge/controlled-workflows.cjs');
+
+test('read-only V-model snapshots retain saved evidence without reviving a disconnected stage', t => {
+  const root = mkdtempSync(join(tmpdir(), 'workforce-v-model-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const directory = join(root, '.workforce', 'controlled', 'workflows');
+  mkdirSync(directory, { recursive: true });
+  const workflowId = 'WF-KNW-0001';
+  const journalPath = join(directory, createHash('sha256').update(workflowId).digest('hex') + '.json');
+  const saved = JSON.stringify({
+    schema_version: 1, workflow_id: workflowId, request_id: 'request-1', process_contract: 'workforce/v1',
+    title: 'Workflow: Sample product', status: 'running', phase: 'implementation', revision: 5,
+    updated_at: '2026-11-08T00:00:00Z', attempts: [{ stage: 'implementation', role: 'developer', state: 'running' }],
+    checks: [{ evidence_id: 'WF-EVD-0001', title: 'Check sample', log_path: '.workforce/check.log', passed: true, exit_code: 0 }],
+  });
+  const admissionPath = join(directory, '..', 'request-admissions.json');
+  const admission = JSON.stringify({ schema_version: 1, entries: [] });
+  writeFileSync(journalPath, saved);
+  writeFileSync(admissionPath, admission);
+
+  const [request] = requestListForMonitor(root).requests;
+  assert.equal(request.workflow_id, workflowId);
+  assert.equal(request.status, 'uncertain');
+  assert.equal(request.stages.find(stage => stage.id === 'coding').state, 'uncertain');
+  assert.deepEqual(request.evidence, [{ label: 'Check sample', path: '.workforce/check.log', passed: true, exit_code: 0 }]);
+  assert.equal(readFileSync(journalPath, 'utf8'), saved);
+  assert.equal(readFileSync(admissionPath, 'utf8'), admission);
+});
 
 test('request facade adaptation preserves durable execution identities while using the new request APIs', async () => {
   const calls = [], raw = { workflow_id: 'legacy-workflow', request_id: 'uuid', epoch_id: 'epoch', requirement: 'Build it' };
@@ -46,11 +77,15 @@ test('facade active_agents and acceptance revision reach the active UI without i
   assert.equal('events' in value, false);
 });
 
-test('active extension manifest exposes one request tool and the WorkForce entry points', () => {
+test('active extension manifest separates native tools from the historical request entry', () => {
   const manifest = JSON.parse(readFileSync(new URL('../extensions/vscode-model-bridge/package.json', import.meta.url), 'utf8'));
   assert.equal(manifest.name, 'workforce-model-bridge'); assert.equal(manifest.publisher, 'workforce'); assert.equal(manifest.version, '0.12.1');
   assert.equal(manifest.engines.vscode, '^1.143.0');
-  assert.deepEqual(manifest.contributes.languageModelTools.map(tool => tool.name), ['workforce_request']);
+  assert.deepEqual(manifest.contributes.languageModelTools.map(tool => tool.name), ['workforce_request',
+    'workforce_native_request', 'workforce_native_role', 'workforce_native_prepare', 'workforce_native_control',
+    'workforce_native_role_swsd', 'workforce_native_role_p_res', 'workforce_native_role_fnd',
+    'workforce_native_role_reviewer', 'workforce_native_role_tester']);
   assert.ok(manifest.contributes.commands.some(command => command.command === 'workforce.pm.openLocal'));
+  assert.ok(manifest.contributes.commands.some(command => command.command === 'workforce.monitor.legacy'));
   assert.equal(manifest.contributes.commands.some(command => command.command.includes('workflows.open')), false);
 });

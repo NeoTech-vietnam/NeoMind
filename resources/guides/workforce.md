@@ -1,5 +1,7 @@
 # WorkForce
 
+Execution scope: historical `workforce/v1` with the OpenCode transport. A `vscode-native/v1` Local profile follows `guides/native-local.md` and `guides/native-reuse.md`; it does not use this page's connection, routing or session procedure. Existing historical records keep their original contract.
+
 WorkForce receives ordinary requests from Copilot Local, Codex or Universe. The runtime owns worker sessions, engineering state and tool bindings. Workers use the pinned OpenCode engine and the configured custom endpoint model aliases. Client chat models remain independent of worker routing.
 
 ## Give work

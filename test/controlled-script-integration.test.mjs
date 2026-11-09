@@ -1,5 +1,6 @@
 // Historical mode fixtures explicitly retain the pre-WorkForce engine and storage root.
 import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
+import { ProgressWaitError, waitForProgress } from './helpers/progress-wait.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -289,16 +290,23 @@ function diagnosticState(env, id, run = controlledStatus(env.root, id)) {
     progress: env.progress.slice(-32) };
 }
 async function until(env, id, predicate) {
-  const deadline = Date.now() + 90000;
-  do {
-    const run = controlledStatus(env.root, id);
-    if (predicate(run)) return run;
-    if (['blocked', 'uncertain'].includes(run.status)) assert.fail(JSON.stringify(diagnosticState(env, id, run)));
-    // Status verifies signed receipts and reads durable files. Polling every
-    // 20ms competes with those same persistence operations on Windows.
-    await delay(200);
-  } while (Date.now() < deadline);
-  assert.fail(`Controlled direct script did not reach its expected durable state: ${JSON.stringify(diagnosticState(env, id))}`);
+  try {
+    return await waitForProgress({
+      // This exact backend journal is a scheduling hint only. A matching or
+      // failed state is always rechecked through the authoritative status API.
+      probe: () => JSON.parse(readFileSync(safePath(env.root, `.neomind/controlled/workflows/${hash(id)}.json`), 'utf8')),
+      inspect: () => controlledStatus(env.root, id), accept: predicate,
+      reject: run => ['blocked', 'uncertain'].includes(run.status),
+      progress: run => JSON.stringify({ phase: run.phase, status: run.status, model_rounds: env.progress.length,
+        attempts: run.attempts.map(item => [item.id, item.stage, item.state, item.report?.outcome]),
+        executions: (run.local_executions ?? []).map(item => [item.id, item.state, item.passed]),
+        checks: run.checks.map(item => [item.title, item.negative, item.passed, item.exit_code]),
+        capture_retry: run.pending_plan?.capture_failure?.retry_started }),
+    });
+  } catch (error) {
+    if (!(error instanceof ProgressWaitError)) throw error;
+    assert.fail(`Controlled direct script did not reach its expected durable state (${error.code}): ${JSON.stringify(diagnosticState(env, id))}`);
+  }
 }
 const savedResult = (env, entry) => JSON.parse(readFileSync(safePath(env.root, entry.result_path), 'utf8'));
 const savedContract = (env, run) => JSON.parse(readFileSync(safePath(env.root,

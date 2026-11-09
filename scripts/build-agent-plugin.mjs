@@ -69,8 +69,8 @@ function dependencyNotices(inputs) {
 export async function buildAgentPlugin({ out = canonicalOutput, check = false } = {}) {
   if (!isAbsolute(out)) throw new Error('--out must be an absolute directory.');
   const { build } = await import('esbuild');
-  const [{ workforceClientInstructions }, { agentProfiles, workforceProfileFileId }] = await Promise.all([
-    import('../dist/adapters.js'), import('../dist/agent-profiles.js'),
+  const [{ workforceNativeClientInstructions }, { nativeLocalProfile, nativeLocalWorkerProfile, nativeRoles, nativeSpecialists }] = await Promise.all([
+    import('../dist/adapters.js'), import('../dist/native-local-contract.js'),
   ]);
   const bundled = await build({ absWorkingDir: repository, entryPoints: ['scripts/agent-plugin/entry.mjs'],
     outfile: 'workforce-plugin.mjs', bundle: true, write: false, metafile: true, platform: 'node', format: 'esm', target: 'node24',
@@ -90,12 +90,12 @@ export async function buildAgentPlugin({ out = canonicalOutput, check = false } 
   files.set('LICENSE', readText(join(repository, 'LICENSE')));
   files.set('THIRD_PARTY_NOTICES.md', dependencyNotices(bundled.metafile.inputs));
   const connectionInstructions = readText(join(templateRoot, 'connection-instructions.md')).trim();
-  const instructions = workforceClientInstructions('copilot').replaceAll('\r\n', '\n') + '\n' + connectionInstructions + '\n';
-  for (const profile of agentProfiles) {
-    const tools = profile.id === 'coordinator' ? ['workforce/*'] : ['workforce/request_status'];
-    files.set(`com.github.copilot/agents/workforce-${workforceProfileFileId(profile.id)}.agent.md`,
-      `---\nname: ${JSON.stringify(profile.name)}\ndescription: ${JSON.stringify(profile.duty)}\ntools: ${JSON.stringify(tools)}\nagents: []\nuser-invocable: ${profile.id === 'coordinator'}\n---\n\n${instructions}\nRuntime responsibility: ${profile.name}. ${profile.procedure}\n`);
+  const instructions = workforceNativeClientInstructions('copilot').replaceAll('\r\n', '\n') + '\n' + connectionInstructions + '\n';
+  for (const role of nativeRoles) {
+    files.set(`com.github.copilot/agents/workforce-${role.slice(3).toLowerCase()}.agent.md`, nativeLocalProfile(role));
   }
+  for (const role of nativeSpecialists)
+    files.set(`com.github.copilot/agents/workforce-worker-${role.slice(3).toLowerCase()}.agent.md`, nativeLocalWorkerProfile(role));
   files.set('skills/workforce-request/SKILL.md', `---\nname: workforce-request\ndescription: Submit an engineering request to WorkForce, inspect its saved deliverables, or control the same request from Copilot Local.\n---\n\n${instructions}`);
   for (const skill of ['workforce-plugin-status', 'workforce-plugin-connection'])
     files.set(`skills/${skill}/SKILL.md`, readText(join(templateRoot, 'skills', skill, 'SKILL.md')));
@@ -115,7 +115,7 @@ export async function buildAgentPlugin({ out = canonicalOutput, check = false } 
     }
   }
   return { plugin: 'workforce', version: pluginVersion, path: target, checked: check,
-    files: [...files.keys()], agents: agentProfiles.map(profile => profile.name), skills: 3, mcp_servers: ['workforce'],
+    files: [...files.keys()], agents: nativeRoles, skills: 3, mcp_servers: ['workforce'],
     runtime_bundled: false, npm_install_required_in_distribution: false };
 }
 

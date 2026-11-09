@@ -8,6 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ListRootsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { initialize } from '../dist/storage.js';
+import { nativeLocalProfile, nativeLocalWorkerProfile, nativeRoles, nativeSpecialists } from '../dist/native-local-contract.js';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const distribution = join(repository, 'agent-plugin');
@@ -23,7 +24,14 @@ test('Git plugin contains portable entrypoints and the required profiles, skills
   assert.deepEqual(Object.keys(mcp.mcpServers), ['workforce']);
   assert.deepEqual(mcp.mcpServers.workforce, { type: 'stdio', command: 'node', args: ['${PLUGIN_ROOT}/bin/workforce-plugin.mjs'] });
   assert.doesNotMatch(JSON.stringify(mcp.mcpServers), /[A-Za-z]:[\\/]|workspaceFolder|apiKey|authorization|claim_token/);
-  assert.equal(readdirSync(join(distribution, 'com.github.copilot/agents')).filter(name => name.endsWith('.agent.md')).length, 6);
+  assert.equal(readdirSync(join(distribution, 'com.github.copilot/agents')).filter(name => name.endsWith('.agent.md')).length, 11);
+  for (const role of nativeRoles) assert.equal(readFileSync(join(distribution,
+    `com.github.copilot/agents/workforce-${role.slice(3).toLowerCase()}.agent.md`), 'utf8'), nativeLocalProfile(role));
+  for (const role of nativeSpecialists) assert.equal(readFileSync(join(distribution,
+    `com.github.copilot/agents/workforce-worker-${role.slice(3).toLowerCase()}.agent.md`), 'utf8'), nativeLocalWorkerProfile(role));
+  const requestSkill = readFileSync(join(distribution, 'skills/workforce-request/SKILL.md'), 'utf8');
+  assert.match(requestSkill, /vscode-native\/v1/);
+  assert.doesNotMatch(requestSkill, /OpenCode workers|top-models|worker-models|claim_token/);
   assert.deepEqual(readdirSync(join(distribution, 'skills')).sort(), ['workforce-plugin-connection', 'workforce-plugin-status', 'workforce-request']);
   const notices = readFileSync(join(distribution, 'THIRD_PARTY_NOTICES.md'), 'utf8');
   assert.match(notices, /@modelcontextprotocol\/sdk@/);

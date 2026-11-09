@@ -284,7 +284,12 @@ test('legacy dispatch remains sanitized when explicitly invoked but is not contr
   assert.equal(JSON.stringify(result).includes(manager.token), false);
   const manifest = require('../extensions/vscode-model-bridge/package.json');
   const contribution = manifest.contributes.languageModelTools.find(tool => tool.name === TOOL_NAME);
-  assert.equal(contribution, undefined, 'New Local chats have only the backend-owned WorkForce request tool.');
-  assert.deepEqual(manifest.contributes.languageModelTools.map(tool => tool.name), ['workforce_request']);
+  assert.equal(contribution, undefined, 'Legacy assignment dispatch is not contributed to new Local chats.');
+  assert.deepEqual(manifest.contributes.languageModelTools.map(tool => tool.name), [
+    'workforce_request', // Historical request compatibility remains separate.
+    'workforce_native_request', 'workforce_native_role', 'workforce_native_prepare', 'workforce_native_control',
+    'workforce_native_role_swsd', 'workforce_native_role_p_res', 'workforce_native_role_fnd',
+    'workforce_native_role_reviewer', 'workforce_native_role_tester',
+  ]);
   assert.equal(manifest.files.includes('native-dispatch.cjs'), true);
 });

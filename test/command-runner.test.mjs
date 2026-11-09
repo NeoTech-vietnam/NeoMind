@@ -15,6 +15,19 @@ function workspace(t) {
   return root;
 }
 
+test('an absolute Windows GCC toolchain locates its own compiler DLLs without global PATH changes', {
+  skip: process.platform !== 'win32' || !existsSync('C:/msys64/mingw64/bin/gcc.exe'),
+}, async t => {
+  const root = workspace(t), before = process.env.PATH ?? process.env.Path;
+  writeFileSync(join(root, 'hello.c'), 'int main(void) { return 0; }\n');
+  for (const compiler of ['gcc.exe', 'g++.exe']) {
+    const result = await runCommand({ cwd: root, command: [`C:/msys64/mingw64/bin/${compiler}`, '-fsyntax-only', 'hello.c'],
+      env: { PATH: join(process.env.SystemRoot ?? 'C:/Windows', 'System32') } });
+    assert.equal(result.exit_code, 0, `${compiler}: ${result.stderr || result.error || 'compiler subprocess failed without diagnostics'}`);
+  }
+  assert.equal(process.env.PATH ?? process.env.Path, before);
+});
+
 test('command runner captures argv without a shell and filters inherited environment', async t => {
   const root = workspace(t), key = 'NEOMIND_RUNNER_PRIVATE_TEST';
   const previous = process.env[key]; process.env[key] = 'must-not-reach-child';

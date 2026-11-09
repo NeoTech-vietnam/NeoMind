@@ -9,15 +9,41 @@ import { packageAgentPlugin } from '../scripts/package-agent-plugin.mjs';
 import { parse as parseYaml } from 'yaml';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { nativeLocalProfile, nativeLocalWorkerProfile, nativeRoles, nativeSpecialists } from '../dist/native-local-contract.js';
 
 const runtime = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-function fixture(t) {
+function fixture(t, nativeLocal = false) {
   const root = mkdtempSync(join(tmpdir(), 'workforce plugin '));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project with spaces'); mkdirSync(project);
-  initialize(project, { platforms: ['copilot'] });
+  initialize(project, { platforms: ['copilot'], ...(nativeLocal ? { copilot_integration: 'local' } : {}) });
   return { root, project, out: join(root, 'plugin with spaces') };
 }
+
+test('a native Local plugin carries the same six selectors, hidden workers and entry contract as the installer', async t => {
+  const { project, out } = fixture(t, true);
+  const before = readFileSync(safePath(project, '.workforce/config.json'));
+  await packageAgentPlugin({ runtime, project, out });
+  for (const role of nativeRoles) {
+    const text = readFileSync(join(out, `com.github.copilot/agents/workforce-${role.slice(3).toLowerCase()}.agent.md`), 'utf8');
+    assert.equal(text, nativeLocalProfile(role));
+    assert.doesNotMatch(text, /workforce\/request_submit|OpenCode workers|top-models|worker-models/);
+    assert.equal(parseYaml(text.split('---')[1])['user-invocable'], true);
+  }
+  for (const role of nativeSpecialists) {
+    const text = readFileSync(join(out, `com.github.copilot/agents/workforce-worker-${role.slice(3).toLowerCase()}.agent.md`), 'utf8');
+    assert.equal(text, nativeLocalWorkerProfile(role));
+    const worker = parseYaml(text.split('---')[1]);
+    assert.equal(worker['user-invocable'], false);
+    assert.deepEqual(worker.agents, []);
+  }
+  assert.equal(readdirSync(join(out, 'com.github.copilot/agents')).length, 11);
+  const skill = readFileSync(join(out, 'skills/workforce-request/SKILL.md'), 'utf8');
+  assert.match(skill, /vscode-native\/v1/); assert.doesNotMatch(skill, /request_submit|claim_token/);
+  const binding = JSON.parse(readFileSync(join(out, 'binding.json')));
+  assert.match(binding.profile_source, /native-local-contract/);
+  assert.deepEqual(readFileSync(safePath(project, '.workforce/config.json')), before);
+});
 function files(root, path = '') {
   return readdirSync(join(root, path), { withFileTypes: true }).flatMap(entry => entry.isDirectory()
     ? files(root, join(path, entry.name)) : [join(path, entry.name)]);

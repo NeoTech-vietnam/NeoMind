@@ -1,0 +1,369 @@
+{
+  "scope": "Bounded golden snapshot vectors: actual pinned package subtree plus required ancestor; not a complete upstream-repository fixture.",
+  "repository": "https://github.com/github/awesome-copilot",
+  "commit": "02466d1eb70b841c90717b0fc2dc9457aa6f606f",
+  "catalog_provenance": {
+    "repository": "https://github.com/github/awesome-copilot",
+    "commit": "02466d1eb70b841c90717b0fc2dc9457aa6f606f",
+    "path": ".github/plugin/marketplace.json",
+    "sha256": "3509977f5245298a16ff2747fc37a9579a00488c3f542800609918037cc11709"
+  },
+  "candidate": {
+    "name": "java-development",
+    "description": "Comprehensive collection of prompts and instructions for Java development including Spring Boot, Quarkus, testing, documentation, and best practices.",
+    "source_path": "plugins/java-development",
+    "files": 25,
+    "bytes": 94863,
+    "skills": [
+      {
+        "path": "plugins/java-development/skills/create-spring-boot-java-project",
+        "entry_bytes": 4622,
+        "files": 13,
+        "bytes": 32723
+      },
+      {
+        "path": "plugins/java-development/skills/java-docs",
+        "entry_bytes": 2087,
+        "files": 1,
+        "bytes": 2087
+      },
+      {
+        "path": "plugins/java-development/skills/java-junit",
+        "entry_bytes": 8417,
+        "files": 3,
+        "bytes": 20859
+      },
+      {
+        "path": "plugins/java-development/skills/java-springboot",
+        "entry_bytes": 4433,
+        "files": 6,
+        "bytes": 37632
+      }
+    ]
+  },
+  "tree": [
+    {
+      "path": "LICENSE",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "89bc5e962c9944cdb050887062afdaaf89be504a",
+      "size": 1059,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/89bc5e962c9944cdb050887062afdaaf89be504a"
+    },
+    {
+      "path": "plugins",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "5a56308e477486f5df77addbef80c3bf85906f63",
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/trees/5a56308e477486f5df77addbef80c3bf85906f63"
+    },
+    {
+      "path": "plugins/java-development",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "56374bc0929ce9c8affe1fb464b48822ffcce845",
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/trees/56374bc0929ce9c8affe1fb464b48822ffcce845"
+    },
+    {
+      "path": "plugins/java-development/README.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c2db42e6cf3c1a162e6606fce74bc8b436a638bd",
+      "size": 1018,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/c2db42e6cf3c1a162e6606fce74bc8b436a638bd"
+    },
+    {
+      "path": "plugins/java-development/plugin.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "604aafa85bef510d3cb3168cf05a4c305b795f25",
+      "size": 544,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/604aafa85bef510d3cb3168cf05a4c305b795f25"
+    },
+    {
+      "path": "plugins/java-development/skills",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "c051c3998a71d9fc84a0e4d9b78bb67fcf545c6b",
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/trees/c051c3998a71d9fc84a0e4d9b78bb67fcf545c6b"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "ca503c21e54db8ce9933bc932da6335008517251",
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/trees/ca503c21e54db8ce9933bc932da6335008517251"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/SKILL.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6da0df4d0d66d167486caa7038fbec17bb67501f",
+      "size": 4622,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/6da0df4d0d66d167486caa7038fbec17bb67501f"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/assets",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "3b9b2e473b3a5b942373a87e922dfc6e74533a30",
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/trees/3b9b2e473b3a5b942373a87e922dfc6e74533a30"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/assets/Dockerfile",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1be84840455557a09544498543cdd8eadc686a39",
+      "size": 2191,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/1be84840455557a09544498543cdd8eadc686a39"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/assets/Dockerfile-gradle",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "45f5ac492451c0c1e8ba01612b0ff48cd146c5d9",
+      "size": 2514,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/45f5ac492451c0c1e8ba01612b0ff48cd146c5d9"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/assets/Dockerfile-native",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5e5796c97538603c809a4c9b1480b3abb3b77031",
+      "size": 1211,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/5e5796c97538603c809a4c9b1480b3abb3b77031"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/assets/Dockerfile-native-gradle",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "16fc2f3d574c979f89db6cda2590b57210eb4330",
+      "size": 1282,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/16fc2f3d574c979f89db6cda2590b57210eb4330"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/references",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "bad2e5759ce36c17e71f3cd49f277a1d9ac45e30",
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/trees/bad2e5759ce36c17e71f3cd49f277a1d9ac45e30"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/references/PROVENANCE.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4464d8b377f6e8136841575ce1421c6b61a16656",
+      "size": 1754,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/4464d8b377f6e8136841575ce1421c6b61a16656"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/references/configuration.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "97947d87a1a9c0ec3d4a6f55553ce5999bb21757",
+      "size": 2219,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/97947d87a1a9c0ec3d4a6f55553ce5999bb21757"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/references/database.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "37e3b05126441e4036683c045823a02b0afe8697",
+      "size": 3511,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/37e3b05126441e4036683c045823a02b0afe8697"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/references/docker.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "99aaf03a35c1de557f226497ca2a45ba0ac4d591",
+      "size": 4503,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/99aaf03a35c1de557f226497ca2a45ba0ac4d591"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/references/logging.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "96371d77b10ad2f381edde9e0203f18ae9ee92d0",
+      "size": 1600,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/96371d77b10ad2f381edde9e0203f18ae9ee92d0"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/references/security.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b1523347c4fca7db03454594f627b922972c2033",
+      "size": 2420,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/b1523347c4fca7db03454594f627b922972c2033"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/references/spring-boot-4.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1b4165e65356e9b98dd1531237ed450f20282ab6",
+      "size": 2202,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/1b4165e65356e9b98dd1531237ed450f20282ab6"
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/references/versions.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3a4bd50c71ab1796d69ebf68949776fa1996154b",
+      "size": 2694,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/3a4bd50c71ab1796d69ebf68949776fa1996154b"
+    },
+    {
+      "path": "plugins/java-development/skills/java-docs",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "0f91310d67a511050c4dd2aecff5aded54191148",
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/trees/0f91310d67a511050c4dd2aecff5aded54191148"
+    },
+    {
+      "path": "plugins/java-development/skills/java-docs/SKILL.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a351277d52923db53d911787abd47d1a198f8d73",
+      "size": 2087,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/a351277d52923db53d911787abd47d1a198f8d73"
+    },
+    {
+      "path": "plugins/java-development/skills/java-junit",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "f71d8d9df9c372d80e34928c381bbe152ff460bf",
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/trees/f71d8d9df9c372d80e34928c381bbe152ff460bf"
+    },
+    {
+      "path": "plugins/java-development/skills/java-junit/SKILL.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "419dc60746db0128f170fe11414e4e8f0b06e180",
+      "size": 8417,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/419dc60746db0128f170fe11414e4e8f0b06e180"
+    },
+    {
+      "path": "plugins/java-development/skills/java-junit/references",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "29cd285d8e1f345b38ba52dc608c26fbe2c92a9f",
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/trees/29cd285d8e1f345b38ba52dc608c26fbe2c92a9f"
+    },
+    {
+      "path": "plugins/java-development/skills/java-junit/references/assertj-and-mockito.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7b9d593fefe4a93a268d7bcba3ee8c95d41a1286",
+      "size": 7533,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/7b9d593fefe4a93a268d7bcba3ee8c95d41a1286"
+    },
+    {
+      "path": "plugins/java-development/skills/java-junit/references/build-setup.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e026780e0df06c8fe5e1bc7799b47e910ce64913",
+      "size": 4909,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/e026780e0df06c8fe5e1bc7799b47e910ce64913"
+    },
+    {
+      "path": "plugins/java-development/skills/java-springboot",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "a607aad8679dc3a252dd05ee44165db980ba5501",
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/trees/a607aad8679dc3a252dd05ee44165db980ba5501"
+    },
+    {
+      "path": "plugins/java-development/skills/java-springboot/SKILL.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3729077eaf60351e7d4d7a46464e6f5d2797bd74",
+      "size": 4433,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/3729077eaf60351e7d4d7a46464e6f5d2797bd74"
+    },
+    {
+      "path": "plugins/java-development/skills/java-springboot/references",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "43c7da18f45a55ae3f86034002877b2f6c7be809",
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/trees/43c7da18f45a55ae3f86034002877b2f6c7be809"
+    },
+    {
+      "path": "plugins/java-development/skills/java-springboot/references/aot-and-startup.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bdebfab601c65bd14bcd6ba8ad1322197872d829",
+      "size": 5475,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/bdebfab601c65bd14bcd6ba8ad1322197872d829"
+    },
+    {
+      "path": "plugins/java-development/skills/java-springboot/references/configuration.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "500624d3e2d0c42c186932658733e2469b7544e4",
+      "size": 5146,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/500624d3e2d0c42c186932658733e2469b7544e4"
+    },
+    {
+      "path": "plugins/java-development/skills/java-springboot/references/data.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e66458facf39cb04df86210da94efef797143bbf",
+      "size": 6013,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/e66458facf39cb04df86210da94efef797143bbf"
+    },
+    {
+      "path": "plugins/java-development/skills/java-springboot/references/messaging-caching.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ecfd728c0c1cd7498105e348610f2d082e983631",
+      "size": 7391,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/ecfd728c0c1cd7498105e348610f2d082e983631"
+    },
+    {
+      "path": "plugins/java-development/skills/java-springboot/references/rest-api.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "69226559eebfd6823659a7ffbb356292d87c43e1",
+      "size": 9174,
+      "url": "https://api.github.com/repos/github/awesome-copilot/git/blobs/69226559eebfd6823659a7ffbb356292d87c43e1"
+    }
+  ],
+  "files": [
+    {
+      "path": "plugins/java-development/plugin.json",
+      "bytes": 544,
+      "sha256": "476b728618cdaacd639a8d3d764261ee7f6325d6895621c122b5c7ebc549e4d6",
+      "content_base64": "ewogICIkc2NoZW1hIjogImh0dHBzOi8vYWdlbnQtcGx1Z2lucy5vcmcvc2NoZW1hcy8xLjAuMC9wbHVnaW4uc2NoZW1hLmpzb24iLAogICJuYW1lIjogImphdmEtZGV2ZWxvcG1lbnQiLAogICJkZXNjcmlwdGlvbiI6ICJDb21wcmVoZW5zaXZlIGNvbGxlY3Rpb24gb2YgcHJvbXB0cyBhbmQgaW5zdHJ1Y3Rpb25zIGZvciBKYXZhIGRldmVsb3BtZW50IGluY2x1ZGluZyBTcHJpbmcgQm9vdCwgUXVhcmt1cywgdGVzdGluZywgZG9jdW1lbnRhdGlvbiwgYW5kIGJlc3QgcHJhY3RpY2VzLiIsCiAgInZlcnNpb24iOiAiMS4wLjAiLAogICJhdXRob3IiOiB7CiAgICAibmFtZSI6ICJBd2Vzb21lIENvcGlsb3QgQ29tbXVuaXR5IgogIH0sCiAgInJlcG9zaXRvcnkiOiAiaHR0cHM6Ly9naXRodWIuY29tL2dpdGh1Yi9hd2Vzb21lLWNvcGlsb3QiLAogICJsaWNlbnNlIjogIk1JVCIsCiAgImtleXdvcmRzIjogWwogICAgImphdmEiLAogICAgInNwcmluZ2Jvb3QiLAogICAgInF1YXJrdXMiLAogICAgImpwYSIsCiAgICAianVuaXQiLAogICAgImphdmFkb2MiCiAgXQp9Cg=="
+    },
+    {
+      "path": "plugins/java-development/skills/create-spring-boot-java-project/SKILL.md",
+      "bytes": 4622,
+      "sha256": "b4b65b93468685467e9a8e6f4c695a870c510a068a753be6d960f740c03a2b93",
+      "content_base64": "LS0tCm5hbWU6IGNyZWF0ZS1zcHJpbmctYm9vdC1qYXZhLXByb2plY3QKZGVzY3JpcHRpb246ICdDcmVhdGUgYSBuZXcgU3ByaW5nIEJvb3QgSmF2YSBwcm9qZWN0IChNYXZlbiBvciBHcmFkbGUpIGZyb20gc3RhcnQuc3ByaW5nLmlvIHdpdGggc2Vuc2libGUgZGVmYXVsdHMgZm9yIGNvbmZpZ3VyYXRpb24sIFBvc3RncmVTUUwsIGxvZ2dpbmcsIHNlY3VyaXR5LCB0ZXN0aW5nIGFuZCBEb2NrZXIuIFVzZSB3aGVuIGFza2VkIHRvIHNjYWZmb2xkLCBib290c3RyYXAgb3IgZ2VuZXJhdGUgYSBTcHJpbmcgQm9vdCBhcHBsaWNhdGlvbi4gRGV0ZWN0cyBleGlzdGluZyBwcm9qZWN0IHZlcnNpb25zIGFuZCBuZXZlciB1cGdyYWRlcyBpbXBsaWNpdGx5LicKLS0tCgojIENyZWF0ZSBhIFNwcmluZyBCb290IEphdmEgcHJvamVjdAoKU2NhZmZvbGQgYSBTcHJpbmcgQm9vdCBhcHBsaWNhdGlvbiB3aXRoIFtzdGFydC5zcHJpbmcuaW9dKGh0dHBzOi8vc3RhcnQuc3ByaW5nLmlvKSwgdGhlbiBhcHBseSBhIHNtYWxsIHNldCBvZiBvcGluaW9uYXRlZCBkZWZhdWx0cy4gT3V0IG9mIHNjb3BlIGZvciBub3c6IGZyb250LWVuZHMgKFZ1ZS9SZWFjdC9Bbmd1bGFyKSwgY2xvdWQgZGVwbG95bWVudCAoQXp1cmUpLCBHaXQgc2V0dXAsIENSYUMgYW5kIEFPVCBpbWFnZXMuCgojIyBTdGVwIDA6IERldGVjdCBiZWZvcmUgeW91IGNyZWF0ZQoKLSBJZiB0aGUgd29ya2luZyBkaXJlY3RvcnkgYWxyZWFkeSBjb250YWlucyBhIGBwb20ueG1sYCBvciBgYnVpbGQuZ3JhZGxlKC5rdHMpYCwgdGhpcyBpcyBhbiAqKmV4aXN0aW5nIHByb2plY3QqKjogZG8gbm90IHJlZ2VuZXJhdGUgaXQuIFJlYWQgaXRzIFNwcmluZyBCb290LCBKYXZhIGFuZCB0ZXN0LWZyYW1ld29yayB2ZXJzaW9ucyBhbmQgZm9sbG93IHRoZW0uICoqTmV2ZXIgdXBncmFkZSB2ZXJzaW9ucyBpbXBsaWNpdGx5Kio7IHByb3Bvc2UgYW4gdXBncmFkZSBhbmQgd2FpdCBmb3IgdGhlIHVzZXIncyBkZWNpc2lvbi4KLSBDaGVjayB0aGUgdG9vbHM6IGBqYXZhIC12ZXJzaW9uYCAoSkRLIG1hdGNoaW5nIHRoZSBjaG9zZW4gSmF2YSB2ZXJzaW9uKSwgYGRvY2tlciAtLXZlcnNpb25gIChuZWVkZWQgZm9yIFRlc3Rjb250YWluZXJzIGFuZCBDb21wb3NlKS4gT24gdGhlIGRlZmF1bHQgcGF0aCAoY3VycmVudCBCb290IHZpYSBzdGFydC5zcHJpbmcuaW8pIE1hdmVuL0dyYWRsZSBuZWVkIG5vdCBiZSBpbnN0YWxsZWQ6IHRoZSBnZW5lcmF0ZWQgd3JhcHBlciBpcyB1c2VkLiBUaGUgQm9vdCAzLjUgZmFsbGJhY2sgbmVlZHMgTWF2ZW4gb3IgR3JhZGxlIGluc3RhbGxlZCBvbmNlIHRvIGNyZWF0ZSB0aGUgd3JhcHBlciAoc2VlIFt2ZXJzaW9ucy5tZF0ocmVmZXJlbmNlcy92ZXJzaW9ucy5tZCkpLgotIEFzayBvbmx5IGZvciB3aGF0IGlzIG1pc3Npbmc6IHByb2plY3QgbmFtZSwgZ3JvdXAgaWQsIHBhY2thZ2UsIGJ1aWxkIHRvb2wgKGRlZmF1bHQgKipNYXZlbioqKSwgZGVwZW5kZW5jaWVzIChkZWZhdWx0OiB3ZWIsIGFjdHVhdG9yLCB2YWxpZGF0aW9uLCBkZXZ0b29sczsgYWRkIGBkYXRhLWpwYWAsIGBwb3N0Z3Jlc3FsYCwgYHNlY3VyaXR5YCwgYGRvY2tlci1jb21wb3NlYCwgYHRlc3Rjb250YWluZXJzYCB3aGVuIGEgZGF0YWJhc2Ugb3IgYXV0aCBpcyBuZWVkZWQpLgoKIyMgU3RlcCAxOiBSZXNvbHZlIHZlcnNpb25zCgpGb2xsb3cgW3JlZmVyZW5jZXMvdmVyc2lvbnMubWRdKHJlZmVyZW5jZXMvdmVyc2lvbnMubWQpOiBxdWVyeSBgaHR0cHM6Ly9zdGFydC5zcHJpbmcuaW8vbWV0YWRhdGEvY2xpZW50YCBhdCBydW4gdGltZSBmb3IgdGhlIGxhdGVzdCBzdGFibGUgU3ByaW5nIEJvb3QgcmVsZWFzZSwgZmFsbCBiYWNrIHRvIHRoZSBkb2N1bWVudGVkIHBpbm5lZCB2YWx1ZXMgaWYgb2ZmbGluZS4gRG8gbm90IGhhcmRjb2RlIGBsYXRlc3RgIGFueXdoZXJlLgoKIyMgU3RlcCAyOiBHZW5lcmF0ZSB0aGUgcHJvamVjdAoKVXNlIHRoZSBzdGFydC5zcHJpbmcuaW8gSFRUUCBBUEkgd2l0aCBleHBsaWNpdCwgcGlubmVkIHBhcmFtZXRlcnMgKG5vIHBpcGVkIGluc3RhbGxlcnMpLiBSZXBsYWNlIHRoZSB2YWx1ZXMgaW4gY2FwaXRhbHMuCgpNYXZlbjoKCmBgYGJhc2gKY3VybCAtZnNTIGh0dHBzOi8vc3RhcnQuc3ByaW5nLmlvL3N0YXJ0ZXIuemlwIFwKICAtZCB0eXBlPW1hdmVuLXByb2plY3QgLWQgbGFuZ3VhZ2U9amF2YSAtZCBwYWNrYWdpbmc9amFyIFwKICAtZCBib290VmVyc2lvbj1CT09UX1ZFUlNJT04gLWQgamF2YVZlcnNpb249SkFWQV9WRVJTSU9OIFwKICAtZCBncm91cElkPWNvbS5leGFtcGxlIC1kIGFydGlmYWN0SWQ9ZGVtbyAtZCBuYW1lPWRlbW8gXAogIC1kIHBhY2thZ2VOYW1lPWNvbS5leGFtcGxlLmRlbW8gLWQgYmFzZURpcj1kZW1vIFwKICAtZCBkZXBlbmRlbmNpZXM9d2ViLGFjdHVhdG9yLHZhbGlkYXRpb24sZGV2dG9vbHMgXAogIC1vIGRlbW8uemlwICYmIHVuemlwIC1xIGRlbW8uemlwICYmIHJtIGRlbW8uemlwCmBgYAoKR3JhZGxlOiBzYW1lIGNvbW1hbmQgd2l0aCBgLWQgdHlwZT1ncmFkbGUtcHJvamVjdGAgKEdyb292eSBEU0wpIG9yIGAtZCB0eXBlPWdyYWRsZS1wcm9qZWN0LWtvdGxpbmAgKEtvdGxpbiBEU0w7IHRoZSBsYW5ndWFnZSBzdGF5cyBgamF2YWApLgoKSW5zcGVjdCB0aGUgcmVzdWx0IChgbHMgZGVtb2AsIHJlYWQgdGhlIGJ1aWxkIGZpbGUpIGFuZCBtYWtlIHN1cmUgdGhlIHdyYXBwZXIgKGBtdm53YCBvciBgZ3JhZGxld2ApIGlzIGV4ZWN1dGFibGUuIEFkZCBgLWQgZGVwZW5kZW5jaWVzPS4uLixkYXRhLWpwYSxwb3N0Z3Jlc3FsLGRvY2tlci1jb21wb3NlLHRlc3Rjb250YWluZXJzYCBmb3IgYSBkYXRhYmFzZSBwcm9qZWN0LgoKIyMgU3RlcCAzOiBBcHBseSB0aGUgZGVmYXVsdHMKCnwgQXJlYSB8IFdoYXQgdG8gZG8gfCBSZWZlcmVuY2UgfAp8LS0tLS0tfC0tLS0tLS0tLS0tfC0tLS0tLS0tLS0tfAp8IEJvb3QgMyB2cyA0IGRpZmZlcmVuY2VzIHwgU3RhcnRlciBuYW1lcywgSmFja3NvbiAzLCB0ZXN0IG1vZHVsZXMgfCBbcmVmZXJlbmNlcy9zcHJpbmctYm9vdC00Lm1kXShyZWZlcmVuY2VzL3NwcmluZy1ib290LTQubWQpIHwKfCBDb25maWd1cmF0aW9uIHwgYGFwcGxpY2F0aW9uLnByb3BlcnRpZXNgIG9yIGAueW1sYCAobWF0Y2ggdGhlIHByb2plY3QpLCBwcm9maWxlcywgYEBDb25maWd1cmF0aW9uUHJvcGVydGllc2AsIHNlY3JldHMgdmlhIGVudmlyb25tZW50IHwgW3JlZmVyZW5jZXMvY29uZmlndXJhdGlvbi5tZF0ocmVmZXJlbmNlcy9jb25maWd1cmF0aW9uLm1kKSB8CnwgRGF0YWJhc2UgfCBQb3N0Z3JlU1FMLCBIaWJlcm5hdGUgc2V0dGluZ3MsIENvbXBvc2UgZm9yIGRldiwgVGVzdGNvbnRhaW5lcnMgZm9yIHRlc3RzIHwgW3JlZmVyZW5jZXMvZGF0YWJhc2UubWRdKHJlZmVyZW5jZXMvZGF0YWJhc2UubWQpIHwKfCBMb2dnaW5nIHwgU0xGNEosIHBhcmFtZXRlcml6ZWQgbWVzc2FnZXMsIGxldmVscywgc3RydWN0dXJlZCBsb2dnaW5nIHwgW3JlZmVyZW5jZXMvbG9nZ2luZy5tZF0ocmVmZXJlbmNlcy9sb2dnaW5nLm1kKSB8CnwgU2VjdXJpdHkgfCBTcHJpbmcgU2VjdXJpdHkgYmFzaWNzLCBzZWN1cmUgZGVmYXVsdHMsIFByb2JsZW0gRGV0YWlscyB8IFtyZWZlcmVuY2VzL3NlY3VyaXR5Lm1kXShyZWZlcmVuY2VzL3NlY3VyaXR5Lm1kKSB8CnwgRG9ja2VyIHwgSlZNIGltYWdlIGFuZCBHcmFhbFZNIG5hdGl2ZSBpbWFnZSBEb2NrZXJmaWxlcyB8IFtyZWZlcmVuY2VzL2RvY2tlci5tZF0ocmVmZXJlbmNlcy9kb2NrZXIubWQpIHwKfCBUZXN0aW5nIHwgU2VlIHRoZSBgc3ByaW5nLWJvb3QtdGVzdGluZ2Agc2tpbGwgKHNsaWNlcywgVGVzdGNvbnRhaW5lcnMsIEZhaWxzYWZlKSB8IGBza2lsbHMvc3ByaW5nLWJvb3QtdGVzdGluZ2AgfAp8IEJlc3QgcHJhY3RpY2VzIHwgU2VlIHRoZSBgamF2YS1zcHJpbmdib290YCBza2lsbCBhbmQgYGluc3RydWN0aW9ucy9zcHJpbmdib290Lmluc3RydWN0aW9ucy5tZGAgfCBgc2tpbGxzL2phdmEtc3ByaW5nYm9vdGAgfAoKS2VlcCBkb3RmaWxlcyBtaW5pbWFsOiBhIGAuZ2l0aWdub3JlYCBjb3ZlcmluZyBgdGFyZ2V0L2AsIGBidWlsZC9gLCBgLmdyYWRsZS9gLCBJREUgZm9sZGVycyBhbmQgYC5lbnZgOyBuZXZlciBjb21taXQgYC5lbnZgIChjb21taXQgYSBgLmVudi5zYW1wbGVgKS4KCiMjIFN0ZXAgNDogVmVyaWZ5CgoxLiBCdWlsZCBhbmQgdGVzdDogYC4vbXZudyB2ZXJpZnlgIChNYXZlbikgb3IgYC4vZ3JhZGxldyBidWlsZGAgKEdyYWRsZSkuCjIuIFJ1bjogYC4vbXZudyBzcHJpbmctYm9vdDpydW5gIG9yIGAuL2dyYWRsZXcgYm9vdFJ1bmAsIHRoZW4gYGN1cmwgLWZzUyBsb2NhbGhvc3Q6ODA4MC9hY3R1YXRvci9oZWFsdGhgIG11c3QgcmV0dXJuIGB7InN0YXR1cyI6IlVQIn1gLgozLiBSZXBvcnQgdGhlIGNob3NlbiB2ZXJzaW9ucyBhbmQgYW55dGhpbmcgdGhhdCB3YXMgc2tpcHBlZCBvciBkZWZlcnJlZC4KCiMjIFByb3ZlbmFuY2UKCkFkYXB0ZWQgZnJvbSB0aGUgQXBhY2hlLTIuMCBza2lsbCBbamR1Ym9pcy9kci1qc2tpbGxdKGh0dHBzOi8vZ2l0aHViLmNvbS9qZHVib2lzL2RyLWpza2lsbCk7IHNlZSBbcmVmZXJlbmNlcy9QUk9WRU5BTkNFLm1kXShyZWZlcmVuY2VzL1BST1ZFTkFOQ0UubWQpLgo="
+    },
+    {
+      "path": "plugins/java-development/skills/java-docs/SKILL.md",
+      "bytes": 2087,
+      "sha256": "efc6ef95b4af71c8cf1a4f127c06e9f260e314dda81ba1862f140eef09956cec",
+      "content_base64": "LS0tCm5hbWU6IGphdmEtZG9jcwpkZXNjcmlwdGlvbjogJ0Vuc3VyZSB0aGF0IEphdmEgdHlwZXMgYXJlIGRvY3VtZW50ZWQgd2l0aCBKYXZhZG9jIGNvbW1lbnRzIGFuZCBmb2xsb3cgYmVzdCBwcmFjdGljZXMgZm9yIGRvY3VtZW50YXRpb24uJwotLS0KCiMgSmF2YSBEb2N1bWVudGF0aW9uIChKYXZhZG9jKSBCZXN0IFByYWN0aWNlcwoKIyMgUHJpbmNpcGxlcwoKLSBEb2N1bWVudCBvbmx5IHdoYXQgdGhlIGNvZGUgYWN0dWFsbHkgZG9lczogcmVhZCB0aGUgaW1wbGVtZW50YXRpb24sIGNhbGxlcnMgYW5kIHRlc3RzIGZpcnN0LiBOZXZlciBpbnZlbnQgYmVoYXZpb3VyLCB0aHJlc2hvbGRzLCB0aHJlYWQtc2FmZXR5LCBudWxsYWJpbGl0eSBvciBleGNlcHRpb25zIHlvdSBoYXZlIG5vdCB2ZXJpZmllZDsgaWYgdW5zdXJlLCBsZWF2ZSBpdCBvdXQgb3IgYXNrLgotIEtlZXAgdGhlIGV4aXN0aW5nIGRvY3VtZW50YXRpb24gc3R5bGUgb2YgdGhlIHByb2plY3QgKGxhbmd1YWdlLCB0YWcgb3JkZXIsIGNvbW1lbnQgZm9ybSBgLyoqICovYCB2cyBgLy8vYCkuIERvIG5vdCByZXdyaXRlIGV4aXN0aW5nIGNvbW1lbnRzLCBvciBtYXNzLWRvY3VtZW50IGEgY29kZWJhc2UsIHVubGVzcyB0aGUgdXNlciBhc2tzOyBsaW1pdCBjaGFuZ2VzIHRvIHRoZSByZXF1ZXN0ZWQgc2NvcGUuCi0gQ2hlY2sgdGhlIEpESyBsZXZlbCAoYG1hdmVuLmNvbXBpbGVyLnJlbGVhc2VgLCB0b29sY2hhaW4sIGBqYXZhIC12ZXJzaW9uYCkgYmVmb3JlIHVzaW5nIG5ld2VyIGZlYXR1cmVzLCBhbmQgc3RheSB3aXRoaW4gaXQuCgojIyBDb252ZW50aW9ucwoKLSBgQHNpbmNlYCBvbmx5IHdpdGggdGhlIHJlYWwgdmVyc2lvbiBpbiB3aGljaCB0aGUgQVBJIHdhcyBpbnRyb2R1Y2VkOyBgQGRlcHJlY2F0ZWRgIHdpdGggYSByZWFzb24gYW5kIHJlcGxhY2VtZW50LCB0b2dldGhlciB3aXRoIGBARGVwcmVjYXRlZGAuCi0gYEBhdXRob3JgIGFuZCBgQHZlcnNpb25gIG9ubHkgaWYgdGhlIHByb2plY3QgYWxyZWFkeSB1c2VzIHRoZW0uCi0gQ29kZSBibG9ja3MsIGJ5IEpESyBsZXZlbDoKICAtIEFueSBKREs6IGA8cHJlPntAY29kZSAuLi4gfTwvcHJlPmAgKGVzY2FwZSBgQGAgYXQgbGluZSBzdGFydCwgYmFsYW5jZSBicmFjZXMpLgogIC0gSkRLIDE4KzogYHtAc25pcHBldCA6ICAuLi4gfWAgZm9yIGlubGluZSBjb2RlLCBvciBge0BzbmlwcGV0IGZpbGU9IkV4YW1wbGUuamF2YSIgcmVnaW9uPSJkZW1vIn1gIHdpdGggZmlsZXMgaW4gYHNuaXBwZXQtZmlsZXMvYCAocHJlZmVycmVkIGZvciBleGFtcGxlczsgYGphdmFkb2NgIGRvZXMgbm90IGNvbXBpbGUgb3IgdmFsaWRhdGUgdGhlIHNuaXBwZXQgc291cmNlLCBzbyBjb21waWxlIGFuZCB0ZXN0IHRoZSBmaWxlcyBpbiBhIHNlcGFyYXRlIGJ1aWxkL3Rlc3Qgc291cmNlIHNldCBpZiB5b3UgbmVlZCB0aGF0IGd1YXJhbnRlZSkuIFVzZSBgLy8gQGhpZ2hsaWdodCBzdWJzdHJpbmc9IngiYCBhbmQgYC8vIEByZXBsYWNlYCBtYXJrdXAgYXMgbmVlZGVkLgogIC0gSkRLIDIzKyBvbmx5IChKRVAgNDY3KTogTWFya2Rvd24gZG9jIGNvbW1lbnRzIHdpdGggYC8vL2AsIHVzaW5nIGBbVHlwZSNtZW1iZXJdYCBmb3IgbGlua3MgYW5kIGZlbmNlZCBjb2RlIGJsb2Nrcy4gVXNlIHRoZW0gb25seSBpZiB0aGUgcHJvamVjdCBhbHJlYWR5IGRvZXMgb3IgdGhlIHVzZXIgYXNrcywgYW5kIHRoZSBidWlsZCBydW5zIGEgSkRLIDIzKyBgamF2YWRvY2AuCgojIyBWZXJpZnkKCi0gUnVuIGBtdm4gLXEgamF2YWRvYzpqYXZhZG9jYCAob3IgYC4vZ3JhZGxldyBqYXZhZG9jYCkgYW5kIGZvciBzaW5nbGUgZmlsZXMgYGphdmFkb2MgLVhkb2NsaW50OmFsbCAtZCB0YXJnZXQvamF2YWRvYy1jaGVjayA8ZmlsZXM+YDsgZml4IGV2ZXJ5IHdhcm5pbmcvZXJyb3IgeW91IGludHJvZHVjZWQgKG1pc3NpbmcgYEBwYXJhbWAsIGJhZCBIVE1MLCB1bnJlc29sdmVkIGB7QGxpbmt9YCwgdW5rbm93biB0YWdzKS4KLSBSZXBvcnQgd2hhdCB3YXMgZG9jdW1lbnRlZCBhbmQgdGhlIGNvbW1hbmRzIHJ1bjsgc3RhdGUgYW55IGNsYWltcyB5b3UgY291bGQgbm90IHZlcmlmeSBmcm9tIHRoZSBjb2RlLgo="
+    },
+    {
+      "path": "plugins/java-development/skills/java-junit/SKILL.md",
+      "bytes": 8417,
+      "sha256": "836790283679a14b3e1c78ff2f5f596361f4b8155077355f4afa343a4355c537",
+      "content_base64": "LS0tCm5hbWU6IGphdmEtanVuaXQKZGVzY3JpcHRpb246ICdXcml0ZSwgcmV2aWV3IGFuZCBmaXggSmF2YSB1bml0IHRlc3RzIHdpdGggSlVuaXQgNSBhbmQgSlVuaXQgNiAoSnVwaXRlciksIEFzc2VydEogYW5kIE1vY2tpdG86IGFzc2VydGlvbnMsIHBhcmFtZXRlcml6ZWQgYW5kIG5lc3RlZCB0ZXN0cywgbW9ja2luZyBydWxlcywgZGV0ZXJtaW5pc3RpYyB0aW1lIGFuZCByYW5kb21uZXNzLCBTdXJlZmlyZSB2cyBGYWlsc2FmZSwgSmFDb0NvIGNvdmVyYWdlLCBvcHRpb25hbCBQSVQgbXV0YXRpb24gdGVzdGluZywgYW5kIGd1YXJkcmFpbHMgZm9yIGFnZW50cyAobmV2ZXIgc2tpcCBvciBkZWxldGUgZmFpbGluZyB0ZXN0cykuIFVzZSB3aGVuIGFkZGluZywgcmVmYWN0b3Jpbmcgb3IgZGVidWdnaW5nIHRlc3RzIGluIE1hdmVuIG9yIEdyYWRsZSBwcm9qZWN0cy4gRnJhbWV3b3JrLW5ldXRyYWwuJwotLS0KCiMgSmF2YSBUZXN0aW5nIHdpdGggSlVuaXQgNS82LCBBc3NlcnRKIGFuZCBNb2NraXRvCgpGcmFtZXdvcmstbmV1dHJhbCBndWlkYW5jZSBmb3IgZmFzdCwgZGV0ZXJtaW5pc3RpYyB1bml0IHRlc3RzLiBGb3IgU3ByaW5nIHNsaWNlcyB1c2UgYHNwcmluZy1ib290LXRlc3RpbmdgIChpZiBpbnN0YWxsZWQpOyBmb3IgcmVhbCBkYXRhYmFzZXMvYnJva2VycyBpbiBEb2NrZXIgdXNlIGBqYXZhLXRlc3Rjb250YWluZXJzYDsgZm9yIGZhaWx1cmVzIHlvdSBjYW5ub3QgZXhwbGFpbiwgYGphdmEtZGVidWdnaW5nYC4KCiMjIEZpcnN0OiBkZXRlY3QsIGRvbid0IGltcG9zZQoKMS4gUmVhZCBgcG9tLnhtbGAvYGJ1aWxkLmdyYWRsZSpgOiBKVW5pdCB2ZXJzaW9uIChganVuaXQtanVwaXRlcmAsIGBqdW5pdC1ib21gLCBvciBpbmhlcml0ZWQgZnJvbSBhIFNwcmluZyBCb290IEJPTSksIGFzc2VydGlvbiBsaWJyYXJ5LCBNb2NraXRvLCBTdXJlZmlyZS9GYWlsc2FmZSB2ZXJzaW9ucywgSmF2YSByZWxlYXNlLgoyLiBDb3B5IHRoZSBjb252ZW50aW9ucyBhbHJlYWR5IGluIGBzcmMvdGVzdC9qYXZhYCAobmFtaW5nLCBhc3NlcnRpb24gbGlicmFyeSwgc3RhdGljIGltcG9ydHMsIG1vY2tpbmcgc3R5bGUpLiBEbyBub3QgaW50cm9kdWNlIEFzc2VydEosIE1vY2tpdG8gb3IgSmFDb0NvIGludG8gYSBwcm9qZWN0IHRoYXQgbGFja3MgdGhlbSB3aXRob3V0IGFza2luZy4KMy4gTmV2ZXIgYnVtcCB0aGUgSlVuaXQgbWFqb3IgdmVyc2lvbiBpbXBsaWNpdGx5OyB1cGdyYWRpbmcgaXMgaXRzIG93biB0YXNrIChzZWUgYGphdmEtdXBncmFkZWAgaWYgaW5zdGFsbGVkKS4KCiMjIEpVbml0IDUgdnMgSlVuaXQgNgoKfCB8IEpVbml0IDUgKGxhc3QgNS4xNC54KSB8IEpVbml0IDYgKDYuMCByZWxlYXNlZDsgNi4xLnggY3VycmVudCkgfAp8IC0tLSB8IC0tLSB8IC0tLSB8CnwgSmF2YSBiYXNlbGluZSB8IDggfCAqKjE3KiogKHZlcmlmaWVkIGluIHRoZSBwdWJsaXNoZWQgR3JhZGxlIG1vZHVsZSBtZXRhZGF0YSkgfAp8IFZlcnNpb25pbmcgfCBQbGF0Zm9ybSAxLngsIEp1cGl0ZXIgNS54LCBWaW50YWdlIDUueCB8IE9uZSB2ZXJzaW9uIG51bWJlciBmb3IgUGxhdGZvcm0sIEp1cGl0ZXIgYW5kIFZpbnRhZ2UgfAp8IEFQSSB8IGBvcmcuanVuaXQuanVwaXRlci5hcGkuKmAgfCBTYW1lIHBhY2thZ2VzOyB0aGUgSnVwaXRlciB0ZXN0cyBpbiB0aGlzIHNraWxsIGNvbXBpbGUgYW5kIHBhc3MgdW5jaGFuZ2VkIG9uIDUuMTQuNCBhbmQgNi4wLjMgfAp8IFJlbW92ZWQgaW4gNi4wIHwgfCBgTWV0aG9kT3JkZXJlci5BbHBoYW51bWVyaWNgLCB0aGUgZGVwcmVjYXRlZCB0d28tYXJndW1lbnQgYEludm9jYXRpb25JbnRlcmNlcHRvci5pbnRlcmNlcHREeW5hbWljVGVzdChJbnZvY2F0aW9uLCBFeHRlbnNpb25Db250ZXh0KWAgb3ZlcmxvYWQgKHRoZSB0aHJlZS1hcmd1bWVudCBvbmUgcmVtYWlucyksIGBqdW5pdC5qdXBpdGVyLnRlbXBkaXIuc2NvcGVgLCBgQENzdkZpbGVTb3VyY2UobGluZVNlcGFyYXRvcilgIHwKfCBDU1YgfCB1bml2b2NpdHktcGFyc2VycyB8IEZhc3RDU1Y6IHN0cmljdGVyIHBhcnNpbmcgKG5vIGNoYXJhY3RlcnMgYWZ0ZXIgYSBjbG9zaW5nIHF1b3RlKTsgaGVhZGVyLWZpZWxkIG9wdGlvbnMgbm93IGFwcGx5IHRvIGhlYWRlcnMgfAp8IE90aGVyIHwgfCBganVuaXQtanVwaXRlci1taWdyYXRpb25zdXBwb3J0YCBkZXByZWNhdGVkOyBpbnZhbGlkIGVudW0tc3R5bGUgY29uZmlnIHZhbHVlcyBub3cgZmFpbCBkaXNjb3Zlcnk7IGBATmVzdGVkYCBjbGFzcyBvcmRlciBkZXRlcm1pbmlzdGljIGJ1dCBub24tb2J2aW91cyB8CgpTb3VyY2U6IEpVbml0IDYuMC4wIHJlbGVhc2Ugbm90ZXMgKDxodHRwczovL2RvY3MuanVuaXQub3JnLzYuMC4wL3JlbGVhc2Utbm90ZXMuaHRtbD4pLiBSZWFkIHRoZSBub3RlcyBmb3IgdGhlIHRhcmdldCB2ZXJzaW9uICg8aHR0cHM6Ly9kb2NzLmp1bml0Lm9yZy9jdXJyZW50L3JlbGVhc2Utbm90ZXMvPikgYW5kIHByZWZlciB0aGVtIG92ZXIgdGhpcyB0YWJsZS4gSlVuaXQgNCB0ZXN0cyBuZWVkIHRoZSBWaW50YWdlIGVuZ2luZTsgZG8gbm90IG1peCBgb3JnLmp1bml0LlRlc3RgIGFuZCBgb3JnLmp1bml0Lmp1cGl0ZXIuYXBpLlRlc3RgIGluIG9uZSBjbGFzcy4KCkRlcGVuZGVuY2llcyAoc2FtZSBmb3IgNSBhbmQgNjsgdmVyaWZpZWQgd2l0aCBNYXZlbiBhbmQgR3JhZGxlKTogaW1wb3J0IGBvcmcuanVuaXQ6anVuaXQtYm9tYCwgdGhlbiBkZWNsYXJlIGBvcmcuanVuaXQuanVwaXRlcjpqdW5pdC1qdXBpdGVyYCAoYWdncmVnYXRlcyBhcGksIHBhcmFtcywgZW5naW5lKSB3aXRoIGB0ZXN0YCBzY29wZS4gR3JhZGxlIDkgYWRkaXRpb25hbGx5ICoqcmVxdWlyZXMqKiBgdGVzdFJ1bnRpbWVPbmx5KCJvcmcuanVuaXQucGxhdGZvcm06anVuaXQtcGxhdGZvcm0tbGF1bmNoZXIiKWAgKHZlcmlmaWVkOiB3aXRob3V0IGl0IHRoZSB0ZXN0IGV4ZWN1dG9yIGZhaWxzIHdpdGggIkZhaWxlZCB0byBsb2FkIEpVbml0IFBsYXRmb3JtIikgYW5kIGB0YXNrcy50ZXN0IHsgdXNlSlVuaXRQbGF0Zm9ybSgpIH1gLiBNYXZlbiBuZWVkcyBTdXJlZmlyZSAzLnggKHZlcmlmaWVkIHdpdGggMy42LjApLgoKIyMgQXNzZXJ0aW9ucwoKTWF0Y2ggdGhlIHByb2plY3QncyBsaWJyYXJ5LiBQbGFpbiBKdXBpdGVyIHJ1bGVzOiBleHBlY3RlZCB2YWx1ZSBmaXJzdCwgbGF6eSBgU3VwcGxpZXJgIG1lc3NhZ2VzLCBgYXNzZXJ0QWxsYCwgYGFzc2VydFRocm93c0V4YWN0bHlgLCB0aW1lb3V0cy4gKFRoZSBzZXBhcmF0ZSBgaW5zdHJ1Y3Rpb25zL2phdmEtanVuaXQ1LWFzc2VydGlvbnMuaW5zdHJ1Y3Rpb25zLm1kYCByZXNvdXJjZSBoYXMgdGhlIGxvbmdlciB2ZXJzaW9uIGJ1dCBpcyBub3QgaW5zdGFsbGVkIHdpdGggdGhpcyBza2lsbC4pIElmIHRoZSBwcm9qZWN0IHVzZXMgQXNzZXJ0SiwgcHJlZmVyIGl0IGZvciBjb2xsZWN0aW9ucywgc3RyaW5ncyBhbmQgZXhjZXB0aW9uczsgcGF0dGVybnMgKHNvZnQgYXNzZXJ0aW9ucywgYGFzc2VydFRoYXRUaHJvd25CeWAsIGBleHRyYWN0aW5nYCwgYGNvbnRhaW5zRXhhY3RseWAsIGB1c2luZ1JlY3Vyc2l2ZUNvbXBhcmlzb25gKSBhcmUgaW4gYHJlZmVyZW5jZXMvYXNzZXJ0ai1hbmQtbW9ja2l0by5tZGAuCgotIEFzc2VydCBvbiBvdXRjb21lcyBhbmQgc3RhdGUsIG5vdCBvbiBob3cgbWFueSB0aW1lcyBpbnRlcm5hbHMgd2VyZSBjYWxsZWQuCi0gQ29tcGFyZSB2YWx1ZXM7IGF2b2lkIGJhcmUgYGFzc2VydE5vdE51bGxgLgotIE5ldmVyIGNhdGNoIGBBc3NlcnRpb25FcnJvcmAvYEV4Y2VwdGlvbmAgdG8gbWFrZSBhIHRlc3QgcGFzcy4KCiMjIE1vY2tpbmcgKE1vY2tpdG8pCgotIE1vY2sgKipjb2xsYWJvcmF0b3JzIGFjcm9zcyBhIGJvdW5kYXJ5KiogKHJlcG9zaXRvcnksIEhUVFAgY2xpZW50LCBjbG9jaywgbWVzc2FnZSBzZW5kZXIpLiBEbyAqKm5vdCoqIG1vY2sgdmFsdWUgb2JqZWN0cywgcmVjb3JkcywgY29sbGVjdGlvbnMsIGBTdHJpbmdgLCBvciB0aGUgY2xhc3MgdW5kZXIgdGVzdDsgdXNlIHJlYWwgaW5zdGFuY2VzIG9yIHNpbXBsZSBmYWtlcy4KLSBQcmVmZXIgYSBoYW5kLXdyaXR0ZW4gZmFrZSBvdmVyIGEgbW9jayB3aGVuIHRoZSBpbnRlcmFjdGlvbiBpcyBzdGF0ZWZ1bC4KLSBVc2UgYEBFeHRlbmRXaXRoKE1vY2tpdG9FeHRlbnNpb24uY2xhc3MpYCB3aXRoIGBATW9ja2AvYEBJbmplY3RNb2Nrc2AvYEBDYXB0b3JgLiBTdHJpY3Qgc3R1YnMgYXJlIHRoZSBkZWZhdWx0IHRoZXJlLCBzbyBhbiB1bnVzZWQgc3R1YiBmYWlscyB0aGUgdGVzdCAoYFVubmVjZXNzYXJ5U3R1YmJpbmdFeGNlcHRpb25gKS4gRml4IHRoZSB0ZXN0OyByZWxheCB3aXRoIGBATW9ja2l0b1NldHRpbmdzKHN0cmljdG5lc3MgPSBTdHJpY3RuZXNzLkxFTklFTlQpYCBvbmx5IGZvciBhIGp1c3RpZmllZCBzaGFyZWQgc2V0dXAuCi0gTW9ja2l0byA1IHVzZXMgdGhlIGlubGluZSBtb2NrIG1ha2VyIGJ5IGRlZmF1bHQuIE9uIEpESyAyMSsgaXQgbWF5IHNlbGYtYXR0YWNoIGFuZCBwcmludCBhIGR5bmFtaWMtYWdlbnQgd2FybmluZy4gV2l0aCAqKk1vY2tpdG8gNS4xNC4wKyoqLCByZWdpc3RlciBgbW9ja2l0by1jb3JlYCBhcyBhIGAtamF2YWFnZW50YCBpbnN0ZWFkIChzZXR1cCBmb3IgTWF2ZW4gYW5kIEdyYWRsZSBpbiBgcmVmZXJlbmNlcy9hc3NlcnRqLWFuZC1tb2NraXRvLm1kYCwgdmVyaWZpZWQgb24gSkRLIDIxIGFuZCAyNSkuIENoZWNrIHRoZSByZXNvbHZlZCB2ZXJzaW9uIGZpcnN0OiBlYXJsaWVyIDUueCBqYXJzIGxhY2sgYFByZW1haW4tQ2xhc3NgIGFuZCBjYW5ub3QgYmUgdXNlZCBhcyB0aGUgYWdlbnQuIEFzayBiZWZvcmUgdXBncmFkaW5nOyBvdGhlcndpc2UgdXNlIHRoZSBpbnN0cnVtZW50YXRpb24gc2V0dXAgZG9jdW1lbnRlZCBmb3IgdGhlIGluc3RhbGxlZCB2ZXJzaW9uLgotIE1vY2tpdG8gNSByZXF1aXJlcyBKYXZhIDExKy4gSXRzIGRlZmF1bHQgaW5saW5lIG1vY2sgbWFrZXIgZG9lcyBub3Qgd29yayBvbiBHcmFhbFZNIG5hdGl2ZSBpbWFnZSwgd2hlcmUgdGhlIHN1YmNsYXNzIG1vY2sgbWFrZXIgaXMgYXBwcm9wcmlhdGUgKE1vY2tpdG8gNS4wLjAgcmVsZWFzZSBub3RlcywgPGh0dHBzOi8vZ2l0aHViLmNvbS9tb2NraXRvL21vY2tpdG8vcmVsZWFzZXMvdGFnL3Y1LjAuMD4pLgotIEF2b2lkIGBtb2NrU3RhdGljYC9gbW9ja0NvbnN0cnVjdGlvbmA7IHdyYXAgdGhlIHN0YXRpYyBjYWxsIGJlaGluZCBhbiBpbnRlcmZhY2UuCgojIyBEZXRlcm1pbmlzbQoKLSBUaW1lOiBpbmplY3QgYGphdmEudGltZS5DbG9ja2AgKGBDbG9jay5maXhlZCguLi4pYCkgYW5kIGNhbGwgYEluc3RhbnQubm93KGNsb2NrKWA7IGF2b2lkIGBJbnN0YW50Lm5vdygpYC9gTG9jYWxEYXRlLm5vdygpYCBpbiBjb2RlIHVuZGVyIHRlc3QuCi0gUmFuZG9tbmVzczogaW5qZWN0IGEgYFJhbmRvbWAvYFJhbmRvbUdlbmVyYXRvcmAgd2l0aCBhIGZpeGVkIHNlZWQ7IGxvZyB0aGUgc2VlZCBpZiBnZW5lcmF0ZWQuCi0gRG8gbm90IGRlcGVuZCBvbiBkZWZhdWx0IGxvY2FsZSwgdGltZSB6b25lLCBmaWxlIGVuY29kaW5nLCBuZXR3b3JrLCBvciB3YWxsLWNsb2NrIHNsZWVwcy4gU2V0IHRoZW0gZXhwbGljaXRseSAobmV3ZXIgNi54IHJlbGVhc2VzIGFkZCBidWlsdC1pbiBsb2NhbGUvdGltZS16b25lL3N5c3RlbS1wcm9wZXJ0eSBleHRlbnNpb25zOyBjaGVjayB0aGUgcmVsZWFzZSBub3RlcyBvZiB5b3VyIHZlcnNpb24sIG90aGVyd2lzZSB1c2UgdHJ5L2ZpbmFsbHkpLgoKIyMgVW5pdCB2cyBpbnRlZ3JhdGlvbiB0ZXN0cwoKfCB8IFVuaXQgKGAqVGVzdGApIHwgSW50ZWdyYXRpb24gKGAqSVRgKSB8CnwgLS0tIHwgLS0tIHwgLS0tIHwKfCBNYXZlbiB8IFN1cmVmaXJlLCBgbXZuIHRlc3RgIHwgRmFpbHNhZmUsIGBtdm4gdmVyaWZ5YCB8CnwgR3JhZGxlIHwgYHRlc3RgIHRhc2sgfCBzZXBhcmF0ZSBgaW50ZWdyYXRpb25UZXN0YCB0YXNrIChKVk0gVGVzdCBTdWl0ZSkgd2lyZWQgaW50byBgY2hlY2tgIHwKfCBTcGVlZCB8IG1pbGxpc2Vjb25kcywgbm8gSS9PIHwgbWF5IHVzZSBEb2NrZXIvREIgfAoKU3VyZWZpcmUgZGVmYXVsdHMgcGljayBgKlRlc3RgLCBgVGVzdCpgLCBgKlRlc3RzYCwgYCpUZXN0Q2FzZWA7IEZhaWxzYWZlIHBpY2tzIGAqSVRgLCBgSVQqYCwgYCpJVENhc2VgLiBGYWlsc2FmZSBuZWVkcyB0aGUgYGludGVncmF0aW9uLXRlc3RgIGFuZCBgdmVyaWZ5YCBnb2FscyBib3VuZCBhbmQgaXMgcnVuIGJ5IGBtdm4gdmVyaWZ5YCwgbm90IGBtdm4gdGVzdGAuIEFsdGVybmF0aXZlbHkgc3BsaXQgYnkgYEBUYWdgLiBGb3IgZGF0YWJhc2VzIGFuZCBicm9rZXJzIHNlZSBgamF2YS10ZXN0Y29udGFpbmVyc2A7IGZvciBTcHJpbmcgc2xpY2VzIHNlZSBgc3ByaW5nLWJvb3QtdGVzdGluZ2AuIEZ1bGwgYnVpbGQgc25pcHBldHM6IGByZWZlcmVuY2VzL2J1aWxkLXNldHVwLm1kYC4KCiMjIENvdmVyYWdlIGFuZCBtdXRhdGlvbiB0ZXN0aW5nIChvcHRpb25hbCkKCi0gSmFDb0NvOiBhZGQgb25seSBpZiB0aGUgcHJvamVjdCB1c2VzIGl0IG9yIHRoZSB1c2VyIGFza3MuIFdpdGggU3VyZWZpcmUvRmFpbHNhZmUgdXNlIGA8YXJnTGluZT5Ae2FyZ0xpbmV9IC4uLjwvYXJnTGluZT5gIHNvIHRoZSBKYUNvQ28gYWdlbnQgaXMgbm90IG92ZXJ3cml0dGVuLgotIENvdmVyYWdlIGlzIGEgc21lbGwgZGV0ZWN0b3IsIG5vdCBhIGdvYWw7IG5ldmVyIGFkZCBhc3NlcnRpb24tZnJlZSB0ZXN0cyB0byByYWlzZSBhIG51bWJlciwgYW5kIGRvIG5vdCBhZGQgYSBjb3ZlcmFnZSBnYXRlIHRoZSBwcm9qZWN0IGxhY2tzLgotIFBJVCAobXV0YXRpb24gdGVzdGluZykgaXMgc2xvdzsgcnVuIGl0IG9uIGNoYW5nZWQgY2xhc3NlcyBvbmx5IGlmIHRoZSBwcm9qZWN0IGFscmVhZHkgdXNlcyBpdCBvciB0aGUgdXNlciBhc2tzIChzZWUgYHJlZmVyZW5jZXMvYnVpbGQtc2V0dXAubWRgLCB3aGljaCByZWNvcmRzIGEgdmVyaWZpZWQgcGl0ZXN0LW1hdmVuICsgSlVuaXQgNSBwbHVnaW4gcnVuKS4KCiMjIEFnZW50IGd1YXJkcmFpbHMKCjEuICoqTmV2ZXIqKiBkZWxldGUsIGNvbW1lbnQgb3V0LCBgQERpc2FibGVkYCwgd2Vha2VuIChsb29zZXIgYXNzZXJ0aW9uLCB3aWRlciB0b2xlcmFuY2UsIHN3YWxsb3dlZCBleGNlcHRpb24pIG9yIHNraXAgYSBmYWlsaW5nIHRlc3QgdG8gZ2V0IGdyZWVuLiBGaW5kIHRoZSBjYXVzZS4KMi4gRGVjaWRlIHdoaWNoIHNpZGUgaXMgd3JvbmcsIHRoZSB0ZXN0IG9yIHRoZSBwcm9kdWN0aW9uIGNvZGUuIElmIHRoZSBmaXggY2hhbmdlcyAqKnByb2R1Y3Rpb24gYmVoYXZpb3IqKiwgc3RvcCBhbmQgYXNrIHRoZSB1c2VyIGZpcnN0OyBpZiB0aGUgdGVzdCBlbmNvZGVzIGFuIG9idmlvdXNseSBzdGFsZSBleHBlY3RhdGlvbiwgc2F5IHNvIGFuZCBwcm9wb3NlIHRoZSBjaGFuZ2UuCjMuIERvIG5vdCBhZGQgYC1Ec2tpcFRlc3RzYCwgYC1EbWF2ZW4udGVzdC5za2lwYCwgYC14IHRlc3RgIG9yIGBmYWlsSWZOb1Rlc3RzPWZhbHNlYCB0byBtYWtlIGEgYnVpbGQgcGFzcy4KNC4gRG8gbm90IG1vY2sgdGhlIGNsYXNzIHVuZGVyIHRlc3Qgb3IgYXNzZXJ0IG9uIG1vY2sgaW50ZXJuYWxzIHRvICJwcm92ZSIgY29ycmVjdG5lc3MuCjUuIFJ1biB0aGUgbmFycm93ZXN0IHRlc3QgZmlyc3QsIHRoZW4gdGhlIGZ1bGwgYnVpbGQ6CiAgIC0gTWF2ZW46IGBtdm4gLXEgLUR0ZXN0PU9yZGVyc1Rlc3QgdGVzdGAgKG9uZSBtZXRob2Q6IGAtRHRlc3Q9J09yZGVyc1Rlc3QjcGxhY2Vfc2hvdWxkX3NhdmVBbmROb3RpZnlfd2hlbl9pdGVtVmFsaWQnYCksIHRoZW4gYG12biB2ZXJpZnlgLgogICAtIEdyYWRsZTogYC4vZ3JhZGxldyB0ZXN0IC0tdGVzdHMgJ2RlbW8uT3JkZXJzVGVzdCdgLCB0aGVuIGAuL2dyYWRsZXcgY2hlY2tgLgogICBQcmVmZXIgdGhlIHByb2plY3Qgd3JhcHBlciAoYC4vbXZud2AsIGAuL2dyYWRsZXdgKSB3aGVuIHByZXNlbnQuCjYuIEZsYWt5IHRlc3Q6IHJlcHJvZHVjZSBieSByZXJ1bm5pbmcsIHRoZW4gcmVtb3ZlIHRoZSBub25kZXRlcm1pbmlzbSAodGltZSwgb3JkZXIsIHNoYXJlZCBzdGF0ZSwgYXN5bmMgd2FpdHMpOyBkbyBub3QgYWRkIHJldHJpZXMuCjcuIE5ldyBjb2RlIGdldHMgbmV3IHRlc3RzIGJlc2lkZSB0aGUgZXhpc3Rpbmcgb25lcywgaW4gdGhlIHNhbWUgc3R5bGU6IGhhcHB5IHBhdGgsIGJvdW5kYXJpZXMsIGVycm9yIGNhc2VzLgoKIyMgUmVmZXJlbmNlcwoKLSBgcmVmZXJlbmNlcy9hc3NlcnRqLWFuZC1tb2NraXRvLm1kYDogQXNzZXJ0SiBwYXR0ZXJucywgTW9ja2l0byBzdHJpY3RuZXNzL2NhcHRvcnMvYWdlbnQgc2V0dXAsIHdoZW4gbm90IHRvIG1vY2suCi0gYHJlZmVyZW5jZXMvYnVpbGQtc2V0dXAubWRgOiBNYXZlbiBhbmQgR3JhZGxlIChLb3RsaW4gRFNMKSBzZXR1cHMgZm9yIEpVbml0IDUvNiwgRmFpbHNhZmUgc3BsaXQsIEphQ29DbywgUElULgo="
+    },
+    {
+      "path": "plugins/java-development/skills/java-springboot/SKILL.md",
+      "bytes": 4433,
+      "sha256": "c54d94da498251d79ae4bc34fcb824d7cd66fc72ad199637f1189e1df04e01c5",
+      "content_base64": "LS0tCm5hbWU6IGphdmEtc3ByaW5nYm9vdApkZXNjcmlwdGlvbjogJ1dyaXRlIGFuZCByZXZpZXcgYXBwbGljYXRpb24gY29kZSBpbiBhbiBleGlzdGluZyBTcHJpbmcgQm9vdCAzLzQgcHJvamVjdDogY29udHJvbGxlcnMsIHZhbGlkYXRpb24gYW5kIFByb2JsZW1EZXRhaWwgZXJyb3JzLCBTcHJpbmcgRGF0YSBKUEEvSkRCQywgUmVzdENsaWVudCBhbmQgSFRUUCBpbnRlcmZhY2VzLCBjb25maWd1cmF0aW9uIHByb3BlcnRpZXMsIEthZmthL0FNUVAsIGNhY2hpbmcsIHNjaGVkdWxpbmcsIHZpcnR1YWwgdGhyZWFkcywgQU9UIGFuZCBzdGFydHVwIHR1bmluZy4gVXNlIHdoZW4gYWRkaW5nIG9yIGNoYW5naW5nIGZlYXR1cmVzLiBUbyBzY2FmZm9sZCBhIG5ldyBwcm9qZWN0IHVzZSBjcmVhdGUtc3ByaW5nLWJvb3QtamF2YS1wcm9qZWN0IGluc3RlYWQuJwotLS0KCiMgU3ByaW5nIEJvb3QgYXBwbGljYXRpb24gZGV2ZWxvcG1lbnQKCk9waW5pb25hdGVkIHJ1bGVzIHBsdXMgYSByb3V0ZXIgdG8gZGVlcGVyIHJlZmVyZW5jZXMuIENvZGUgc2FtcGxlcyBpbiB0aGUgcmVmZXJlbmNlcyB3ZXJlIGNvbXBpbGVkIGFuZCBydW4gb24gU3ByaW5nIEJvb3QgNC4xLjEgKFNwcmluZyBGcmFtZXdvcmsgNykgYW5kLCB3aGVyZSB0aGV5IGRpZmZlciwgb24gQm9vdCAzLjUuMTYgKEZyYW1ld29yayA2LjIpLiBCb290IDMgdnMgNCBkaWZmZXJlbmNlcyBhcmUgbWFya2VkICJCb290IDMiIC8gIkJvb3QgNCIgaW4gZWFjaCByZWZlcmVuY2UuCgojIyBCZWZvcmUgd3JpdGluZyBjb2RlCgoxLiAqKkRldGVjdCwgZG8gbm90IGFzc3VtZToqKiByZWFkIGBwb20ueG1sYC9gYnVpbGQuZ3JhZGxlKC5rdHMpYCBmb3IgdGhlIFNwcmluZyBCb290IHZlcnNpb24sIEphdmEgdmVyc2lvbiwgc3RhcnRlcnMgaW4gdXNlIChgc3ByaW5nLWJvb3Qtc3RhcnRlci13ZWJgIGlzIEJvb3QgMywgYHNwcmluZy1ib290LXN0YXJ0ZXItd2VibXZjYCBpcyBCb290IDQpLCBwZXJzaXN0ZW5jZSAoSlBBLCBKREJDKSwgdGhlIG1pZ3JhdGlvbiB0b29sLCB0aGUgdGVzdCBzZXR1cCwgYW5kIHRoZSBwYWNrYWdlIGxheW91dCBhbmQgbmFtaW5nIGNvbnZlbnRpb25zIG9mIHRoZSBleGlzdGluZyBjb2RlLiBNYXRjaCB0aGVtLgoyLiAqKk5ldmVyIHVwZ3JhZGUgU3ByaW5nIEJvb3QsIEphdmEgb3IgZGVwZW5kZW5jaWVzIGltcGxpY2l0bHkuKiogQSBCb290IDMgLT4gNCBtb3ZlIGlzIGEgZGVsaWJlcmF0ZSB0YXNrIChgc3ByaW5nLWJvb3QtNC1taWdyYXRpb25gKS4KMy4gKipBc2sgYmVmb3JlIGFkZGluZyBpbmZyYXN0cnVjdHVyZToqKiBhIGJyb2tlciAoS2Fma2EsIFJhYmJpdE1RKSwgYSBjYWNoZSBwcm92aWRlciwgYSBuZXcgZGF0YWJhc2UsIG9yIGEgc2NoZWR1bGVyL2FzeW5jIHNldHVwLiBBZGQgb25seSB3aGF0IHRoZSB1c2VyIHJlcXVlc3RlZCwgd2l0aCB0aGUgQm9vdC1tYW5hZ2VkIHZlcnNpb24gKG5vIGV4cGxpY2l0IHZlcnNpb24gZm9yIEJPTS1tYW5hZ2VkIGFydGlmYWN0cywgbmV2ZXIgYGxhdGVzdGApLgo0LiAqKlZlcmlmeSBldmVyeSBjaGFuZ2UqKiB3aXRoIHRoZSBwcm9qZWN0J3Mgb3duIGJ1aWxkOiBgLi9tdm53IHZlcmlmeWAgb3IgYC4vZ3JhZGxldyBidWlsZGAgKHBsYWluIGBtdm5gL2BncmFkbGVgIGlmIG5vIHdyYXBwZXIpLiBJbnRlZ3JhdGlvbiB0ZXN0cyBuZWVkIERvY2tlciB3aGVuIHRoZXkgdXNlIFRlc3Rjb250YWluZXJzLgoKIyMgUm91dGVyCgp8IFRhc2sgfCBSZWFkIHwKfCAtLS0gfCAtLS0gfAp8IFJlcG9zaXRvcmllcywgcHJvamVjdGlvbnMsIHBhZ2luYXRpb24sIE4rMSwgYEBUcmFuc2FjdGlvbmFsYCwgYXVkaXRpbmcsIEZseXdheS9MaXF1aWJhc2UsIFNwcmluZyBEYXRhIEpEQkMgfCBgcmVmZXJlbmNlcy9kYXRhLm1kYCB8CnwgQ29udHJvbGxlcnMsIHZhbGlkYXRpb24sIGBQcm9ibGVtRGV0YWlsYCwgYFJlc3RDbGllbnRgLCBgQEh0dHBFeGNoYW5nZWAsIEFQSSB2ZXJzaW9uaW5nLCBPcGVuQVBJLCBKU3BlY2lmeSB8IGByZWZlcmVuY2VzL3Jlc3QtYXBpLm1kYCB8CnwgS2Fma2EvQU1RUCwgYEBDYWNoZWFibGVgL0NhZmZlaW5lLCBgQFNjaGVkdWxlZGAsIGBAQXN5bmNgLCB2aXJ0dWFsIHRocmVhZHMsIG91dGJveCB8IGByZWZlcmVuY2VzL21lc3NhZ2luZy1jYWNoaW5nLm1kYCB8CnwgYEBDb25maWd1cmF0aW9uUHJvcGVydGllc2AsIHByb2ZpbGVzLCBzZWNyZXRzLCBjb25maWcgaW1wb3J0LCBEb2NrZXIgQ29tcG9zZSAvIFRlc3Rjb250YWluZXJzIGF0IGRldiB0aW1lIHwgYHJlZmVyZW5jZXMvY29uZmlndXJhdGlvbi5tZGAgfAp8IEFPVCwgQ0RTL0FwcENEUywgbGF6eSBpbml0aWFsaXphdGlvbiwgbmF0aXZlIGltYWdlIHwgYHJlZmVyZW5jZXMvYW90LWFuZC1zdGFydHVwLm1kYCB8CgpJZiB0aGVzZSBzdGFuZGFsb25lIHNraWxscyBhcmUgaW5zdGFsbGVkLCBhbHNvIHVzZSB0aGVtIGZvciB0aGVpciB0b3BpYzsgb3RoZXJ3aXNlIHJlbHkgb24gdGhlIG9mZmljaWFsIGRvY3M6IGBqYXZhLWhpYmVybmF0ZS1qcGFgIChKUEEgbWFwcGluZyksIGBzcHJpbmctYm9vdC10ZXN0aW5nYCAodGVzdHMpLCBgc3ByaW5nLXNlY3VyaXR5YCAoYXV0aGVudGljYXRpb24sIGF1dGhvcml6YXRpb24sIENTUkYvQ09SUyksIGBzcHJpbmctb2JzZXJ2YWJpbGl0eWAgKG1ldHJpY3MsIHRyYWNpbmcsIEFjdHVhdG9yLCBsb2dzKSwgYGNyZWF0ZS1zcHJpbmctYm9vdC1qYXZhLXByb2plY3RgIChwcm9qZWN0IGRlZmF1bHRzLCBCb290IDMgdnMgNCBidWlsZCBjaGFuZ2VzKSwgYGphdmEtYWRkLWdyYWFsdm0tbmF0aXZlLWltYWdlLXN1cHBvcnRgIChuYXRpdmUgZXhlY3V0YWJsZSkuCgojIyBDb3JlIHJ1bGVzCgotICoqU3RydWN0dXJlIGFuZCBsYXllcnM6KiogcGFja2FnZSBieSBmZWF0dXJlOyBjb25zdHJ1Y3RvciBpbmplY3Rpb247IGNvbnRyb2xsZXJzIHJldHVybiBEVE9zL3JlY29yZHMsIG5ldmVyIGVudGl0aWVzOyBzZXJ2aWNlcyBvd24gdGhlIHRyYW5zYWN0aW9uLgotICoqVmFsaWRhdGlvbiBhbmQgZXJyb3JzOioqIEJlYW4gVmFsaWRhdGlvbiBvbiByZXF1ZXN0IHJlY29yZHMgd2l0aCBgQFZhbGlkYDsgb25lIGBAUmVzdENvbnRyb2xsZXJBZHZpY2VgIHJldHVybmluZyBgUHJvYmxlbURldGFpbGAuIEpTcGVjaWZ5IGFubm90YXRpb25zIGRvY3VtZW50IG51bGxhYmlsaXR5IG9ubHkgYW5kIGRvIG5vdCB2YWxpZGF0ZS4KLSAqKkphY2tzb246KiogQm9vdCA0IHVzZXMgSmFja3NvbiAzIChgdG9vbHMuamFja3Nvbi5kYXRhYmluZC4qYCwgYEpzb25NYXBwZXJgOyBhbm5vdGF0aW9ucyBzdGF5IGluIGBjb20uZmFzdGVyeG1sLmphY2tzb24uYW5ub3RhdGlvbmApOyBCb290IDMgdXNlcyBKYWNrc29uIDIgKGBjb20uZmFzdGVyeG1sLmphY2tzb24uZGF0YWJpbmQuKmAsIGBPYmplY3RNYXBwZXJgKS4KLSAqKlNsaWNlLXRlc3QgZ290Y2hhOioqIHB1dCBgQEVuYWJsZUpwYUF1ZGl0aW5nYCwgYEBFbmFibGVDYWNoaW5nYCwgYEBFbmFibGVBc3luY2AsIGBARW5hYmxlU2NoZWR1bGluZ2Agb24gZGVkaWNhdGVkIGBAQ29uZmlndXJhdGlvbmAgY2xhc3Nlcywgbm90IG9uIHRoZSBgQFNwcmluZ0Jvb3RBcHBsaWNhdGlvbmAgY2xhc3MsIG9yIHNsaWNlcyBzdWNoIGFzIGBARGF0YUpwYVRlc3RgIGZhaWwgdG8gc3RhcnQgKGZvciBleGFtcGxlLCBubyBgQ2FjaGVNYW5hZ2VyYCkuIFNsaWNlcyBkbyBub3Qgc2NhbiBgQENvbmZpZ3VyYXRpb25gIGNsYXNzZXM6IGBASW1wb3J0YCB0aGUgb25lIGEgdGVzdCBuZWVkcy4KLSAqKlByb3hpZWQgYmVhbnM6KiogYEBDYWNoZWFibGVgLCBgQEFzeW5jYCBhbmQgYEBUcmFuc2FjdGlvbmFsYCB3b3JrIHRocm91Z2ggcHJveGllczogdGhleSBkbyBub3RoaW5nIG9uIHNlbGYtaW52b2NhdGlvbiBvciBvbiBgcHJpdmF0ZWAvYGZpbmFsYCBtZXRob2RzOyB0ZXN0IHRoZW0gdGhyb3VnaCB0aGUgaW5qZWN0ZWQgYmVhbi4KCiMjIENoZWNrbGlzdAoKLSBbIF0gVmVyc2lvbnMsIGJ1aWxkIHRvb2wgYW5kIGNvbnZlbnRpb25zIGRldGVjdGVkOyBzdGFydGVycyBtYXRjaCB0aGUgQm9vdCBtYWpvcgotIFsgXSBObyBuZXcgaW5mcmFzdHJ1Y3R1cmUgb3IgZGVwZW5kZW5jeSB3aXRob3V0IHRoZSB1c2VyJ3MgYWdyZWVtZW50Ci0gWyBdIGAuL212bncgdmVyaWZ5YCAvIGAuL2dyYWRsZXcgYnVpbGRgIHBhc3Nlczsgc2VjcmV0cyBhYnNlbnQgZnJvbSBjb2RlLCBwcm9wZXJ0aWVzIGFuZCBsb2dzCgpTZWUgYWxzbzogU3ByaW5nIEJvb3QgcmVmZXJlbmNlIDxodHRwczovL2RvY3Muc3ByaW5nLmlvL3NwcmluZy1ib290L3JlZmVyZW5jZS8+LCBTcHJpbmcgRnJhbWV3b3JrIHJlZmVyZW5jZSA8aHR0cHM6Ly9kb2NzLnNwcmluZy5pby9zcHJpbmctZnJhbWV3b3JrL3JlZmVyZW5jZS8+LCBTcHJpbmcgRGF0YSA8aHR0cHM6Ly9kb2NzLnNwcmluZy5pby9zcHJpbmctZGF0YS9jb21tb25zL3JlZmVyZW5jZS8+Lgo="
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 1059,
+      "sha256": "e32449d23085399adc1222f7a17408b730550258e51627c153cb108ca9955823",
+      "content_base64": "TUlUIExpY2Vuc2UKCkNvcHlyaWdodCBHaXRIdWIsIEluYy4KClBlcm1pc3Npb24gaXMgaGVyZWJ5IGdyYW50ZWQsIGZyZWUgb2YgY2hhcmdlLCB0byBhbnkgcGVyc29uIG9idGFpbmluZyBhIGNvcHkKb2YgdGhpcyBzb2Z0d2FyZSBhbmQgYXNzb2NpYXRlZCBkb2N1bWVudGF0aW9uIGZpbGVzICh0aGUgIlNvZnR3YXJlIiksIHRvIGRlYWwKaW4gdGhlIFNvZnR3YXJlIHdpdGhvdXQgcmVzdHJpY3Rpb24sIGluY2x1ZGluZyB3aXRob3V0IGxpbWl0YXRpb24gdGhlIHJpZ2h0cwp0byB1c2UsIGNvcHksIG1vZGlmeSwgbWVyZ2UsIHB1Ymxpc2gsIGRpc3RyaWJ1dGUsIHN1YmxpY2Vuc2UsIGFuZC9vciBzZWxsCmNvcGllcyBvZiB0aGUgU29mdHdhcmUsIGFuZCB0byBwZXJtaXQgcGVyc29ucyB0byB3aG9tIHRoZSBTb2Z0d2FyZSBpcwpmdXJuaXNoZWQgdG8gZG8gc28sIHN1YmplY3QgdG8gdGhlIGZvbGxvd2luZyBjb25kaXRpb25zOgoKVGhlIGFib3ZlIGNvcHlyaWdodCBub3RpY2UgYW5kIHRoaXMgcGVybWlzc2lvbiBub3RpY2Ugc2hhbGwgYmUgaW5jbHVkZWQgaW4gYWxsCmNvcGllcyBvciBzdWJzdGFudGlhbCBwb3J0aW9ucyBvZiB0aGUgU29mdHdhcmUuCgpUSEUgU09GVFdBUkUgSVMgUFJPVklERUQgIkFTIElTIiwgV0lUSE9VVCBXQVJSQU5UWSBPRiBBTlkgS0lORCwgRVhQUkVTUyBPUgpJTVBMSUVELCBJTkNMVURJTkcgQlVUIE5PVCBMSU1JVEVEIFRPIFRIRSBXQVJSQU5USUVTIE9GIE1FUkNIQU5UQUJJTElUWSwKRklUTkVTUyBGT1IgQSBQQVJUSUNVTEFSIFBVUlBPU0UgQU5EIE5PTklORlJJTkdFTUVOVC4gSU4gTk8gRVZFTlQgU0hBTEwgVEhFCkFVVEhPUlMgT1IgQ09QWVJJR0hUIEhPTERFUlMgQkUgTElBQkxFIEZPUiBBTlkgQ0xBSU0sIERBTUFHRVMgT1IgT1RIRVIKTElBQklMSVRZLCBXSEVUSEVSIElOIEFOIEFDVElPTiBPRiBDT05UUkFDVCwgVE9SVCBPUiBPVEhFUldJU0UsIEFSSVNJTkcgRlJPTSwKT1VUIE9GIE9SIElOIENPTk5FQ1RJT04gV0lUSCBUSEUgU09GVFdBUkUgT1IgVEhFIFVTRSBPUiBPVEhFUiBERUFMSU5HUyBJTiBUSEUKU09GVFdBUkUu"
+    }
+  ]
+}

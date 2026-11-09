@@ -1,5 +1,7 @@
 # Install WorkForce Agent Plugin from GitHub
 
+> Native Local candidate: on `codex/workforce-vscode-native`, both plugin builders now generate the shared `vscode-native/v1` profiles and request instructions. This is source work, not a published matching release. The native package requires the matching runtime/VSIX; it uses native extension tools, without the legacy Bridge connection or required routing aliases. The published installation flow below remains historical until paired release acceptance is complete.
+
 Paste this URL into **Chat: Install Plugin from Source** in VS Code **Local**:
 
 ```text

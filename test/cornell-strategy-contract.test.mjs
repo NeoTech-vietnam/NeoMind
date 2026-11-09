@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { researchFixture } from './cornell-research-fixture.mjs';
+import { pythonExecutable } from './helpers/python.mjs';
 import { compileCornellResearch, cornellResearchSchema, cornellCanonical } from '../dist/cornell-workflow.js';
 import { createCornellNote, previewCornellArtifacts } from '../dist/notes.js';
 import { createRecord, safePath, hash, getRecord, loadRecords } from '../dist/storage.js';
@@ -13,6 +14,7 @@ import { controlledCornellResult } from '../dist/controlled-cornell-sources.js';
 import { persistControlledCornellNote } from '../dist/controlled-cornell-write.js';
 
 const assets=fileURLToPath(new URL('./fixtures/cornell-format-assets/',import.meta.url));
+const python = pythonExecutable();
 function fixture(t,letters=['A']) {
   const a=researchFixture(t),template='.agents/skills/format/assets/template.md',validator='.agents/skills/format/scripts/validate_notes.py';
   for(const [path,name] of [[template,'cornell-note-template.md'],[validator,'validate_notes.py']]) {
@@ -28,7 +30,7 @@ function fixture(t,letters=['A']) {
       {heading:`Strategy ${letter} Flow`,body:flow},
       {heading:`Strategy ${letter} Worked Example Flow`,body:flow},
     ])};
-  const validate=path=>{const result=spawnSync(process.env.PYTHON??(process.platform==='win32'?'python':'python3'),['-I','-B',safePath(a.root,validator),path],{encoding:'utf8',timeout:10000,windowsHide:true});assert.ifError(result.error);return result;};
+  const validate=path=>{const result=spawnSync(python,['-I','-B',safePath(a.root,validator),path],{encoding:'utf8',timeout:10000,windowsHide:true});assert.ifError(result.error);return result;};
   return {...a,input,profile,validate,task};
 }
 

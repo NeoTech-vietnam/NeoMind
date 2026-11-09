@@ -20,3 +20,12 @@ button:hover { border-color: var(--accent); } button:disabled { cursor: default;
 @media (max-width: 760px) { body { padding: 12px; } .workspace { display: block; } .request-sidebar { min-height: auto; margin-bottom: 14px; } #requests { max-height: 210px; overflow: auto; } .project-heading { border: 0; padding: 0; } .deliverables-grid { grid-template-columns: 1fr; } .setup-card { align-items: start; flex-wrap: wrap; } h1 span { display: none; } .v-node text { font-size: 16px; } .request-heading { flex-wrap: wrap; } }
 @media (max-width: 420px) { #roles { grid-template-columns: repeat(2,minmax(0,1fr)); } .header-actions button { padding: 7px 9px; font-size: 11px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+.v-model-view main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+.v-model-view main > * { min-width: 0; }
+.v-model-view .v-model-toolbar select { flex: 1 1 200px; min-width: 0; padding: 6px; background: var(--vscode-dropdown-background, var(--panel)); color: var(--vscode-dropdown-foreground, var(--fg)); border: 1px solid var(--vscode-dropdown-border, var(--line)); }
+.v-model-view .v-model-toolbar select:focus-visible { outline: 2px solid var(--accent); }
+.v-model-view .v-model-toolbar button[aria-pressed=true] { border-color: var(--accent); }
+.v-model-view #v-model { min-height: 0; overflow-x: auto; }
+.v-model-view .v-model { min-width: 520px; }
+.v-model-view .v-panel { overflow-wrap: anywhere; }

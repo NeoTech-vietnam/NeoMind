@@ -1,5 +1,7 @@
 # WorkForce — kế hoạch tổng hợp cho đợt refactor và phát hành
 
+> **Tài liệu lịch sử, đã được thay thế:** từ 08/11/2026, [kế hoạch WorkForce Local](2026-11-08-workforce-local-final-plan.md) và [milestones](2026-11-08-workforce-local-milestones.md) là nguồn triển khai hiện hành. Nội dung dưới đây giữ nguyên bối cảnh của đợt 28/10, bao gồm lựa chọn OpenCode cũ; không áp dụng lựa chọn đó cho đường native Local mới.
+
 Ngày 28/10/2026. **Đây là nguồn quyết định triển khai duy nhất cho đợt WorkForce này**, hợp nhất khảo sát hạ tầng, yêu cầu frontend/agents/backend, chính sách đầu ra/nâng model và nghiên cứu thực hành bên ngoài. Thay thế các kế hoạch NeoMind/WorkForce trước trong cuộc trao đổi. **Chưa triển khai, chưa nghiệm thu, chưa phát hành.**
 
 ## 0. Phạm vi hợp nhất và cách đọc

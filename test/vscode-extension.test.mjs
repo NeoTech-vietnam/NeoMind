@@ -20,7 +20,7 @@ function deferred() {
 
 function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'workforce', controlled = true, controlledFailure = false,
   closeAt, closeFailure = false, savedConnection, fingerprint = 'fixture-build', approval = 'Connect', stateUpdate, probeValid = true,
-  catalogPath = resolve('fixture-catalog.json'), discoveredCatalog = null, nativeCatalog, rejectAbortedProbe = false } = {}) {
+  catalogPath = resolve('fixture-catalog.json'), discoveredCatalog = null, nativeCatalog, rejectAbortedProbe = false, nativeClose } = {}) {
   const entered = deferred(), release = deferred();
   const closeEntered = deferred(), closeRelease = deferred();
   let closeHeld = false, controlledCloses = 0;
@@ -74,11 +74,14 @@ function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'w
     AbortController,
     require(name) {
       if (name === './monitor.cjs') return { activateMonitor(_vscode, _context, _loader, connection) { connections.push(connection); } };
+      if (name === './v-model-panel.cjs') return require('../extensions/vscode-model-bridge/v-model-panel.cjs');
       if (name === './plugin-panel.cjs') return require('../extensions/vscode-model-bridge/plugin-panel.cjs');
       if (name === './automation-panel.cjs') return require('../extensions/vscode-model-bridge/automation-panel.cjs');
       if (name === './native-validation.cjs') return require('../extensions/vscode-model-bridge/native-validation.cjs');
       if (name === './native-dispatch.cjs') return require('../extensions/vscode-model-bridge/native-dispatch.cjs');
       if (name === './controlled-workflows.cjs') return require('../extensions/vscode-model-bridge/controlled-workflows.cjs');
+      // Native entry's lazy binding/ownership is exercised in native-entry.test.
+      if (name === './native-entry.cjs') return { activateNativeEntry() { return { async dispose() { await nativeClose; } }; } };
       if (name === 'vscode') return vscode;
       if (name === 'node:fs') return {
         realpathSync: { native: path => path },
@@ -121,12 +124,24 @@ function setup(blocked, { trusted = true, globalRuntime = true, packageName = 'w
     closeEntered: closeEntered.promise, releaseClose: closeRelease.resolve,
     get controlledCloses() { return controlledCloses; },
     enable: commands.get('workforce.bridge.enable'),
+    restore: () => connections[0].restore(root),
     disable: commands.get('workforce.bridge.disable'),
     deactivate: module.exports.deactivate,
     foldersChanged: () => foldersChanged(),
     dispose: () => subscriptions.at(-1).dispose(),
   };
 }
+
+test('editor deactivation also drains native work, even when the historical bridge is idle', async () => {
+  const native = deferred(), app = setup(undefined, { nativeClose: native.promise });
+  let ended = false;
+  const shutdown = app.deactivate().then(() => { ended = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(ended, false);
+  assert.equal(app.calls.startup, 0);
+  native.resolve(); await shutdown;
+  assert.equal(ended, true);
+});
 
 for (const closeAt of ['controlled', 'bridge']) {
   test(`concurrent disable, disposal and deactivation wait for the same ${closeAt} shutdown`, async () => {
@@ -270,9 +285,12 @@ test('activation stays idle; explicit enable uses User runtime; disable closes o
   assert.equal(app.calls.close, 1);
 });
 
-test('approved exact workspace/runtime/build restores after reload without another consent or any VS Code model loop', async () => {
+test('cold activation leaves a previously approved connection idle until a legacy execution surface restores it', async () => {
   const app = setup(undefined, { savedConnection: true });
   await app.flush();
+  assert.equal(app.calls.startup, 0); assert.equal(app.calls.probe, 0);
+  assert.equal(app.connections[0].enabled(app.root), false);
+  await Promise.all([app.restore(), app.restore()]);
   assert.equal(app.calls.consent, 0); assert.equal(app.calls.startup, 1);
   assert.equal(app.connections[0].enabled(app.root), true);
   assert.deepEqual(app.info, []); assert.deepEqual(app.errors, []);
@@ -285,7 +303,7 @@ for (const changed of ['root', 'runtime', 'fingerprint']) {
   test(`saved approval is not reused after ${changed} changes`, async () => {
     const saved = { root: resolve('workspace'), runtime: resolve('trusted-runtime'), fingerprint: 'fixture-build', [changed]: 'changed' };
     const app = setup(undefined, { savedConnection: saved });
-    await app.flush();
+    await app.restore();
     assert.equal(app.calls.startup, 0); assert.equal(app.calls.consent, 0, 'Automatic restore never asks for a replacement approval.');
     await app.enable(app.root); assert.equal(app.calls.consent, 1); assert.equal(app.calls.startup, 1);
     assert.equal(app.state.get('workforce.connection').fingerprint, 'fixture-build'); await app.disable();

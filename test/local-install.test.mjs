@@ -91,14 +91,22 @@ test('fresh CLI local init registers WorkForce for the exact project while prese
   assert.deepEqual(initialized.installation.conflicts, []);
   assert.equal(read(root, '.github/copilot-instructions.md'), instructions);
   assert.equal(read(root, '.gitignore'), gitignore);
-  assert.match(read(root, '.github/instructions/workforce.instructions.md'), /request_submit/);
+  const nativeInstructions = read(root, '.github/instructions/workforce.instructions.md');
+  assert.match(nativeInstructions, /vscode-native\/v1/);
+  assert.match(nativeInstructions, /workforceNativeRequest/);
+  assert.doesNotMatch(nativeInstructions, /request_submit|assignment_claim|reported_assignment/);
   const mcp = JSON.parse(read(root, '.vscode/mcp.json'));
   assert.equal(mcp.servers.existing.command, 'authored-server');
   assert.equal(mcp.servers.workforce.command, process.execPath);
   assert.deepEqual(mcp.servers.workforce.args, [cli, 'mcp', '--project', root]);
   assert.equal(JSON.parse(read(root, '.vscode/settings.json'))['chat.permissions.default'], 'autoApprove');
-  for (const [file, name] of [['pm', 'WF.PM'], ['swsd', 'WF.SWSD'], ['p-res', 'WF.P-RES'], ['fnd', 'WF.FnD'], ['reviewer', 'WF.Reviewer'], ['tester', 'WF.Tester']])
-    assert.match(read(root, `.github/agents/workforce-${file}.agent.md`), new RegExp(`name: "${name.replaceAll('.', '\\.')}"`));
+  for (const [file, name] of [['pm', 'WF.PM'], ['swsd', 'WF.SWSD'], ['p-res', 'WF.P-RES'], ['fnd', 'WF.FnD'], ['reviewer', 'WF.Reviewer'], ['tester', 'WF.Tester']]) {
+    const profile = read(root, `.github/agents/workforce-${file}.agent.md`);
+    assert.match(profile, new RegExp(`name: "${name.replaceAll('.', '\\.')}"`));
+    assert.match(profile, /user-invocable: true/);
+    assert.doesNotMatch(profile, /^model:|workforce\/request_submit|assignment_claim|reported_assignment/m,
+      'Fresh Local profiles inherit native models and cannot reintroduce the legacy assignment protocol.');
+  }
   assert.equal(existsSync(join(root, '.neomind')), false);
   assert.deepEqual(run(root, ['update']).conflicts, []);
   assert.deepEqual(JSON.parse(read(root, '.vscode/mcp.json')), mcp);

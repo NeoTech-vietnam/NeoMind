@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const { TOOL_NAME, LOCAL_COORDINATOR_COMMAND, activateControlledWorkflows, createControlledPanelHost, publicStatus, renderControlledPanel } = require('../extensions/vscode-model-bridge/controlled-workflows.cjs');
 const workflowId = 'NM-TEST-KNW-0001';
 
-function app(t) {
+function app(t, connection = {}) {
   const parent = realpathSync.native(tmpdir()), root = realpathSync.native(mkdtempSync(join(parent, 'neomind-controlled-ui-')));
   t.after(() => { assert.equal(dirname(resolve(root)), parent); rmSync(root, { force: true, recursive: true }); });
   const calls = [], sent = [], errors = [], commands = new Map(), tools = new Map(), subscriptions = [];
@@ -35,7 +35,7 @@ function app(t) {
     LanguageModelTextPart: class { constructor(value) { this.value = value; } },
   };
   const host = createControlledPanelHost({ runtime, root, post: async value => sent.push(value), alive: () => active, enabled: () => enabled });
-  activateControlledWorkflows(vscode, { subscriptions }, async selected => { assert.equal(selected, root); return runtime; }, { enabled: selected => selected === root && enabled });
+  activateControlledWorkflows(vscode, { subscriptions }, async selected => { assert.equal(selected, root); return runtime; }, { enabled: selected => selected === root && enabled, ...connection });
   const invoke = async input => JSON.parse((await tools.get(TOOL_NAME).invoke({ input })).content[0].value);
   return { root, workflow, runtime, vscode, calls, sent, errors, commands, host, invoke, tool: tools.get(TOOL_NAME), subscriptions,
     active: value => { active = value; }, enabled: value => { enabled = value; } };
@@ -74,6 +74,17 @@ test('Local Coordinator focuses the sidebar before creating Local chat from eith
       ['workbench.action.chat.open', { mode: 'WF.PM' }]]);
     assert.deepEqual(a.calls, []);
   }
+});
+
+test('opening a native Local profile does not restore the historical model Bridge or engine', async t => {
+  let restores = 0;
+  const a = app(t, { restore: async () => { restores++; } }), open = localCoordinator(a);
+  a.vscode.commands.executeCommand = async () => {};
+  await open();
+  assert.equal(restores, 1, 'historical profiles keep their existing restoration contract');
+  writeFileSync(join(a.root, '.github/agents/workforce-pm.agent.md'), '---\nname: "WF.PM"\n---\nExecution contract: vscode-native/v1. Native Local owns the model loop.\n');
+  assert.equal((await open()).opened, true);
+  assert.equal(restores, 1, 'native entry uses the real Local context without a second engine');
 });
 
 test('Local Coordinator waits for the Chat view and Local chat before selecting the profile and preserves model choice', async t => {

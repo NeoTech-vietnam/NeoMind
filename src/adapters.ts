@@ -11,6 +11,7 @@ import { resolveCatalogModel } from './model-catalog.js';
 import { readModelCatalog } from './model-catalog-reader.js';
 import { readRoleUpstreamInstructions } from './upstreams.js';
 import { agentProfiles, legacyAgentProfiles, legacyAgentDelegation as agentDelegation, workforceProfileFileId, nativeActivityInstructions, nativeIdentityInstructions, type AgentProfile } from './agent-profiles.js';
+import { nativeLocalProfile, nativeLocalWorkerProfile, nativeRoles, nativeSpecialists, nativeLocalToolReferences } from './native-local-contract.js';
 import { readCodexRouting } from './codex-routing.js';
 import { nativeHookOutputs } from './agent-hooks.js';
 import { reaToolsForRole, readReaSkillBundle } from './rea.js';
@@ -453,33 +454,54 @@ The team is WF.PM, WF.SWSD, WF.P-RES, WF.FnD, WF.Reviewer and WF.Tester. The bac
 `;
 }
 
+export function workforceNativeClientInstructions(platform: Platform): string {
+  return `## WorkForce native Local entry
+
+Execution contract: vscode-native/v1. VS Code Local owns model/tool execution; WorkForce owns valid request membership, engineering records and acceptance. Use the current model picker; role preferences inherit by default and may be changed through the V-model's native Role models picker. No particular model alias or external catalog file is required.
+
+When the native WorkForce tools are available in the current Local chat, use the WF.PM native profile for an ordinary user requirement. Resolve attached context to actual workspace paths, inspect existing tools with ${nativeLocalToolReferences.prepare}, then submit one short professional plan through ${nativeLocalToolReferences.request}. Keep the user's requirement faithful. Backend-generated specialist calls handle implementation, independent review/testing and actual checks; report their returned artifacts and acceptance. Never submit another request solely to repair or reverify an unfinished one. Use ${nativeLocalToolReferences.control} with the returned public request_key to inspect results, recheck unchanged reviewed products after an environment correction, or explicitly resume retained findings through fresh specialists and checks. Do not poll while work is running. A request for one named role uses ${nativeLocalToolReferences.role} and completes only that scope.
+
+${platform === 'copilot' ? 'Use native Local tools; the historical MCP workflow intake is a separate execution contract.' : 'A client without these native VS Code tools must use Local WF.PM or its separately validated native admission adapter. Do not substitute the historical workflow protocol. Generated configuration alone is not proof of a connection.'}
+
+Native profiles do not use historical assignment authentication or client-generated lifecycle IDs. Existing legacy workflows retain their evidence and separate execution contract. Do not mix their instructions into a native assignment.
+
+WorkForce keeps each request under .workforce/requests. Native V-model stages reflect actual owned calls and current checks; a configured role or a saved report is not a running agent or accepted product. Closing the view does not cancel work; editor shutdown cancels and retains results. Read .workforce/guides/native-local.md for this integration.
+`;
+}
+
 function workforceAdapterOutputs(root: string, config: AdapterConfig): ManagedOutput[] {
   const outputs: ManagedOutput[] = [], node = adapterNodeCommand(root);
   const server = { type: 'stdio', command: node, args: [cliPath, 'mcp', '--project', root] };
   const tools = ['request_submit', 'request_status', 'request_control'];
+  const nativeLocal = config.platforms.includes('copilot') && config.copilot_integration === 'local';
+  if (nativeLocal) outputs.push({ path: '.workforce/guides/native-local.md', kind: 'file', content: workforceNativeClientInstructions('copilot') });
   const optional = toolCatalog.flatMap(item => {
     const registration = pluginRegistration(root, item.id);
     return registration.status === 'ready' ? [{ id: item.id, registration }] : [];
   });
   for (const platform of config.platforms) {
-    const instructions = workforceClientInstructions(platform);
+    const instructions = nativeLocal ? workforceNativeClientInstructions(platform) : workforceClientInstructions(platform);
     if (platform === 'copilot') {
       outputs.push({ path: '.github/instructions/workforce.instructions.md', kind: 'file',
         content: `---\ndescription: "WorkForce Local request entrypoint"\napplyTo: "**"\n---\n\n${instructions}` });
       outputs.push(jsonEntry('.vscode/mcp.json', ['servers', 'workforce'], server));
       outputs.push(jsonEntry('.vscode/settings.json', ['chat.permissions.default'], 'autoApprove'));
-      for (const profile of agentProfiles) {
+      if (nativeLocal) for (const role of nativeRoles) outputs.push({ path: `.github/agents/workforce-${role.slice(3).toLowerCase()}.agent.md`,
+        kind: 'file', content: nativeLocalProfile(role) });
+      else for (const profile of agentProfiles) {
         const models = profile.id === 'coordinator' ? copilotModels(root, profile.modelRole) : null;
         outputs.push({ path: `.github/agents/workforce-${workforceProfileFileId(profile.id)}.agent.md`, kind: 'file',
           content: `---\nname: ${JSON.stringify(profile.name)}\ndescription: ${JSON.stringify(profile.duty)}\n${models ? `model: ${JSON.stringify(models.length === 1 ? models[0] : models)}\n` : ''}tools: ${JSON.stringify(profile.id === 'coordinator' ? tools.map(tool => `workforce/${tool}`) : ['workforce/request_status'])}\nagents: []\nuser-invocable: ${profile.id === 'coordinator'}\n---\n\n${instructions}\nRuntime responsibility: ${profile.name}. ${profile.procedure}\n` });
       }
+      if (nativeLocal) for (const role of nativeSpecialists) outputs.push({ path: `.github/agents/workforce-worker-${role.slice(3).toLowerCase()}.agent.md`,
+        kind: 'file', content: nativeLocalWorkerProfile(role) });
       outputs.push({ path: '.workforce/mcp-server.json', kind: 'file', content: JSON.stringify({ schema_version: 1,
         registration: 'workspace-configured; verify actual client discovery', destination: '.vscode/mcp.json', servers: { workforce: server } }, null, 2) + '\n' });
     } else if (platform === 'codex') {
       outputs.push({ path: 'AGENTS.md', kind: 'block', key: 'instructions', content: instructions });
       outputs.push({ path: '.codex/config.toml', kind: 'block', key: 'mcp', content: `[mcp_servers.workforce]\ncommand = ${JSON.stringify(node)}\nargs = ${JSON.stringify(server.args)}\nrequired = true\nenabled_tools = ${JSON.stringify(tools)}\n` });
       for (const profile of agentProfiles) outputs.push({ path: `.codex/agents/workforce-${workforceProfileFileId(profile.id)}.toml`, kind: 'file',
-        content: `name = ${JSON.stringify(`workforce-${workforceProfileFileId(profile.id)}`)}\ndescription = ${JSON.stringify(`${profile.name}: ${profile.duty}`)}\ndeveloper_instructions = ${JSON.stringify(`${instructions}\nRuntime responsibility: ${profile.name}. ${profile.procedure}`)}\n` });
+        content: `name = ${JSON.stringify(`workforce-${workforceProfileFileId(profile.id)}`)}\ndescription = ${JSON.stringify(`${profile.name}: ${profile.duty}`)}\ndeveloper_instructions = ${JSON.stringify(`${instructions}\nRuntime responsibility: ${profile.name}. ${nativeLocal ? 'Use the validated native Local adapter for execution; preserve the requested professional scope.' : profile.procedure}`)}\n` });
     } else {
       outputs.push({ path: 'CLAUDE.md', kind: 'block', key: 'instructions', content: instructions });
       outputs.push(jsonEntry('.mcp.json', ['mcpServers', 'workforce'], server));

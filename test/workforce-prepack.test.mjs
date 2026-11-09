@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, read
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { packedArchive } from '../scripts/package-runtime.mjs';
 
 const npm = [process.env.npm_execpath, join(dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js')]
   .find(path => path && existsSync(path));
@@ -29,9 +30,12 @@ function pack(root) {
 test('actual npm pack retains build/bootstrap execution and emits exactly one parseable JSON value', t => {
   const root = fixture(t), result = pack(root);
   assert.equal(result.status, 0, result.stderr);
-  const metadata = JSON.parse(result.stdout);
-  assert.equal(metadata.length, 1); assert.equal(metadata[0].filename, 'workforce-prepack-fixture-1.0.0.tgz');
-  assert.ok(metadata[0].files.some(item => item.path === 'product.txt'));
+  // npm 11 emits an array; npm 12 emits an object keyed by package name.
+  // Use the same strict one-archive reader as production packaging.
+  const metadata = packedArchive(JSON.parse(result.stdout));
+  assert.equal(metadata.name, 'workforce-prepack-fixture'); assert.equal(metadata.version, '1.0.0');
+  assert.equal(metadata.filename, 'workforce-prepack-fixture-1.0.0.tgz');
+  assert.ok(metadata.files.some(item => item.path === 'product.txt'));
   assert.equal(readFileSync(join(root, 'product.txt'), 'utf8'), 'built-product');
   assert.equal(readFileSync(join(root, 'build-ran.txt'), 'utf8'), 'observed');
   assert.equal(readFileSync(join(root, 'bootstrap-ran.txt'), 'utf8'), 'observed');

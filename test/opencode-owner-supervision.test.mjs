@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { openCodeConfiguration, openCodeStorage, reconcileOpenCodeOwner } from '../dist/opencode-engine.js';
 
@@ -10,19 +11,30 @@ const temporary = resolve('artifacts/test-temp'), moduleURL = new URL('../dist/o
 const pause = milliseconds => new Promise(done => setTimeout(done, milliseconds));
 function fixture(t) {
   mkdirSync(temporary, { recursive: true }); const root = mkdtempSync(join(temporary, 'wf-owner-supervision-')), storage = openCodeStorage(root).path;
-  t.after(() => { assert.equal(dirname(root), temporary); assert.equal(dirname(storage), join(temporary, '.workforce-private'));
-    rmSync(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
-  return { root, storage, invocation: randomUUID(), prepared: join(root, 'prepared.json'), ready: join(root, 'ready.json') };
+  const owners = [];
+  // After hooks run in registration order. Keep process teardown and deletion
+  // in one hook so a later owner hook cannot run after storage was removed.
+  t.after(async () => {
+    for (const { child, closed } of owners) {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await closed;
+    }
+    assert.equal(dirname(root), temporary); assert.equal(dirname(storage), join(temporary, '.workforce-private'));
+    await rm(storage, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+  return { root, storage, owners, invocation: randomUUID(), prepared: join(root, 'prepared.json'), ready: join(root, 'ready.json') };
 }
 async function until(read, timeout = 60000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { const value = await read(); if (value) return value; await pause(50); }
   assert.fail('Timed out waiting for actual engine supervision evidence.');
 }
-function owner(t, root, script) {
-  const child = spawn(process.execPath, ['--input-type=module', '-e', script], { cwd: root, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+function owner(fixture, script) {
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script], { cwd: fixture.root, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+  const closed = new Promise(done => child.once('close', done));
+  fixture.owners.push({ child, closed });
   let error = ''; child.stderr.on('data', bytes => { error = (error + bytes.toString()).slice(-4096); });
-  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
   return { child, error: () => error };
 }
 const config = () => ({ ...openCodeConfiguration({ model: 'worker-models', provider: 'fixture', baseURL: 'http://127.0.0.1:1/v1' },
@@ -33,7 +45,7 @@ test('actual editor-owner SIGKILL stops the pinned engine and retains authentica
   const script = `import{startOpenCodeEngine}from${JSON.stringify(moduleURL)};import{writeFileSync}from'node:fs';
 const engine=await startOpenCodeEngine(${JSON.stringify(root)},${JSON.stringify(invocation)},${JSON.stringify(config())},undefined,{onPrepared:ref=>writeFileSync(${JSON.stringify(prepared)},JSON.stringify(ref))});
 const health=await engine.client.global.health();writeFileSync(${JSON.stringify(ready)},JSON.stringify({ref:engine.supervision,directory:engine.directory,healthy:health.data.healthy}));await new Promise(()=>{});`;
-  const running = owner(t, root, script);
+  const running = owner(fixtureData, script);
   await until(() => { if (running.child.exitCode !== null) assert.fail(`Owner exited before readiness: ${running.error()}`); return existsSync(ready); });
   const actual = JSON.parse(readFileSync(ready, 'utf8')), initial = JSON.parse(readFileSync(prepared, 'utf8'));
   assert.equal(actual.healthy, true); assert.equal(initial.engine, undefined, 'Controller checkpoint precedes the actual engine.');
@@ -76,10 +88,10 @@ const health=await engine.client.global.health();writeFileSync(${JSON.stringify(
 });
 
 test('owner crash after durable preparation but before admit proves no engine started without claiming an observed process exit', { timeout: 120000 }, async t => {
-  const { root, storage, invocation, prepared } = fixture(t);
+  const fixtureData = fixture(t), { root, storage, invocation, prepared } = fixtureData;
   const script = `import{startOpenCodeEngine}from${JSON.stringify(moduleURL)};import{writeFileSync}from'node:fs';
 await startOpenCodeEngine(${JSON.stringify(root)},${JSON.stringify(invocation)},${JSON.stringify(config())},undefined,{onPrepared:async ref=>{writeFileSync(${JSON.stringify(prepared)},JSON.stringify(ref));await new Promise(()=>{});}});`;
-  const running = owner(t, root, script);
+  const running = owner(fixtureData, script);
   await until(() => { if (running.child.exitCode !== null) assert.fail(`Owner exited before preparation: ${running.error()}`); return existsSync(prepared); });
   const ref = JSON.parse(readFileSync(prepared, 'utf8'));
   assert.equal(running.child.kill('SIGKILL'), true);
@@ -92,7 +104,7 @@ await startOpenCodeEngine(${JSON.stringify(root)},${JSON.stringify(invocation)},
 });
 
 test('actual guardian kills adversarial owned child and grandchild processes before authenticating tree shutdown', { timeout: 60000 }, async t => {
-  const { root, storage, invocation, prepared, ready } = fixture(t), heartbeat = join(root, 'heartbeat.txt'), grandchild = join(root, 'grandchild.json');
+  const fixtureData = fixture(t), { root, storage, invocation, prepared, ready } = fixtureData, heartbeat = join(root, 'heartbeat.txt'), grandchild = join(root, 'grandchild.json');
   const descendant = `const fs=require('node:fs');fs.writeFileSync(process.env.WF_GRANDCHILD,JSON.stringify({pid:process.pid}));setInterval(()=>fs.appendFileSync(process.env.WF_HEARTBEAT,'g'),30);`;
   const nested = `const{spawn}=require('node:child_process');spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'inherit'});setInterval(()=>require('node:fs').appendFileSync(process.env.WF_HEARTBEAT,'c'),30);`;
   const server = `const{spawn}=require('node:child_process');spawn(process.execPath,['-e',${JSON.stringify(nested)}],{stdio:'inherit'});require('node:http').createServer((q,s)=>s.end('fixture')).listen(0,'127.0.0.1',function(){console.log('opencode server listening on http://127.0.0.1:'+this.address().port)});`;
@@ -106,7 +118,7 @@ const guardian=openCodeWindowsGuardian(),key=randomBytes(32),instance=randomByte
 const bytes=JSON.stringify(spec)+String.fromCharCode(10),ref={schema_version:1,invocation_id:invocation,instance,owner:spec.owner,spec_sha256:hash(bytes),spec_hmac:createHmac('sha256',key).update('workforce-engine-spec-v1'+String.fromCharCode(0)).update(bytes).digest('hex')};writeFileSync(join(path,'key.bin'),key,{mode:0o600});writeFileSync(join(path,'spec.json'),bytes,{mode:0o600});writeFileSync(${JSON.stringify(prepared)},JSON.stringify(ref));
 const main='import{runOpenCodeOwnerSupervisor}from'+JSON.stringify(${JSON.stringify(moduleURL)})+';await runOpenCodeOwnerSupervisor(process.argv[1],JSON.parse(process.argv[2]));';
 const watcher=spawn(process.execPath,['--input-type=module','-e',main,root,JSON.stringify(ref)],{cwd:directory,detached:true,windowsHide:true,env:commandEnvironment({TEMP:join(directory,'tmp'),TMP:join(directory,'tmp'),TMPDIR:join(directory,'tmp')}),stdio:['ignore','ignore','ignore','ipc']});watcher.on('message',m=>{if(m.type==='waiting')watcher.send({type:'admit',instance});if(m.type==='ready')writeFileSync(${JSON.stringify(ready)},JSON.stringify(m));});await new Promise(()=>{});`;
-  const running = owner(t, root, script);
+  const running = owner(fixtureData, script);
   await until(() => { if (running.child.exitCode !== null) assert.fail(`Owner fixture exited: ${running.error()}`); return existsSync(ready) && existsSync(grandchild) && existsSync(heartbeat); }, 30000);
   const ref = JSON.parse(readFileSync(prepared, 'utf8'));
   assert.equal(running.child.kill('SIGKILL'), true);

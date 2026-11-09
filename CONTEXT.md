@@ -20,7 +20,7 @@ A bounded engineering assignment within a request, with an owner, authorized out
 The owner of request state, engineering identities, scoped tool bindings, scheduling, recovery and final acceptance. Client chats submit or follow requests; workers contribute professional results under runtime-owned assignments.
 
 **Engine session**:
-A worker conversation managed by the pinned OpenCode engine through its SDK. The engine owns its model and tool-call loop and conversation identities; WorkForce owns engineering identities and state.
+A worker conversation managed by its declared agent harness. Native Local owns the current agents' model and tool loop; WorkForce owns engineering identities and state. OpenCode engine sessions belong to historical contracts and retain their original obligations.
 
 **Agent assignment**:
 A bounded responsibility delegated to an actual actor under a declared profile and core role. An assignment description establishes scope; observed execution and its receipt establish what actually ran.
@@ -33,11 +33,17 @@ A provenance-bearing record of an invocation's bound context, lifecycle and requ
 **Agent profile**:
 A named set of duties presented to a client or worker. A visible profile can compose existing core responsibilities; its presence alone does not establish an active agent.
 
+**Worker profile**:
+A profile used to execute an assigned professional role. Its profile name and the role's engineering identity are separate facts. An intake profile receives a user's request; a worker profile contributes a bounded result.
+
+**Direct role job**:
+A user's scoped request to one professional role, with its own saved result. Completing that role job does not establish whole-product acceptance or independent verification of its own implementation.
+
 **Core role**:
 A stable responsibility used for engineering ownership, permitted operations and model policy. Profile names do not replace core role identifiers.
 
 **WF.PM**:
-The coordination responsibility for planning, applicable reuse, bounded delegation, recovery decisions and final handoff. The client WF.PM is an intake and follow-up profile; runtime WF.PM owns engineering coordination.
+The coordination responsibility for planning, applicable reuse, bounded delegation, recovery decisions and final handoff. The native WF.PM agent supplies professional coordination decisions; WorkForce applies the saved plan and owns engineering state and acceptance.
 
 **WF.SWSD**:
 The responsibility for scope, measurable requirements, acceptance criteria and verification intent.

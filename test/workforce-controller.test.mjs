@@ -27,6 +27,7 @@ import { requestProjection } from '../dist/workforce-requests.js';
 import { researchFixture } from './cornell-research-fixture.mjs';
 import { localOpenAIProvider } from './helpers/local-openai-provider.mjs';
 import { probeWorkForceConnection } from '../dist/workforce-connection.js';
+import { waitForProgress, ProgressWaitError } from './helpers/progress-wait.mjs';
 
 const actualOpenCodeRun = OpenCodeSession.prototype.run;
 
@@ -563,10 +564,29 @@ test('historical WorkForce reads normalize default selectors while preserving th
   assert.equal((await call({ path: null })).isError, true);
 });
 
-test('concurrent WorkForce requests complete six explicit roles with independent Reviewer before Tester and real subprocess evidence', { timeout: 120000 }, async t => {
+test('concurrent WorkForce requests complete six explicit roles with independent Reviewer before Tester and real subprocess evidence', { timeout: 330000 }, async t => {
   const root = await fixture(t, ['alpha', 'beta']);
   const [a, b] = await Promise.all(['alpha', 'beta'].map(name => startControlledWorkflow(root, { requirement: `Case: ${name}\nCreate the requested JSON result.`, request_id: `test-${name}`, context: [{ path: 'requirements.md', kind: 'file' }] })));
-  const runs = await Promise.all([wait(root, a.workflow_id), wait(root, b.workflow_id)]);
+  const completed = async id => {
+    try {
+      return await waitForProgress({
+        // Journal reads are cheap scheduling observations, never acceptance.
+        // Every terminal candidate is checked through authoritative receipts.
+        probe: () => JSON.parse(readFileSync(safePath(root, `.neomind/controlled/workflows/${hash(id)}.json`), 'utf8')),
+        inspect: () => controlledStatus(root, id), accept: run => run.status === 'completed',
+        reject: run => ['blocked', 'uncertain', 'cancelled'].includes(run.status),
+        progress: run => JSON.stringify({ phase: run.phase, status: run.status,
+          attempts: run.attempts.map(item => [item.id, item.stage, item.state, item.report?.outcome]),
+          checks: run.checks.map(item => [item.title, item.negative, item.passed, item.exit_code]),
+          tool_calls: run.events.filter(item => item.kind === 'tool').length }),
+        idleMs: 90000, totalMs: 270000,
+      });
+    } catch (error) {
+      if (!(error instanceof ProgressWaitError)) throw error;
+      assert.fail(`Concurrent WorkForce request did not complete (${error.code}): ${JSON.stringify(error.snapshot)}`);
+    }
+  };
+  const runs = await Promise.all([completed(a.workflow_id), completed(b.workflow_id)]);
   for (const run of runs) {
     assert.equal(run.process_contract, 'workforce/v1'); assert.equal(run.transport, 'opencode');
     assert.deepEqual(run.attempts.map(item => item.role), ['manager', 'requirements', 'architect', 'developer', 'reviewer', 'verifier']);
@@ -1075,8 +1095,32 @@ test('unreachable provider checks persist bounded backoff without inference and 
   assert.equal(controlledStatus(root, started.workflow_id).revision, before);
 });
 
-test('canonical OpenCode HTTP 503 with upstream usage 429 signs a bound failure, waits and completes the same review after actual healthy proof', { timeout: 150000 }, async t => {
-  const began = Date.now(), remaining = () => Math.max(1, began + 140000 - Date.now());
+test('canonical OpenCode HTTP 503 with upstream usage 429 signs a bound failure, waits and completes the same review after actual healthy proof', { timeout: 330000 }, async t => {
+  // Initial failure, actual proof for both model routes and the recovered
+  // independent review share one hard observation cap. Real progress may renew
+  // inactivity; timestamps, revisions and unchanged backoff do not renew it.
+  const began = Date.now(), remaining = () => Math.max(1, began + 270000 - Date.now());
+  const observe = async (root, id, expected) => {
+    try {
+      return await waitForProgress({
+        probe: () => JSON.parse(readFileSync(safePath(root, `.neomind/controlled/workflows/${hash(id)}.json`), 'utf8')),
+        inspect: () => controlledStatus(root, id), accept: run => run.status === expected,
+        reject: run => ['blocked', 'uncertain', 'cancelled', 'completed'].includes(run.status) && run.status !== expected,
+        progress: run => JSON.stringify({ phase: run.phase, status: run.status,
+          attempts: run.attempts.map(item => [item.id, item.stage, item.state, item.report?.outcome]),
+          checks: run.checks.map(item => [item.title, item.negative, item.passed, item.exit_code]),
+          tool_calls: run.events.filter(item => item.kind === 'tool').length,
+          restored: run.runtime_observations?.filter(item => item.kind === 'provider-capability-restored').length }),
+        idleMs: 90000, totalMs: remaining(),
+      });
+    } catch (error) {
+      if (!(error instanceof ProgressWaitError)) throw error;
+      const state = error.snapshot;
+      assert.fail(`Canonical provider restoration did not reach ${expected} (${error.code}): ${JSON.stringify({
+        status: state?.status, phase: state?.phase, blocker: state?.blocker, dependency_wait: state?.dependency_wait,
+        recent_events: state?.events.slice(-8).map(({ kind, stage, at }) => ({ kind, stage, at })) })}`);
+    }
+  };
   let healthy = false, staleRejected = false;
   const routeNonces = new Map();
   const secret = 'PRIVATE_PROVIDER_ERROR_CANARY';
@@ -1108,7 +1152,7 @@ test('canonical OpenCode HTTP 503 with upstream usage 429 signs a bound failure,
   atomicWrite(safePath(root, 'catalog.json'), JSON.stringify([{ name: 'fixture', vendor: 'fixture', models: [
     { id: 'top-models', url: provider.baseURL }, { id: 'worker-models', url: provider.baseURL }] }]));
   const started = await startControlledWorkflow(root, { requirement: 'Case: canonical-provider\nCreate the requested JSON and use the existing independent checker.' });
-  const waiting = await wait(root, started.workflow_id, 'waiting', remaining());
+  const waiting = await observe(root, started.workflow_id, 'waiting');
   assert.equal(waiting.phase, 'review'); assert.equal(waiting.dependency_wait.code, 'provider');
   assert.deepEqual(waiting.provider_stalls?.flatMap(checkpoint => checkpoint.attempts.map(attempt => attempt.action)), ['retry-provider'],
     'A canonical transient failure enters the same task-bound recovery ledger as a stalled provider stream.');
@@ -1131,7 +1175,8 @@ test('canonical OpenCode HTTP 503 with upstream usage 429 signs a bound failure,
   assert.equal(waiting.pending_question, undefined);
   const product = readFileSync(join(root, 'products/canonical-provider.json'));
   healthy = true; fixtureClocks.get(root).value = Date.parse(waiting.dependency_wait.next_condition_check_at) + 1;
-  const completed = await wait(root, started.workflow_id, 'completed', remaining());
+  const completed = await observe(root, started.workflow_id, 'completed');
+  assert.equal(requestProjection(root, completed).accepted, true, 'Restored provider proof alone is never product acceptance.');
   assert.equal(completed.attempts.filter(attempt => attempt.stage === 'review').length, 2);
   assert.equal(completed.attempts.filter(attempt => attempt.stage === 'implementation').length, 1);
   assert.equal(completed.checks.length, 1); assert.equal(completed.checks[0].passed, true);

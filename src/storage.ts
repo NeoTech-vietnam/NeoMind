@@ -456,6 +456,11 @@ export function getRecord(root: string, id: string): ProjectRecord {
 export function requestFolderForWorkflow(root: string, workflowId: string) {
   return readStorageLayout(root, resolveManagedRoot(root)).requests.find(item => item.workflow_id === workflowId);
 }
+/** Public request selection, resolved by the backend rather than model-built IDs. */
+export function requestFolderForDisplayId(root: string, displayId: string) {
+  if (!/^WF-R\d{4,}$/.test(displayId)) throw new Error('Select a request key returned by WorkForce.');
+  return readStorageLayout(root, resolveManagedRoot(root)).requests.find(item => item.display_id === displayId);
+}
 function canonicalBody(body: string): string {
   return body.replaceAll('\r\n', '\n').trim() + '\n';
 }
@@ -510,7 +515,12 @@ export function createRecord(root: string, input: CreateRecord): ProjectRecord {
       [input.data?.workflow_id, input.data?.intake_workflow_id].includes(candidate.meta.id));
     const nativeIntake = input.type === 'knowledge' && input.data?.kind === 'manager-workflow' &&
       isNativeExecutionMode(input.data.execution_mode) && input.data.routing_required === false;
-    const native = nativeIntake || nativeWorkflow !== undefined;
+    const nativeRequestIntake = input.type === 'knowledge' && input.data?.kind === 'workforce-request' &&
+      input.data.process_contract === 'vscode-native/v1' && input.data.transport === 'vscode-native';
+    const nativeRequest = nativeRequestIntake || records.some(candidate => candidate.meta.data.kind === 'workforce-request' &&
+      candidate.meta.data.process_contract === 'vscode-native/v1' && candidate.meta.data.transport === 'vscode-native' &&
+      [input.data?.workflow_id, input.data?.intake_workflow_id].includes(candidate.meta.id));
+    const native = nativeIntake || nativeWorkflow !== undefined || nativeRequest;
     const record: ProjectRecord = {
       meta: {
         schema_version: 1,
@@ -534,7 +544,7 @@ export function createRecord(root: string, input: CreateRecord): ProjectRecord {
           ...(existsSync(safePath(root, '.neomind/routing.json')) && !native
             ? { routing_required: true }
             : {}),
-          ...(native ? { assurance: 'unsigned-native-report', routing_required: false } : {}),
+          ...(native ? { assurance: nativeRequest ? 'observed-native-local' : 'unsigned-native-report', routing_required: false } : {}),
         },
       },
       body:
@@ -547,7 +557,9 @@ export function createRecord(root: string, input: CreateRecord): ProjectRecord {
     sequence[input.type] = number;
     atomicWrite(sequencePath, JSON.stringify(sequence, null, 2) + '\n');
     const physical = resolveManagedRoot(root);
-    if (physical === managedRoot) {
+    // New native requests require a request folder even when an established
+    // project retains its historical physical root. Never migrate old records.
+    if (physical === managedRoot || nativeRequest) {
       const layout = readStorageLayout(root, physical);
       if (['manager-workflow', 'lightweight-workflow', 'workforce-request'].includes(String(record.meta.data.kind))) {
         const request = ensureRequestInLayout(layout, record);

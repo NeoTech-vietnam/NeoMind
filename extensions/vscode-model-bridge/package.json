@@ -10,7 +10,17 @@
   "main": "./extension.cjs",
   "activationEvents": [
     "onUri",
-    "onLanguageModelTool:workforce_request"
+    "onLanguageModelTool:workforce_request",
+    "onLanguageModelTool:workforce_native_request",
+    "onLanguageModelTool:workforce_native_role",
+    "onLanguageModelTool:workforce_native_prepare",
+    "onLanguageModelTool:workforce_native_control",
+    "onLanguageModelTool:workforce_native_role_swsd",
+    "onLanguageModelTool:workforce_native_role_p_res",
+    "onLanguageModelTool:workforce_native_role_fnd",
+    "onLanguageModelTool:workforce_native_role_reviewer",
+    "onLanguageModelTool:workforce_native_role_tester",
+    "onLanguageModelTool:workforce_native_capabilities"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -28,6 +38,11 @@
   "files": [
     "extension.cjs",
     "monitor.cjs",
+    "v-model-panel.cjs",
+    "local-activity.cjs",
+    "local-models.cjs",
+    "local-delegation.cjs",
+    "local-request.cjs",
     "focus-host.cjs",
     "focus-location.cjs",
     "focus-youtube.cjs",
@@ -35,6 +50,7 @@
     "resources/monitor/monitor.js",
     "resources/monitor/monitor.css",
     "resources/monitor/universe.js",
+    "resources/monitor/v-model-panel.js",
     "resources/monitor/focus-space.js",
     "resources/monitor/focus-space.css",
     "README.md",
@@ -50,7 +66,8 @@
     "resources/monitor/controlled.js",
     "resources/monitor/controlled.css",
     "resources/monitor/automation.js",
-    "resources/monitor/automation.css"
+    "resources/monitor/automation.css",
+    "native-entry.cjs"
   ],
   "contributes": {
     "languageModelTools": [
@@ -114,6 +131,763 @@
             }
           }
         }
+      },
+      {
+        "name": "workforce_native_request",
+        "toolReferenceName": "workforceNativeRequest",
+        "displayName": "WorkForce native request",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Submit the ordinary requirement and professional software plan once. WorkForce owns valid native specialist calls, saved engineering identities, independent inspection, actual checks and acceptance. Optional plan.role_skills selects exact installed current workspace skill names per worker; omission uses ordinary project tools. Selection does not prove skill loading or use. Do not open a replacement request to retry an unfinished one.",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "requirement": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "context": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "description": "Project context path. Absolute paths inside the workspace and local file URIs are normalized by the backend."
+              }
+            },
+            "plan": {
+              "type": "object",
+              "properties": {
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 20000
+                },
+                "requirements": {
+                  "minItems": 1,
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
+                  }
+                },
+                "design": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 20000
+                },
+                "role_skills": {
+                  "type": "object",
+                  "properties": {
+                    "WF.FnD": {
+                      "maxItems": 8,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+                        "description": "Exact installed workspace skill name; not a source path, package URL or ownership identity."
+                      },
+                      "uniqueItems": true
+                    },
+                    "WF.Reviewer": {
+                      "maxItems": 8,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+                        "description": "Exact installed workspace skill name; not a source path, package URL or ownership identity."
+                      },
+                      "uniqueItems": true
+                    },
+                    "WF.Tester": {
+                      "maxItems": 8,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+                        "description": "Exact installed workspace skill name; not a source path, package URL or ownership identity."
+                      },
+                      "uniqueItems": true
+                    }
+                  },
+                  "additionalProperties": false,
+                  "description": "Optional explicit installed workspace skills assigned only to the named workers, at most eight distinct names across these roles. Missing or changed selections are not silently replaced. Omit to use ordinary project tools."
+                },
+                "task_family": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "parameters": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                  },
+                  "additionalProperties": {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean"
+                    ]
+                  }
+                },
+                "outputs": {
+                  "minItems": 1,
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "description": "Product file path inside the workspace; the backend normalizes editor absolute paths or relative paths."
+                  }
+                },
+                "checks": {
+                  "minItems": 1,
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "command": {
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4000
+                        }
+                      },
+                      "level": {
+                        "type": "string",
+                        "enum": [
+                          "unit",
+                          "integration",
+                          "system",
+                          "acceptance"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "command",
+                      "level"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "summary",
+                "requirements",
+                "design",
+                "outputs",
+                "checks"
+              ],
+              "additionalProperties": false
+            },
+            "workspace_folder": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "Exact absolute open workspace folder. Optional for one local folder; required when multiple projects are open."
+            }
+          },
+          "required": [
+            "requirement",
+            "plan"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "workforce_native_role",
+        "toolReferenceName": "workforceRoleJob",
+        "displayName": "WorkForce native role",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Complete an explicitly requested single named role scope. Optional skills selects exact installed current workspace skill names with host-pinned receipts and files; omit for ordinary tools. Whole-product acceptance is not implied by a scoped professional report.",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "requirement": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "context": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "description": "Project context path. Absolute paths inside the workspace and local file URIs are normalized by the backend."
+              }
+            },
+            "outputs": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "skills": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+                "description": "Exact installed workspace skill name; not a source path, package URL or ownership identity."
+              },
+              "uniqueItems": true,
+              "description": "Optional exact currently installed workspace skill names. The host pins the receipt and files; omission uses ordinary project tools."
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "WF.SWSD",
+                "WF.P-RES",
+                "WF.FnD",
+                "WF.Reviewer",
+                "WF.Tester"
+              ]
+            },
+            "workspace_folder": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "Exact absolute open workspace folder. Optional for one local folder; required when multiple projects are open."
+            }
+          },
+          "required": [
+            "requirement",
+            "role"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "workforce_native_prepare",
+        "toolReferenceName": "workforcePrepare",
+        "displayName": "WorkForce native prepare",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Find relevant accepted experience and eligible project scripts before planning. Retrieval never starts a procedure or blocks ordinary implementation.",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "requirement": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "WF.SWSD",
+                "WF.P-RES",
+                "WF.FnD",
+                "WF.Reviewer",
+                "WF.Tester"
+              ],
+              "description": "Optional professional role for advisory capability matching; this does not assign or invoke an agent."
+            },
+            "task_family": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "parameters": {
+              "default": {},
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,63}$"
+              },
+              "additionalProperties": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ]
+              }
+            },
+            "outputs": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "workspace_folder": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "Exact absolute open workspace folder. Optional for one local folder; required when multiple projects are open."
+            }
+          },
+          "required": [
+            "requirement"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "workforce_native_control",
+        "toolReferenceName": "workforceRequestControl",
+        "displayName": "WorkForce native control",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Inspect a public request key, recheck unchanged reviewed products after an environment correction, or explicitly resume retained findings with fresh specialists and checks. Keep the same request instead of submitting a replacement.",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "request_key": {
+              "type": "string",
+              "pattern": "^WF-R\\d{4,}$",
+              "description": "The public request key returned by WorkForce, not a record, task or assignment ID."
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "status",
+                "recheck",
+                "resume"
+              ],
+              "description": "Inspect results; recheck unchanged reviewed products after an environment correction; or explicitly continue retained professional findings through fresh specialist review and checks."
+            },
+            "workspace_folder": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "Exact absolute open workspace folder. Optional for one local folder; required when multiple projects are open."
+            }
+          },
+          "required": [
+            "request_key",
+            "action"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "workforce_native_capabilities",
+        "toolReferenceName": "workforceCapabilities",
+        "displayName": "WorkForce native capabilities",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Search approved pinned capability catalogs, inspect a named package, install an exact portable skill, or view current workspace skills. The host owns source approval and license verification. Optional unavailable or unsupported capabilities fall back to ordinary project tools; this never starts workers, runs hooks or installs MCP dependencies.",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "search",
+                "inspect",
+                "install",
+                "status"
+              ]
+            },
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000,
+              "description": "Required for search."
+            },
+            "source": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+              "description": "An approved source_name returned by discovery/status; never a URL."
+            },
+            "package": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$",
+              "description": "Exact catalog candidate name; required for inspect/install."
+            },
+            "skill": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+              "description": "Exact SKILL.md frontmatter name; required for install or actual-content inspection."
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "WF.PM",
+                "WF.SWSD",
+                "WF.P-RES",
+                "WF.FnD",
+                "WF.Reviewer",
+                "WF.Tester"
+              ]
+            },
+            "workspace_folder": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "Exact absolute open workspace folder. Optional for one local folder; required when multiple projects are open."
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "workforce_native_role_swsd",
+        "toolReferenceName": "workforceRoleSWSD",
+        "displayName": "WorkForce WF.SWSD role request",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Complete the WF.SWSD assignment through its backend-owned scoped worker. Supply professional content; the role is fixed by this tool. Optional skills selects exact installed current workspace skill names; omission uses ordinary project tools. The host pins selected receipts and files; selection does not prove loading/use.",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "requirement": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "context": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "description": "Project context path. Absolute paths inside the workspace and local file URIs are normalized by the backend."
+              }
+            },
+            "outputs": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "skills": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+                "description": "Exact installed workspace skill name; not a source path, package URL or ownership identity."
+              },
+              "uniqueItems": true,
+              "description": "Optional exact currently installed workspace skill names. The host pins the receipt and files; omission uses ordinary project tools."
+            },
+            "workspace_folder": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "Exact absolute open workspace folder. Optional for one local folder; required when multiple projects are open."
+            }
+          },
+          "required": [
+            "requirement"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "workforce_native_role_p_res",
+        "toolReferenceName": "workforceRolePRES",
+        "displayName": "WorkForce WF.P-RES role request",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Complete the WF.P-RES assignment through its backend-owned scoped worker. Supply professional content; the role is fixed by this tool. Optional skills selects exact installed current workspace skill names; omission uses ordinary project tools. The host pins selected receipts and files; selection does not prove loading/use.",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "requirement": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "context": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "description": "Project context path. Absolute paths inside the workspace and local file URIs are normalized by the backend."
+              }
+            },
+            "outputs": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "skills": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+                "description": "Exact installed workspace skill name; not a source path, package URL or ownership identity."
+              },
+              "uniqueItems": true,
+              "description": "Optional exact currently installed workspace skill names. The host pins the receipt and files; omission uses ordinary project tools."
+            },
+            "workspace_folder": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "Exact absolute open workspace folder. Optional for one local folder; required when multiple projects are open."
+            }
+          },
+          "required": [
+            "requirement"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "workforce_native_role_fnd",
+        "toolReferenceName": "workforceRoleFnD",
+        "displayName": "WorkForce WF.FnD role request",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Complete the WF.FnD assignment through its backend-owned scoped worker. Supply professional content; the role is fixed by this tool. Optional skills selects exact installed current workspace skill names; omission uses ordinary project tools. The host pins selected receipts and files; selection does not prove loading/use.",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "requirement": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "context": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "description": "Project context path. Absolute paths inside the workspace and local file URIs are normalized by the backend."
+              }
+            },
+            "outputs": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "skills": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+                "description": "Exact installed workspace skill name; not a source path, package URL or ownership identity."
+              },
+              "uniqueItems": true,
+              "description": "Optional exact currently installed workspace skill names. The host pins the receipt and files; omission uses ordinary project tools."
+            },
+            "workspace_folder": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "Exact absolute open workspace folder. Optional for one local folder; required when multiple projects are open."
+            }
+          },
+          "required": [
+            "requirement"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "workforce_native_role_reviewer",
+        "toolReferenceName": "workforceRoleReviewer",
+        "displayName": "WorkForce WF.Reviewer role request",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Complete the WF.Reviewer assignment through its backend-owned scoped worker. Supply professional content; the role is fixed by this tool. Optional skills selects exact installed current workspace skill names; omission uses ordinary project tools. The host pins selected receipts and files; selection does not prove loading/use.",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "requirement": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "context": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "description": "Project context path. Absolute paths inside the workspace and local file URIs are normalized by the backend."
+              }
+            },
+            "outputs": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "skills": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+                "description": "Exact installed workspace skill name; not a source path, package URL or ownership identity."
+              },
+              "uniqueItems": true,
+              "description": "Optional exact currently installed workspace skill names. The host pins the receipt and files; omission uses ordinary project tools."
+            },
+            "workspace_folder": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "Exact absolute open workspace folder. Optional for one local folder; required when multiple projects are open."
+            }
+          },
+          "required": [
+            "requirement"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "workforce_native_role_tester",
+        "toolReferenceName": "workforceRoleTester",
+        "displayName": "WorkForce WF.Tester role request",
+        "canBeReferencedInPrompt": true,
+        "modelDescription": "Complete the WF.Tester assignment through its backend-owned scoped worker. Supply professional content; the role is fixed by this tool. Optional skills selects exact installed current workspace skill names; omission uses ordinary project tools. The host pins selected receipts and files; selection does not prove loading/use.",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "requirement": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "context": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "description": "Project context path. Absolute paths inside the workspace and local file URIs are normalized by the backend."
+              }
+            },
+            "outputs": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "skills": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+                "description": "Exact installed workspace skill name; not a source path, package URL or ownership identity."
+              },
+              "uniqueItems": true,
+              "description": "Optional exact currently installed workspace skill names. The host pins the receipt and files; omission uses ordinary project tools."
+            },
+            "workspace_folder": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "description": "Exact absolute open workspace folder. Optional for one local folder; required when multiple projects are open."
+            }
+          },
+          "required": [
+            "requirement"
+          ],
+          "additionalProperties": false
+        }
       }
     ],
     "commands": [
@@ -134,6 +908,14 @@
         "title": "WorkForce: Open Universe"
       },
       {
+        "command": "workforce.monitor.legacy",
+        "title": "WorkForce: Open Legacy Universe"
+      },
+      {
+        "command": "workforce.vModel.open",
+        "title": "WorkForce: Open V-model"
+      },
+      {
         "command": "workforce.plugins.open",
         "title": "WorkForce: Manage Plug-ins"
       },
@@ -150,6 +932,74 @@
           "default": "",
           "scope": "machine",
           "description": "Absolute path to a trusted WorkForce package directory containing package.json and built dist. Read only from User settings."
+        },
+        "workforce.capabilities.sources": {
+          "type": "array",
+          "scope": "machine",
+          "default": [
+            {
+              "name": "github-awesome-copilot",
+              "repository": "https://github.com/github/awesome-copilot",
+              "commit": "02466d1eb70b841c90717b0fc2dc9457aa6f606f",
+              "catalog_path": ".github/plugin/marketplace.json",
+              "catalog_sha256": "3509977f5245298a16ff2747fc37a9579a00488c3f542800609918037cc11709",
+              "license_path": "LICENSE",
+              "license_sha256": "e32449d23085399adc1222f7a17408b730550258e51627c153cb108ca9955823",
+              "allow_skills": true
+            }
+          ],
+          "description": "Approved immutable public capability catalogs for native WF.PM. Read only from User settings; workspace overrides are ignored. An explicit empty User array disables external sources. Project network policy still controls downloads. Only portable skill files are installed, without hooks or MCP dependencies.",
+          "maxItems": 32,
+          "items": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+              },
+              "repository": {
+                "type": "string",
+                "pattern": "^https:\\/\\/github\\.com\\/[a-z0-9_.-]+\\/[a-z0-9_.-]+$"
+              },
+              "commit": {
+                "type": "string",
+                "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+              },
+              "catalog_path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 800
+              },
+              "catalog_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "license_path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 800
+              },
+              "license_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "allow_skills": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name",
+              "repository",
+              "commit",
+              "catalog_path",
+              "catalog_sha256",
+              "license_path",
+              "license_sha256",
+              "allow_skills"
+            ],
+            "additionalProperties": false
+          }
         }
       }
     }

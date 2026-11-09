@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync, readFileSync, copyFileSync } from 'node:fs';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -11,7 +13,7 @@ import { z } from 'zod';
 import { initialize, safePath } from '../dist/storage.js';
 import { ensureRoutingPolicy } from '../dist/routing.js';
 import { createOpenCodeGateway, openCodeConfiguration, openCodeEndpoint, openCodeError, startOpenCodeEngine,
-  opencodeRuntimeVersion, opencodeProtocol, opencodeRuntimeIntegrity } from '../dist/opencode-engine.js';
+  opencodeRuntimeVersion, opencodeProtocol, opencodeRuntimeIntegrity, reconcileOpenCodeOwner } from '../dist/opencode-engine.js';
 import { openCodeStorage, openCodeStorageFailure, openCodeMinimumFreeBytes } from '../dist/opencode-engine.js';
 import { openCodeWindowsGuardian, validateOpenCodeWindowsGuardian } from '../dist/opencode-engine.js';
 import { OpenCodeSession, openCodeAttestation, openCodeSystemText } from '../dist/opencode-session.js';
@@ -267,16 +269,52 @@ test('private engine storage uses the project volume and disk errors have a fixe
 });
 
 test('a durable engine disk failure stops the actual local process promptly without inference polling', { timeout: 45000 }, async t => {
+  const started = performance.now();
+  const mark = stage => t.diagnostic(JSON.stringify({ disk_failure_stage: stage, elapsed_ms: Math.round(performance.now() - started) }));
   const { root } = project(t, [], true), a = await gateway(t, 'storage-monitor');
-  const engine = await startOpenCodeEngine(root, randomUUID(), openCodeConfiguration({ model: 'worker-models', provider: 'test', baseURL: 'http://127.0.0.1:1/v1' }, a.server, ['observe']));
+  mark('fixture-ready');
+  const engine = await startOpenCodeEngine(root, randomUUID(), openCodeConfiguration({ model: 'worker-models', provider: 'test', baseURL: 'http://127.0.0.1:1/v1' }, a.server, ['observe']),
+    undefined, { onStartupStage: observation => mark(`startup:${observation.stage}`) });
   t.after(() => engine.close());
+  mark('engine-ready');
   const log = join(engine.directory, 'data/opencode/log/opencode.log');
   mkdirSync(join(engine.directory, 'data/opencode/log'), { recursive: true });
   writeFileSync(log, 'timestamp=2026-10-28T00:00:00Z level=ERROR error="SQLiteError: database or disk is full"\n');
+  mark('disk-error-injected');
   const deadline = Date.now() + 5000;
   while (!engine.failure && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
   assert.equal(engine.failure?.code, 'OPENCODE_STORAGE_UNAVAILABLE');
+  mark('disk-error-observed');
   await engine.close();
+  mark('authenticated-close');
   await assert.rejects(engine.client.global.health({ signal: AbortSignal.timeout(1000) }));
+  mark('health-unreachable');
   assert.equal(a.calls, 0); assert.equal(existsSync(join(engine.directory, 'config/opencode/node_modules')), false);
+});
+
+test('close waits for a late observation of actual signed ended proof while its editor owner is alive', { timeout: 60000 }, async t => {
+  const { root } = project(t, [], true), a = await gateway(t, 'late-ended-observation');
+  const engine = await startOpenCodeEngine(root, randomUUID(), openCodeConfiguration({ model: 'worker-models', provider: 'test', baseURL: 'http://127.0.0.1:1/v1' }, a.server, ['observe']));
+  t.after(() => engine.close());
+  const ended = join(engine.directory, 'supervision/ended.json'), actualExists = fs.existsSync;
+  let withheld = false;
+  // Delay exactly one read observation, never the real supervisor, actual exit,
+  // cleanup writer, signed bytes, or authentication checks. Owner remains alive.
+  fs.existsSync = function(path) {
+    const exists = actualExists(path);
+    if (String(path) === ended && exists && !withheld) { withheld = true; return false; }
+    return exists;
+  };
+  syncBuiltinESMExports();
+  try { await engine.close(); }
+  finally { fs.existsSync = actualExists; syncBuiltinESMExports(); }
+  assert.equal(withheld, true, 'The test exercised the first delayed signed-proof observation.');
+  const observed = await reconcileOpenCodeOwner(root, engine.supervision);
+  assert.equal(observed.state, 'stopped'); assert.match(observed.proof_sha256, /^[a-f0-9]{64}$/);
+  const proof = JSON.parse(readFileSync(ended, 'utf8'));
+  assert.equal(proof.payload.actual_exit_observed, true); assert.equal(proof.payload.process_tree_closed, true);
+  assert.deepEqual(proof.payload.engine, engine.supervision.engine);
+  assert.equal(existsSync(join(engine.directory, 'config/opencode/node_modules')), false);
+  assert.equal(JSON.parse(readFileSync(join(engine.directory, 'bootstrap-cleanup.json'), 'utf8')).cleaned, true);
+  assert.equal(a.calls, 0);
 });

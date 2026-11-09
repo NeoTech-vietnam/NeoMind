@@ -1,5 +1,15 @@
 # WorkForce Agent Plugin
 
+## Native Local candidate
+
+This branch generates `vscode-native/v1` profiles from the same contract as the WorkForce installer. It needs the matching native WorkForce runtime and VSIX. These changes have not yet been published as a matching GitHub release; the published plugin may still use the earlier execution contract.
+
+With the matching native pair installed, select Local and WF.PM, keep the native model picker or choose a per-role preference in WorkForce V-model, then describe the requested outcome. A particular alias or external model catalog is not required. WF.PM uses the extension's native request/prepare/role/control tools; it does not fall back to historical MCP request submission or assignment claims. The six packaged profiles and the request skill use that same native contract.
+
+The workspace-aware MCP launcher remains available for compatibility and saved status. Its connection result proves MCP setup, not native tool loading or model capability. Verify actual native delegation and current check evidence separately. Do not connect the legacy OpenCode engine to execute a native request.
+
+The following installation instructions describe the previously published plugin. Native migration, host namespace/lifecycle tests and the matching release are still being validated.
+
 Install URL for VS Code **Local**:
 
 ```text

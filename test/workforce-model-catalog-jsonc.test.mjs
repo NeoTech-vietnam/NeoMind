@@ -10,12 +10,15 @@ import { configuredOpenCodeEndpoint } from '../dist/opencode-engine.js';
 import { vscodeSelection } from '../dist/vscode-policy.js';
 import { adapterOutputs } from '../dist/adapters.js';
 
-function project(t) {
+function project(t, { native = false } = {}) {
   const temporary = mkdtempSync(join(tmpdir(), 'wf-jsonc-model-catalog-'));
   const root = join(temporary, 'project'), user = join(temporary, 'VS Code User');
   mkdirSync(root); mkdirSync(user);
   t.after(() => rmSync(temporary, { recursive: true, force: true }));
-  initialize(root, { platforms: ['copilot'], copilot_integration: 'local' });
+  // Catalog routing belongs to the preserved engine transport. Native Local
+  // uses the VS Code inventory and must not acquire a catalog prerequisite.
+  initialize(root, { platforms: ['copilot'], execution_engine: 'opencode',
+    ...(native ? { copilot_integration: 'local' } : {}) });
   const policy = { ...ensureRoutingPolicy(root), strong_model: 'top-models', worker_models: ['worker-models'],
     strong_provider: '9Router', worker_provider: '9Router' };
   writeFileSync(safePath(root, '.workforce/routing.json'), JSON.stringify(policy));
@@ -48,6 +51,21 @@ test('selected User-style JSONC catalog works through configuration, endpoint, m
   assert.match(manager.content, /model: "Top Models \(customendpoint\)"/);
   assert.doesNotMatch(JSON.stringify(selected), /fixture-key/);
   assert.equal(readFileSync(path, 'utf8'), source, 'The selected User catalog, comments and credential bytes remain unchanged.');
+});
+
+test('native Local profiles inherit VS Code selection even when a historical catalog is unreadable', t => {
+  const { root, path } = project(t, { native: true });
+  const source = '[{"apiKey":"fixture-native-catalog-secret" malformed';
+  writeFileSync(path, source);
+  writeFileSync(safePath(root, '.workforce/routing.json'), JSON.stringify({ ...readRoutingPolicy(root), language_models_file: path }));
+  const before = readFileSync(safePath(root, '.workforce/routing.json'), 'utf8');
+  const profiles = adapterOutputs(root, readConfig(root)).filter(item => item.path.startsWith('.github/agents/'));
+  assert.equal(profiles.filter(profile => /^user-invocable: true$/m.test(profile.content)).length, 6);
+  const manager = profiles.find(item => item.path.endsWith('/workforce-pm.agent.md'));
+  assert.match(manager.content, /workforceNativeRequest/);
+  for (const profile of profiles) assert.doesNotMatch(profile.content, /^model:|fixture-native-catalog-secret/m);
+  assert.equal(readFileSync(path, 'utf8'), source);
+  assert.equal(readFileSync(safePath(root, '.workforce/routing.json'), 'utf8'), before);
 });
 
 test('real JSONC syntax errors are rejected at every catalog entrypoint without exposing catalog secrets or changing routing', t => {

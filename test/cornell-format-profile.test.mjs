@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { researchFixture } from './cornell-research-fixture.mjs';
+import { pythonExecutable } from './helpers/python.mjs';
 import { compileCornellResearch } from '../dist/cornell-workflow.js';
 import { createCornellNote, validateCornellNote } from '../dist/notes.js';
 import { createRecord, getRecord, updateRecord, hash, safePath } from '../dist/storage.js';
@@ -14,6 +15,7 @@ import { persistControlledCornellNote } from '../dist/controlled-cornell-write.j
 const fixtures = fileURLToPath(new URL('./fixtures/cornell-format-assets/', import.meta.url));
 const templateHash = '143d7be4ea4d7e00fcc3067b7843939cdfe63e14d4dcf11411c99a52c8eb6a37';
 const validatorHash = '052b08835e19d17fd06dc7450251926400dff960c0893ef9113cd07cf5e8b5e0';
+const python = pythonExecutable();
 function fixture(t) {
   const a = researchFixture(t), template = '.github/skills/research-layout/assets/layout.md', validator = '.github/skills/research-layout/scripts/check.py';
   for (const [path, source] of [[template,'cornell-note-template.md'],[validator,'validate_notes.py']]) {
@@ -31,7 +33,6 @@ function fixture(t) {
   return { ...a, input, task, contract, profile, template, validator };
 }
 function externalValidation(a, note) {
-  const python = process.env.PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3');
   const result = spawnSync(python, [safePath(a.root,a.validator), safePath(a.root,note.meta.data.artifact_path)], {
     encoding: 'utf8', timeout: 10000, windowsHide: true });
   assert.ifError(result.error);

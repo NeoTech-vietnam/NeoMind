@@ -29,14 +29,17 @@ async function connection(t, root) {
   t.after(async () => { await client.close(); await server.close(); });
   return client;
 }
-test('fresh WorkForce exposes exactly six named profiles and three content-only entrypoint tools', async t => {
+test('fresh WorkForce exposes six native Local profiles and retains three content-only compatibility MCP tools', async t => {
   const root = project(t); installProject(root);
   assert.deepEqual(agentProfiles.map(profile => profile.name), ['WF.PM', 'WF.SWSD', 'WF.P-RES', 'WF.FnD', 'WF.Reviewer', 'WF.Tester']);
   const policy = JSON.parse(readFileSync(safePath(root, '.workforce/routing.json')));
   assert.equal(policy.strong_model, 'top-models'); assert.deepEqual(policy.worker_models, ['worker-models']);
   assert.equal(policy.strong_provider, 'customendpoint');
   const pm = readFileSync(join(root, '.github/agents/workforce-pm.agent.md'), 'utf8');
-  assert.match(pm, /name: "WF.PM"/); assert.match(pm, /workforce\/request_submit/);
+  assert.match(pm, /name: "WF.PM"/); assert.match(pm, /vscode-native\/v1/);
+  for (const tool of ['workforceNativeRequest', 'workforcePrepare', 'workforceRoleJob', 'workforceRequestControl'])
+    assert.ok(pm.includes(tool), `The native PM can access ${tool}.`);
+  assert.doesNotMatch(pm, /^model:|workforce\/request_submit/m, 'Native Local inherits its model instead of using the historical MCP execution path.');
   assert.doesNotMatch(pm, /assignment_claim|assignment_open|manager_run|reported_assignment/);
   const config = readFileSync(join(root, '.codex/config.toml'), 'utf8');
   assert.match(config, /\[mcp_servers.workforce\]/); assert.doesNotMatch(config, /manager_run|approval_policy|sandbox_mode/);

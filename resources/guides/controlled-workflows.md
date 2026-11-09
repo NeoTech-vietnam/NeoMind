@@ -1,5 +1,7 @@
 # Controlled software workflows
 
+Execution scope: historical backend-owned `neomind-controlled` sessions. Native Local profiles marked `vscode-native/v1` follow `guides/native-local.md` instead; this page does not introduce claim, compiler or lifecycle tools into a native assignment.
+
 Use this path when the project explicitly configures `execution_mode: neomind-controlled`, or the user chooses controlled continuation through the backend. Client intake reads the exact project's policy and saved receipt. Backend-owned sessions receive their current policy, assignment and scope from the runtime.
 
 ## Backend-owned session
