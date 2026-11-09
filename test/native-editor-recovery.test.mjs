@@ -112,6 +112,9 @@ else {assert.equal(fs.readFileSync('product.txt','utf8'),'complete\\n');console.
   assert.equal(existsSync(marker), true);
   await first.dispose(); const cancelled = await running, before = app.saved();
   assert.equal(cancelled.error.code, 'EDITOR_CLOSED');
+  assert.equal(cancelled.status, 'cancelled', 'The public result reflects an actually drained editor stop');
+  assert.equal(before.status, 'cancelled');
+  assert.ok(before.interruption.editor_checkpoint, 'The status promotion requires the retained settled-effects checkpoint');
   assert.equal(before.checks[0].result.cancelled, true);
   const old = before.checks[0], priorLog = readFileSync(join(app.root, old.log_path)), priorEvidence = readFileSync(join(app.root, getRecord(app.root, old.evidence_id).path));
   const product = readFileSync(join(app.root, 'product.txt')), calls = [];

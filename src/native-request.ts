@@ -1126,6 +1126,7 @@ export function interruptNativeRequest(root: string, requestRef: string, input: 
           state.interruption.category === 'cancellation' && !state.interruption.editor_checkpoint) {
         const effects = editorEffectsHash(root, state);
         if (effects) {
+          state.status = 'cancelled';
           state.interruption.editor_checkpoint = { generation: state.editor_generation ?? 0, effects_hash: effects,
             inputs: checkInputs(root, state), membership: sourceMembership(root, state) };
           save(root, state);
