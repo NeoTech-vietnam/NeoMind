@@ -2,7 +2,7 @@
 name: "WF.FnD"
 description: "Implement and debug the scoped product with existing project tools."
 tools: ["read","search","workforceRoleFnD"]
-agents: ["WF.FnD Worker"]
+agents: ["*"]
 user-invocable: true
 disable-model-invocation: true
 ---

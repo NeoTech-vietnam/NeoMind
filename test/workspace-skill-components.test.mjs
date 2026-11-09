@@ -5,7 +5,7 @@ import { basename, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { syncBuiltinESMExports } from 'node:module';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { initialize, readConfig, loadRecords } from '../dist/storage.js';
 import { prepareNativeWork } from '../dist/native-work.js';
 const materializerModule = new URL('../dist/workspace-skill-components.js', import.meta.url).href;
@@ -374,6 +374,116 @@ test('publication filesystem errors retain a private original cause while public
   assert.equal(receipt.state, 'partial'); assert.equal(receipt.published, false);
   assert.ok(receipt.history.some(event => event.action === 'publication-failed'));
   assert.doesNotMatch(JSON.stringify(receipt), /PRIVATE|EACCES|rename/);
+});
+
+test('Windows transient sharing denial retries only the exact intact owned stage with absent destination', { skip: process.platform !== 'win32' }, async t => {
+  const f = fixture(t), rename = fs.renameSync; let attempts = 0;
+  fs.renameSync = function(from, to) {
+    if (String(from).replaceAll('\\', '/').includes('/staging/') && ++attempts < 3)
+      throw Object.assign(new Error('PRIVATE sharing denial'), { code: 'EPERM', errno: -4048, syscall: 'rename' });
+    return rename.call(this, from, to);
+  };
+  syncBuiltinESMExports();
+  try {
+    const installed = await installWorkspaceSkillComponents(f.root, f.approval, f.reader);
+    assert.equal(installed.components[0].state, 'installed'); assert.equal(attempts, 3);
+    assert.deepEqual(fs.readFileSync(join(f.target, 'SKILL.md')), skill);
+  } finally { fs.renameSync = rename; syncBuiltinESMExports(); }
+});
+
+test('Windows publication retries stop on a new destination, changed staged bytes or newly added unowned content', { skip: process.platform !== 'win32' }, async t => {
+  for (const change of ['destination', 'bytes', 'extra']) await t.test(change, async t => {
+    const f = fixture(t), rename = fs.renameSync; let attempts = 0, staged;
+    fs.renameSync = function(from, to) {
+      if (String(from).replaceAll('\\', '/').includes('/staging/')) {
+        attempts++; staged = String(from);
+        if (change === 'destination') { fs.mkdirSync(to); fs.writeFileSync(join(to, 'user.md'), 'Preserve racing user content.'); }
+        if (change === 'bytes') fs.writeFileSync(join(from, 'SKILL.md'), 'Preserve edited staging content.');
+        if (change === 'extra') fs.writeFileSync(join(from, 'user.md'), 'Preserve unexpected staging content.');
+        throw Object.assign(new Error('PRIVATE sharing denial'), { code: 'EPERM', errno: -4048, syscall: 'rename' });
+      }
+      return rename.call(this, from, to);
+    };
+    syncBuiltinESMExports();
+    try { await assert.rejects(installWorkspaceSkillComponents(f.root, f.approval, f.reader), code(change === 'destination' ? 'COLLISION' : 'LOCAL_CHANGED')); }
+    finally { fs.renameSync = rename; syncBuiltinESMExports(); }
+    assert.equal(attempts, 1, 'No second rename can consume a changed scope or overwrite a racing destination.');
+    if (change === 'destination') assert.equal(fs.readFileSync(join(f.target, 'user.md'), 'utf8'), 'Preserve racing user content.');
+    else {
+      assert.equal(fs.existsSync(f.target), false);
+      assert.equal(fs.readFileSync(join(staged, change === 'bytes' ? 'SKILL.md' : 'user.md'), 'utf8'), change === 'bytes'
+        ? 'Preserve edited staging content.' : 'Preserve unexpected staging content.');
+    }
+  });
+});
+
+test('an error after actual directory publication is uncertain and preserves the unacknowledged target without another rename', async t => {
+  const f = fixture(t), rename = fs.renameSync; let attempts = 0;
+  fs.renameSync = function(from, to) {
+    if (String(from).replaceAll('\\', '/').includes('/staging/')) {
+      attempts++; rename.call(this, from, to);
+      throw Object.assign(new Error('PRIVATE lost rename acknowledgement'), { code: 'EPERM', errno: -4048, syscall: 'rename' });
+    }
+    return rename.call(this, from, to);
+  };
+  syncBuiltinESMExports();
+  try { await assert.rejects(installWorkspaceSkillComponents(f.root, f.approval, f.reader), code('PUBLICATION_UNCERTAIN')); }
+  finally { fs.renameSync = rename; syncBuiltinESMExports(); }
+  assert.equal(attempts, 1); assert.deepEqual(fs.readFileSync(join(f.target, 'SKILL.md')), skill);
+  const metadata = join(f.root, '.workforce', 'capabilities'), id = fs.readdirSync(metadata).find(name => /^workspace-skill-.*\.json$/.test(name)).slice(0, -5);
+  const receipt = JSON.parse(fs.readFileSync(join(metadata, `${id}.json`)));
+  assert.equal(receipt.state, 'partial'); assert.equal(receipt.published, false);
+  assert.equal(controlWorkspaceSkillComponent(f.root, id, 'remove').components[0].state, 'conflict');
+  assert.deepEqual(fs.readFileSync(join(f.target, 'SKILL.md')), skill, 'Unknown publication is never adopted as deletion authority.');
+});
+
+test('Windows sharing retry rechecks source authorization and keeps its retry budget bounded', { skip: process.platform !== 'win32' }, async t => {
+  for (const revoke of [true, false]) await t.test(revoke ? 'revoked' : 'persistent', async t => {
+    const f = fixture(t), rename = fs.renameSync; let attempts = 0, approved = true;
+    const cause = Object.assign(new Error('PRIVATE persistent sharing denial'), { code: 'EPERM', errno: -4048, syscall: 'rename' });
+    fs.renameSync = function(from, to) {
+      if (String(from).replaceAll('\\', '/').includes('/staging/')) { attempts++; if (revoke) approved = false; throw cause; }
+      return rename.call(this, from, to);
+    };
+    syncBuiltinESMExports();
+    try { await assert.rejects(installWorkspaceSkillComponents(f.root, f.approval, f.reader, { authorize: () => approved }), error => {
+      assert.equal(error.code, revoke ? 'POLICY_CHANGED' : 'FILESYSTEM_FAILED');
+      if (!revoke) assert.equal(error.cause, cause); return true;
+    }); }
+    finally { fs.renameSync = rename; syncBuiltinESMExports(); }
+    assert.equal(attempts, revoke ? 1 : 7); assert.equal(fs.existsSync(f.target), false);
+  });
+});
+
+test('actual Windows sharing handle temporarily denies staging publication and a single install completes', { skip: process.platform !== 'win32' }, async t => {
+  const f = fixture(t), rename = fs.renameSync, ready = join(f.root, 'sharing-handle-ready');
+  let child, finished, attempts = 0, sharingErrors = [];
+  fs.renameSync = function(from, to) {
+    if (String(from).replaceAll('\\', '/').includes('/staging/')) {
+      attempts++;
+      if (!child) {
+        child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+          "$ErrorActionPreference='Stop'; $stream=[System.IO.File]::Open($env:WF_SKILL_LOCK_FILE,[System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::Read); try { [System.IO.File]::WriteAllText($env:WF_SKILL_LOCK_READY,'ready'); Start-Sleep -Milliseconds 220 } finally { $stream.Dispose() }"],
+        { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, WF_SKILL_LOCK_FILE: join(from, 'SKILL.md'), WF_SKILL_LOCK_READY: ready } });
+        finished = new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
+        const deadline = Date.now() + 10_000;
+        while (!fs.existsSync(ready) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        assert.equal(fs.existsSync(ready), true, 'The external process must hold the actual file before publication.');
+      }
+      try { return rename.call(this, from, to); } catch (error) { sharingErrors.push(error.code); throw error; }
+    }
+    return rename.call(this, from, to);
+  };
+  syncBuiltinESMExports();
+  try {
+    const installed = await installWorkspaceSkillComponents(f.root, f.approval, f.reader);
+    assert.equal(installed.components[0].state, 'installed'); assert.ok(attempts > 1);
+    assert.ok(sharingErrors.length > 0 && sharingErrors.every(value => ['EPERM', 'EACCES', 'EBUSY'].includes(value)));
+    assert.deepEqual(fs.readFileSync(join(f.target, 'SKILL.md')), skill);
+  } finally {
+    fs.renameSync = rename; syncBuiltinESMExports();
+    if (child) { if (child.exitCode === null) child.kill(); await finished; }
+  }
 });
 
 test('multi-skill failure retains the already installed component and truthful separate receipts', async t => {

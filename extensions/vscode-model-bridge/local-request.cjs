@@ -20,7 +20,9 @@ const editorRecoveryIssue = error => {
   return Object.hasOwn(messages, error?.code) ? issue(error.code,
     error.code === 'NATIVE_REPAIR_ALLOWANCE_EXHAUSTED' ? 'product-repair' : 'interruption', messages[error.code]) : undefined;
 };
-const selectedSkillIssue = error => ['SELECTED_SKILL_UNAVAILABLE', 'SELECTED_SKILL_CHANGED'].includes(error?.code)
+const selectedSkillIssue = error => error?.code === 'NATIVE_PACKAGE_CHANGED'
+  ? issue('NATIVE_PACKAGE_CHANGED', 'capability', 'Selected pinned package source changed before dispatch. Existing products and native observations were retained; no modified package code was invoked.')
+  : ['SELECTED_SKILL_UNAVAILABLE', 'SELECTED_SKILL_CHANGED'].includes(error?.code)
   ? issue(error.code, 'capability', error.code === 'SELECTED_SKILL_UNAVAILABLE'
     ? 'An explicitly selected workspace skill is missing, disabled, ambiguous or unavailable. Select an installed current skill, or omit optional skills to use ordinary project tools.'
     : 'An explicitly selected workspace skill or its receipt changed. Existing work is retained; restore the selected component or explicitly choose a current selection.') : undefined;
@@ -55,7 +57,7 @@ function publicRequest(state) {
 }
 
 function createLocalRequestRunner(vscode, runtime, root, options = {}) {
-  const delegator = createLocalDelegator(vscode, runtime.nativeWorkerProfiles), active = new Set(), owners = new Map();
+  const delegator = createLocalDelegator(vscode, runtime.nativeWorkerProfiles, options.capabilities), active = new Set(), owners = new Map();
   let disposed = false, disposing;
   let workers = 0;
   const waiting = [];
@@ -67,7 +69,7 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
       workers++; entry.resolve(true);
     }
   }
-  async function invoke(job, token, operation, observe, requestRef, assignmentRef, preflight) {
+  async function invoke(job, token, operation, observe, requestRef, assignmentRef, preflight, preparedProfile) {
     const limit = runtime.readConfig?.(root)?.max_workers ?? 3;
     if (!Number.isInteger(limit) || limit < 1 || limit > 3) throw new Error('Invalid configured worker limit');
     const endWaiting = workers >= limit ? observeNativeQueue(root, requestRef, assignmentRef, job.agentName) : () => {};
@@ -87,7 +89,12 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
     // operation is cancelled. It never receives another request's ownership.
     try {
       if (admitted && !operation.source.token.isCancellationRequested) await preflight?.();
-      return await delegator.invoke(job, token, operation.source.token, observe);
+      const result = await delegator.invoke(job, token, operation.source.token, observe, preparedProfile);
+      if (preparedProfile?.profile && !result.metadata.invoked && result.error?.code === 'NATIVE_MCP_BINDING_CHANGED' && !operation.source.token.isCancellationRequested) {
+        await options.capabilities.fallback(requestRef, assignmentRef, operation.roleOnly);
+        return await delegator.invoke(job, token, operation.source.token, observe);
+      }
+      return result;
     }
     finally { if (admitted) { workers--; admitWorkers(); } }
   }
@@ -106,19 +113,24 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
     catch { return result(issue('INVALID_REQUEST', 'input', 'Supply the selected role, professional requirement and scoped project paths.')); }
     try {
       phase = 'open';
+      options.capabilities?.stage(parsed, true);
       state = await runtime.openNativeRoleJob(root, parsed);
+      const capability = options.capabilities?.prepare(state, { assignment_ref: state.assignment_ref, agentName: state.role }, true);
+      if (capability) state = capability.state;
       phase = 'delegate';
       const preference = await options.modelForRole?.(state.role);
-      const outcome = await invoke({ agentName: state.role, prompt: state.prompt, description: state.description,
+      const outcome = await invoke({ agentName: state.role, prompt: state.prompt + (capability?.promptSuffix ?? ''), description: state.description,
         ...(preference ? { model: { id: preference.id, vendor: preference.vendor } } : {}) }, token, operation,
         metadata => observeNativeCall(root, state.request_ref, state.assignment_ref, metadata), state.request_ref, state.assignment_ref,
-        state.skill_contexts?.length ? () => runtime.assertNativeRoleSkillsCurrent?.(root, state.request_ref) : undefined);
+        () => { if (state.dispatch_capabilities) options.capabilities?.assertCurrent?.(state.request_ref, true);
+          if (state.skill_contexts?.length) runtime.assertNativeRoleSkillsCurrent?.(root, state.request_ref); }, capability?.prepared);
       phase = 'save';
       const interrupted = operation.source.token.isCancellationRequested;
       const error = interrupted ? issue('CANCELLED', 'cancellation', 'The direct role job was cancelled; its actual returned report is retained without scoped completion.') : outcome.error;
       state = await runtime.recordNativeRoleResult(root, { request_ref: state.request_ref, assignment_ref: state.assignment_ref,
         ...(outcome.metadata.invoked ? { invocation: { ...outcome.metadata, status: interrupted ? 'cancelled' : outcome.status }, raw_result: outcome.raw_result } : {}),
         ...(error ? { error: { code: error.code, category: error.category } } : {}) });
+      await options.capabilities?.settle(state, true);
       return result(error);
     } catch (error) {
       const capability = selectedSkillIssue(error);
@@ -209,6 +221,7 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
       }
       else {
         const { plan, ...request } = parsed;
+        options.capabilities?.stage(parsed);
         if (Object.values(plan.role_skills ?? {}).some(names => names.length)) {
           if (typeof runtime.assertNativePlanSkillsAvailable !== 'function')
             return result(issue('NATIVE_SKILL_CONTEXT_UNAVAILABLE', 'compatibility', 'The installed runtime does not support selected skill contexts. Update the matching runtime, or omit optional skills to use ordinary project tools.'));
@@ -268,17 +281,20 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
         // The repair uses the actual Coordinator's chosen model, while leaving
         // its ordinary worker preference unchanged for subsequent requests.
         const preference = job.escalation === 'native-parent' ? undefined : await options.modelForRole?.(job.agentName);
-        const outcome = await invoke({ agentName: job.agentName, prompt: job.prompt, description: job.description,
+        const capability = options.capabilities?.prepare(state, job);
+        if (capability) remember(capability.state);
+        const outcome = await invoke({ agentName: job.agentName, prompt: job.prompt + (capability?.promptSuffix ?? ''), description: job.description,
           ...(preference ? { model: { id: preference.id, vendor: preference.vendor } } : {}) },
           toolInvocationToken, operation, metadata => observeNativeCall(root, requestRef, job.assignment_ref, metadata), requestRef, job.assignment_ref,
           state.editor_recovery?.status === 'prepared'
             ? () => {
+              if (state.dispatch_capabilities) options.capabilities?.assertCurrent?.(requestRef);
               if (typeof runtime.assertNativeEditorRecoveryCurrent !== 'function')
                 throw Object.assign(new Error('Matching native editor recovery runtime required'), { code: 'EDITOR_EFFECTS_UNCONFIRMED' });
               return runtime.assertNativeEditorRecoveryCurrent(root, requestRef, job.assignment_ref);
             }
-            : Object.values(state.skill_contexts ?? {}).some(contexts => contexts.length)
-            ? () => runtime.assertNativeRequestSkillsCurrent?.(root, requestRef) : undefined);
+            : () => { if (state.dispatch_capabilities) options.capabilities?.assertCurrent?.(requestRef);
+              if (Object.values(state.skill_contexts ?? {}).some(contexts => contexts.length)) runtime.assertNativeRequestSkillsCurrent?.(root, requestRef); }, capability?.prepared);
         if (outcome.metadata.host_call_id) privateValues.add(outcome.metadata.host_call_id);
         if (outcome.metadata.invoked) {
           remember(await runtime.recordNativeResult(root, { request_ref: requestRef, assignment_ref: job.assignment_ref,
@@ -330,6 +346,7 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
         return interrupt(inputIssue() ?? issue('NATIVE_INPUT_REVISION_CHANGED', 'concurrency',
           'Current source/checker inputs changed before acceptance; actual work and earlier evidence were preserved.'));
       }
+      await options.capabilities?.settle(state);
       return result();
       }
     } catch (error) {
@@ -350,7 +367,7 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
     let source;
     try { source = new vscode.CancellationTokenSource(); }
     catch { return Promise.resolve({ status: 'rejected', error: issue('NATIVE_CANCELLATION_UNAVAILABLE', 'compatibility', 'Native cancellation support is unavailable.') }); }
-    const operation = { source, abort: new AbortController(), reason: undefined, done: undefined, caller: undefined, requestRef: requestToResume };
+    const operation = { source, abort: new AbortController(), reason: undefined, done: undefined, caller: undefined, requestRef: requestToResume, roleOnly };
     operation.cancel = reason => { operation.reason ??= reason; source.cancel(); operation.abort.abort(); };
     if (cancellationToken?.isCancellationRequested) operation.cancel('caller');
     else operation.caller = cancellationToken?.onCancellationRequested?.(() => operation.cancel('caller'));

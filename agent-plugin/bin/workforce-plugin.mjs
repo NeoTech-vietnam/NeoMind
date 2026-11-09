@@ -19297,10 +19297,10 @@ function discoverRuntime(options = {}) {
 }
 
 // scripts/agent-plugin/version.mjs
-var pluginVersion = "0.1.0-alpha.1";
+var pluginVersion = "0.2.0-alpha.1";
 
 // scripts/agent-plugin/server.mjs
-var intakeNames = /* @__PURE__ */ new Set(["request_submit", "request_status", "request_control"]);
+var intakeNames = /* @__PURE__ */ new Set(["request_status", "work_prepare"]);
 var connectionTool = {
   name: "workforce_connection",
   description: "Check WorkForce MCP setup without model inference. Uses the workspace folders exposed by this client. Select workspace_uri only when several folders are open.",
@@ -19429,7 +19429,7 @@ function createPluginServer(options = {}) {
       const directory = lstatSync(join2(selected.root, ".workforce")), file = lstatSync(path);
       if (!directory.isDirectory() || directory.isSymbolicLink() || !file.isFile() || file.isSymbolicLink() || file.size > 1024 * 1024) throw new Error();
       project = JSON.parse(readFileSync2(path, "utf8"));
-      if (project?.execution_engine !== "opencode" || !Array.isArray(project.platforms) || !project.platforms.includes("copilot")) throw new Error();
+      if (!["opencode", "vscode-native"].includes(project?.execution_engine) || !Array.isArray(project.platforms) || !project.platforms.includes("copilot")) throw new Error();
     } catch {
       throw new ConnectionIssue(problem("INITIALIZE_WORKSPACE", "Initialize this folder with the installed WorkForce runtime for Copilot before connecting. Existing project files were not changed.", { workspace_uri: selected.uri }));
     }
@@ -19458,8 +19458,9 @@ function createPluginServer(options = {}) {
         try {
           backend = await connectBackend({ runtime: selection.runtime, root: selection.root, timeout: backendTimeout });
           const listed = await backend.listTools();
-          const tools = listed.tools?.filter((tool) => intakeNames.has(tool.name)) ?? [];
-          if (tools.length !== 3 || new Set(tools.map((tool) => tool.name)).size !== 3) throw new Error();
+          const tools = listed.tools ?? [];
+          if (tools.length !== intakeNames.size || new Set(tools.map((tool) => tool.name)).size !== intakeNames.size || tools.some((tool) => !intakeNames.has(tool.name)))
+            throw new ConnectionIssue(problem("RUNTIME_NATIVE_MCP_REQUIRED", "Install the matching native WorkForce runtime and VSIX. This plugin requires status and experience MCP tools; older submission/control or general record tools are not used. Existing project configuration and saved work were not changed."));
           lease = { key, backend, tools, active: 0, retired: false };
           leases.add(lease);
           if (closed || selection.version !== scopeVersion) {
@@ -19496,7 +19497,7 @@ function createPluginServer(options = {}) {
   });
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: input = {} } = request.params;
-    if (name !== connectionTool.name && !intakeNames.has(name)) return result(problem("UNKNOWN_TOOL", "Use the WorkForce connection or intake tools advertised by this server."), true);
+    if (name !== connectionTool.name && !intakeNames.has(name)) return result(problem("UNKNOWN_TOOL", "Use the advertised connection, request_status or work_prepare tools. Submit and control products through the installed native WorkForce extension tools in VS Code Local."), true);
     if (name === connectionTool.name && (typeof input !== "object" || input === null || Array.isArray(input) || Object.keys(input).some((key) => key !== "workspace_uri") || input.workspace_uri !== void 0 && typeof input.workspace_uri !== "string"))
       return result(problem("INVALID_CONNECTION_INPUT", "Use an empty object, or the exact workspace_uri returned in the roots list."), true);
     try {
@@ -19512,7 +19513,7 @@ function createPluginServer(options = {}) {
           workspace: selection.root,
           runtime: selection.runtime,
           ...typeof lease.backend.info?.version === "string" ? { runtime_version: lease.backend.info.version.slice(0, 64) } : {},
-          summary: "Project-bound MCP connected. Model access and worker execution still require WorkForce: Connect Workspace in VS Code."
+          summary: "Project-bound status and experience MCP connected. Submit and control products through the matching native WorkForce extension tools in VS Code Local; MCP setup does not prove native tool loading or model execution."
         });
       }
       if (selection.version !== scopeVersion || lease.retired) throw new ConnectionIssue(problem("WORKSPACE_CHANGED", "The workspace changed before dispatch. Check workforce_connection; no tool was dispatched."));
@@ -19522,7 +19523,7 @@ function createPluginServer(options = {}) {
       } catch {
         if (current === lease) current = void 0;
         retire(lease);
-        return result(problem("DELIVERY_UNCERTAIN", "The runtime tool reply was interrupted. Preserve this workspace and check request_status before resubmitting; never repeat a new request automatically."), true);
+        return result(problem("DELIVERY_UNCERTAIN", "The status or experience reply was interrupted and was not retried. No product request was submitted through this MCP connection. Preserve the workspace and explicitly check request_status when needed."), true);
       } finally {
         lease.active--;
         if (lease.retired && !lease.active) await closeLease(lease);

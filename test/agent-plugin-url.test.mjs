@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -12,7 +12,7 @@ import { createPluginServer } from '../scripts/agent-plugin/server.mjs';
 
 const protocolTest = (name, fn) => test(name, { timeout: 7000 }, fn);
 const runtime = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const intakeNames = ['request_control', 'request_status', 'request_submit'];
+const intakeNames = ['request_status', 'work_prepare'];
 const jsonResult = value => ({ content: [{ type: 'text', text: JSON.stringify(value) }] });
 const body = result => result.structuredContent ?? JSON.parse(result.content.find(item => item.type === 'text').text);
 const canonical = path => realpathSync.native(path);
@@ -117,16 +117,16 @@ protocolTest('a linked WorkForce configuration directory cannot import another p
   assert.equal(backend.launches.length, 0);
 });
 
-protocolTest('one project with spaces binds automatically and forwards only the original intake request unchanged', async t => {
+protocolTest('one project with spaces binds automatically and forwards only the original experience request unchanged', async t => {
   const f = fixture(t), project = f.project('project with spaces'), backend = backendFactory();
   const session = await connection(f, [project], backend);
   assert.equal((await session.status()).state, 'ready');
   const names = (await session.client.listTools()).tools.map(tool => tool.name).sort();
   assert.deepEqual(names, [...intakeNames, 'workforce_connection'].sort());
-  const input = { requirement: 'Read this ordinary requirement verbatim.', new_request: true, context: [{ path: '.', kind: 'directory' }] };
-  const result = body(await session.client.callTool({ name: 'request_submit', arguments: input }));
+  const input = { requirement: 'Find prior work for this ordinary requirement verbatim.' };
+  const result = body(await session.client.callTool({ name: 'work_prepare', arguments: input }));
   assert.equal(canonical(result.root), canonical(project));
-  assert.deepEqual(result.received, { name: 'request_submit', arguments: input });
+  assert.deepEqual(result.received, { name: 'work_prepare', arguments: input });
   assert.equal(backend.calls.length, 1, 'Forward once, without creating request IDs or retrying.');
   assert.equal(backend.launches.length, 1, 'Status/list/call reuse the same bound backend.');
   let rejected = false;
@@ -134,6 +134,40 @@ protocolTest('one project with spaces binds automatically and forwards only the 
   catch { rejected = true; }
   assert.equal(rejected, true);
   assert.equal(backend.calls.length, 1, 'Legacy or unknown methods are not forwarded.');
+});
+
+protocolTest('native MCP connects for both new and historical initialized config without migrating or launching an engine', async t => {
+  const f = fixture(t), backend = backendFactory();
+  for (const engine of ['vscode-native', 'opencode']) {
+    const project = f.project(engine), path = join(project, '.workforce/config.json');
+    const config = JSON.parse(readFileSync(path, 'utf8')); config.execution_engine = engine;
+    writeFileSync(path, JSON.stringify(config)); const before = readFileSync(path);
+    const session = await connection(f, [project], backend);
+    const status = await session.status();
+    assert.equal(status.code, 'CONNECTED');
+    assert.match(status.summary, /native WorkForce extension tools/);
+    assert.doesNotMatch(status.summary, /Connect Workspace|Enable Model Bridge/);
+    assert.deepEqual(readFileSync(path), before, 'Compatibility reads never rewrite historical project policy.');
+  }
+  assert.equal(backend.calls.length, 0); assert.equal(backend.launches.length, 2);
+});
+
+protocolTest('an unsupported backend surface gets a bounded native-runtime diagnostic and never exposes legacy or generic tools', async t => {
+  const f = fixture(t), project = f.project('old runtime project');
+  for (const names of [['request_submit', 'request_status', 'request_control'], ['request_status', 'work_prepare', 'record_create'], ['request_status', 'request_status']]) {
+    let calls = 0, closes = 0;
+    const session = await connection(f, [project], { connectBackend: async () => ({
+      listTools: async () => ({ tools: names.map(name => ({ name, description: 'PRIVATE_PROVIDER_DIAGNOSTIC', inputSchema: { type: 'object' } })) }),
+      callTool: async () => { calls++; throw new Error('Must never forward an unsupported tool.'); }, close: async () => { closes++; },
+    }) });
+    assert.deepEqual((await session.client.listTools()).tools.map(tool => tool.name), ['workforce_connection']);
+    const status = await session.status(); assert.equal(status.code, 'RUNTIME_NATIVE_MCP_REQUIRED');
+    assert.doesNotMatch(JSON.stringify(status), /PRIVATE_PROVIDER_DIAGNOSTIC/);
+    for (const name of ['request_submit', 'request_control', 'record_create']) {
+      const denied = await session.client.callTool({ name, arguments: {} }); assert.equal(denied.isError, true);
+    }
+    assert.equal(calls, 0); assert.equal(closes, 2, 'Both explicit probes close their incompatible child, without fallback.');
+  }
 });
 
 protocolTest('two plugin clients in different workspaces cannot mix roots or backend instances', async t => {
@@ -201,7 +235,7 @@ protocolTest('workspace removal during backend startup cannot redirect or dispat
   const session = await connection(f, [a], {
     connectBackend: async input => { if (delay) { connecting(); await wait; } return backend.connectBackend(input); },
   });
-  const submission = session.client.callTool({ name: 'request_submit', arguments: { requirement: 'belongs to A', new_request: true } });
+  const submission = session.client.callTool({ name: 'work_prepare', arguments: { requirement: 'belongs to A' } });
   await started;
   await session.changeRoots([b]);
   // Request a fresh roots snapshot before allowing the old child to finish.
@@ -231,7 +265,7 @@ protocolTest('a roots response arriving after a workspace-change notification ca
       return snapshot;
     },
   });
-  const submission = session.client.callTool({ name: 'request_submit', arguments: { requirement: 'belongs to A', new_request: true } });
+  const submission = session.client.callTool({ name: 'work_prepare', arguments: { requirement: 'belongs to A' } });
   await started;
   await session.changeRoots([b]);
   delay = false;
@@ -256,7 +290,7 @@ protocolTest('runtime discovery cannot give old roots the new workspace generati
     ...backend,
     discoverRuntime: async () => { if (delay) { began(); await gate; } return { state: 'ready', runtime }; },
   });
-  const submission = session.client.callTool({ name: 'request_submit', arguments: { requirement: 'belongs to A', new_request: true } });
+  const submission = session.client.callTool({ name: 'work_prepare', arguments: { requirement: 'belongs to A' } });
   await started;
   await session.changeRoots([b]);
   delay = false;
@@ -293,7 +327,7 @@ protocolTest('backend transport failures are not replayed and do not expose prov
       close: async () => {},
     }),
   });
-  const result = await session.client.callTool({ name: 'request_submit', arguments: { requirement: 'ordinary request', new_request: true } });
+  const result = await session.client.callTool({ name: 'work_prepare', arguments: { requirement: 'ordinary request' } });
   assert.equal(result.isError, true);
   assert.doesNotMatch(JSON.stringify(result), /SECRET_PROVIDER_HEADER_VALUE/);
   assert.equal(calls.length, 1, 'A lost response must not create a second submission.');

@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { distributionTarget, lockedDependencyInventory, archiveRuntime, packedArchive, nativeTarCommand } from '../scripts/package-runtime.mjs';
+import { distributionTarget, lockedDependencyInventory, archiveRuntime, packedArchive, nativeTarCommand, packageSmokeWorkspace, assertPackageRuntimeIsolated } from '../scripts/package-runtime.mjs';
+import * as runtimePackaging from '../scripts/package-runtime.mjs';
 import { spawnSync } from 'node:child_process';
 import { writeReleaseIndex } from '../scripts/package-release.mjs';
 import { parse as parseYaml } from 'yaml';
 import { bootstrapWindowsGuardian } from '../scripts/bootstrap-engine.mjs';
 import { statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 test('exact WorkForce branch push packages candidates after the same native CI regression without publishing', () => {
   const ci = parseYaml(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
@@ -27,6 +29,7 @@ test('exact WorkForce branch push packages candidates after the same native CI r
     assert.ok(step, 'Native build, extracted smoke and retained reports are all required.');
     assert.match(step.if, /github\.event_name == 'push'/);
     assert.match(step.if, /github\.ref == 'refs\/heads\/codex\/workforce-vmodel'/);
+    assert.match(step.if, /github\.ref == 'refs\/heads\/codex\/workforce-vscode-native'/);
   }
   assert.match(build.if, /^success\(\)/);
   assert.match(smoke.if, /^success\(\)/);
@@ -70,9 +73,44 @@ test('Ubuntu repeated engine diagnostics supplement full regression and stop bef
 });
 
 test('portable assets identify only their actually supported native targets', () => {
-  assert.equal(distributionTarget('win32', 'x64').binaryPackage, 'opencode-windows-x64');
+  assert.deepEqual(distributionTarget('win32', 'x64'), { platform: 'win32', arch: 'x64', target: 'windows-x64', execution: 'vscode-native/v1', transport: 'vscode-local' });
   assert.equal(distributionTarget('linux', 'x64').target, 'linux-x64');
   for (const [platform, arch] of [['darwin', 'arm64'], ['linux', 'arm64'], ['win32', 'ia32']]) assert.throws(() => distributionTarget(platform, arch), /Windows x64 and Linux x64 only/);
+});
+
+test('native distribution excludes legacy execution dependencies and rejects accidentally bundled engines', t => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  for (const name of ['opencode-ai', '@opencode-ai/sdk']) {
+    assert.equal(pkg.dependencies[name], undefined, 'Legacy engine dependencies must not install in the native product.');
+    assert.equal(pkg.devDependencies[name], '1.19.4', 'Historical source regression remains installable with dev dependencies.');
+  }
+  assert.equal(typeof runtimePackaging.assertNativeOnlyRuntime, 'function');
+  const root = mkdtempSync(join(tmpdir(), 'workforce-native-distribution-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { yaml: '2.9.1' } }));
+  assert.equal(runtimePackaging.assertNativeOnlyRuntime(root), true);
+  mkdirSync(join(root, 'resources/opencode-bootstrap'), { recursive: true });
+  assert.throws(() => runtimePackaging.assertNativeOnlyRuntime(root), /legacy|OpenCode/i);
+  rmSync(join(root, 'resources'), { recursive: true });
+  mkdirSync(join(root, 'node_modules/opencode-windows-x64'), { recursive: true });
+  assert.throws(() => runtimePackaging.assertNativeOnlyRuntime(root), /legacy|OpenCode/i);
+  rmSync(join(root, 'node_modules'), { recursive: true });
+  mkdirSync(join(root, 'node_modules/ordinary/node_modules/@opencode-ai/sdk'), { recursive: true });
+  writeFileSync(join(root, 'package-lock.json'), JSON.stringify({ packages: {
+    'node_modules/ordinary/node_modules/@opencode-ai/sdk': { version: '1.19.4' },
+  } }));
+  assert.throws(() => runtimePackaging.assertNativeOnlyRuntime(root), /legacy|OpenCode/i, 'A nested installed engine dependency cannot hide behind a regular package.');
+});
+test('real installed-package smoke isolation cannot borrow the checkout development SDK through Node parent lookup', t => {
+  assert.match(import.meta.resolve('@opencode-ai/sdk/v2/client'), /\/node_modules\/@opencode-ai\/sdk\//,
+    'The source regression SDK exists, making this a meaningful negative control.');
+  const root = packageSmokeWorkspace(); t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, 'missing-sdk.mjs'), "import '@opencode-ai/sdk/v2/client';\n");
+  const result = spawnSync(process.execPath, [join(root, 'missing-sdk.mjs')], { cwd: root, windowsHide: true, encoding: 'utf8' });
+  assert.notEqual(result.status, 0); assert.match(result.stderr, /ERR_MODULE_NOT_FOUND/);
+  assert.throws(() => packageSmokeWorkspace(fileURLToPath(new URL('../artifacts', import.meta.url))), /outside the source checkout/);
+  assert.throws(() => assertPackageRuntimeIsolated(fileURLToPath(new URL('../artifacts', import.meta.url))), /--runtime-archive|outside the source checkout/);
+  assert.throws(() => assertPackageRuntimeIsolated(fileURLToPath(new URL('..', import.meta.url))), /--runtime-archive|outside the source checkout/);
+  assert.equal(assertPackageRuntimeIsolated(root), true);
 });
 
 test('npm archive metadata accepts supported CLI envelopes without accepting multiple or escaping files', () => {
@@ -123,6 +161,7 @@ test('candidate indexing requires both native assets when requested and never cl
   for (const target of ['windows-x64', 'linux-x64']) writeFileSync(join(root, `workforce-runtime-${version}-${target}.tgz`), `fixture ${target}`);
   const manifest = await writeReleaseIndex(root, { requirePlatforms: true });
   assert.equal(manifest.tag, `workforce-v${version}`); assert.equal(manifest.published, false); assert.equal(manifest.state, 'candidate');
+  assert.equal(manifest.execution, 'vscode-native/v1'); assert.equal(manifest.transport, 'vscode-local'); assert.equal(manifest.engine_version, undefined);
   assert.equal(manifest.complete_platform_set, true); assert.equal(manifest.assets.length, 2);
   assert.ok(manifest.assets.every(asset => /^[a-f0-9]{64}$/.test(asset.sha256)));
   assert.match(readFileSync(join(root, 'SHA256SUMS'), 'utf8'), /release-manifest\.json/);

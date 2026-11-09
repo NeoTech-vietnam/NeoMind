@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { userInfo } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { Worker } from 'node:worker_threads';
-import { createOpencodeClient, type Config } from '@opencode-ai/sdk/v2/client';
+import type { createOpencodeClient, Config } from '@opencode-ai/sdk/v2/client';
 import { Agent, fetch as fixedFetch } from 'undici';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -671,6 +671,10 @@ async function startSupervisedEngine(root: string, invocationId: string, directo
       // its own equivalent DOM type rather than Node's bundled declaration.
       return response as unknown as Response;
     };
+    // The historical engine is dev-only. Native releases retain history readers
+    // without loading or shipping its SDK; only explicit legacy diagnostics
+    // resolve this optional dependency.
+    const { createOpencodeClient } = await import('@opencode-ai/sdk/v2/client');
     const client = createOpencodeClient({ baseUrl: ready.url, directory, fetch: options.wrapControlFetch?.(controlFetch) ?? controlFetch,
       headers: { Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}` }, throwOnError: true });
     return { client, directory, instance, binary_sha256: binary.sha256, pid: ready.engine.pid,

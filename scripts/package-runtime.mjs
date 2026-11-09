@@ -2,14 +2,27 @@
 // inside a user's first request. Run this on each supported target platform.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, createWriteStream, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { createReadStream, createWriteStream, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { bootstrapEngine } from './bootstrap-engine.mjs';
+import { tmpdir } from 'node:os';
+import { prepareManagedGateway } from './prepare-managed-gateway.mjs';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+export function assertPackageRuntimeIsolated(runtime) {
+  const route = relative(realpathSync.native(repository), realpathSync.native(resolve(runtime)));
+  if (!route || !isAbsolute(route) && route !== '..' && !route.startsWith('../') && !route.startsWith('..\\'))
+    throw new Error('Use --runtime-archive or extract the runtime outside the source checkout so imports cannot borrow development dependencies.');
+  return true;
+}
+export function packageSmokeWorkspace(temporaryRoot = tmpdir()) {
+  const target = realpathSync.native(resolve(temporaryRoot)), route = relative(realpathSync.native(repository), target);
+  if (!route || !isAbsolute(route) && route !== '..' && !route.startsWith('../') && !route.startsWith('..\\'))
+    throw new Error('Package smoke must run outside the source checkout so it cannot borrow development dependencies.');
+  return mkdtempSync(join(target, 'workforce-package-'));
+}
 export function nativeTarCommand() {
   // Git Bash can put GNU tar first on PATH; it interprets D: as a remote
   // archive host. Windows ships bsdtar with native drive-path support.
@@ -23,9 +36,20 @@ export function packedArchive(value) {
 }
 export function distributionTarget(platform = process.platform, arch = process.arch) {
   if (arch !== 'x64' || !['win32', 'linux'].includes(platform)) throw new Error('Release runtime assets are built natively for Windows x64 and Linux x64 only.');
-  return { platform, arch, target: `${platform === 'win32' ? 'windows' : 'linux'}-${arch}`,
-    binaryPackage: `opencode-${platform === 'win32' ? 'windows' : 'linux'}-${arch}`,
-    binaryName: platform === 'win32' ? 'opencode.exe' : 'opencode' };
+  return { platform, arch, target: `${platform === 'win32' ? 'windows' : 'linux'}-${arch}`, execution: 'vscode-native/v1', transport: 'vscode-local' };
+}
+export function assertNativeOnlyRuntime(root) {
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const legacy = name => /^@opencode-ai\//.test(name) || /^opencode(?:-|$)/.test(name);
+  const lock = existsSync(join(root, 'package-lock.json')) ? JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8')) : {};
+  const nestedLegacy = Object.keys(lock.packages ?? {}).some(path => path.startsWith('node_modules/') && !path.split('/').includes('..') &&
+    /(?:^|\/)node_modules\/(?:@opencode-ai\/|opencode(?:-|\/|$))/.test(path) && existsSync(join(root, path)));
+  if (Object.keys(pkg.dependencies ?? {}).some(legacy) || existsSync(join(root, 'resources/opencode-bootstrap')) ||
+      existsSync(join(root, 'scripts/bootstrap-engine.mjs')) || existsSync(join(root, 'extensions/vscode-model-bridge/legacy-extension.cjs')) ||
+      existsSync(join(root, 'node_modules/@opencode-ai')) ||
+      nestedLegacy || (existsSync(join(root, 'node_modules')) && readdirSync(join(root, 'node_modules')).some(legacy)))
+    throw new Error('Native distribution must not bundle legacy OpenCode execution dependencies or bootstrap.');
+  return true;
 }
 export async function fileHash(path) {
   const digest = createHash('sha256');
@@ -76,49 +100,37 @@ export async function buildRuntime({ outputDirectory = join(repository, 'artifac
   mkdirSync(output, { recursive: true }); mkdirSync(root);
   try {
     execute(process.execPath, [npm, 'run', 'build'], repository);
+    await prepareManagedGateway();
     const cache = join(repository, 'artifacts/npm-build-cache');
     const packed = packedArchive(JSON.parse(execute(process.execPath, [npm, 'pack', '--ignore-scripts', '--json', '--cache', cache, '--pack-destination', staging], repository)));
     execute(nativeTarCommand(), ['-xzf', join(staging, packed.filename), '-C', root, '--strip-components=1'], repository);
     copyFileSync(join(repository, 'package-lock.json'), join(root, 'package-lock.json'));
     execute(process.execPath, [npm, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--cache', cache], root);
-    const bootstrap = join(root, 'resources/opencode-bootstrap');
-    const seed = lstatSync(join(bootstrap, 'seed.cjs'));
-    if (!seed.isFile() || seed.isSymbolicLink()) throw new Error('The runtime must ship its reviewed dependency-copy worker.');
-    bootstrapEngine(bootstrap);
-    // npm can install multiple libc/CPU variants for the same OS. The runtime
-    // resolver uses exactly this asset's pinned binary; do not ship unused copies.
-    for (const entry of readdirSync(join(root, 'node_modules'))) if (entry.startsWith('opencode-') && !['opencode-ai', target.binaryPackage].includes(entry)) {
-      const path = resolve(root, 'node_modules', entry), child = relative(root, path);
-      if (isAbsolute(child) || child.startsWith(`..${sep}`) || lstatSync(path).isSymbolicLink()) throw new Error('Unexpected OpenCode dependency path.');
-      rmSync(path, { recursive: true, force: true });
-    }
+    assertNativeOnlyRuntime(root);
     const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
-    const dependencies = lockedDependencyInventory(root, lock), find = name => dependencies.find(entry => entry.name === name);
-    for (const name of ['@opencode-ai/sdk', 'opencode-ai', target.binaryPackage]) {
-      if (find(name)?.version !== '1.19.4' || !find(name)?.integrity) throw new Error(`Pinned OpenCode dependency is absent: ${name}`);
-    }
-    const binary = join(root, 'node_modules', target.binaryPackage, 'bin', target.binaryName);
-    if (!lstatSync(binary).isFile() || lstatSync(binary).isSymbolicLink()) throw new Error('The bundled engine must be a regular platform binary.');
-    if (process.platform !== 'win32') chmodSync(binary, 0o755);
-    if (execute(binary, ['--version'], root).trim() !== '1.19.4') throw new Error('Bundled OpenCode did not report its pinned version.');
+    const dependencies = lockedDependencyInventory(root, lock);
     const cliVersion = execute(process.execPath, [join(root, 'dist/cli.js'), '--version'], root).trim();
     if (cliVersion !== pkg.version) throw new Error('Bundled CLI does not match the release version.');
     const info = await import(pathToFileURL(join(root, 'dist/index.js')).href);
     if (typeof info.requestStatus !== 'function' || typeof info.requestSubmit !== 'function') throw new Error('Bundled request facade cannot be loaded.');
-    const guardian = (await import(pathToFileURL(join(root, 'dist/opencode-engine.js')).href)).openCodeWindowsGuardian();
+    const gateway = JSON.parse(readFileSync(join(root, 'resources/managed-gateway/manifest.json'), 'utf8'));
+    const { MANAGED_GATEWAY_PIN: pin } = await import(pathToFileURL(join(root, 'dist/managed-gateway-artifact.js')).href);
+    if (JSON.stringify(gateway.pin) !== JSON.stringify(pin) || gateway.archive !== `9router-${pin.version}.tgz` ||
+        gateway.archive_sha256 !== await fileHash(join(root, 'resources/managed-gateway', gateway.archive)) ||
+        `sha512-${createHash('sha512').update(readFileSync(join(root, 'resources/managed-gateway', gateway.archive))).digest('base64')}` !== pin.integrity ||
+        gateway.license_sha256 !== pin.license_sha256 || gateway.license_sha256 !== await fileHash(join(root, 'resources/managed-gateway/LICENSE.9router.txt')))
+      throw new Error('Bundled offline gateway archive or notices differ from the reviewed pin.');
     const distribution = { schema_version: 1, package: pkg.name, version: pkg.version, ...target,
       build_fingerprint: info.createRuntimeInfo(root).build_fingerprint,
       source_build_fingerprint: info.getRuntimeBuildFingerprint(repository),
-      node: pkg.engines.node, engine: { version: '1.19.4', binary: `node_modules/${target.binaryPackage}/bin/${target.binaryName}`, sha256: await fileHash(binary) },
-      ...(guardian ? { windows_guardian: { path: 'resources/opencode-bootstrap/windows-guardian.dll', sha256: guardian.sha256,
-        source_sha256: guardian.source_sha256, manifest_sha256: guardian.manifest_sha256 } } : {}),
-      dependencies, bootstrap: { path: 'resources/opencode-bootstrap', lock_sha256: await fileHash(join(bootstrap, 'package-lock.json')),
-        dependencies: lockedDependencyInventory(bootstrap, JSON.parse(readFileSync(join(bootstrap, 'package-lock.json'), 'utf8'))) },
+      node: pkg.engines.node, dependencies, gateway: { path: `resources/managed-gateway/${gateway.archive}`, pin: gateway.pin,
+        sha256: gateway.archive_sha256, license_sha256: gateway.license_sha256, optional: true },
       limitations: ['Node.js is a prerequisite; no Node executable is bundled.', 'Linux core packaging is not Linux VS Code desktop acceptance.', 'No model inference is run by the packaging check.'] };
     writeFileSync(join(root, 'distribution-manifest.json'), `${JSON.stringify(distribution, null, 2)}\n`);
     const filename = `workforce-runtime-${pkg.version}-${target.target}.tgz`, path = join(output, filename);
     await archiveRuntime(staging, path);
-    const result = { path, version: pkg.version, target: target.target, sha256: await fileHash(path), binary_sha256: distribution.engine.sha256 };
+    const result = { path, version: pkg.version, target: target.target, sha256: await fileHash(path), execution: target.execution,
+      gateway_sha256: gateway.archive_sha256 };
     writeFileSync(join(output, `${filename}.json`), `${JSON.stringify({ ...result, path: filename, distribution }, null, 2)}\n`);
     return result;
   } finally {

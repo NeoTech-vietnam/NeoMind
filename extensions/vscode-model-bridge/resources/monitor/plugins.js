@@ -23,7 +23,8 @@
     const actions = node('div', '', 'actions');
     const toggle = button('Enable', () => cards.get(id).value?.enabled ? 'disable' : 'enable', id);
     const install = button('Install pinned version', () => 'install', id), check = button('Probe MCP', () => 'probe', id);
-    actions.append(toggle, install, check);
+    const remove = button('Remove registrations', () => 'remove', id);
+    actions.append(toggle, install, check, remove);
     const connectionList = node('div', '', 'connections'), connectionRows = new Map();
     for (const [client, label] of Object.entries(clients)) {
       const row = node('div', '', 'connection'), status = node('span', 'Reading…', 'connection-state');
@@ -33,15 +34,17 @@
       connectionRows.set(client, { status: 'unavailable', statusNode: status, control });
     }
     card.append(heading, description, version, probe, actions, connectionList, reason); document.getElementById('plugins').append(card);
-    cards.set(id, { value: null, state, version, probe, reason, toggle, install, check, connectionRows });
+    cards.set(id, { value: null, state, version, probe, reason, toggle, install, check, remove, connectionRows });
   }
   function controls() {
     document.getElementById('refresh').disabled = busy;
     document.getElementById('select-vscode').disabled = busy;
+    document.getElementById('native-capabilities').disabled = busy;
     document.getElementById('plugins').setAttribute('aria-busy', String(busy));
     for (const card of cards.values()) {
       card.toggle.disabled = busy || !loaded; card.install.disabled = busy || !loaded || card.value?.installed || !card.value?.enabled;
       card.check.disabled = busy || !loaded || !card.value?.enabled || !card.value?.installed;
+      card.remove.disabled = busy || !loaded;
       for (const [client, row] of card.connectionRows) row.control.disabled = busy || !loaded || (row.status !== 'connected' && (!card.value?.enabled || card.value?.availability !== 'ready')) || (client === 'copilot-vscode' && !vscodeSelected);
     }
   }
@@ -61,7 +64,8 @@
       card.value = value; card.state.textContent = `${value.enabled ? 'Enabled' : 'Disabled'} · ${value.availability}`;
       card.state.className = `badge ${value.availability === 'ready' ? 'ready' : ''}`;
       card.version.textContent = `Pinned version: ${value.version || 'Approved external setup'} · ${value.installed ? 'Installed' : 'Not installed'}`;
-      card.reason.textContent = value.reason || '';
+      card.reason.textContent = value.control?.pending_action
+        ? `${value.control.pending_action} pending · ${value.control.active_count} retained holder(s) · new work denied` : value.reason || '';
       card.probe.textContent = value.last_probe ? `Saved MCP verification: ${value.last_probe.ok ? 'Passed' : 'Failed'}${value.last_probe.checked_at ? ` · ${value.last_probe.checked_at}` : ''}${value.last_probe.tool_count !== null ? ` · ${value.last_probe.tool_count} tools` : ''}` : 'No direct MCP probe recorded.';
       card.toggle.textContent = value.enabled ? 'Disable' : 'Enable';
       card.install.textContent = value.installed ? 'Pinned version installed' : 'Install pinned version';
@@ -77,6 +81,7 @@
   });
   document.getElementById('refresh').addEventListener('click', () => request('refresh'));
   document.getElementById('select-vscode').addEventListener('click', () => request('select-vscode'));
+  document.getElementById('native-capabilities').addEventListener('click', () => request('native-capabilities'));
   controls();
   // The initial native snapshot may arrive before this document loads.
   vscode.postMessage({ type: 'plugin-action', action: 'refresh' });

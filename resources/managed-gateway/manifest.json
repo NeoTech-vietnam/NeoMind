@@ -1,0 +1,332 @@
+{
+  "schema_version": 1,
+  "purpose": "optional-offline-managed-gateway",
+  "pin": {
+    "package": "9router",
+    "version": "0.5.116",
+    "repository": "https://github.com/decolua/9router",
+    "commit": "1339107e624d1ab150c6a0c2c2ee22caa7e9db2f",
+    "license": "MIT",
+    "integrity": "sha512-Ny4N80cuLBjGmSpOluIwjd0kOk5IZJX26vYDZ+xZunvcVUIHX1h9/t9yu5rfiy6hlXkE6H0rVizD794P1YKMjw==",
+    "license_sha256": "7099c6555fcaa069f19c43bdd409cd78b87d4d250069428e0b3406ea2367d26e"
+  },
+  "archive": "9router-0.5.116.tgz",
+  "archive_sha256": "2a523958afa178a15d5806b498a6bb983e6d20ad89ba675c1b863efd77fad817",
+  "tarball_sha512": "sha512-Ny4N80cuLBjGmSpOluIwjd0kOk5IZJX26vYDZ+xZunvcVUIHX1h9/t9yu5rfiy6hlXkE6H0rVizD794P1YKMjw==",
+  "entry": "app/custom-server.js",
+  "closure_file_count": 3701,
+  "licenses": [
+    {
+      "package": "@aws/lambda-invoke-store",
+      "version": "0.3.0",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@aws-sdk/core",
+      "version": "3.978.1",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@aws-sdk/credential-provider-cognito-identity",
+      "version": "3.972.71",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@aws-sdk/credential-provider-env",
+      "version": "3.972.72",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@aws-sdk/credential-provider-http",
+      "version": "3.972.74",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@aws-sdk/credential-provider-ini",
+      "version": "3.973.17",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@aws-sdk/credential-provider-login",
+      "version": "3.972.79",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@aws-sdk/credential-provider-node",
+      "version": "3.972.84",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@aws-sdk/credential-provider-process",
+      "version": "3.972.72",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@aws-sdk/credential-provider-sso",
+      "version": "3.973.16",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@aws-sdk/credential-provider-web-identity",
+      "version": "3.972.78",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@aws-sdk/credential-providers",
+      "version": "3.1147.0",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@aws-sdk/nested-clients",
+      "version": "3.997.46",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@aws-sdk/signature-v4-multi-region",
+      "version": "3.996.47",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@aws-sdk/token-providers",
+      "version": "3.1138.0",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@aws-sdk/xml-builder",
+      "version": "3.972.41",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@emnapi/runtime",
+      "version": "1.11.3",
+      "license": "MIT"
+    },
+    {
+      "package": "@next/env",
+      "version": "16.4.2",
+      "license": "MIT"
+    },
+    {
+      "package": "@smithy/core",
+      "version": "3.35.1",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@smithy/credential-provider-imds",
+      "version": "4.5.2",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@smithy/node-http-handler",
+      "version": "4.12.1",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@smithy/signature-v4",
+      "version": "5.7.4",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@smithy/types",
+      "version": "4.19.0",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "@swc/helpers",
+      "version": "0.5.23",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "baseline-browser-mapping",
+      "version": "2.11.20",
+      "license": "Apache-2.0"
+    },
+    {
+      "package": "bindings",
+      "version": "1.5.0",
+      "license": "MIT"
+    },
+    {
+      "package": "bowser",
+      "version": "2.14.1",
+      "license": "MIT"
+    },
+    {
+      "package": "bundle-name",
+      "version": "4.1.0",
+      "license": "MIT"
+    },
+    {
+      "package": "caniuse-lite",
+      "version": "1.0.30001810",
+      "license": "CC-BY-4.0"
+    },
+    {
+      "package": "client-only",
+      "version": "0.0.1",
+      "license": "MIT"
+    },
+    {
+      "package": "default-browser",
+      "version": "5.5.1",
+      "license": "MIT"
+    },
+    {
+      "package": "default-browser-id",
+      "version": "5.0.1",
+      "license": "MIT"
+    },
+    {
+      "package": "define-lazy-prop",
+      "version": "3.0.0",
+      "license": "MIT"
+    },
+    {
+      "package": "file-uri-to-path",
+      "version": "1.0.0",
+      "license": "MIT"
+    },
+    {
+      "package": "is-docker",
+      "version": "3.0.0",
+      "license": "MIT"
+    },
+    {
+      "package": "is-in-ssh",
+      "version": "1.0.0",
+      "license": "MIT"
+    },
+    {
+      "package": "is-inside-container",
+      "version": "1.0.0",
+      "license": "MIT"
+    },
+    {
+      "package": "is-wsl",
+      "version": "3.1.1",
+      "license": "MIT"
+    },
+    {
+      "package": "nanoid",
+      "version": "3.3.18",
+      "license": "MIT"
+    },
+    {
+      "package": "@edge-runtime/cookies",
+      "version": "6.0.0",
+      "license": "MIT"
+    },
+    {
+      "package": "@edge-runtime/ponyfill",
+      "version": "4.0.0",
+      "license": "MIT"
+    },
+    {
+      "package": "@edge-runtime/primitives",
+      "version": "6.0.0",
+      "license": "MIT"
+    },
+    {
+      "package": "react-is",
+      "version": "19.3.0-canary-278794d7-20261002",
+      "license": "MIT"
+    },
+    {
+      "package": "react-refresh",
+      "version": "0.12.0",
+      "license": "MIT"
+    },
+    {
+      "package": "regenerator-runtime",
+      "version": "0.13.4",
+      "license": "MIT"
+    },
+    {
+      "package": "postcss",
+      "version": "8.5.23",
+      "license": "MIT"
+    },
+    {
+      "package": "next",
+      "version": "16.4.2",
+      "license": "MIT"
+    },
+    {
+      "package": "open",
+      "version": "11.0.2",
+      "license": "MIT"
+    },
+    {
+      "package": "picocolors",
+      "version": "1.1.1",
+      "license": "ISC"
+    },
+    {
+      "package": "powershell-utils",
+      "version": "0.2.1",
+      "license": "MIT"
+    },
+    {
+      "package": "react",
+      "version": "19.2.4",
+      "license": "MIT"
+    },
+    {
+      "package": "react-dom",
+      "version": "19.2.4",
+      "license": "MIT"
+    },
+    {
+      "package": "run-applescript",
+      "version": "7.1.0",
+      "license": "MIT"
+    },
+    {
+      "package": "source-map-js",
+      "version": "1.2.2",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "package": "sql.js",
+      "version": "1.14.2",
+      "license": "MIT"
+    },
+    {
+      "package": "styled-jsx",
+      "version": "5.1.6",
+      "license": "MIT"
+    },
+    {
+      "package": "undici",
+      "version": "8.12.3",
+      "license": "MIT"
+    },
+    {
+      "package": "powershell-utils",
+      "version": "0.1.0",
+      "license": "MIT"
+    },
+    {
+      "package": "wsl-utils",
+      "version": "1.0.0",
+      "license": "MIT"
+    },
+    {
+      "package": "9router-app",
+      "version": "0.5.116",
+      "license": null
+    },
+    {
+      "package": "9router",
+      "version": "0.5.116",
+      "license": "MIT"
+    }
+  ],
+  "license": "LICENSE.9router.txt",
+  "license_sha256": "7099c6555fcaa069f19c43bdd409cd78b87d4d250069428e0b3406ea2367d26e",
+  "installation": "installManagedGateway(privateRoot,{allowDownload:false,archivePath})",
+  "limitations": [
+    "No upstream account credentials are bundled.",
+    "Archive validation is not provider authentication or model execution."
+  ]
+}

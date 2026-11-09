@@ -4,18 +4,22 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { nativeLocalContractVersion, nativeProfessionalReportInstructions, nativeRequestOpenSchema, nativeSkillNamesSchema, nativeSpecialists, nativeWorkerProfiles } from './native-local-contract.js';
-import { assertNativeSkillsCurrent, nativeSkillInputsMatch, nativeSkillPins, nativeSkillPrompt, nativeSkillReceiptDependencies, resolveNativeSkills, type NativeSkillContext } from './native-skill-context.js';
+import { nativeLocalContractVersion, nativeProfessionalReportInstructions, nativeRequestOpenSchema, nativeSkillNamesSchema, nativeMcpIdsSchema, nativePluginNamesSchema, nativeSpecialists, nativeWorkerProfiles } from './native-local-contract.js';
+import { assertNativeSkillsCurrent, nativeSkillInputsMatch, nativeSkillPins, nativeSkillPrompt, nativeSkillDependencies, resolveNativeSkills, type NativeSkillContext } from './native-skill-context.js';
 import { parseNativeProfessionalReport, type NativeMonitorOwnership, type NativeReportArtifact } from './native-request.js';
 import { nativeContextFiles, normalizeNativeProjectPaths } from './native-project-paths.js';
 import { NativeMonitorSnapshot } from './native-monitor-snapshot.js';
 import type { ProjectRecord } from './types.js';
 import { atomicWrite, createRecord, getRecord, hash, loadRecords, requestFolderForWorkflow, safePath, saveStatus, withOperationLock } from './storage.js';
 import { assertWorkspaceEditablePath, replaceWorkspaceFile, workspaceContentBytes, workspaceFileBytes, workspacePathLockKey } from './workspace.js';
+import { bindNativeSkillLease } from './native-skill-context.js';
+import { assertNativeDispatchCapabilities, type NativeDispatchCapabilities } from './native-dispatch-capabilities.js';
 
 export const nativeRoleContentSchema = nativeRequestOpenSchema.extend({
   outputs: z.array(z.string().trim().min(1).max(1024)).max(100).default([]),
-  skills: nativeSkillNamesSchema.describe('Optional exact currently installed workspace skill names. The host pins the receipt and files; omission uses ordinary project tools.').optional() });
+  skills: nativeSkillNamesSchema.describe('Optional exact currently installed workspace skill names. The host pins the receipt and files; omission uses ordinary project tools.').optional(),
+  plugins: nativePluginNamesSchema.describe('Optional exact owned native package names. Source/registration are pinned by the host; MCP grants remain separate and no package agent/model policy replaces this role.').optional(),
+  mcp: nativeMcpIdsSchema.describe('Optional User-approved connector IDs. The host binds exact currently observed tools; unavailable optional tools use ordinary work.').optional() });
 export const nativeRoleContentJsonSchema = z.toJSONSchema(nativeRoleContentSchema, { io: 'input', target: 'draft-7' });
 export const nativeRoleJobSchema = nativeRoleContentSchema.extend({ role: z.enum(nativeSpecialists) });
 export const nativeRoleJobJsonSchema = z.toJSONSchema(nativeRoleJobSchema, { io: 'input', target: 'draft-7' });
@@ -26,6 +30,11 @@ interface State {
   baseline: Record<string, string | null>; status: 'queued' | 'submitted' | 'findings' | 'uncertain' | 'cancelled';
   context_membership?: string[];
   skill_contexts?: NativeSkillContext[];
+  mcp?: string[];
+  plugins?: string[];
+  dispatch_capabilities?: NativeDispatchCapabilities;
+  native_profile?: string;
+  capability_fallback?: 'ordinary-work';
   report_output_baseline?: Record<string, string | null>;
   report_write?: { result_hash: string; intent_sha256: string; outcome_sha256?: string; completed: boolean };
   report_artifact_issue?: string;
@@ -61,7 +70,7 @@ const reportOutputs = (state: State) => state.role !== 'WF.FnD' && state.outputs
 const contextExclusions = (state: State) => state.role === 'WF.FnD' || state.report_output_baseline ? state.outputs : [];
 function contextCurrent(root: string, state: State, snapshot?: NativeMonitorSnapshot, ownedTemporary: string[] = []) {
   return nativeSkillInputsMatch(root, state.skill_contexts ?? [], fileHashes(root, Object.keys(state.baseline), snapshot), state.baseline,
-    nativeSkillReceiptDependencies(root, state.skill_contexts ?? [], state.context)) &&
+    nativeSkillDependencies(root, state.skill_contexts ?? [], state.context)) &&
     (!state.context_membership || JSON.stringify(nativeContextFiles(root, state.context, false, [...contextExclusions(state), ...ownedTemporary])) === JSON.stringify(state.context_membership));
 }
 function view(root: string, state: State, snapshot?: NativeMonitorSnapshot) {
@@ -187,7 +196,7 @@ export function openNativeRoleJob(root: string, input: z.input<typeof nativeRole
     throw new Error('Role outputs must stay outside managed execution metadata.');
   if (parsed.role !== 'WF.FnD') outputs.forEach(path => assertWorkspaceEditablePath(path));
   const protectedPaths = nativeContextFiles(root, context, false, outputs);
-  const baseline = { ...fileHashes(root, [...protectedPaths, ...nativeSkillReceiptDependencies(root, skillContexts, context)]), ...nativeSkillPins(skillContexts) };
+  const baseline = { ...fileHashes(root, [...protectedPaths, ...nativeSkillDependencies(root, skillContexts, context)]), ...nativeSkillPins(skillContexts) };
   const report_output_baseline = parsed.role !== 'WF.FnD' && outputs.length ? Object.fromEntries(outputs.map(path => {
     const value = workspaceFileBytes(root, path); return [path, value === null ? null : hash(value)];
   })) : undefined;
@@ -198,7 +207,7 @@ export function openNativeRoleJob(root: string, input: z.input<typeof nativeRole
   const folder = requestFolderForWorkflow(root, created.meta.id)!;
   const state: State = { request_ref: created.meta.id, request_key: folder.display_id, title, requirement: parsed.requirement,
     role: parsed.role, assignment_ref: randomUUID(), context, outputs, baseline, ...(report_output_baseline ? { report_output_baseline } : {}),
-    ...(skillContexts.length ? { skill_contexts: skillContexts } : {}),
+    ...(skillContexts.length ? { skill_contexts: skillContexts } : {}), ...(parsed.mcp ? { mcp: parsed.mcp } : {}), ...(parsed.plugins ? { plugins: parsed.plugins } : {}),
     context_membership: nativeContextFiles(root, context, false, outputs), status: 'queued', updated_at: '',
     description: `${parsed.role}: ${title}`.slice(0, 200),
     prompt: `Complete only the assigned ${parsed.role} scope. This is a direct role job; your report does not approve a whole software workflow. ${['WF.SWSD', 'WF.P-RES', 'WF.Reviewer', 'WF.Tester'].includes(parsed.role) ? 'Inspect and report; keep project files unchanged. The backend publishes requested report documents from your explicit returned content.' : 'Implement only the listed products and preserve unrelated files.'}\n\nRequirement:\n${parsed.requirement}\n\nContext:\n${context.join('\n') || '(none)'}\n\nProduct destinations:\n${outputs.join('\n') || '(professional report only)'}${nativeSkillPrompt(skillContexts)}\n\n${nativeProfessionalReportInstructions()}${report_output_baseline ? '\nAdd report_artifacts: an array of {"path": "one exact requested destination", "content": "the full distinct UTF-8 report document"}, exactly once for each listed destination. Supply the actual requested documents, not placeholder text or copies of one summary. The host handles scoped publication, baselines and history; do not call file editing or lifecycle tools.' : ''}` };
@@ -207,6 +216,29 @@ export function openNativeRoleJob(root: string, input: z.input<typeof nativeRole
 }
 
 export function getNativeRoleJob(root: string, ref: string) { return view(root, load(root, ref)); }
+/** Private host admission; role/model inputs cannot set dispatch identity. */
+export function bindNativeRoleCapabilities(root: string, ref: string, binding: NativeDispatchCapabilities) {
+  assertNativeDispatchCapabilities(root, binding, ref);
+  return withOperationLock(root, `native-role-${hash(ref)}`, () => {
+    const state = load(root, ref);
+    if (binding.owner.assignment_ref !== state.assignment_ref || binding.owner.generation !== 0 || state.invocation || state.result_hash)
+      throw new Error('Bind capabilities to the issued role job before its actual native call.');
+    if (state.dispatch_capabilities && JSON.stringify(state.dispatch_capabilities) !== JSON.stringify(binding)) throw new Error('Frozen capability binding cannot be replaced.');
+    state.dispatch_capabilities = structuredClone(binding);
+    state.skill_contexts = bindNativeSkillLease(state.skill_contexts ?? [], binding.lease, binding.owner);
+    save(root, state); return view(root, state);
+  });
+}
+export function bindNativeRoleDispatchProfile(root: string, ref: string, assignmentRef: string, useCapabilities: boolean) {
+  return withOperationLock(root, `native-role-${hash(ref)}`, () => {
+    const state = load(root, ref);
+    if (state.assignment_ref !== assignmentRef || state.invocation || state.result_hash) throw new Error('Only the current unstarted role can bind its actual native profile.');
+    state.native_profile = useCapabilities ? state.dispatch_capabilities?.roles[state.role]?.profile?.name ?? nativeWorkerProfiles[state.role] : nativeWorkerProfiles[state.role];
+    if (!useCapabilities && state.dispatch_capabilities?.roles[state.role]?.profile) state.capability_fallback = 'ordinary-work';
+    else delete state.capability_fallback;
+    save(root, state); return view(root, state);
+  });
+}
 /** Host-only check immediately before the actual queued native dispatch. */
 export function assertNativeRoleSkillsCurrent(root: string, ref: string): void {
   assertNativeSkillsCurrent(root, load(root, ref).skill_contexts ?? []);
@@ -218,7 +250,8 @@ export function recordNativeRoleResult(root: string, input: { request_ref: strin
     const state = load(root, input.request_ref), invocation = input.invocation;
     if (input.assignment_ref !== state.assignment_ref) throw new Error('This actual role callback belongs to another job.');
     if (invocation && (invocation.agentName !== state.role ||
-        invocation.native_agent_name !== undefined && invocation.native_agent_name !== nativeWorkerProfiles[state.role] ||
+        invocation.native_agent_name !== undefined && invocation.native_agent_name !==
+          (state.native_profile ?? state.dispatch_capabilities?.roles[state.role]?.profile?.name ?? nativeWorkerProfiles[state.role]) ||
         invocation.transport !== 'vscode-native' || invocation.tool !== 'runSubagent' ||
         invocation.invoked !== true || !/^[A-Za-z0-9_-]{8,160}$/.test(invocation.host_call_id) || !['returned', 'rejected', 'cancelled', 'uncertain'].includes(invocation.status)))
       throw new Error('An actual owned role invocation is required.');
@@ -290,7 +323,7 @@ export function nativeRoleListForMonitor(root: string, ownership: NativeMonitorO
     const ids: Record<Role, string[]> = { 'WF.SWSD': ['requirements', 'analysis'], 'WF.P-RES': ['architecture', 'module-design'],
       'WF.FnD': ['coding'], 'WF.Reviewer': [], 'WF.Tester': [] };
     const stage = calls.length ? 'running' : queued ? 'queued' : state.status === 'cancelled' ? 'interrupted' :
-      state.status === 'findings' ? 'failed' : state.completion === 'role-completed' ? 'completed' : 'uncertain';
+      state.completion === 'role-completed' ? 'completed' : state.status === 'findings' ? 'failed' : 'uncertain';
     return { workflow_id: state.request_ref, request_key: state.request_key, title: state.title, source: 'native-local', transport: 'vscode-native',
       live: calls.length > 0 || queued, status: calls.length ? 'working' : queued ? 'queued' : state.status === 'cancelled' ? 'cancelled' : state.completion,
       updated_at: state.updated_at, accepted: false,

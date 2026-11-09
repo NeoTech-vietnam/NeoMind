@@ -14,7 +14,7 @@ function renderPanel({ cspSource, stylesheet, renderer, script, nonce }) {
 <header><h1>WorkForce V-model</h1><p id="project" class="muted"></p>
 <p class="hint">Saved WorkForce request state · Native Local activity appears only for calls owned by this editor.</p></header>
 <div class="toolbar v-model-toolbar"><label for="request">Request</label><select id="request" disabled></select>
-<button id="pin" type="button" aria-pressed="false" disabled>Pin request</button><button id="models" type="button">Role models…</button><button id="refresh" type="button">Refresh</button></div>
+<button id="pin" type="button" aria-pressed="false" disabled>Pin request</button><button id="models" type="button">Role models…</button><button id="focus-space" type="button">Focus Space</button><button id="refresh" type="button">Refresh</button></div>
 <p id="notice" class="hint" role="status">Reading saved requests…</p>
 <section id="details" class="panel v-panel" aria-labelledby="title" hidden>
 <div class="v-panel-heading"><div><h2 id="title"></h2><p id="action" class="hint"></p></div></div>
@@ -117,6 +117,7 @@ function activateVModelPanel(vscode, context, loadRuntime) {
       const listener = panel.webview.onDidReceiveMessage(async message => {
         if (!alive()) return;
         if (message?.type === 'refresh') { await refresh(); return; }
+        if (message?.type === 'open-focus') { await vscode.commands.executeCommand('workforce.focus.open'); return; }
         if (message?.type === 'choose-models') {
           try {
             const result = await policy.choose(message.role);

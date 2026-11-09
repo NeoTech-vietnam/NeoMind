@@ -1,0 +1,2 @@
+# Keep the reviewed published notice byte-identical on Windows and Linux.
+resources/managed-gateway/LICENSE.9router.txt -text whitespace=-blank-at-eof

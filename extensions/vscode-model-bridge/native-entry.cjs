@@ -4,6 +4,9 @@ const { realpathSync } = require('node:fs');
 const { isAbsolute } = require('node:path');
 const { createLocalRequestRunner } = require('./local-request.cjs');
 const { createLocalModelPolicy } = require('./local-models.cjs');
+const { createNativeCapabilitySession } = require('./native-capability-session.cjs');
+const { createNativePluginPackageHost } = require('./native-plugin-packages.cjs');
+const { manageNativeCapabilityControls } = require('./native-capability-controls.cjs');
 const { nativeProfessionalRoles, validNativeWorkerProfiles } = require('./local-delegation.cjs');
 
 const nativeToolNames = Object.freeze({ request: 'workforce_native_request', role: 'workforce_native_role',
@@ -20,6 +23,8 @@ class EntryError extends Error {
 function activateNativeEntry(vscode, context, loadRuntime, options = {}) {
   const runners = new Map(), pending = new Map(), activeCapabilities = new Set();
   let disposed = false, closing;
+  const readNativePackageSources = root => structuredClone(options.readApprovedNativePackageSources?.(root) ??
+    vscode.workspace.getConfiguration?.('workforce')?.inspect?.('capabilities.nativePackageSources')?.globalValue ?? []);
   function rootFor(input) {
     if (disposed) throw new EntryError('NATIVE_ENTRY_DISPOSED', 'The native WorkForce host has closed. Existing results remain saved.');
     if (!vscode.workspace.isTrusted) throw new EntryError('WORKSPACE_UNTRUSTED', 'Open and trust the project before using WorkForce.');
@@ -47,8 +52,36 @@ function activateNativeEntry(vscode, context, loadRuntime, options = {}) {
       if (previous) { await previous.runner.dispose(); runners.delete(key); }
       rootFor({ workspace_folder: root });
       const policy = createLocalModelPolicy(vscode, context, root);
-      const runner = (options.createRunner ?? createLocalRequestRunner)(vscode, api, root, policy);
-      const value = { api, runner, root }; runners.set(key, value); return value;
+      let packageHost;
+      if (typeof api.prepareNativePluginPackage === 'function' && typeof api.createNativePluginPackageSourceReader === 'function' &&
+          vscode.Uri?.file && vscode.workspace.getWorkspaceFolder && vscode.workspace.getConfiguration) {
+        let reader, readerPolicy;
+        const read = query => {
+          const sources = readNativePackageSources(root), snapshot = JSON.stringify(sources);
+          if (!reader || snapshot !== readerPolicy) {
+            readerPolicy = snapshot;
+            reader = api.createNativePluginPackageSourceReader(sources, async (url, init) => {
+              const current = () => rootFor({ workspace_folder: root }) === root && JSON.stringify(readNativePackageSources(root)) === snapshot;
+              if (!current()) throw new Error('NATIVE_PACKAGE_POLICY_CHANGED');
+              if (api.readAutomationPolicy?.(root)?.network_policy !== 'remote-enabled') throw new Error('NATIVE_PACKAGE_DOWNLOADS_DISABLED');
+              const result = await (options.nativePackageFetch ?? globalThis.fetch)(url, init);
+              if (!current()) throw new Error('NATIVE_PACKAGE_POLICY_CHANGED');
+              return result;
+            });
+          }
+          return reader(query);
+        };
+        packageHost = createNativePluginPackageHost(vscode, api, root, { readApprovedSources: () => readNativePackageSources(root), reader: read });
+      }
+      const capabilities = typeof api.resolveNativeMcpCapabilities === 'function' && typeof api.acquireNativeCapabilityLease === 'function'
+        ? createNativeCapabilitySession(vscode, api, root, { readApprovedConnectors: () => structuredClone(
+          options.readApprovedMcpConnectors?.() ?? vscode.workspace.getConfiguration?.('workforce')?.inspect?.('capabilities.mcpConnectors')?.globalValue ?? []),
+          readPluginTargets: () => { const selected = context.workspaceState?.get(`workforce.plugins.vscodeMcp:${root}`);
+            return typeof selected === 'string' && isAbsolute(selected) ? { copilotVscode: selected } : {}; },
+          ...(packageHost ? { pluginPackages: packageHost } : {}),
+        }) : undefined;
+      const runner = (options.createRunner ?? createLocalRequestRunner)(vscode, api, root, { ...policy, ...(capabilities ? { capabilities } : {}) });
+      const value = { api, runner, root, packageHost }; runners.set(key, value); return value;
     });
     pending.set(key, operation);
     try { return await operation; }
@@ -58,7 +91,20 @@ function activateNativeEntry(vscode, context, loadRuntime, options = {}) {
     role: 'WorkForce: complete the selected role scope', prepare: 'WorkForce: find existing experience and qualified tools',
     control: 'WorkForce: inspect or continue the retained request',
     capabilities: 'WorkForce: find or prepare optional role skills' };
-  async function capabilities(api, root, input, cancellation) {
+  const approvedMcp = () => structuredClone(options.readApprovedMcpConnectors?.() ??
+    vscode.workspace.getConfiguration?.('workforce')?.inspect?.('capabilities.mcpConnectors')?.globalValue ?? []);
+  if (vscode.commands?.registerCommand) context.subscriptions.push(vscode.commands.registerCommand('workforce.capabilities.manage', async () => {
+    const root = rootFor(), { api } = await owner(root);
+    return manageNativeCapabilityControls(vscode, api, root, approvedMcp, () => {
+      try { return rootFor({ workspace_folder: root }) === root; } catch { return false; }
+    });
+  }));
+  if (vscode.commands?.registerCommand) context.subscriptions.push(vscode.commands.registerCommand('workforce.nativePackages.manage', async input => {
+    const root = rootFor(input), { packageHost } = await owner(root);
+    if (!packageHost) return vscode.window.showInformationMessage('The matching native runtime does not support owned full-package registration. Ordinary project work remains available.');
+    return packageHost.manage();
+  }));
+  async function capabilities(api, root, input, cancellation, packageHost) {
     if (typeof api.manageNativeCapabilities !== 'function')
       return { state: 'unavailable', fallback: 'ordinary-work', reason: 'matching-runtime-required' };
     // Catalog approval belongs to User settings. A workspace cannot add trusted
@@ -67,15 +113,16 @@ function activateNativeEntry(vscode, context, loadRuntime, options = {}) {
       const configured = vscode.workspace.getConfiguration?.('workforce')?.inspect?.('capabilities.sources')?.globalValue;
       return structuredClone((configured === undefined ? api.DEFAULT_NATIVE_CAPABILITY_SOURCES : configured) ?? []);
     };
-    const sources = readSources(), sourceSnapshot = JSON.stringify(sources);
+    const packageAction = String(input.action).startsWith('package-');
+    const sources = packageAction ? [] : readSources(), sourceSnapshot = JSON.stringify(packageAction ? readNativePackageSources(root) : sources);
     const controller = new AbortController();
     const listener = cancellation?.onCancellationRequested?.(() => controller.abort());
     const settings = vscode.workspace.onDidChangeConfiguration?.(event => {
-      if (event.affectsConfiguration('workforce.capabilities.sources')) controller.abort();
+      if (event.affectsConfiguration(packageAction ? 'workforce.capabilities.nativePackageSources' : 'workforce.capabilities.sources')) controller.abort();
     });
     const operation = { root, controller, promise: undefined };
     const isCurrent = () => {
-      try { return rootFor({ workspace_folder: root }) === root && JSON.stringify(readSources()) === sourceSnapshot; }
+      try { return rootFor({ workspace_folder: root }) === root && JSON.stringify(packageAction ? readNativePackageSources(root) : readSources()) === sourceSnapshot; }
       catch { return false; }
     };
     if (cancellation?.isCancellationRequested) controller.abort();
@@ -83,8 +130,17 @@ function activateNativeEntry(vscode, context, loadRuntime, options = {}) {
     try {
       operation.promise = Promise.resolve().then(() => api.manageNativeCapabilities(root, input, {
         sources, fetch: globalThis.fetch, signal: controller.signal, isCurrent,
+        ...(packageHost ? { nativePackages: { status: packageHost.capabilityStatus, inspect: packageHost.inspect, prepare: packageHost.prepare } } : {}),
       }));
-      return await operation.promise;
+      const result = await operation.promise;
+      if (input.action === 'status' && typeof api.resolveNativeMcpCapabilities === 'function') {
+        const policy = approvedMcp();
+        return { ...result, mcp_connectors: (Array.isArray(policy) ? policy : []).map(connector => ({ id: connector.id, label: connector.label,
+          roles: (Array.isArray(connector.roles) ? connector.roles : []).map(role => ({ role,
+            resolution: api.resolveNativeMcpCapabilities(policy, vscode.lm.tools, { role, selectIds: [connector.id] }) })),
+          control: api.readNativeMcpBindingControl(root, connector.id), server_ownership: 'not-observed' })) };
+      }
+      return result;
     } catch {
       return { state: 'unavailable', fallback: 'ordinary-work', reason: controller.signal.aborted ? 'cancelled' : 'capability-operation-failed' };
     } finally { activeCapabilities.delete(operation); listener?.dispose(); settings?.dispose(); }
@@ -96,7 +152,7 @@ function activateNativeEntry(vscode, context, loadRuntime, options = {}) {
     async invoke(invocation, cancellation) {
       let result;
       try {
-        const root = rootFor(invocation.input), { api, runner } = await owner(root);
+        const root = rootFor(invocation.input), { api, runner, packageHost } = await owner(root);
         let { workspace_folder: _selected, ...input } = invocation.input ?? {};
         if (binding.role) {
           if (typeof api.nativeRoleContentSchema?.safeParse !== 'function' || !api.nativeWorkerProfiles?.[binding.role])
@@ -106,7 +162,7 @@ function activateNativeEntry(vscode, context, loadRuntime, options = {}) {
           input = { ...content.data, role: binding.role };
         }
         result = binding.kind === 'prepare' ? await api.prepareNativeWork(root, input)
-          : binding.kind === 'capabilities' ? await capabilities(api, root, input, cancellation)
+          : binding.kind === 'capabilities' ? await capabilities(api, root, input, cancellation, packageHost)
           : await runner[binding.kind === 'request' ? 'run' : binding.kind](input, invocation.toolInvocationToken, cancellation);
       } catch (error) {
         result = { status: 'rejected', error: error instanceof EntryError ? { code: error.code, message: error.message }

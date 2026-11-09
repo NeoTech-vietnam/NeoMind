@@ -80,7 +80,7 @@ export interface ProjectConfig {
   max_workers: number;
   repair_attempts: number;
   /** Explicit engine choice; historical projects retain their saved transport. */
-  execution_engine?: 'opencode' | 'vscode-lm';
+  execution_engine?: 'opencode' | 'vscode-lm' | 'vscode-native';
 }
 export interface Finding {
   code: string;

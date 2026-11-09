@@ -2,7 +2,7 @@
 name: "WF.Reviewer"
 description: "Independently review the current product against its requirements and design."
 tools: ["read","search","workforceRoleReviewer"]
-agents: ["WF.Reviewer Worker"]
+agents: ["*"]
 user-invocable: true
 disable-model-invocation: true
 ---

@@ -2,7 +2,7 @@
 name: "WF.P-RES"
 description: "Define applicable design, interfaces and verification implications."
 tools: ["read","search","workforceRolePRES"]
-agents: ["WF.P-RES Worker"]
+agents: ["*"]
 user-invocable: true
 disable-model-invocation: true
 ---

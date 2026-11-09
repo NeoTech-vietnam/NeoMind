@@ -2,15 +2,14 @@
   "name": "workforce-model-bridge",
   "displayName": "WorkForce Universe",
   "publisher": "workforce",
-  "version": "0.12.1",
-  "description": "A request-centered V-model workspace with autonomous engineering agents, verified products and 9router controls.",
+  "version": "0.13.0",
+  "description": "VS Code Local agents, reusable engineering tools and an evidence-backed V-model, with an optional managed provider gateway.",
   "engines": {
     "vscode": "^1.143.0"
   },
   "main": "./extension.cjs",
   "activationEvents": [
     "onUri",
-    "onLanguageModelTool:workforce_request",
     "onLanguageModelTool:workforce_native_request",
     "onLanguageModelTool:workforce_native_role",
     "onLanguageModelTool:workforce_native_prepare",
@@ -20,7 +19,11 @@
     "onLanguageModelTool:workforce_native_role_fnd",
     "onLanguageModelTool:workforce_native_role_reviewer",
     "onLanguageModelTool:workforce_native_role_tester",
-    "onLanguageModelTool:workforce_native_capabilities"
+    "onLanguageModelTool:workforce_native_capabilities",
+    "onCommand:workforce.capabilities.manage",
+    "onLanguageModelChatProvider:workforce",
+    "onCommand:workforce.gateway.manage",
+    "onCommand:workforce.nativePackages.manage"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -67,71 +70,20 @@
     "resources/monitor/controlled.css",
     "resources/monitor/automation.js",
     "resources/monitor/automation.css",
-    "native-entry.cjs"
+    "native-entry.cjs",
+    "native-mcp-host.cjs",
+    "native-capability-session.cjs",
+    "native-capability-controls.cjs",
+    "native-local-chat.cjs",
+    "native-rea-provider.cjs",
+    "managed-gateway-host.cjs",
+    "managed-gateway-provider.cjs",
+    "native-plugin-packages.cjs",
+    "native-focus.cjs",
+    "resources/monitor/native-focus.js"
   ],
   "contributes": {
     "languageModelTools": [
-      {
-        "name": "workforce_request",
-        "toolReferenceName": "workforceRequest",
-        "displayName": "WorkForce Request",
-        "userDescription": "Submit a request to WorkForce, inspect its progress, or answer a question and continue.",
-        "modelDescription": "Submit the user's ordinary requirement to the exact open workspace. WorkForce owns planning, agent sessions, implementation, independent review/testing and recovery. Return the saved receipt; do not implement the accepted request separately. Use status or pause/resume/cancel with its returned workflow_id. Include answer on resume only for a pending genuine user question. Retrying submit recovers its saved identity; submit_new explicitly creates another request after the previous receipt was acknowledged. Never invent identifiers or credentials. The user request and project policy define the authorized scope.",
-        "canBeReferencedInPrompt": true,
-        "tags": [
-          "workforce",
-          "request"
-        ],
-        "inputSchema": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "action",
-            "workspace_folder"
-          ],
-          "properties": {
-            "action": {
-              "type": "string",
-              "enum": [
-                "submit",
-                "submit_new",
-                "status",
-                "pause",
-                "resume",
-                "cancel"
-              ]
-            },
-            "workspace_folder": {
-              "type": "string",
-              "description": "Exact absolute local workspace folder for this request. Required to avoid mixing projects in multi-root windows."
-            },
-            "requirement": {
-              "type": "string",
-              "maxLength": 20000,
-              "description": "The user's requested outcome and constraints. Use for submit or an intentional submit_new; retries of submit retain the saved intake identity."
-            },
-            "workflow_id": {
-              "type": "string",
-              "description": "An existing workflow ID returned by WorkForce. Required for pause, resume and cancel; optional for status."
-            },
-            "title": {
-              "type": "string",
-              "maxLength": 256,
-              "description": "Optional short title for a new submit."
-            },
-            "answer": {
-              "type": "string",
-              "maxLength": 20000,
-              "description": "The user answer to the selected request pending question; use with resume."
-            },
-            "question_id": {
-              "type": "string",
-              "maxLength": 256,
-              "description": "Exact pending question ID returned by WorkForce status. Required with answer; never invent or replace it."
-            }
-          }
-        }
-      },
       {
         "name": "workforce_native_request",
         "toolReferenceName": "workforceNativeRequest",
@@ -222,6 +174,74 @@
                   },
                   "additionalProperties": false,
                   "description": "Optional explicit installed workspace skills assigned only to the named workers, at most eight distinct names across these roles. Missing or changed selections are not silently replaced. Omit to use ordinary project tools."
+                },
+                "role_mcp": {
+                  "type": "object",
+                  "properties": {
+                    "WF.FnD": {
+                      "maxItems": 8,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+                      },
+                      "uniqueItems": true
+                    },
+                    "WF.Reviewer": {
+                      "maxItems": 8,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+                      },
+                      "uniqueItems": true
+                    },
+                    "WF.Tester": {
+                      "maxItems": 8,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+                      },
+                      "uniqueItems": true
+                    }
+                  },
+                  "additionalProperties": false,
+                  "description": "Optional User-approved MCP connector IDs for the named workers. The host binds exact observed tools; unavailable optional tools fall back to ordinary project work. Discovery is not proof of execution."
+                },
+                "role_plugins": {
+                  "type": "object",
+                  "properties": {
+                    "WF.FnD": {
+                      "maxItems": 8,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$"
+                      },
+                      "uniqueItems": true
+                    },
+                    "WF.Reviewer": {
+                      "maxItems": 8,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$"
+                      },
+                      "uniqueItems": true
+                    },
+                    "WF.Tester": {
+                      "maxItems": 8,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$"
+                      },
+                      "uniqueItems": true
+                    }
+                  },
+                  "additionalProperties": false,
+                  "description": "Optional exact owned native package names for each worker. The host pins approved source and full package registration; read only relevant package guidance. MCP tools still require separate approved role_mcp bindings; package agents/model rules do not replace WorkForce roles. Unavailable optional packages fall back to ordinary work."
                 },
                 "task_family": {
                   "type": "string",
@@ -369,6 +389,26 @@
               "uniqueItems": true,
               "description": "Optional exact currently installed workspace skill names. The host pins the receipt and files; omission uses ordinary project tools."
             },
+            "plugins": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$"
+              },
+              "uniqueItems": true,
+              "description": "Optional exact owned native package names. Source/registration are pinned by the host; MCP grants remain separate and no package agent/model policy replaces this role."
+            },
+            "mcp": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+              },
+              "uniqueItems": true,
+              "description": "Optional User-approved connector IDs. The host binds exact currently observed tools; unavailable optional tools use ordinary work."
+            },
             "role": {
               "type": "string",
               "enum": [
@@ -505,7 +545,7 @@
         "toolReferenceName": "workforceCapabilities",
         "displayName": "WorkForce native capabilities",
         "canBeReferencedInPrompt": true,
-        "modelDescription": "Search approved pinned capability catalogs, inspect a named package, install an exact portable skill, or view current workspace skills. The host owns source approval and license verification. Optional unavailable or unsupported capabilities fall back to ordinary project tools; this never starts workers, runs hooks or installs MCP dependencies.",
+        "modelDescription": "Search approved pinned capability catalogs, inspect a named package, install an exact portable skill, or view workspace skills. For full native packages use package-status, package-inspect and package-prepare with advertised professional source/package names only. The host checks exact reviewed file pins, caches source, and manages owned workspace registration; it never edits private native caches or global security. Package selection does not grant MCP tools or adopt foreign agent/model rules. Missing approval or optional capability uses ordinary-work fallback; do not repeat unchanged calls or override User-disabled packages.",
         "inputSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "type": "object",
@@ -516,7 +556,10 @@
                 "search",
                 "inspect",
                 "install",
-                "status"
+                "status",
+                "package-status",
+                "package-inspect",
+                "package-prepare"
               ]
             },
             "query": {
@@ -616,6 +659,26 @@
               "uniqueItems": true,
               "description": "Optional exact currently installed workspace skill names. The host pins the receipt and files; omission uses ordinary project tools."
             },
+            "plugins": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$"
+              },
+              "uniqueItems": true,
+              "description": "Optional exact owned native package names. Source/registration are pinned by the host; MCP grants remain separate and no package agent/model policy replaces this role."
+            },
+            "mcp": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+              },
+              "uniqueItems": true,
+              "description": "Optional User-approved connector IDs. The host binds exact currently observed tools; unavailable optional tools use ordinary work."
+            },
             "workspace_folder": {
               "type": "string",
               "minLength": 1,
@@ -680,6 +743,26 @@
               },
               "uniqueItems": true,
               "description": "Optional exact currently installed workspace skill names. The host pins the receipt and files; omission uses ordinary project tools."
+            },
+            "plugins": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$"
+              },
+              "uniqueItems": true,
+              "description": "Optional exact owned native package names. Source/registration are pinned by the host; MCP grants remain separate and no package agent/model policy replaces this role."
+            },
+            "mcp": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+              },
+              "uniqueItems": true,
+              "description": "Optional User-approved connector IDs. The host binds exact currently observed tools; unavailable optional tools use ordinary work."
             },
             "workspace_folder": {
               "type": "string",
@@ -746,6 +829,26 @@
               "uniqueItems": true,
               "description": "Optional exact currently installed workspace skill names. The host pins the receipt and files; omission uses ordinary project tools."
             },
+            "plugins": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$"
+              },
+              "uniqueItems": true,
+              "description": "Optional exact owned native package names. Source/registration are pinned by the host; MCP grants remain separate and no package agent/model policy replaces this role."
+            },
+            "mcp": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+              },
+              "uniqueItems": true,
+              "description": "Optional User-approved connector IDs. The host binds exact currently observed tools; unavailable optional tools use ordinary work."
+            },
             "workspace_folder": {
               "type": "string",
               "minLength": 1,
@@ -810,6 +913,26 @@
               },
               "uniqueItems": true,
               "description": "Optional exact currently installed workspace skill names. The host pins the receipt and files; omission uses ordinary project tools."
+            },
+            "plugins": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$"
+              },
+              "uniqueItems": true,
+              "description": "Optional exact owned native package names. Source/registration are pinned by the host; MCP grants remain separate and no package agent/model policy replaces this role."
+            },
+            "mcp": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+              },
+              "uniqueItems": true,
+              "description": "Optional User-approved connector IDs. The host binds exact currently observed tools; unavailable optional tools use ordinary work."
             },
             "workspace_folder": {
               "type": "string",
@@ -876,6 +999,26 @@
               "uniqueItems": true,
               "description": "Optional exact currently installed workspace skill names. The host pins the receipt and files; omission uses ordinary project tools."
             },
+            "plugins": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$"
+              },
+              "uniqueItems": true,
+              "description": "Optional exact owned native package names. Source/registration are pinned by the host; MCP grants remain separate and no package agent/model policy replaces this role."
+            },
+            "mcp": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+              },
+              "uniqueItems": true,
+              "description": "Optional User-approved connector IDs. The host binds exact currently observed tools; unavailable optional tools use ordinary work."
+            },
             "workspace_folder": {
               "type": "string",
               "minLength": 1,
@@ -897,15 +1040,15 @@
       },
       {
         "command": "workforce.bridge.enable",
-        "title": "WorkForce: Connect Workspace"
+        "title": "WorkForce: Open Local WF.PM (compatibility command)"
       },
       {
         "command": "workforce.bridge.disable",
-        "title": "WorkForce: Disconnect Workspace"
+        "title": "WorkForce: Stop Native Work"
       },
       {
         "command": "workforce.monitor.open",
-        "title": "WorkForce: Open Universe"
+        "title": "WorkForce: Open V-model"
       },
       {
         "command": "workforce.monitor.legacy",
@@ -922,6 +1065,22 @@
       {
         "command": "workforce.automation.open",
         "title": "WorkForce: Open Automation Library"
+      },
+      {
+        "command": "workforce.capabilities.manage",
+        "title": "WorkForce: Manage Native Capabilities"
+      },
+      {
+        "command": "workforce.gateway.manage",
+        "title": "WorkForce: Manage Provider Gateway"
+      },
+      {
+        "command": "workforce.focus.open",
+        "title": "WorkForce: Open Focus Space"
+      },
+      {
+        "command": "workforce.nativePackages.manage",
+        "title": "WorkForce: Manage Native Package Registrations"
       }
     ],
     "configuration": {
@@ -1000,9 +1159,238 @@
             ],
             "additionalProperties": false
           }
+        },
+        "workforce.capabilities.mcpConnectors": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label",
+              "tools",
+              "roles"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "tools": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 128,
+                "uniqueItems": true,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "reference"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "reference": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    }
+                  }
+                }
+              },
+              "roles": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 5,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "WF.SWSD",
+                    "WF.P-RES",
+                    "WF.FnD",
+                    "WF.Reviewer",
+                    "WF.Tester"
+                  ]
+                }
+              }
+            }
+          },
+          "scope": "machine",
+          "default": [],
+          "description": "User-approved exact native MCP tool names and references by professional role. Workspace overrides cannot grant tools. Availability means registered tools were observed, not that a server or model call succeeded."
+        },
+        "workforce.gateway.nodePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Optional absolute supported Node.js executable for the owned managed provider. Read from User settings; workspace overrides are ignored."
+        },
+        "workforce.gateway.routingPolicy": {
+          "type": "object",
+          "scope": "machine",
+          "default": {},
+          "additionalProperties": false,
+          "properties": {
+            "models": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "combos": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "vision_fallback": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "description": "Exact authorized managed model/combination pools. No models array permits directly selected routes. Combos require explicit pinned members; vision fallback must be explicit. Workspace overrides cannot broaden routing."
+        },
+        "workforce.gateway.modelDeclarations": {
+          "type": "object",
+          "scope": "machine",
+          "default": {},
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "context_length": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "max_output_tokens": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "tools": {
+                "type": "boolean"
+              },
+              "vision": {
+                "type": "boolean"
+              }
+            }
+          },
+          "description": "Optional explicit User capacity and tool/vision declarations for exact connected gateway IDs when upstream metadata is missing. Existing upstream declarations are retained. This does not verify upstream identity or grant native tool permissions."
+        },
+        "workforce.capabilities.nativePackageSources": {
+          "type": "array",
+          "scope": "machine",
+          "default": [],
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "package",
+              "repository",
+              "commit",
+              "package_path",
+              "files",
+              "license_path"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+              },
+              "package": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$"
+              },
+              "repository": {
+                "type": "string",
+                "pattern": "^https://github\\.com/[a-z0-9_.-]+/[a-z0-9_.-]+$"
+              },
+              "commit": {
+                "type": "string",
+                "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+              },
+              "package_path": {
+                "type": "string",
+                "maxLength": 800
+              },
+              "license_path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 800
+              },
+              "allow_hooks": {
+                "type": "boolean",
+                "default": false
+              },
+              "files": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 256,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "path",
+                    "sha256",
+                    "bytes"
+                  ],
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 800
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "bytes": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1048576
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "description": "User-approved full canonical native package sources with immutable Git commit and exact reviewed file inventory. Read only from User settings; workspace overrides are ignored. Empty disables remote full-package preparation. Packages use owned workspace chat.pluginLocations registration; no private native install cache or global security settings are changed. MCP tool grants remain separately approved. Explicit User disable/remove is retained."
         }
       }
-    }
+    },
+    "languageModelChatProviders": [
+      {
+        "vendor": "workforce",
+        "displayName": "WorkForce Managed Providers",
+        "managementCommand": "workforce.gateway.manage"
+      }
+    ],
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "workforce-rea",
+        "label": "WorkForce REA"
+      }
+    ]
   },
   "license": "MIT",
   "repository": {

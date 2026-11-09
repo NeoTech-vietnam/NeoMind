@@ -1,6 +1,6 @@
 {
   "name": "workforce",
-  "version": "0.2.0-alpha.3",
+  "version": "0.3.0-alpha.1",
   "description": "WorkForce agents, V-model engineering and independently verified deliverables.",
   "type": "module",
   "bin": {
@@ -24,7 +24,10 @@
     "scripts",
     "extensions/vscode-model-bridge",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "!resources/opencode-bootstrap",
+    "!scripts/bootstrap-engine.mjs",
+    "!extensions/vscode-model-bridge/legacy-extension.cjs"
   ],
   "engines": {
     "node": ">=24.0.0 <25 || >=26.0.0"
@@ -60,16 +63,16 @@
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
-    "@opencode-ai/sdk": "1.19.4",
     "ical.js": "2.2.1",
     "jsonc-parser": "3.3.1",
-    "opencode-ai": "1.19.4",
     "smol-toml": "1.9.1",
     "undici": "8.12.3",
     "yaml": "2.9.1",
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@opencode-ai/sdk": "1.19.4",
+    "opencode-ai": "1.19.4",
     "@types/node": "26.6.5",
     "esbuild": "0.28.2",
     "prettier": "3.9.10",

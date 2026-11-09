@@ -1,5 +1,6 @@
 (() => {
   const vscode = acquireVsCodeApi();
+  document.getElementById('focus-space')?.addEventListener('click', () => vscode.postMessage({ type: 'open-focus' }));
   const byId = id => document.getElementById(id);
   const { WorkForceUniverse } = window;
   const chooser = byId('request'), pin = byId('pin'), refresh = byId('refresh'), notice = byId('notice');
@@ -14,6 +15,9 @@
   }
 
   const diagram = WorkForceUniverse.create(byId('v-model'), { onSelect: selectStage });
+  // Only explicit running/repairing milestones animate. The native workbench
+  // body class and OS media query remain authoritative CSS motion overrides.
+  diagram.setMotion(true);
   const request = () => requests.find(item => item.workflow_id === selectedId);
   const label = value => String(value ?? 'unknown').replace(/[-_]/g, ' ');
 

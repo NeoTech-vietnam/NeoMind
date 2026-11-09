@@ -731,6 +731,7 @@ import { publishProjectKnowledge } from './project-knowledge.js';
 export function createMcpServer(root: string, binding: McpBinding = {}): McpServer {
   const runtimeInfo = createRuntimeInfo(root);
   readConfig(root);
+  if (!binding.invocation_id && readConfig(root).execution_engine === 'vscode-native') return createNativeLocalMcpServer(root);
   if (!binding.invocation_id && readConfig(root).execution_engine === 'opencode') return createWorkForceMcpServer(root);
   const controlledParent = !binding.invocation_id && readAutomationPolicy(root).execution_mode === 'neomind-controlled';
   const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -2171,3 +2172,4 @@ export async function startMcp(root: string, binding: McpBinding = {}): Promise<
   await server.connect(new StdioServerTransport());
 }
 import { createWorkForceMcpServer } from './workforce-requests.js';
+import { createNativeLocalMcpServer } from './native-mcp.js';

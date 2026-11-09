@@ -38,7 +38,7 @@
     const document = container.ownerDocument ?? globalThis.document, ns = 'http://www.w3.org/2000/svg';
     let selected = null;
     const svg = document.createElementNS(ns, 'svg');
-    svg.setAttribute('viewBox', '0 0 910 526'); svg.setAttribute('role', 'group'); svg.setAttribute('aria-label', 'V-model engineering stages');
+    svg.setAttribute('viewBox', '0 0 910 554'); svg.setAttribute('role', 'group'); svg.setAttribute('aria-label', 'V-model engineering stages');
     svg.setAttribute('class', 'v-model');
     const links = document.createElementNS(ns, 'g'); links.setAttribute('class', 'v-links');
     for (let index = 0; index < 4; index++) {
@@ -48,6 +48,13 @@
     }
     const route = document.createElementNS(ns, 'path');
     route.setAttribute('d', 'M148 70 L450 460 L762 70'); route.setAttribute('class', 'v-route'); links.append(route);
+    const rework = document.createElementNS(ns, 'g');
+    rework.setAttribute('class', 'v-rework'); rework.setAttribute('data-state', 'pending'); rework.setAttribute('aria-hidden', 'true');
+    const loop = document.createElementNS(ns, 'path');
+    loop.setAttribute('d', 'M566 488 C650 548 260 548 344 488 L346 503 M344 488 L359 491');
+    const loopLabel = document.createElementNS(ns, 'text');
+    loopLabel.setAttribute('x', '455'); loopLabel.setAttribute('y', '542'); loopLabel.textContent = 'Implementation repair';
+    rework.append(loop, loopLabel); links.append(rework);
     svg.append(links);
     const rows = new Map();
     function select(id) { selected = id; for (const [key, row] of rows) row.group.setAttribute('aria-pressed', String(id === key)); }
@@ -70,6 +77,9 @@
     container.replaceChildren(svg);
     return { setData(request) {
       const scene = buildScene(request);
+      const repairing = scene.stages.some(stage => stage.id === 'coding' && stage.state === 'repairing');
+      rework.setAttribute('data-state', repairing ? 'repairing' : 'pending');
+      rework.setAttribute('aria-hidden', String(!repairing));
       for (const stage of scene.stages) {
         const row = rows.get(stage.id); row.group.setAttribute('data-state', stage.state);
         row.group.setAttribute('aria-label', `${stage.label}: ${stage.state.replaceAll('-', ' ')}. ${stage.role}${stage.summary ? `. ${stage.summary}` : ''}`);

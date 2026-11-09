@@ -6,7 +6,7 @@ This branch generates `vscode-native/v1` profiles from the same contract as the 
 
 With the matching native pair installed, select Local and WF.PM, keep the native model picker or choose a per-role preference in WorkForce V-model, then describe the requested outcome. A particular alias or external model catalog is not required. WF.PM uses the extension's native request/prepare/role/control tools; it does not fall back to historical MCP request submission or assignment claims. The six packaged profiles and the request skill use that same native contract.
 
-The workspace-aware MCP launcher remains available for compatibility and saved status. Its connection result proves MCP setup, not native tool loading or model capability. Verify actual native delegation and current check evidence separately. Do not connect the legacy OpenCode engine to execute a native request.
+The workspace-aware MCP launcher exposes `request_status` and `work_prepare`, plus its own `workforce_connection` check. It does not submit or control products. Its connection result proves MCP setup, not native tool loading or model capability. Verify actual native delegation and current check evidence separately. An older runtime exposing historical submission/control or general record tools is reported as `RUNTIME_NATIVE_MCP_REQUIRED`; install the matching native runtime/VSIX pair. Do not connect the legacy engine or rewrite historical configuration to bypass that diagnosis.
 
 The following installation instructions describe the previously published plugin. Native migration, host namespace/lifecycle tests and the matching release are still being validated.
 
@@ -31,8 +31,8 @@ per-machine package generation or editing MCP paths.
    integration, disable its old `workforce` MCP registration before enabling the
    plugin, preserving unrelated servers. Retire only its old WorkForce agent
    profiles if they cause duplicate WF.PM entries.
-4. In a fresh Local chat, select **WF.PM** and your customendpoint model, such as
-   `top-models`. Run:
+4. In a fresh Local chat, select **WF.PM** and an available model in the native
+   picker, including your customendpoint model if configured. Run:
 
    ```text
    /workforce:workforce-plugin-connection
@@ -40,9 +40,9 @@ per-machine package generation or editing MCP paths.
 
    Expect `WORKFORCE_PLUGIN_CONNECTION_V1` and `code: CONNECTED`. With several
    workspace folders, select a `workspace_uri` returned by the connection tool.
-5. Run **WorkForce: Connect Workspace** and approve the workspace/model connection
-   if it has not already been connected. Existing `top-models`/`worker-models`
-   routing and model credentials are retained.
+5. Confirm the matching native WorkForce extension tools are available. This
+   native path does not need the historical **Connect Workspace** or **Enable
+   Model Bridge** commands. Retain your native model selection and credentials.
 6. Verify the actual backend connection with:
 
    ```text

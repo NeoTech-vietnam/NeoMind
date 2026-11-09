@@ -17,6 +17,19 @@ function nativeFailure(error, cancelled) {
   const code = String(error?.code ?? error?.status ?? error?.statusCode ?? '');
   const message = typeof error?.message === 'string' ? error.message.slice(0, 4000) : '';
   const details = `${code} ${message}`;
+  const gatewayCode = /^GATEWAY_[A-Z_]+$/.test(code) ? code : /^(?:Error:\s*)?\[?(GATEWAY_[A-Z_]+)\]?(?::|\s|$)/.exec(message)?.[1];
+  if (gatewayCode === 'GATEWAY_CANCELLED') return failure('CANCELLED', 'cancellation', 'The managed provider request was cancelled; its effects require reconciliation.');
+  if (gatewayCode === 'GATEWAY_AUTHORIZATION' || gatewayCode === 'GATEWAY_ADMIN_AUTHORIZATION')
+    return failure('PROVIDER_AUTHORIZATION', 'provider-authorization', 'The managed gateway or provider requires valid authorization.');
+  if (gatewayCode === 'GATEWAY_QUOTA') return failure('PROVIDER_QUOTA', 'provider-quota', 'The managed provider reported a quota or rate limit.');
+  if (['GATEWAY_CONNECTION', 'GATEWAY_PROVIDER_UNAVAILABLE'].includes(gatewayCode))
+    return failure('PROVIDER_CONNECTION', 'provider-connection', 'The managed provider connection or service is unavailable.');
+  if (['GATEWAY_MODEL_UNAVAILABLE', 'GATEWAY_MODEL_NOT_APPROVED'].includes(gatewayCode))
+    return failure('PROVIDER_MODEL_UNAVAILABLE', 'provider-model', 'The selected managed provider route is unavailable or outside the approved selection.');
+  if (gatewayCode && /PROTOCOL|INCOMPLETE/.test(gatewayCode))
+    return failure('PROVIDER_PROTOCOL', 'provider-protocol', 'The managed provider returned an incomplete or invalid model response.');
+  if (/Requested agent .* is not allowed by the current agent\./i.test(message))
+    return failure('NATIVE_AGENT_POLICY', 'compatibility', 'The current native parent profile excludes the host-prepared worker. Update the generated WorkForce selector profiles and open a new Local chat. No provider diagnosis or model retry is implied.');
   if (/\b429\b|rate[_ -]?limit|insufficient[_ -]?quota|quota[_ -]?(?:exceeded|exhausted)/i.test(details))
     return failure('PROVIDER_QUOTA', 'provider-quota', 'The native provider reported a rate or quota limit.');
   if (/\b40[13]\b|unauthorized|authentication[_ -]?(?:error|failed)|invalid[_ -]?api[_ -]?key/i.test(details))
@@ -25,7 +38,26 @@ function nativeFailure(error, cancelled) {
     return failure('PROVIDER_MODEL_UNAVAILABLE', 'provider-model', 'The native provider reported that the requested model is unavailable.');
   if (/ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|\b50[234]\b/i.test(details))
     return failure('PROVIDER_CONNECTION', 'provider-connection', 'The native invocation reported a connection or service failure.');
+  if (/\bResponse contained no choices\b/i.test(message))
+    return failure('PROVIDER_PROTOCOL', 'provider-protocol', 'The native provider returned a response without any choices.');
   return failure('NATIVE_INVOCATION_FAILED', 'unknown', 'The native invocation failed without a recognized failure category.');
+}
+
+function returnedNativeFailure(result, cancelled) {
+  // The installed runSubagent implementation returns these failures through its
+  // one-text-part helper, not as a rejected API promise or an isError flag.
+  // Match only its bare envelope. Quoted/fenced prose, JSON professional reports
+  // and arbitrary mentions of errors are not native transport evidence.
+  if (!object(result) || !Array.isArray(result.content) || result.content.length !== 1) return;
+  const part = result.content[0];
+  if (!object(part) || typeof part.value !== 'string' || part.kind !== undefined && part.kind !== 'text') return;
+  const envelope = /^(?:Agent error: |Error invoking subagent: )([\s\S]+)$/.exec(part.value);
+  if (!envelope) return;
+  const body = envelope[1].slice(0, 16000);
+  const reason = /^Sorry, your request failed\. Please try again\.\r?\n\r?\nClient Request Id: [a-f0-9-]{36}\r?\n\r?\nReason: ([^\r\n]*)/i.exec(body);
+  // A native diagnostic can include its stack inside message. Line numbers and
+  // request IDs are not provider status codes; classify only the actual reason.
+  return nativeFailure({ message: reason?.[1] ?? body.split(/\r?\n/, 1)[0] }, cancelled);
 }
 
 function acceptsString(schema, value) {
@@ -46,9 +78,9 @@ function compatible(schema, input) {
   return Object.entries(input).every(([key, value]) => acceptsString(schema.properties[key], value));
 }
 
-function createLocalDelegator(vscode, workerProfiles) {
+function createLocalDelegator(vscode, workerProfiles, profileAuthority) {
   return {
-    async invoke(handoff, toolInvocationToken, cancellationToken, observe) {
+    async invoke(handoff, toolInvocationToken, cancellationToken, observe, preparedProfile) {
       const metadata = { transport: 'vscode-native', tool: 'runSubagent', agentName: undefined, invoked: false,
         host_call_id: null, native_context_id: null,
         requested_model: { selection: 'inherit' }, resolved_model: 'unknown', resolved_provider: 'unknown', outcome: 'unknown' };
@@ -69,6 +101,11 @@ function createLocalDelegator(vscode, workerProfiles) {
       if (workerProfiles !== undefined && !validNativeWorkerProfiles(workerProfiles))
         return reject(failure('NATIVE_PROFILE_CONTRACT_REQUIRED', 'compatibility', 'Install the matching runtime and native worker profiles.'));
       const input = { agentName: workerProfiles?.[handoff.agentName] ?? handoff.agentName, prompt: handoff.prompt, description: handoff.description };
+      if (preparedProfile?.profile) {
+        if (preparedProfile.role !== handoff.agentName || profileAuthority?.isPrepared?.(preparedProfile) !== true)
+          return reject(failure('NATIVE_MCP_BINDING_CHANGED', 'capability', 'The host-prepared optional MCP profile is no longer current. No native call was started.'));
+        input.agentName = preparedProfile.profile.name;
+      }
       if (workerProfiles !== undefined) metadata.native_agent_name = input.agentName;
       if (handoff.model !== undefined) {
         const preference = handoff.model;
@@ -88,6 +125,8 @@ function createLocalDelegator(vscode, workerProfiles) {
         const matches = (Array.isArray(inventory) ? inventory : []).filter(model => model.id === id && model.vendor === vendor);
         if (matches.length !== 1 || !text(matches[0].name, 1000))
           return reject(failure('MODEL_UNAVAILABLE', 'configuration', 'The explicitly requested model is not unique in the current native inventory.'));
+        if (matches[0].capabilities?.toolCalling === false)
+          return reject(failure('MODEL_TOOL_CALLING_UNAVAILABLE', 'configuration', 'The explicitly requested model no longer supports tool calls in the current native inventory.'));
         metadata.requested_model.name = matches[0].name;
         input.model = `${matches[0].name} (${matches[0].vendor})`;
         metadata.requested_model.native_argument = input.model;
@@ -106,6 +145,8 @@ function createLocalDelegator(vscode, workerProfiles) {
         let raw_result;
         try { raw_result = await pending; }
         finally { try { close?.(); } catch { /* Read-only observation is best effort. */ } }
+        const returnedError = returnedNativeFailure(raw_result, cancellationToken?.isCancellationRequested);
+        if (returnedError) return reject(returnedError);
         metadata.outcome = 'unverified';
         return { status: 'returned', raw_result, metadata };
       } catch (error) {

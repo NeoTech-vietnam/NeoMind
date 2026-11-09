@@ -5,7 +5,8 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { applyEdits, modify, parse, parseTree, type Node, type ParseError } from 'jsonc-parser';
 import { atomicWrite, hash, readConfig, safePath, withOperationLock, retryWindowsFileOperation } from './storage.js';
-import { pluginRegistration, withPluginConfigurationLock } from './plugin-control.js';
+import { pluginRegistration, setPluginEnabled, withPluginConfigurationLock } from './plugin-control.js';
+import { readNativeCapabilityControl, withNativeCapabilityControl, type NativeCapabilityControl, type NativeCapabilityControlInput } from './native-capability-leases.js';
 
 const plugins = ['rea', 'codegraph', 'context7', 'playwright'] as const;
 const clients = ['codex', 'copilot-vscode', 'copilot-cli'] as const;
@@ -18,6 +19,7 @@ export interface PluginConnectionStatus {
   status: 'connected' | 'disconnected' | 'unselected' | 'conflict' | 'blocked';
   managed: boolean; configured: boolean; verified_live: false;
   applies_to: 'next-client-session'; reason?: string;
+  control?: NativeCapabilityControl;
 }
 interface OwnedEntry {
   target_sha256: string; entry_sha256: string; format: 'json' | 'toml-block';
@@ -289,7 +291,10 @@ export function readPluginConnections(root: string, trustedTargets: PluginConnec
   let ledger: Ledger;
   try { ledger = readLedger(root); } catch { return plugins.flatMap(plugin => clients.map(client => row(plugin, client, 'blocked', false, false, 'Connection ownership metadata requires repair.'))); }
   return plugins.flatMap(plugin => clients.map(client => {
-    try { return assess(root, plugin, client, trustedTargets, ledger); }
+    try {
+      const result = assess(root, plugin, client, trustedTargets, ledger), control = readNativeCapabilityControl(root, `mcp:${plugin}`);
+      return { ...result, ...(control.active_count || !control.new_admissions ? { control } : {}) };
+    }
     catch { return row(plugin, client, 'blocked', false, false, 'Client configuration is malformed, unsafe, or unavailable.'); }
   }));
 }
@@ -299,7 +304,11 @@ export function setPluginConnection(root: string, input: { plugin: string; clien
   validateInput(input.plugin, input.client);
   if (typeof input.connected !== 'boolean' || Object.keys(input).some(k => !['plugin', 'client', 'connected'].includes(k))) throw new Error('Invalid plug-in connection request.');
   const plugin = input.plugin as Plugin, client = input.client;
-  return withPluginConfigurationLock(root, () => withOperationLock(root, 'plugin-connections', () => {
+  withPluginConfigurationLock(root, () => {}); // Do not weaken legacy receipt protection.
+  const selected = target(root, client, trustedTargets);
+  if (!selected) return row(plugin, client, 'unselected', false, false, 'Select the client configuration in the native host.');
+  const controlled = withNativeCapabilityControl(root, { key: `mcp:${plugin}`, action: input.connected ? 'connect' : 'disconnect', client,
+    target_sha256: hash(selected) }, () => withPluginConfigurationLock(root, () => withOperationLock(root, 'plugin-connections', () => {
     const path = target(root, client, trustedTargets);
     if (!path) return row(plugin, client, 'unselected', false, false, 'Select the client configuration in the native host.');
     const proposed = input.connected ? expected(root, plugin, client) : undefined;
@@ -316,6 +325,8 @@ export function setPluginConnection(root: string, input: { plugin: string; clien
       if (owned && owned.target_sha256 !== hash(path)) throw new Error('Connection target changed; preserve the previous client configuration and select its original profile.');
       const digest = proposed === undefined ? undefined : hash(canonical(proposed));
       const exact = proposed !== undefined && digest === state.digest;
+      if (input.connected && !exact && readNativeCapabilityControl(root, `mcp:${plugin}`).active_count)
+        throw new Error('CAPABILITY_IN_USE');
       const adoptedExpected = !input.connected ? expected(root, plugin, client) : proposed;
       const adoptable = canAdopt(root, plugin, client, path, state, adoptedExpected);
       if (state.value !== undefined && !(owned ? owned.entry_sha256 === state.digest : adoptable)) throw new Error('An authored or changed MCP entry is preserved; review it before managing this connection.');
@@ -354,5 +365,59 @@ export function setPluginConnection(root: string, input: { plugin: string; clien
       }
       return input.connected ? row(plugin, client, 'connected', true, true) : row(plugin, client, 'disconnected');
     } finally { closeSync(descriptor); unlinkSync(lock); }
-  }));
+  })));
+  if (controlled.value) return { ...controlled.value, control: controlled.control };
+  const current = assess(root, plugin, client, trustedTargets, readLedger(root));
+  return { ...current, control: controlled.control, reason: 'The connection change is queued until its current native holders finish.' };
+}
+
+export interface PluginRemovalResult {
+  plugin: Plugin; control: NativeCapabilityControl; cache_retained: true;
+  owned_registrations_removed: boolean; connections: PluginConnectionStatus[];
+}
+function removalTargetsHash(root: string, trustedTargets: PluginConnectionTargets): string {
+  return hash(canonical(clients.map(client => [client, target(root, client, trustedTargets) ?? null])));
+}
+/** Logical uninstall revokes this project's provider and removes only MCP
+ * registrations it owns. Package caches, evidence and authored entries remain. */
+export function removePlugin(root: string, pluginId: string, trustedTargets: PluginConnectionTargets = {}): PluginRemovalResult {
+  readConfig(root); validateInput(pluginId);
+  const plugin = pluginId as Plugin;
+  withPluginConfigurationLock(root, () => {});
+  const controlled = withNativeCapabilityControl(root, { key: `mcp:${plugin}`, action: 'remove', target_sha256: removalTargetsHash(root, trustedTargets) }, () => {
+    const ledger = readLedger(root);
+    // Every owned profile must still be selected exactly. Never lose ownership
+    // or edit another machine/profile merely to make uninstall appear complete.
+    for (const client of clients) {
+      const owned = ledger.entries[key(plugin, client)];
+      if (!owned) continue;
+      const selected = target(root, client, trustedTargets);
+      if (!selected || hash(selected) !== owned.target_sha256) throw new Error('Select the original owned MCP profiles before removing this plug-in.');
+    }
+    setPluginEnabled(root, plugin, false);
+    for (const client of clients) if (ledger.entries[key(plugin, client)])
+      setPluginConnection(root, { plugin, client, connected: false }, trustedTargets);
+    if (clients.some(client => readLedger(root).entries[key(plugin, client)])) throw new Error('Owned MCP registrations remain; removal is pending reconciliation.');
+  });
+  return { plugin, control: controlled.control, cache_retained: true,
+    owned_registrations_removed: controlled.control.state !== 'deferred', connections: readPluginConnections(root, trustedTargets).filter(row => row.plugin === plugin) };
+}
+/** The host re-supplies trusted paths at drain time. Only hash-bound original
+ * selections may finish queued disconnect/uninstall; no model supplies paths. */
+export function applyNativePluginControl(root: string, input: NativeCapabilityControlInput, trustedTargets: PluginConnectionTargets = {}): unknown {
+  if (input.origin !== undefined) throw new Error('A native binding control does not own this plug-in server or client registrations.');
+  if (!input.key.startsWith('mcp:')) throw new Error('Invalid native plug-in control resource.');
+  const plugin = input.key.slice(4); validateInput(plugin);
+  if (input.action === 'remove') {
+    if (input.target_sha256 !== removalTargetsHash(root, trustedTargets)) throw new Error('CAPABILITY_TARGET_CHANGED');
+    return removePlugin(root, plugin, trustedTargets);
+  }
+  if (input.action === 'disable' && input.client === undefined) return setPluginEnabled(root, plugin, false);
+  if (input.action === 'disconnect') {
+    validateInput(plugin, input.client);
+    const client = input.client as PluginConnectionClient, selected = target(root, client, trustedTargets);
+    if (!selected || hash(selected) !== input.target_sha256) throw new Error('CAPABILITY_TARGET_CHANGED');
+    return setPluginConnection(root, { plugin, client, connected: false }, trustedTargets);
+  }
+  throw new Error('Invalid queued native plug-in action.');
 }

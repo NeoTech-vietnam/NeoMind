@@ -81,7 +81,11 @@ async function openVModelFixture(vscode, context, fixture, write) {
     }
     return snapshot;
   } };
-  activateVModelPanel(vscode, context, async () => observed);
+  const client = fixture.vModelNativeProbe === true
+    ? require('./v-model-probe.cjs').createVModelProofObserver(vscode, context, write, { autoCapture: fixture.vModelProbeAuto === true,
+      clientSource: readFileSync(join(fixture.repository, 'extensions/vscode-model-bridge/resources/monitor/v-model-panel.js'), 'utf8') }).vscode
+    : vscode;
+  activateVModelPanel(client, context, async () => observed);
   const open = await openVModelAndObserve(vscode);
   write('v-model-fixture.json', { source: 'synthetic saved journal and real source projection', panel_open: open,
     panel_observation: open ? 'vscode-tab-observed' : 'not-observed-before-deadline', snapshot });

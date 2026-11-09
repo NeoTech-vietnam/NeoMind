@@ -38,43 +38,42 @@ export async function packageAgentPlugin({ runtime: inputRuntime, project: input
   const cli = join(runtime, 'dist/cli.js');
   if (!existsSync(cli) || !lstatSync(cli).isFile()) throw new Error('WorkForce runtime dist/cli.js is missing.');
   const { readConfig } = await import(pathToFileURL(join(runtime, 'dist/storage.js')).href);
-  const { workforceClientInstructions, workforceNativeClientInstructions } = await import(pathToFileURL(join(runtime, 'dist/adapters.js')).href);
+  const { workforceNativeClientInstructions } = await import(pathToFileURL(join(runtime, 'dist/adapters.js')).href);
   const { agentProfiles, workforceProfileFileId } = await import(pathToFileURL(join(runtime, 'dist/agent-profiles.js')).href);
   const config = readConfig(project);
-  if (config.execution_engine !== 'opencode' || !config.platforms.includes('copilot'))
-    throw new Error('The project must already be initialized for WorkForce OpenCode and Copilot.');
-  if (!Array.isArray(agentProfiles) || agentProfiles.length !== 6 || typeof workforceClientInstructions !== 'function')
+  if (!config.platforms.includes('copilot') || !['opencode', 'vscode-native'].includes(config.execution_engine))
+    throw new Error('The project must already be initialized for WorkForce Local.');
+  if (!Array.isArray(agentProfiles) || agentProfiles.length !== 6 || typeof workforceNativeClientInstructions !== 'function')
     throw new Error('This runtime does not expose the supported WorkForce profile contract.');
-  const nativeLocal = config.copilot_integration === 'local';
-  const native = nativeLocal ? await import(pathToFileURL(join(runtime, 'dist/native-local-contract.js')).href) : undefined;
-  if (nativeLocal && (native?.nativeLocalContractVersion !== 'vscode-native/v1' || typeof workforceNativeClientInstructions !== 'function' ||
+  // A historical engine discriminator is saved project history, not authority
+  // to recreate removed MCP dispatch. Matching packages always use native tools.
+  const native = await import(pathToFileURL(join(runtime, 'dist/native-local-contract.js')).href);
+  if (native?.nativeLocalContractVersion !== 'vscode-native/v1' ||
       typeof native.nativeLocalWorkerProfile !== 'function' || native.nativeSpecialists?.length !== 5 ||
-      !native.nativeSpecialists.every(role => native.nativeWorkerProfiles?.[role] === `${role} Worker`)))
+      !native.nativeSpecialists.every(role => native.nativeWorkerProfiles?.[role] === `${role} Worker`))
     throw new Error('Native Local packaging requires the matching native WorkForce runtime and VSIX.');
-  const instructions = (nativeLocal ? workforceNativeClientInstructions : workforceClientInstructions)('copilot');
+  const instructions = workforceNativeClientInstructions('copilot');
   const files = new Map();
   const json = value => JSON.stringify(value, null, 2) + '\n';
   files.set('plugin.json', json({ $schema: `${schema}plugin.schema.json`, name: 'workforce',
-    version: metadata.version, description: 'WorkForce Local intake, V-model agent profiles, skills and exact-project MCP.',
+    version: metadata.version, description: 'WorkForce native Local agents, skills and exact-project status/experience MCP.',
     author: { name: 'WorkForce' }, repository: 'https://github.com/NeoTech-vietnam/NeoMind', license: 'MIT' }));
   files.set('mcp.json', json({ $schema: `${schema}mcp.schema.json`, mcpServers: {
     workforce: { type: 'stdio', command: 'node', args: [cli, 'mcp', '--project', project] },
   } }));
   for (const profile of agentProfiles) {
-    const tools = profile.id === 'coordinator' ? ['request_submit', 'request_status', 'request_control'] : ['request_status'];
     files.set(`com.github.copilot/agents/workforce-${workforceProfileFileId(profile.id)}.agent.md`,
-      nativeLocal ? native.nativeLocalProfile(profile.name) :
-        `---\nname: ${JSON.stringify(profile.name)}\ndescription: ${JSON.stringify(profile.duty)}\ntools: ${JSON.stringify(tools.map(tool => `workforce/${tool}`))}\nagents: []\nuser-invocable: ${profile.id === 'coordinator'}\n---\n\n${instructions}\nRuntime responsibility: ${profile.name}. ${profile.procedure}\n`);
+      native.nativeLocalProfile(profile.name));
   }
-  if (nativeLocal) for (const role of native.nativeSpecialists)
+  for (const role of native.nativeSpecialists)
     files.set(`com.github.copilot/agents/workforce-worker-${role.slice(3).toLowerCase()}.agent.md`, native.nativeLocalWorkerProfile(role));
   files.set('skills/workforce-request/SKILL.md', `---\nname: workforce-request\ndescription: Submit an engineering request to WorkForce, inspect its saved deliverables, or control the same request from Copilot Local.\n---\n\n${instructions}`);
   files.set('skills/workforce-plugin-status/SKILL.md', readFileSync(join(templates, 'skills/workforce-plugin-status/SKILL.md'), 'utf8'));
-  files.set('README.md', (nativeLocal ? `# WorkForce native Local Agent Plugin\n\nInstall the matching WorkForce VSIX and runtime, then install this package through VS Code's native Agent Customizations editor in the intended Local workspace. Keep one owner of each WorkForce agent/MCP registration.\n\nThe six profiles share the installed runtime's native contract. WF.PM delegates actual native subagents; model selection inherits from chat unless a role preference is set. The MCP connection remains available for compatibility/status; native product execution uses the extension tools and does not connect the legacy engine.\n\n${instructions}\nInstallation is not proof of tool loading or successful execution. Test discovery, actual delegation, independent checks and disable/uninstall separately. Preserve project products/history during uninstall.\n` : readFileSync(join(templates, 'README.md'), 'utf8')) +
+  files.set('README.md', `# WorkForce native Local Agent Plugin\n\nInstall the matching WorkForce VSIX and runtime, then install this package through VS Code's native Agent Customizations editor in the intended Local workspace. Keep one owner of each WorkForce agent/MCP registration.\n\nThe six profiles share the installed runtime's native contract. WF.PM delegates actual native subagents; model selection inherits from chat unless a role preference is set. MCP exposes request_status and work_prepare only; native product submission/control uses the extension tools and does not connect the legacy engine. Historical project configuration is preserved and never selects a legacy tool fallback.\n\n${instructions}\nInstallation is not proof of tool loading or successful execution. Test discovery, actual delegation, independent checks and disable/uninstall separately. Preserve project products/history during uninstall.\n` +
     `\n## This materialized installation\n\n- Project: ${project}\n- Project ID: ${config.project_id}\n- Runtime: ${runtime}\n- Runtime version: ${metadata.version}\n\nThis copy always addresses that project, even if installed in another window. Install it only in the matching workspace. Generate another copy for another project.\n`);
   files.set('binding.json', json({ schema_version: 1, project, project_id: config.project_id, runtime, runtime_version: metadata.version,
-    packaging_node: process.execPath, registration_owner: 'agent-plugin', profile_source: nativeLocal ? 'runtime/dist/native-local-contract.js#nativeLocalProfile' : 'runtime/dist/agent-profiles.js',
-    instruction_source: `runtime/dist/adapters.js#${nativeLocal ? 'workforceNativeClientInstructions' : 'workforceClientInstructions'}` }));
+    packaging_node: process.execPath, registration_owner: 'agent-plugin', profile_source: 'runtime/dist/native-local-contract.js#nativeLocalProfile',
+    instruction_source: 'runtime/dist/adapters.js#workforceNativeClientInstructions' }));
   // All validation and rendering precede the first write. This generator never
   // writes into the selected workspace, VS Code settings, or installed runtime.
   mkdirSync(out, { recursive: true });

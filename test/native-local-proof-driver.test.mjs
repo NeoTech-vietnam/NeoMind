@@ -13,15 +13,17 @@ const hookSource = fs.readFileSync(new URL('./vscode-client-driver/native-local/
 const hash = value => createHash('sha256').update(value).digest('hex');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-function setup(t, { open, details, response } = {}) {
+function setup(t, { open, details, response, installed = false } = {}) {
   const root = fs.realpathSync.native(fs.mkdtempSync(join(tmpdir(), 'workforce-driver-')));
   t.after(() => fs.rmSync(root, { force: true, recursive: true }));
   const fixture = { evidence: join(root, 'evidence'), workspace: join(root, 'workspace'), coordinator: 'WF.PM Native Proof',
     worker: 'WF.Tester Native Proof', marker: 'WORKFORCE_M2_NATIVE_CHECK_PASSED' };
+  if (installed) Object.assign(fixture, { nativeInstalledEntry: true, nativePilot: true, nativeProductEntry: true,
+    enable_mcp_fixture: true, enable_rea_proof: true, showVModel: true });
   for (const path of [fixture.evidence, fixture.workspace]) fs.mkdirSync(path);
   const prompt = `Delegate once to ${fixture.worker}. Ask it to read m2-fixture.test.cjs, run node --test m2-fixture.test.cjs in this workspace, and report its observed result. Keep all files unchanged.`;
   const models = ['model-a', 'model-b'].map(id => ({ id, name: id, vendor: 'customendpoint' }));
-  const calls = [], registered = new Map();
+  const calls = [], registered = new Map(), forbiddenLoads = [], installedCalls = { inspection: 0, snapshot: 0, view: 0 };
   let watcher, current, currentQuery = prompt, currentMode = fixture.coordinator;
   const local = 'workbench.action.chat.newLocalChat', chat = 'workbench.action.chat.open', exported = 'workbench.action.chat.export';
   const uri = path => ({ scheme: 'file', fsPath: path });
@@ -35,12 +37,13 @@ function setup(t, { open, details, response } = {}) {
       getCommands: async () => [local, chat, exported],
       registerCommand: (name, callback) => { registered.set(name, callback); return { dispose() {} }; },
       async executeCommand(name, input) {
+        if (installed && name === 'workforce.vModel.open') { installedCalls.view++; return; }
         if (name === local) return;
         if (name === chat) {
           current = input.modelSelector.id;
           currentQuery = input.query; currentMode = input.mode;
           calls.push({ model: current, query: input.query, mode: input.mode, wait_for_response: input.blockOnResponse,
-            policy: JSON.parse(fs.readFileSync(join(fixture.evidence, 'model-policy.json'), 'utf8')),
+            policy: installed ? null : JSON.parse(fs.readFileSync(join(fixture.evidence, 'model-policy.json'), 'utf8')),
             attachments: input.attachFiles?.map(uri => uri.fsPath) });
           await open?.(current);
           return { type: 'complete' };
@@ -62,6 +65,13 @@ function setup(t, { open, details, response } = {}) {
     runInNewContext(source, { module, process, require(name) {
       if (name === 'vscode') return vscode;
       if (name === './fixture.json') return fixture;
+      if (name === './installed-entry.cjs') return { createInstalledEntryObserver() { return {
+        async inspect() { installedCalls.inspection++; return { entry: 'installed-vsix', active: true, backend_registration: false }; },
+        async snapshot() { installedCalls.snapshot++; return { observed: true }; },
+      }; } };
+      if (installed && /native-pilot|native-mcp-provider|native-rea-provider|v-model-fixture|extensions[\\/]vscode-model-bridge/.test(name)) {
+        forbiddenLoads.push(name); assert.fail(`Installed observer cannot load ${name}`);
+      }
       if (name === 'node:fs') return { ...fs, watch(path, callback) {
         assert.equal(path, fixture.evidence);
         watcher = callback;
@@ -78,11 +88,33 @@ function setup(t, { open, details, response } = {}) {
   const read = (id, name) => JSON.parse(fs.readFileSync(join(fixture.evidence, 'attempts', id, name), 'utf8'));
   const bytes = id => Object.fromEntries(fs.readdirSync(join(fixture.evidence, 'attempts', id))
     .map(name => [name, fs.readFileSync(join(fixture.evidence, 'attempts', id, name), 'utf8')]));
-  return { ...driver, fixture, calls, read, bytes, authorization, reload: load,
+  return { ...driver, fixture, calls, read, bytes, authorization, reload: load, registered, forbiddenLoads, installedCalls,
     activate: () => driver.activate({ extensionMode: 1, subscriptions: [] }),
     command: name => registered.get(name)?.(),
     authorize(input) { fs.writeFileSync(join(fixture.evidence, 'authorize.json'), JSON.stringify(input)); watcher('change', 'authorize.json'); } };
 }
+
+test('installed mode suppresses stale pilot/provider/view registrations and only dispatches through the observed Local chat', async t => {
+  const driver = setup(t, { installed: true }); driver.activate(); await tick();
+  assert.deepEqual(driver.forbiddenLoads, []);
+  assert.ok([...driver.registered.keys()].every(name => name.startsWith('workforceM2.')));
+  const input = driver.authorization('installed-production'); delete input.worker;
+  assert.equal((await driver.queueAuthorizedProof(input)).status, 'returned');
+  assert.equal(driver.calls.length, 1); assert.equal(driver.installedCalls.snapshot, 1);
+  assert.ok(driver.installedCalls.view > 0); assert.equal(fs.existsSync(join(driver.fixture.evidence, 'model-policy.json')), false,
+    'Installed proof cannot feed a development worker-override hook');
+  assert.equal(driver.read(input.attempt_id, 'inspection.json').installed_product.entry, 'installed-vsix');
+  assert.equal(driver.read(input.attempt_id, 'inspection.json').role_model_preferences, null, 'The driver cannot read product private workspace state through its own context');
+  assert.equal(driver.read(input.attempt_id, 'inspection.json').native_mcp_fixture_enabled, false);
+  assert.deepEqual(driver.forbiddenLoads, []);
+});
+
+test('installed mode refuses development worker overrides and never guesses a missing parent model', async t => {
+  const driver = setup(t, { installed: true }); driver.activate();
+  await assert.rejects(driver.queueAuthorizedProof(driver.authorization('override-denied')), { code: 'INSTALLED_WORKER_OVERRIDE_FORBIDDEN' });
+  const input = driver.authorization('missing-parent'); delete input.worker; delete input.parent;
+  assert.equal((await driver.queueAuthorizedProof(input)).status, 'model-selection-unavailable'); assert.equal(driver.calls.length, 0);
+});
 
 test('authorized proof observes later root authorization after completed attempt A', { timeout: 5000 }, async t => {
   const driver = setup(t);

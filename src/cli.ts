@@ -86,6 +86,8 @@ import { listUpstreams, discoverUpstreams, trackUpstream, checkUpstream, cloneUp
 import { requestSubmit, requestStatus, requestControl, requestSetupStatus } from './workforce-requests.js';
 import { checkpointLightweight, type LightweightCheckpoint } from './lightweight.js';
 import { recordTypes, type Gate, type Platform, type Profile, type RecordType } from './types.js';
+import { nativeLocalSetupStatus } from './native-mcp.js';
+import { requestListForMonitor } from './workforce-requests.js';
 
 const help = `WorkForce engineering workspace (Node.js 24+)
 
@@ -98,7 +100,7 @@ Usage: workforce <command> [action] [id] [options]
   request status [REQUEST_ID]      Read saved products, checks and current action
   request pause|resume|cancel REQUEST_ID [--data-file FILE]
   request resume REQUEST_ID --question-id ISSUED_ID --answer TEXT
-  mcp                             Start request_submit/status/control MCP for this project
+  mcp                             Start native status/experience MCP for this project
   models status | models set --role ROLE --model ALIAS [--provider PROVIDER]
   models catalog --catalog-file FILE  Select and validate an existing custom endpoint catalog
   router configure --base-url URL [--api-key-env ENV] [--catalog-provider NAME]
@@ -114,9 +116,9 @@ Usage: workforce <command> [action] [id] [options]
   upgrade --to VERSION_OR_TAG_OR_LOCAL_TGZ
 Options: --project DIRECTORY --json --help --version
 
-Submit your complete requirement once. WorkForce manages agent sessions,
-implementation, review and independent tests through the configured OpenCode engine.
-VS Code must stay open with the exact workspace connected. A model alias does not
+Give your requirement to WF.PM in VS Code Local. The editor owns subagents and
+tool calls; WorkForce owns engineering records and independent checks.
+VS Code must stay open. Select models from its native picker. A model alias does not
 attest the upstream model. Setup and status commands never run inference.
 
 Legacy workflow, record, task, assignment, check, review, archive, capability and
@@ -234,16 +236,25 @@ async function main(): Promise<void> {
     case 'request': {
       const input = data();
       const answer = o.answer ?? input.answer;
-      if (action === 'setup') result = requestSetupStatus(root);
-      else if (action === 'status') result = requestStatus(root, id);
-      else if (action === 'submit') result = await requestSubmit(root, {
+      if (action === 'setup') result = nativeLocalSetupStatus(root);
+      else if (action === 'status') {
+        const snapshot = requestListForMonitor(root);
+        if (!id) result = snapshot;
+        else {
+          const matches = snapshot.requests.filter(row => row.request_key === id || row.workflow_id === id || ('request_id' in row && row.request_id === id));
+          if (matches.length !== 1) throw new Error('Select one saved WorkForce request.');
+          result = matches[0];
+        }
+      }
+      else if (action === 'submit') result = {
+        state: 'native-local-handoff', submitted: false, target: 'VS Code Local / WF.PM',
         requirement: needed(o.requirement ?? input.requirement, '--requirement'),
-        ...(o.title ?? input.title ? { title: needed(o.title ?? input.title, '--title') } : {}),
-      });
-      else if (action === 'pause' || action === 'resume' || action === 'cancel') result = await requestControl(root, {
-        request_id: needed(id, 'REQUEST_ID'), action,
-        ...(answer !== undefined ? { answer: needed(answer, 'answer'), question_id: needed(o['question-id'] ?? input.question_id, '--question-id') } : {}),
-      });
+        next_action: 'Give this requirement to WF.PM in Local chat. Its native tool owns the editor invocation token; the CLI has not created or dispatched a request.',
+      };
+      else if (action === 'pause' || action === 'resume' || action === 'cancel') result = {
+        state: 'native-local-handoff', applied: false, request_key: needed(id, 'REQUEST_ID'), action,
+        next_action: 'Use WorkForce request control in the actual Local chat that owns the request. The CLI has not changed its state or started a historical engine.',
+      };
       else throw new Error('Use request setup|submit|status|pause|resume|cancel.');
       break;
     }
@@ -398,6 +409,7 @@ async function main(): Promise<void> {
         name: String(o.name ?? 'WorkForce project'),
         profile: String(o.profile ?? 'basic') as Profile,
         platforms: list(o.platforms ?? 'copilot') as Platform[],
+        execution_engine: 'vscode-native',
         ...(o['project-id'] ? { project_id: String(o['project-id']) } : {}),
         ...(o.local ? { copilot_integration: 'local' as const } : {}),
       });
@@ -705,9 +717,7 @@ async function main(): Promise<void> {
       const platform = String(o.platform ?? 'codex');
       if (!['codex', 'claude', 'copilot'].includes(platform))
         throw new Error('Unknown hook platform.');
-      const message = config.execution_engine === 'opencode' && config.platforms.includes('copilot') && config.copilot_integration === 'local'
-        ? `WorkForce ${config.profile} project ${config.project_id}, vscode-native/v1. Use Local WF.PM and ${nativeLocalToolReferences.request} for one faithful requirement and professional plan. Backend owns native specialist calls, records and actual checks. Reuse ${nativeLocalToolReferences.prepare} before planning; use ${nativeLocalToolReferences.control} for retained results, not a replacement request. Native assignments do not use the historical workflow protocol. See .workforce/guides/native-local.md. This hook is advisory.`
-        : `WorkForce ${config.profile} project ${config.project_id}. Use WF.PM to submit the complete requirement once through workforce/request_submit or the WorkForce Request tool. WorkForce owns agent sessions, implementation, independent review/testing and recovery. Follow saved work through request_status; do not implement the same accepted request separately or use legacy assignment credentials. Project instructions live under .workforce. This hook is advisory.`;
+      const message = `WorkForce ${config.profile} project ${config.project_id}, vscode-native/v1. Use Local WF.PM and ${nativeLocalToolReferences.request} for one faithful requirement and professional plan. Backend owns native specialist calls, records and actual checks. Reuse ${nativeLocalToolReferences.prepare} before planning; use ${nativeLocalToolReferences.control} for retained results, not a replacement request. Native assignments do not use the historical workflow protocol. See .workforce/guides/native-local.md. This hook is advisory.`;
       console.log(
         json(
           event !== 'session-start'
@@ -722,8 +732,9 @@ async function main(): Promise<void> {
       return;
     }
     case 'mcp': {
-      const { startMcp } = await import('./mcp.js');
-      await startMcp(root, { invocation_id: o.invocation as string | undefined });
+      if (o.invocation) throw new Error('Native WorkForce MCP exposes status and experience only; historical invocation credentials are not accepted by this release.');
+      const { startNativeLocalMcp } = await import('./native-mcp.js');
+      await startNativeLocalMcp(root);
       return;
     }
     case 'router': {

@@ -17,10 +17,12 @@ import { nativeHookOutputs } from './agent-hooks.js';
 import { reaToolsForRole, readReaSkillBundle } from './rea.js';
 import { pluginRegistration } from './plugin-control.js';
 import { pluginClientConnectionEnabled, type PluginConnectionClient } from './plugin-connections.js';
+import type { ProjectConfig } from './types.js';
 
 export type Platform = 'copilot' | 'claude' | 'codex';
 export type ModelTier = 'economy' | 'balanced' | 'strong';
 export interface AdapterConfig {
+  execution_engine?: ProjectConfig['execution_engine'];
   schema_version: number;
   project_id: string;
   name: string;
@@ -472,8 +474,9 @@ WorkForce keeps each request under .workforce/requests. Native V-model stages re
 function workforceAdapterOutputs(root: string, config: AdapterConfig): ManagedOutput[] {
   const outputs: ManagedOutput[] = [], node = adapterNodeCommand(root);
   const server = { type: 'stdio', command: node, args: [cliPath, 'mcp', '--project', root] };
-  const tools = ['request_submit', 'request_status', 'request_control'];
-  const nativeLocal = config.platforms.includes('copilot') && config.copilot_integration === 'local';
+  const nativeLocal = readConfig(root).execution_engine === 'vscode-native' || config.platforms.includes('copilot') && config.copilot_integration === 'local';
+  const tools = nativeLocal || readConfig(root).execution_engine === 'vscode-native' ? ['request_status', 'work_prepare']
+    : ['request_submit', 'request_status', 'request_control'];
   if (nativeLocal) outputs.push({ path: '.workforce/guides/native-local.md', kind: 'file', content: workforceNativeClientInstructions('copilot') });
   const optional = toolCatalog.flatMap(item => {
     const registration = pluginRegistration(root, item.id);
@@ -527,7 +530,7 @@ function workforceAdapterOutputs(root: string, config: AdapterConfig): ManagedOu
 
 export function adapterOutputs(root: string, config: AdapterConfig): ManagedOutput[] {
   root = resolve(root);
-  if (readConfig(root).execution_engine === 'opencode') return workforceAdapterOutputs(root, config);
+  if (['opencode', 'vscode-native'].includes(readConfig(root).execution_engine ?? '')) return workforceAdapterOutputs(root, config);
   const agentProfiles = legacyAgentProfiles;
   const outputs: ManagedOutput[] = [];
   const node = adapterNodeCommand(root);

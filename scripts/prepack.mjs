@@ -11,7 +11,7 @@ export function runPrepack(root = repository) {
   if (!npm) throw new Error('The npm CLI is required for the WorkForce prepack build.');
   for (const [stage, args] of [
     ['build', [resolve(npm), 'run', 'build']],
-    ['engine bootstrap', [join(root, 'scripts/bootstrap-engine.mjs')]],
+    ['offline gateway', [join(root, 'scripts/prepare-managed-gateway.mjs')]],
   ]) {
     const result = spawnSync(process.execPath, args, {
       cwd: root, env: process.env, shell: false, windowsHide: true,

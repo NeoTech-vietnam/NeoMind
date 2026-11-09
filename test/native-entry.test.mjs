@@ -10,7 +10,7 @@ import { nativeWorkerProfiles } from '../dist/native-local-contract.js';
 const require = createRequire(import.meta.url);
 const { activateNativeEntry, nativeToolNames, nativeRoleToolNames } = require('../extensions/vscode-model-bridge/native-entry.cjs');
 
-function fixture(t) {
+function fixture(t, options = {}) {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'wf-native-entry-')));
   const other = join(root, 'other'); mkdirSync(other);
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -24,7 +24,9 @@ function fixture(t) {
     LanguageModelTextPart: class { constructor(value) { this.value = value; } },
     LanguageModelToolResult: class { constructor(content) { this.content = content; } },
   };
+  options.configure?.(vscode);
   const entry = activateNativeEntry(vscode, context, async path => { loads.push(path); return runtime; }, {
+    ...options.entry,
     createRunner(_vscode, api, path) {
       const runner = Object.fromEntries(['run', 'role', 'control'].map(method => [method, async (...args) => {
         calls.push({ method, path, api, args }); return { status: 'observed-native-result' };
@@ -56,6 +58,42 @@ test('native activation stays idle and binds native submission, scoped roles, re
   assert.equal(app.runners.length, 1);
   assert.equal((await app.invoke('prepare', { requirement: 'Find existing tooling' })).execution, 'not-executed');
   assert.equal(app.calls.length, 3, 'retrieval never calls a worker');
+});
+
+test('full-package entry reads separate User policy only, preserves opt-out and registers management once', async t => {
+  const commands = new Map(), transport = [], captured = [];
+  let approved = [{ name: 'approved-package', package: 'fixture', repository: 'https://github.com/example/fixture', commit: 'a'.repeat(40),
+    files: [{ path: 'plugin.json', sha256: 'b'.repeat(64), bytes: 2 }], package_path: '', license_path: 'LICENSE' }];
+  const app = fixture(t, { configure(vscode) {
+    vscode.Uri = { file: path => ({ scheme: 'file', fsPath: path }) };
+    vscode.ConfigurationTarget = { Workspace: 2, WorkspaceFolder: 3 };
+    vscode.commands = { registerCommand(name, run) { assert.equal(commands.has(name), false); commands.set(name, run); return { dispose() {} }; } };
+    vscode.workspace.getWorkspaceFolder = uri => vscode.workspace.workspaceFolders.find(folder => folder.uri.fsPath === uri.fsPath);
+    vscode.workspace.getConfiguration = section => section === 'workforce' ? { inspect(key) {
+      assert.equal(key, 'capabilities.nativePackageSources');
+      return { globalValue: approved, workspaceValue: [{ name: 'untrusted-workspace' }], workspaceFolderValue: [{ name: 'untrusted-folder' }] };
+    } } : { inspect: () => ({}), get: key => key === 'plugins.enabled' ? true : {} };
+  }, entry: { nativePackageFetch: async () => { transport.push('fetch'); return {}; } } });
+  const moduleBase = process.env.WF_NATIVE_PACKAGE_MODULE_BASE ?? new URL('../dist/', import.meta.url).href;
+  const { manageNativeCapabilities } = await import(new URL('native-capabilities.js', moduleBase));
+  app.setRuntime({ nativeLocalContractVersion: 'vscode-native/v1', nativeRoleContentSchema, nativeWorkerProfiles, manageNativeCapabilities,
+    readNativePluginPackages: () => [], readAutomationPolicy: () => ({ network_policy: 'local-only' }),
+    createNativePluginPackageSourceReader(sources, fetch) { captured.push(structuredClone(sources)); return () => fetch('https://api.github.com/fixture', {}); },
+    async prepareNativePluginPackage(root, selection, options) { captured.push({ root, selection });
+      return options.reader({ repository: approved[0].repository, commit: approved[0].commit, path: 'plugin.json' }); },
+  });
+  const initial = await app.invoke('capabilities', { action: 'package-status' });
+  assert.ok(initial.result, JSON.stringify(initial));
+  assert.equal(initial.result.approved_sources[0].source, 'approved-package');
+  assert.doesNotMatch(JSON.stringify(initial), /untrusted-workspace|untrusted-folder/);
+  assert.equal(commands.has('workforce.nativePackages.manage'), true); assert.equal(commands.size, 2);
+  const denied = await app.invoke('capabilities', { action: 'package-inspect', source: 'approved-package', package: 'fixture' });
+  assert.equal(denied.fallback, 'ordinary-work'); assert.equal(denied.retryable, false); assert.equal(transport.length, 0);
+  assert.deepEqual(captured[0], { root: app.root, selection: { source: 'approved-package', package: 'fixture' } });
+  assert.deepEqual(captured[1], approved);
+  approved = [];
+  assert.deepEqual((await app.invoke('capabilities', { action: 'package-status' })).result.approved_sources, []);
+  assert.equal(app.runners.length, 1); assert.equal(app.calls.length, 0); assert.equal(commands.size, 2);
 });
 
 test('optional capability management uses User sources, ordinary content and cancellable public transport without dispatch', async t => {

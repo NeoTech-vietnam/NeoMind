@@ -131,7 +131,7 @@ function validateConfig(config: ProjectConfig): void {
     new Set(config.platforms).size !== config.platforms.length ||
     (config.copilot_integration !== undefined && config.copilot_integration !== 'local') ||
     (config.codex_routing !== undefined && !['inherit', '9router'].includes(config.codex_routing)) ||
-    (config.execution_engine !== undefined && !['opencode', 'vscode-lm'].includes(config.execution_engine)) ||
+    (config.execution_engine !== undefined && !['opencode', 'vscode-lm', 'vscode-native'].includes(config.execution_engine)) ||
     !Number.isSafeInteger(config.max_workers) ||
     config.max_workers < 1 ||
     config.max_workers > 3 ||

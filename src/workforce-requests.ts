@@ -176,6 +176,13 @@ export async function requestSubmit(root: string, input: WorkForceStartInput) {
   return requestProjection(root, run);
 }
 export function requestStatus(root: string, id?: string) {
+  if (readConfig(root).execution_engine === 'vscode-native') {
+    const value = requestListForMonitor(root);
+    if (!id) return value;
+    const matches = value.requests.filter(row => row.workflow_id === id || ('request_id' in row && row.request_id === id) || row.request_key === id);
+    if (matches.length !== 1) throw new Error('Select one saved native WorkForce request.');
+    return matches[0]!;
+  }
   if (id) { const run = requestRun(root, id);
     try { recordWorkForceAdmission(root, run.request_id, run.workflow_id, true); } catch { /* Observation still returns canonical request/artifact state. */ }
     return requestProjection(root, run); }
@@ -234,6 +241,12 @@ export async function requestControl(root: string, input: { request_id?: string;
   return requestProjection(root, await controlControlledWorkflow(root, { workflow_id: run.workflow_id, action: input.action }));
 }
 export function requestSetupStatus(root: string) {
+  if (readConfig(root).execution_engine === 'vscode-native') return {
+    ready: false, configured: true, engine_ready: false, transport: 'vscode-native',
+    version: createRuntimeInfo(root).package_version, checks: [{ label: 'Local harness', state: 'not-observed',
+      summary: 'Open WF.PM in VS Code Local. Models, tool permissions and subagents are owned by that editor session, not a background engine probe.' }],
+    summary: 'Native project installed. Live model readiness must be observed in its actual Local chat; no model was called by setup.',
+  };
   const config = readConfig(root), routing = readRoutingPolicy(root), info = createRuntimeInfo(root);
   const checks: { label: string; state: string; summary: string }[] = [];
   const check = (label: string, action: () => string) => { try { checks.push({ label, state: 'passed', summary: action() }); }

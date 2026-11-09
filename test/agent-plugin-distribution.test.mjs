@@ -74,7 +74,7 @@ test('copied Git plugin starts without npm installation and connects after User 
     assert.equal(realpathSync.native(body(connected).workspace), realpathSync.native(project));
     assert.doesNotMatch(JSON.stringify(connected), /USER_SETTING_MUST_STAY_PRIVATE/);
     const names = (await client.listTools({}, { timeout: 5000 })).tools.map(tool => tool.name).sort();
-    assert.deepEqual(names, ['request_control', 'request_status', 'request_submit', 'workforce_connection'].sort());
+    assert.deepEqual(names, ['request_status', 'work_prepare', 'workforce_connection'].sort());
     const status = await client.callTool({ name: 'request_status', arguments: {} }, undefined, { timeout: 5000 });
     assert.notEqual(status.isError, true, diagnostic);
     assert.deepEqual(body(status), { requests: [] });

@@ -19,7 +19,9 @@ import { executePreparedNativeProcedure, type NativeProcedureOutcome } from './n
 import { captureNativeTools, type NativeLearningResult } from './native-learning.js';
 import { procedureStdinContractHint } from './procedures.js';
 import { NativeMonitorSnapshot } from './native-monitor-snapshot.js';
-import { assertNativeSkillsCurrent, nativeSkillInputsMatch, nativeSkillPins, nativeSkillPrompt, nativeSkillReceiptDependencies, resolveNativeSkills, type NativeSkillContext } from './native-skill-context.js';
+import { assertNativeSkillsCurrent, nativeSkillInputsMatch, nativeSkillPins, nativeSkillPrompt, nativeSkillDependencies, resolveNativeSkills, type NativeSkillContext } from './native-skill-context.js';
+import { bindNativeSkillLease } from './native-skill-context.js';
+import { assertNativeDispatchCapabilities, type NativeDispatchCapabilities } from './native-dispatch-capabilities.js';
 
 export const nativeRequestContract = nativeLocalContractVersion;
 const assurance = 'observed-native-local' as const;
@@ -48,6 +50,8 @@ export interface NativeAssignment {
   escalation?: 'native-parent';
 }
 interface Assignment extends NativeAssignment {
+  native_profile?: string;
+  capability_fallback?: 'ordinary-work';
   editor_generation?: number;
   revision: number;
   state: 'issued' | 'completed' | 'findings' | 'cancelled' | 'uncertain';
@@ -109,6 +113,7 @@ interface State {
   final_report_id?: string;
   preservation_baseline?: Fingerprints;
   skill_contexts?: Partial<Record<Role, NativeSkillContext[]>>;
+  dispatch_capabilities?: NativeDispatchCapabilities;
   context_membership?: string[];
   resume_role?: Role;
   resume_checks?: boolean;
@@ -217,7 +222,7 @@ function matching(root: string, state: State, baseline?: Fingerprints, row?: Mon
   return !!state.plan && !!baseline && inputMapsMatch(root, state, fingerprints(root, Object.keys(baseline), row), baseline);
 }
 function ordinarySkillReceipts(root: string, state: State): string[] {
-  return nativeSkillReceiptDependencies(root, selectedSkills(state), state.context, state.plan?.checks.flatMap(check => check.command) ?? [],
+  return nativeSkillDependencies(root, selectedSkills(state), state.context, state.plan?.checks.flatMap(check => check.command) ?? [],
     state.plan?.checks.map(check => check.command[0]!) ?? []);
 }
 function inputMapsMatch(root: string, state: State, actual?: Fingerprints, expected?: Fingerprints): boolean {
@@ -543,6 +548,36 @@ export function assertNativePlanSkillsAvailable(root: string, plan: NativeReques
 /** Host-only pre-dispatch validation, also repeated after admission from a queue. */
 export function assertNativeRequestSkillsCurrent(root: string, requestRef: string): void {
   assertNativeSkillsCurrent(root, selectedSkills(load(root, requestRef)));
+}
+/** Host-only, before the first actual call. Identity comes from the issued assignment. */
+export function bindNativeRequestCapabilities(root: string, requestRef: string, binding: NativeDispatchCapabilities) {
+  assertNativeDispatchCapabilities(root, binding, requestRef);
+  return locked(root, requestRef, state => {
+    if (binding.owner.generation !== (state.editor_generation ?? 0) ||
+        !state.assignments.some(job => job.assignment_ref === binding.owner.assignment_ref)) fail('Capability lease belongs to another execution.');
+    if (state.dispatch_capabilities) {
+      if (canonical(state.dispatch_capabilities) !== canonical(binding)) fail('Frozen capability binding cannot be replaced.');
+      return view(root, state);
+    }
+    if (state.assignments.some(job => job.invocation)) fail('Bind capabilities before the first actual native call.');
+    state.dispatch_capabilities = structuredClone(binding);
+    for (const role of Object.keys(state.skill_contexts ?? {}) as Role[])
+      state.skill_contexts![role] = bindNativeSkillLease(state.skill_contexts![role]!, binding.lease, binding.owner);
+    save(root, state); return view(root, state);
+  });
+}
+/** An optional MCP disappearance changes only the next unstarted call. */
+export function bindNativeRequestDispatchProfile(root: string, requestRef: string, assignmentRef: string, useCapabilities: boolean) {
+  return locked(root, requestRef, state => {
+    const job = state.assignments.find(item => item.assignment_ref === assignmentRef);
+    if (!job || job.state !== 'issued' || job.invocation || job.result_hash || job.editor_generation !== (state.editor_generation ?? 0))
+      fail('Only the current unstarted assignment can bind its actual native profile.');
+    job.native_profile = useCapabilities ? state.dispatch_capabilities?.roles[job.agentName]?.profile?.name ?? nativeWorkerProfiles[job.agentName]
+      : nativeWorkerProfiles[job.agentName];
+    if (!useCapabilities && state.dispatch_capabilities?.roles[job.agentName]?.profile) job.capability_fallback = 'ordinary-work';
+    else delete job.capability_fallback;
+    save(root, state); return view(root, state);
+  });
 }
 /** A resumed partial is checked again after queue admission. This host-only
  * method neither issues another assignment nor changes the ordinary fast path. */
@@ -883,7 +918,7 @@ function editorEffectsHash(root: string, state: State, verifyResultRecords = fal
         if (verifyResultRecords) {
           const text = job.raw_text ?? '';
           if (job.invocation.agentName !== job.agentName || job.invocation.native_agent_name !== undefined &&
-              job.invocation.native_agent_name !== nativeWorkerProfiles[job.agentName] ||
+              job.invocation.native_agent_name !== (job.native_profile ?? state.dispatch_capabilities?.roles[job.agentName]?.profile?.name ?? nativeWorkerProfiles[job.agentName]) ||
               job.result_hash !== hash(canonical({ invocation: job.invocation, text, adapter_error: job.adapter_error })))
             throw new Error('Native outcome digest changed');
           const extra = { task_id: state.task_id, native_assignment_ref: job.assignment_ref, native_invocation: job.invocation,
@@ -1100,7 +1135,8 @@ export function recordNativeResult(root: string, input: { request_ref: string; a
     const assignment = state.assignments.find(item => item.assignment_ref === input.assignment_ref);
     if (!assignment) fail('The host callback does not belong to this request; no state changed.');
     if (invocation.agentName !== assignment.agentName) fail('The actual native call used a different agent than the issued assignment; no state changed.');
-    if (invocation.native_agent_name !== undefined && invocation.native_agent_name !== nativeWorkerProfiles[assignment.agentName])
+    if (invocation.native_agent_name !== undefined && invocation.native_agent_name !==
+        (assignment.native_profile ?? state.dispatch_capabilities?.roles[assignment.agentName]?.profile?.name ?? nativeWorkerProfiles[assignment.agentName]))
       fail('The actual native worker profile does not match the issued professional role; no state changed.');
     const { report, text } = parseNativeProfessionalReport(input.raw_result), digest = hash(canonical({ invocation, text, adapter_error: adapterError }));
     if (assignment.result_hash) {

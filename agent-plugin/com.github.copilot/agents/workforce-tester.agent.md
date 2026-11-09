@@ -2,7 +2,7 @@
 name: "WF.Tester"
 description: "Independently evaluate tests, behavior, edge cases and current verification evidence."
 tools: ["read","search","workforceRoleTester"]
-agents: ["WF.Tester Worker"]
+agents: ["*"]
 user-invocable: true
 disable-model-invocation: true
 ---

@@ -51,6 +51,58 @@ test('inventory failures and cancelling a picker preserve the last preference wi
   assert.deepEqual(f.policy.modelForRole('WF.FnD'), { id: 'a', vendor: 'endpoint' });
 });
 
+test('a model removed or no longer tool-capable while its picker is open cannot replace the last preference', async () => {
+  for (const change of ['removed', 'duplicate', 'text-only']) {
+    const f = fixture();
+    f.picks.push(items => items.find(item => item.label === 'A'));
+    await f.policy.choose('WF.FnD');
+    const before = f.writes.length;
+    let inventoryCalls = 0;
+    f.vscode.lm.selectChatModels = async () => {
+      inventoryCalls++;
+      const model = { id: 'b', vendor: 'other', name: 'B' };
+      if (inventoryCalls === 1) return [model];
+      return change === 'removed' ? [] : change === 'duplicate' ? [model, model]
+        : [{ ...model, capabilities: { toolCalling: false } }];
+    };
+    f.picks.push(items => items.find(item => item.label === 'B'));
+    await assert.rejects(f.policy.choose('WF.FnD'), /no longer uniquely available.*tool/i, change);
+    assert.equal(f.writes.length, before, change);
+    assert.deepEqual(f.policy.modelForRole('WF.FnD'), { id: 'a', vendor: 'endpoint' }, change);
+  }
+});
+
+test('native inventory entries with blank identities never become an explicit role preference', async () => {
+  const f = fixture();
+  f.vscode.lm.selectChatModels = async () => [
+    { id: '', vendor: 'provider', name: 'Missing ID' }, { id: 'valid', vendor: '', name: 'Missing provider' },
+    { id: 'valid', vendor: 'provider', name: '   ' },
+  ];
+  f.picks.push(items => { assert.deepEqual(items.map(item => item.label), ['Inherit native parent model']); return undefined; });
+  assert.equal(await f.policy.choose('WF.FnD'), undefined);
+  assert.equal(f.writes.length, 0);
+});
+
+test('changing an inherited native parent never rewrites a distinct explicit role preference', async () => {
+  const f = fixture();
+  f.picks.push(items => items.find(item => item.label === 'A'));
+  await f.policy.choose('WF.FnD');
+  const nativeCalls = [], schema = { type: 'object', required: ['prompt', 'description'],
+    properties: Object.fromEntries(['agentName', 'prompt', 'description', 'model'].map(key => [key, { type: 'string' }])) };
+  let parent = 'Parent A';
+  const delegator = createLocalDelegator({ lm: { tools: [{ name: 'runSubagent', inputSchema: schema }],
+    selectChatModels: async () => [{ id: 'a', vendor: 'endpoint', name: 'A' }],
+    invokeTool(_tool, { input }) { nativeCalls.push({ input, parent }); return { content: [{ value: 'Unverified professional result' }] }; } } });
+  const invoke = async role => delegator.invoke({ agentName: role, prompt: 'Inspect the bounded source', description: role,
+    ...(f.policy.modelForRole(role) ? { model: f.policy.modelForRole(role) } : {}) }, {});
+  await invoke('WF.P-RES'); parent = 'Parent B'; await invoke('WF.P-RES'); await invoke('WF.FnD');
+  assert.deepEqual(nativeCalls.map(call => ({ parent: call.parent, model: call.input.model })), [
+    { parent: 'Parent A', model: undefined }, { parent: 'Parent B', model: undefined }, { parent: 'Parent B', model: 'A (endpoint)' },
+  ]);
+  assert.deepEqual(f.policy.modelForRole('WF.FnD'), { id: 'a', vendor: 'endpoint' });
+  assert.equal(f.writes.length, 1, 'Native inheritance cannot mutate the workspace role policy');
+});
+
 test('actual native call observations end on completion; views cannot interrupt calls or cross projects', async () => {
   let release;
   const pending = new Promise(resolve => { release = resolve; });

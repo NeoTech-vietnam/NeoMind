@@ -16,7 +16,7 @@ function fixture(t, nativeLocal = false) {
   const root = mkdtempSync(join(tmpdir(), 'workforce plugin '));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project with spaces'); mkdirSync(project);
-  initialize(project, { platforms: ['copilot'], ...(nativeLocal ? { copilot_integration: 'local' } : {}) });
+  initialize(project, { platforms: ['copilot'], ...(nativeLocal ? { copilot_integration: 'local' } : { execution_engine: 'opencode' }) });
   return { root, project, out: join(root, 'plugin with spaces') };
 }
 
@@ -44,6 +44,15 @@ test('a native Local plugin carries the same six selectors, hidden workers and e
   assert.match(binding.profile_source, /native-local-contract/);
   assert.deepEqual(readFileSync(safePath(project, '.workforce/config.json')), before);
 });
+test('the native execution discriminator selects native plugin profiles without a legacy integration flag', async t => {
+  const { project, out } = fixture(t);
+  const path = safePath(project, '.workforce/config.json'), configuration = JSON.parse(readFileSync(path, 'utf8'));
+  configuration.execution_engine = 'vscode-native'; delete configuration.copilot_integration;
+  writeFileSync(path, JSON.stringify(configuration));
+  await packageAgentPlugin({ runtime, project, out });
+  assert.equal(readFileSync(join(out, 'com.github.copilot/agents/workforce-pm.agent.md'), 'utf8'), nativeLocalProfile('WF.PM'));
+  assert.equal(readdirSync(join(out, 'com.github.copilot/agents')).length, 11);
+});
 function files(root, path = '') {
   return readdirSync(join(root, path), { withFileTypes: true }).flatMap(entry => entry.isDirectory()
     ? files(root, join(path, entry.name)) : [join(path, entry.name)]);
@@ -64,14 +73,16 @@ test('plugin packages the real runtime profiles and exact-project MCP without co
     args: [join(realpathSync.native(runtime), 'dist/cli.js'), 'mcp', '--project', realpathSync.native(project)] });
   assert.doesNotMatch(JSON.stringify(mcp), /\$\{workspaceFolder\}/);
   const agents = files(join(out, 'com.github.copilot/agents'));
-  assert.equal(agents.length, 6);
+  assert.equal(agents.length, 11);
   const pm = readFileSync(join(out, 'com.github.copilot/agents/workforce-pm.agent.md'), 'utf8');
   const frontmatter = parseYaml(pm.split('---')[1]);
   assert.equal(frontmatter.name, 'WF.PM'); assert.equal(frontmatter['user-invocable'], true);
   assert.equal(frontmatter.model, undefined, 'Local user model selection stays independent.');
-  assert.deepEqual(frontmatter.tools, ['workforce/request_submit', 'workforce/request_status', 'workforce/request_control']);
+  assert.equal(pm, nativeLocalProfile('WF.PM'));
+  assert.ok(frontmatter.tools.includes('workforceNativeRequest'));
+  assert.ok(!frontmatter.tools.some(tool => /^workforce\/request_(submit|control)$/.test(tool)));
   assert.ok(!frontmatter.tools.some(tool => /edit|write|terminal|execute|runInTerminal/i.test(tool)));
-  assert.match(pm, /new_request: true/);
+  assert.match(pm, /vscode-native\/v1/);
   for (const path of files(out)) {
     const content = readFileSync(join(out, path), 'utf8');
     assert.doesNotMatch(content, /SECRET_DO_NOT_PACKAGE|USER_PRODUCT_SENTINEL/);
@@ -94,7 +105,7 @@ test('packaging preserves nonempty output and rejects runtime/project overlap', 
   await assert.rejects(packageAgentPlugin({ runtime, project, out: 'relative' }), /absolute/);
 });
 
-test('packaged stdio server initializes, advertises exactly the intake tools and returns real empty-project status', { timeout: 30_000 }, async t => {
+test('packaged stdio server initializes, advertises only status/experience tools and returns real empty-project status', { timeout: 30_000 }, async t => {
   const { project, out } = fixture(t);
   await packageAgentPlugin({ runtime, project, out });
   const { mcpServers: { workforce: entry } } = JSON.parse(readFileSync(join(out, 'mcp.json')));
@@ -105,7 +116,7 @@ test('packaged stdio server initializes, advertises exactly the intake tools and
   try {
     await client.connect(transport, { timeout: 20_000 });
     const { tools } = await client.listTools({}, { timeout: 5000 });
-    assert.deepEqual(tools.map(tool => tool.name).sort(), ['request_control', 'request_status', 'request_submit']);
+    assert.deepEqual(tools.map(tool => tool.name).sort(), ['request_status', 'work_prepare']);
     const status = await client.callTool({ name: 'request_status', arguments: {} }, undefined, { timeout: 5000 });
     assert.notEqual(status.isError, true, diagnostic);
     const text = status.content.find(item => item.type === 'text')?.text;

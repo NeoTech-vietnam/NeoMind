@@ -15,12 +15,18 @@ let lastAttemptDirectory = fixture.evidence;
 let lastAttemptRequest;
 let dispatchQueue = Promise.resolve();
 let nativePilotActivation, nativePilotShutdown;
+let proofContext;
+let installedEntryObserver;
 const evidencePath = (name, directory = fixture.evidence) => join(directory, name);
 const runId = basename(dirname(fixture.evidence));
 const write = (name, value, flag = 'w', directory = fixture.evidence) =>
   writeFileSync(evidencePath(name, directory), JSON.stringify(value, null, 2) + '\n', { flag, mode: 0o600 });
 const modelFields = model => ({ id: model.id, vendor: model.vendor, name: model.name, family: model.family, version: model.version });
 const safeLabel = value => typeof value === 'string' && /^[a-z0-9._/ :()@-]{1,160}$/i.test(value) ? value : null;
+const toolLabel = value => typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\u0000-\u001f\u007f]/.test(value) ? value : null;
+const toolObservation = tool => ({ name: toolLabel(tool.name), reference: toolLabel(tool.fullReferenceName),
+  schema_json_sha256: hash(JSON.stringify(tool.inputSchema ?? null)), properties: Object.keys(tool.inputSchema?.properties ?? {}),
+  ownership: 'not-observed' });
 const workspace = () => {
   const folders = vscode.workspace.workspaceFolders ?? [];
   if (folders.length !== 1 || folders[0].uri.scheme !== 'file') return;
@@ -33,6 +39,10 @@ const workspace = () => {
 
 function requireTrustedFixture() {
   if (!workspace() || !vscode.workspace.isTrusted) throw new Error('Open and trust the WorkForce M2 fixture workspace first.');
+}
+function installedObserver() {
+  if (fixture.nativeInstalledEntry !== true) throw Object.assign(new Error('Installed observer mode required.'), { code: 'INSTALLED_ENTRY_MODE_REQUIRED' });
+  return installedEntryObserver ??= require('./installed-entry.cjs').createInstalledEntryObserver(vscode, fixture, { requireTrustedFixture, write });
 }
 
 const defaultRequest = () => ({ prompt, coordinator: fixture.coordinator, attachments: fixture.attachments ?? [] });
@@ -57,6 +67,7 @@ function proofRequest(input) {
 
 async function inspect(directory = fixture.evidence, request = defaultRequest()) {
   requireTrustedFixture();
+  const installed = fixture.nativeInstalledEntry === true ? await installedObserver().inspect() : undefined;
   const models = (await vscode.lm.selectChatModels({})).map(modelFields);
   const availableCommands = await vscode.commands.getCommands(true);
   const delegation = vscode.lm.tools.filter(tool => /(?:^|\/)runSubagent$/i.test(tool.name)).map(tool => ({
@@ -77,11 +88,16 @@ async function inspect(directory = fixture.evidence, request = defaultRequest())
     // contract or evidence that a plugin has been installed/loaded/used.
     customization_commands: availableCommands.filter(name =>
       /(?:chat|agent|skill|mcp).*plugin|plugin.*(?:chat|agent)|customizations/i.test(name)).sort(),
-    capability_tools: vscode.lm.tools.filter(tool => /fetch|skill|mcp|search|plugin|workforce/i.test(tool.name)).map(tool => ({
-      name: tool.name, properties: Object.keys(tool.inputSchema?.properties ?? {}),
-    })),
+    capability_tools: vscode.lm.tools.filter(tool => /fetch|skill|mcp|search|plugin|workforce/i.test(tool.name)).map(toolObservation),
+    native_tool_inventory: vscode.lm.tools.map(toolObservation),
+    native_mcp_fixture_enabled: fixture.nativeInstalledEntry !== true && fixture.enable_mcp_fixture === true,
+    ...(installed ? { installed_product: installed, driver_backend_registration: false } : {}),
     hooks_enabled: vscode.workspace.getConfiguration('chat', workspace().uri).get('useHooks'),
     plugins_enabled: vscode.workspace.getConfiguration('chat').get('plugins.enabled'),
+    role_model_preferences: fixture.nativeInstalledEntry !== true && fixture.repository && proofContext?.workspaceState ? (() => {
+      const policy = require(join(fixture.repository, 'extensions/vscode-model-bridge/local-models.cjs')).createLocalModelPolicy(vscode, proofContext, fixture.workspace);
+      return Object.fromEntries(['WF.SWSD', 'WF.P-RES', 'WF.FnD', 'WF.Reviewer', 'WF.Tester'].map(role => [role, policy.modelForRole(role) ?? { selection: 'inherit' }]));
+    })() : null,
   };
   write('inspection.json', result, 'w', directory);
   return result;
@@ -107,8 +123,9 @@ async function capture(directory = lastAttemptDirectory, requestContext = lastAt
           id: safeLabel(node.toolId),
           kind: safeLabel(node.kind),
           native_worker: /(?:^|\/)runSubagent$/i.test(node.toolId) &&
-            [fixture.worker, ...['WF.SWSD', 'WF.P-RES', 'WF.FnD', 'WF.Reviewer', 'WF.Tester'].map(role => `${role} Worker`)]
-              .includes(subagent?.agentName ?? subagent?.name),
+            ([fixture.worker, ...['WF.SWSD', 'WF.P-RES', 'WF.FnD', 'WF.Reviewer', 'WF.Tester'].map(role => `${role} Worker`)]
+              .includes(subagent?.agentName ?? subagent?.name) ||
+              /^WF\.(?:SWSD|P-RES|FnD|Reviewer|Tester) Worker MCP [a-f0-9]{16}$/.test(subagent?.agentName ?? subagent?.name ?? '')),
           agent_name: safeLabel(subagent?.agentName ?? subagent?.name),
           observed_child_model: safeLabel(subagent?.modelId),
         });
@@ -125,6 +142,7 @@ async function capture(directory = lastAttemptDirectory, requestContext = lastAt
       assistant_response_contains_fixture_marker: JSON.stringify(request.response ?? []).includes(fixture.marker),
       failure: classifyFailure(request.responseErrorDetails),
     }, 'w', directory);
+    if (fixture.nativeInstalledEntry === true) await installedObserver().snapshot('after-public-native-chat-export', directory);
   } finally { unlinkSync(path); }
 }
 
@@ -141,6 +159,10 @@ function classifyFailure(details) {
 
 async function dispatch(inspection, parent, worker, directory = fixture.evidence, reuseSession = false, request = defaultRequest()) {
   requireTrustedFixture();
+  if (fixture.nativeInstalledEntry === true) {
+    if (worker) throw Object.assign(new Error('Installed proof cannot override workers through a development hook.'), { code: 'INSTALLED_WORKER_OVERRIDE_FORBIDDEN' });
+    await installedObserver().inspect();
+  }
   if (!inspection.local_commands.local || !inspection.local_commands.open) throw new Error('Local chat commands are unavailable in this VS Code build.');
   if (worker && !inspection.delegation.some(tool => tool.properties.includes('model'))) {
     throw new Error('The observed native tool schema does not advertise a model input.');
@@ -151,7 +173,7 @@ async function dispatch(inspection, parent, worker, directory = fixture.evidence
   // Local model-name fields use the qualified display name, not the model ID.
   const policy = worker ? { override: `${worker.name} (${worker.vendor})` } : {};
   write('model-policy.json', policy, 'wx', directory);
-  writeFileSync(join(fixture.evidence, 'model-policy.json'), JSON.stringify(policy) + '\n', { mode: 0o600 });
+  if (fixture.nativeInstalledEntry !== true) writeFileSync(join(fixture.evidence, 'model-policy.json'), JSON.stringify(policy) + '\n', { mode: 0o600 });
   if (!reuseSession) await vscode.commands.executeCommand(commands.local);
   const result = await vscode.commands.executeCommand(commands.open, {
     mode: request.coordinator,
@@ -176,6 +198,7 @@ async function run() {
   if (entries.length === 0) throw new Error('No chat model is available to the proof extension.');
   const parent = await vscode.window.showQuickPick(entries, { placeHolder: 'Select the model to use in the proof chat' });
   if (!parent) return;
+  if (fixture.nativeInstalledEntry === true) return dispatch(inspection, parent.model);
   const worker = await vscode.window.showQuickPick([{ label: 'Inherit the parent model' }, ...entries],
     { placeHolder: 'Select an optional worker override to test through the Local hook' });
   if (!worker) return;
@@ -200,6 +223,7 @@ function queueAuthorizedProof(input = readAuthorization()) {
 
 async function runAuthorizedProof(input) {
   const request = proofRequest(input.request);
+  if (fixture.nativeInstalledEntry === true && input.worker) throw Object.assign(new Error('Installed proof cannot override workers through a development hook.'), { code: 'INSTALLED_WORKER_OVERRIDE_FORBIDDEN' });
   if (input.allow_chat_dispatch !== true || input.run_id !== runId || input.prompt_sha256 !== hash(request.prompt) ||
       input.request !== undefined && input.request_sha256 !== hash(JSON.stringify(request))) {
     throw Object.assign(new Error('Unrecognized proof authorization.'), { code: 'PROOF_AUTHORIZATION_INVALID' });
@@ -225,7 +249,7 @@ async function runAuthorizedProof(input) {
   try {
     const inspection = await inspect(directory, request);
     const select = route => inspection.models.filter(model => model.vendor === route.vendor && model.id === route.id);
-    const candidates = input.parent ? select(input.parent) : inspection.models.filter(model => model.vendor === 'customendpoint' &&
+    const candidates = input.parent ? select(input.parent) : fixture.nativeInstalledEntry === true ? [] : inspection.models.filter(model => model.vendor === 'customendpoint' &&
       (model.id === 'top-models' || model.name === 'top-models'));
     const worker = input.worker ? select(input.worker) : [];
     if (candidates.length !== 1 || (input.worker && worker.length !== 1)) {
@@ -248,18 +272,33 @@ async function runAuthorizedProof(input) {
 
 function activate(context) {
   if (!workspace() || context.extensionMode === vscode.ExtensionMode.Test) return;
-  let preview;
-  const previewVModel = () => preview ??= require('./v-model-fixture.cjs').openVModelFixture(vscode, context, fixture, write);
+  proofContext = context;
+  let preview, mcpFixture;
+  const previewVModel = () => fixture.nativeInstalledEntry === true ? installedObserver().inspect().then(() =>
+    vscode.commands.executeCommand('workforce.vModel.open')) : preview ??= require('./v-model-fixture.cjs').openVModelFixture(vscode, context, fixture, write);
   const inspectTrusted = () => {
     if (!vscode.workspace.isTrusted) {
       write('inspection.json', { run_id: runId, prompt_sha256: hash(prompt), vscode_version: vscode.version, workspace_trusted: false });
       return;
+    }
+    if (fixture.nativeInstalledEntry !== true && fixture.enable_mcp_fixture === true && !mcpFixture) {
+      try { mcpFixture = require('./native-mcp-provider.cjs').activateMcpFixture(vscode, context, fixture, requireTrustedFixture, write); }
+      catch { write('native-mcp-registration.json', { state: 'unavailable', reason: 'fixture-registration-failed' }); }
     }
     // Inventory is metadata only. This never calls sendRequest or changes model settings.
     void inspect().catch(error => write('inspection-error.json', { name: error?.name, code: safeLabel(error?.code) }));
     if (fixture.showVModel) void previewVModel().catch(error => write('v-model-error.json', { name: error?.name, code: safeLabel(error?.code) }));
   };
   const control = watch(fixture.evidence, (_event, filename) => {
+    if (filename === 'inspect-now.json' && existsSync(join(fixture.evidence, filename))) {
+      let input;
+      try { input = JSON.parse(readFileSync(join(fixture.evidence, filename), 'utf8')); } catch { return; }
+      if (input.run_id !== runId || typeof input.request_id !== 'string' || !/^[a-z0-9-]{1,64}$/.test(input.request_id)) return;
+      // Read-only development inspection never enters the chat dispatch queue.
+      void inspect().then(() => write('inspect-result.json', { request_id: input.request_id, status: 'inspected', model_calls: 0 }))
+        .catch(() => write('inspect-result.json', { request_id: input.request_id, status: 'inspection-unavailable', model_calls: 0 }));
+      return;
+    }
     if (filename !== 'authorize.json' || !existsSync(join(fixture.evidence, filename))) return;
     let authorization;
     try { authorization = readAuthorization(); }
@@ -277,6 +316,7 @@ function activate(context) {
     }),
     vscode.commands.registerCommand('workforceM2.run', () => serializeDispatch(run)),
     vscode.commands.registerCommand('workforceM2.capture', () => serializeDispatch(() => capture())),
+    ...(fixture.nativeInstalledEntry === true ? [vscode.commands.registerCommand('workforceM2.captureInstalled', () => installedObserver().snapshot())] : []),
     vscode.commands.registerCommand('workforceM2.previewVModel', () => {
       requireTrustedFixture();
       return previewVModel();
@@ -284,7 +324,13 @@ function activate(context) {
     vscode.workspace.onDidGrantWorkspaceTrust(inspectTrusted),
   );
   inspectTrusted();
-  if (fixture.nativePilot) nativePilotActivation = require('./native-pilot.cjs').activateNativePilot(vscode, context, fixture, requireTrustedFixture)
+  if (fixture.nativeInstalledEntry !== true && fixture.enable_rea_proof === true) {
+    requireTrustedFixture();
+    require(join(fixture.repository, 'extensions/vscode-model-bridge/native-rea-provider.cjs')).activateNativeReaProvider(vscode, context,
+      async () => { requireTrustedFixture(); return import(require('node:url').pathToFileURL(join(fixture.repository, 'dist/index.js')).href); },
+      () => fixture.repository);
+  }
+  if (fixture.nativeInstalledEntry !== true && fixture.nativePilot) nativePilotActivation = require('./native-pilot.cjs').activateNativePilot(vscode, context, fixture, requireTrustedFixture)
     .catch(error => write('native-pilot-error.json', { name: error?.name, code: safeLabel(error?.code) }));
 }
 

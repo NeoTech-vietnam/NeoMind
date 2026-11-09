@@ -14,7 +14,9 @@ test('native profiles and software tool share one content contract without fixed
     assert.doesNotMatch(profile, /^model:|top-models|worker-models|assignment_claim|assignment_progress|OpenCode/m);
   }
   assert.match(nativeLocalProfile('WF.PM'), /workforceRequest/);
-  assert.deepEqual(parse(nativeLocalProfile('WF.PM').split('---')[1]).agents, Object.values(contract.nativeWorkerProfiles));
+  const manager = parse(nativeLocalProfile('WF.PM').split('---')[1]);
+  assert.deepEqual(manager.agents, ['*']);
+  assert.equal(manager.tools.some(tool => /^(?:agent|runSubagent)(?:\/|$)/i.test(tool)), false);
   assert.doesNotMatch(nativeLocalProfile('WF.Reviewer'), /tools:.*"edit"/);
   assert.doesNotMatch(nativeLocalProfile('WF.Tester'), /tools:.*"edit"/);
 });
@@ -27,7 +29,8 @@ test('selector specialists use prebound role entry tools while hidden workers ha
     assert.equal(root['user-invocable'], true);
     assert.equal(root['disable-model-invocation'], true);
     assert.ok(root.tools.includes(contract.nativeRootRoleToolReferences[role]));
-    assert.deepEqual(root.agents, [contract.nativeWorkerProfiles[role]]);
+    assert.deepEqual(root.agents, ['*']);
+    assert.equal(root.tools.some(tool => /^(?:agent|runSubagent)(?:\/|$)/i.test(tool)), false);
     assert.equal(root.tools.includes('edit'), false);
     assert.equal(root.tools.includes('execute'), false);
     assert.equal(worker.name, contract.nativeWorkerProfiles[role]);

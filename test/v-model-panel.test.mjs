@@ -52,6 +52,19 @@ function panelClient(saved) {
     state: () => saved };
 }
 
+test('native V-model arms motion for actual running-stage styles without inventing stage activity', () => {
+  const panel = panelClient();
+  panel.snapshot([{ workflow_id: 'motion-proof', source: 'native-local', live: true, status: 'working', artifacts: [], evidence: [],
+    stages: [{ id: 'coding', state: 'running' }] }]);
+  const svg = panel.elements.get('v-model').children[0];
+  assert.equal(svg.getAttribute('data-motion'), 'true', 'Native panel must activate the production motion selector; CSS still owns reduced-motion overrides');
+  const groups = svg.children.filter(node => node.getAttribute('data-stage'));
+  assert.equal(groups.filter(node => node.getAttribute('data-state') === 'running').length, 1);
+  panel.snapshot([{ workflow_id: 'motion-proof', source: 'native-local', live: false, status: 'uncertain', artifacts: [], evidence: [],
+    stages: [{ id: 'coding', state: 'uncertain' }] }]);
+  assert.equal(groups.filter(node => node.getAttribute('data-state') === 'running').length, 0, 'Armed motion does not fabricate a running stage');
+});
+
 const selectorRequests = () => [
   { workflow_id: 'wf25', request_key: 'WF-R0025', title: 'Current request', source: 'native-local', live: true,
     status: 'running', revision: 1, artifacts: [], evidence: [] },

@@ -21,7 +21,7 @@ export async function writeReleaseIndex(directory, { requirePlatforms = false } 
   const complete = required.every(name => assets.some(asset => asset.name === name));
   if (requirePlatforms && !complete) throw new Error('Both native Windows x64 and Linux x64 runtime assets are required.');
   const manifest = { schema_version: 1, tag: `workforce-v${pkg.version}`, runtime: { package: pkg.name, version: pkg.version },
-    extension: { id: `${extension.publisher}.${extension.name}`, version: extension.version }, engine_version: '1.19.4',
+    extension: { id: `${extension.publisher}.${extension.name}`, version: extension.version }, execution: 'vscode-native/v1', transport: 'vscode-local',
     state: 'candidate', published: false, complete_platform_set: complete, assets,
     acceptance: 'Actual installed-client acceptance and a matching validation report are required before publication.',
     limitations: ['Linux package/core tests do not certify Linux VS Code desktop.', 'Portable runtime assets contain their native dependencies; Node remains a prerequisite.'] };

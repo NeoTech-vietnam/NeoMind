@@ -8,6 +8,7 @@ import { dirname, resolve } from 'node:path';
 import { parseDocument } from 'yaml';
 import type { AgentMarketplaceReader } from './agent-marketplace.js';
 import { assertNoStorageMigration, resolveManagedRoot } from './storage.js';
+import { assertNativeCapabilityMutable, readNativeCapabilityControl, withNativeCapabilityControl, type NativeCapabilityControl } from './native-capability-leases.js';
 
 export interface WorkspaceSkillApproval {
   approved: true;
@@ -20,7 +21,7 @@ export interface WorkspaceSkillOptions { signal?: AbortSignal; timeout_ms?: numb
 type State = 'selected' | 'installed' | 'disabled' | 'removed' | 'partial' | 'conflict';
 type Code = 'INVALID_APPROVAL' | 'INVALID_QUERY' | 'UNSAFE_PATH' | 'BOUND_EXCEEDED' | 'READ_FAILED' | 'READ_INCOMPLETE' |
   'SOURCE_PIN_MISMATCH' | 'INVALID_SKILL' | 'COLLISION' | 'LOCAL_CHANGED' | 'INVALID_RECEIPT' |
-  'CANCELLED' | 'TIMEOUT' | 'FILESYSTEM_FAILED' | 'POLICY_CHANGED';
+  'CANCELLED' | 'TIMEOUT' | 'FILESYSTEM_FAILED' | 'POLICY_CHANGED' | 'PUBLICATION_UNCERTAIN';
 export class WorkspaceSkillError extends Error {
   readonly code: Code;
   constructor(code: Code, options?: ErrorOptions) { super(`Workspace skill selection failed: ${code}.`, options); this.name = 'WorkspaceSkillError'; this.code = code; }
@@ -54,6 +55,7 @@ export interface WorkspaceSkillResult {
   changed: boolean;
   installation_scope: 'workspace-skill-components-only';
   plugin_installation: 'not-performed'; host_loading: 'unverified'; execution: 'not-performed';
+  control?: NativeCapabilityControl;
 }
 interface Prepared { receipt: WorkspaceSkillReceipt; contents: Map<string, Uint8Array> }
 type LocalPath = { path: string; exists: boolean; directory: boolean };
@@ -70,6 +72,7 @@ export interface WorkspaceSkillCandidate {
   files: { count: number; bytes: number; state: 'current' | 'absent' | 'changed' | 'incomplete' | 'unsafe' | 'not-inspected' };
   receipt: { path: string; sha256: string }; license: { source_path: string; sha256: string };
   observations: { loaded: 'not-observed'; used: 'not-observed'; verified: 'not-observed' };
+  control?: NativeCapabilityControl;
 }
 export interface WorkspaceSkillList {
   state: 'absent' | 'available' | 'partial' | 'unavailable'; components: WorkspaceSkillCandidate[];
@@ -325,6 +328,64 @@ function current(root: string, receipt: WorkspaceSkillReceipt): boolean {
   }
   return true;
 }
+
+/** Validate the complete approved tree, including absence of unowned entries.
+ * A retry must not publish bytes added or changed since the original stage. */
+function assertPublicationTree(root: string, path: string, receipt: WorkspaceSkillReceipt): LocalPath {
+  const directories = new Map<string, Set<string>>([[path, new Set()]]);
+  for (const file of receipt.files) {
+    const parts = file.relative_path.split('/');
+    for (let index = 0; index < parts.length; index++) {
+      const parent = [path, ...parts.slice(0, index)].join('/');
+      if (!directories.has(parent)) directories.set(parent, new Set());
+      directories.get(parent)!.add(parts[index]!);
+    }
+  }
+  for (const [directory, names] of directories) {
+    const found = local(root, directory);
+    if (!found.exists || !found.directory) fail('LOCAL_CHANGED');
+    const actual = readdirSync(found.path);
+    if (actual.length !== names.size || actual.some(name => !names.has(name))) fail('LOCAL_CHANGED');
+  }
+  if (!current(root, { ...receipt, target: path })) fail('LOCAL_CHANGED');
+  return local(root, path);
+}
+
+/** Windows may deny directory rename briefly while a native watcher/scanner
+ * holds a child without FILE_SHARE_DELETE. Retry only an unchanged owned stage
+ * with an absent destination. Never infer success from similar target bytes. */
+function publishStage(root: string, stage: string, receipt: WorkspaceSkillReceipt, authorize: () => void): void {
+  const original = lstatSync(assertPublicationTree(root, stage, receipt).path);
+  const delays = [10, 25, 50, 100, 200, 400];
+  const sameDirectory = (path: string) => {
+    const observed = lstatSync(path);
+    return observed.isDirectory() && !observed.isSymbolicLink() && observed.dev === original.dev && observed.ino === original.ino;
+  };
+  for (let attempt = 0; ; attempt++) {
+    authorize();
+    const source = assertPublicationTree(root, stage, receipt), target = local(root, receipt.target);
+    if (!sameDirectory(source.path)) fail('LOCAL_CHANGED');
+    if (target.exists) fail('COLLISION');
+    try { renameSync(source.path, target.path); }
+    catch (error) {
+      // No retry is safe after a possibly successful rename, even if the new
+      // target happens to contain identical bytes. Preserve it as unacknowledged.
+      const remaining = local(root, stage), destination = local(root, receipt.target);
+      if (!remaining.exists) throw new WorkspaceSkillError('PUBLICATION_UNCERTAIN', { cause: error });
+      if (destination.exists) fail('COLLISION');
+      if (!remaining.directory || !sameDirectory(remaining.path)) fail('LOCAL_CHANGED');
+      assertPublicationTree(root, stage, receipt);
+      if (process.platform !== 'win32' || !['EPERM', 'EACCES', 'EBUSY'].includes(String((error as NodeJS.ErrnoException).code)) || attempt >= delays.length) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delays[attempt]);
+      continue;
+    }
+    try {
+      const published = assertPublicationTree(root, receipt.target, receipt);
+      if (!sameDirectory(published.path) || local(root, stage).exists) fail('LOCAL_CHANGED');
+    } catch (error) { throw new WorkspaceSkillError('PUBLICATION_UNCERTAIN', { cause: error }); }
+    return;
+  }
+}
 function cleanStage(root: string, stage: string, files: OwnedFile[]): WorkspaceSkillReceipt['retained_paths'] {
   const retained: WorkspaceSkillReceipt['retained_paths'] = [], directories = new Set<string>([stage]);
   for (const file of files) {
@@ -480,13 +541,15 @@ export function listWorkspaceSkillComponents(rootPath: string, query: WorkspaceS
         if (!fresh.exists || fresh.directory || lstatSync(fresh.path).size > receiptLimit) fail('INVALID_RECEIPT');
         const freshBytes = readFileSync(fresh.path); observe(freshBytes);
         if (freshBytes.length > receiptLimit || hash(freshBytes) !== receiptHash) fail('INVALID_RECEIPT');
+        const control = readNativeCapabilityControl(root, `skill:${id}`);
         candidates.push({ id, name: receipt.target_name, description, description_truncated: descriptionTruncated,
           source: receipt.source, skill_path: `${receipt.target}/SKILL.md`, skill_sha256: entry.sha256,
-          recorded_state: receipt.state, state, available: state === 'installed' && fileState === 'current',
+          recorded_state: receipt.state, state, available: state === 'installed' && fileState === 'current' && control.new_admissions,
           files: { count: receipt.files.length, bytes: receipt.files.reduce((sum, file) => sum + file.bytes, 0), state: fileState },
           receipt: { path: `${metadata}/${id}.json`, sha256: receiptHash },
           license: { source_path: receipt.license.source_path, sha256: receipt.license.sha256 },
-          observations: { loaded: 'not-observed', used: 'not-observed', verified: 'not-observed' } });
+          observations: { loaded: 'not-observed', used: 'not-observed', verified: 'not-observed' },
+          ...(control.active_count || !control.new_admissions ? { control } : {}) });
         if (truncated && fileState === 'not-inspected') break;
       } catch (error) {
         const issue = code(error); issues.push({ id, code: issue });
@@ -560,7 +623,15 @@ export async function installWorkspaceSkillComponents(rootPath: string, input: W
   for (const item of prepared) {
     authorize();
     const receipt = item.receipt;
-    if (receipt.state === 'installed') { completed.push(receipt); continue; }
+    withNativeCapabilityControl(root, { key: `skill:${receipt.id}`, action: 'enable' }, () => {
+    if (receipt.state === 'installed') {
+      // Reinstalling the same approved bytes cancels a queued shutdown without
+      // rewriting a holder's raw receipt or exposing different guidance.
+      const latest = load(root, receipt.id);
+      if (!latest || latest.state !== 'installed' || !current(root, latest)) fail('LOCAL_CHANGED');
+      completed.push(latest); return;
+    }
+    assertNativeCapabilityMutable(root, `skill:${receipt.id}`);
     const stage = `${metadataRoot(root)}/staging/${receipt.id}-${randomUUID()}`;
     try {
       event(receipt, 'select', 'selected'); save(root, receipt);
@@ -573,20 +644,21 @@ export async function installWorkspaceSkillComponents(rootPath: string, input: W
       }
       authorize();
       ensureDirectory(root, hostRoot);
-      const target = local(root, receipt.target);
-      if (target.exists) fail('COLLISION');
-      renameSync(local(root, stage).path, target.path);
+      publishStage(root, stage, receipt, authorize);
       receipt.published = true;
       event(receipt, 'publish', 'installed'); save(root, receipt);
       completed.push(receipt); changed = true;
     } catch (error) {
       receipt.retained_paths = cleanStage(root, stage, receipt.files);
+      if (error instanceof WorkspaceSkillError && error.code === 'PUBLICATION_UNCERTAIN')
+        receipt.retained_paths.push({ path: receipt.target, reason: 'unowned-content' });
       event(receipt, 'publication-failed', 'partial');
       // A complete renamed component may remain if its final receipt write failed;
       // retain that honest state. Never remove user content to make rollback pass.
       try { save(root, receipt); } catch { /* Original failure remains meaningful. */ }
       throw error instanceof WorkspaceSkillError ? error : new WorkspaceSkillError('FILESYSTEM_FAILED', { cause: error });
     }
+    });
   }
   return result(completed, changed);
 }
@@ -596,6 +668,12 @@ export async function installWorkspaceSkillComponents(rootPath: string, input: W
 export function controlWorkspaceSkillComponent(rootPath: string, id: string, action: 'disable' | 'remove'): WorkspaceSkillResult {
   const root = workspace(rootPath);
   if (!['disable', 'remove'].includes(action)) fail('INVALID_APPROVAL');
+  const receipt = load(root, id);
+  if (!receipt) fail('INVALID_RECEIPT');
+  const controlled = withNativeCapabilityControl(root, { key: `skill:${id}`, action }, () => applyWorkspaceSkillControl(root, id, action));
+  return { ...(controlled.value ?? result([receipt], false)), control: controlled.control };
+}
+function applyWorkspaceSkillControl(root: string, id: string, action: 'disable' | 'remove'): WorkspaceSkillResult {
   const receipt = load(root, id);
   if (!receipt) fail('INVALID_RECEIPT');
   const desired = action === 'disable' ? 'disabled' : 'removed';

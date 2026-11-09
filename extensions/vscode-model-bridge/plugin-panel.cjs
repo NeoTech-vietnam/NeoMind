@@ -40,6 +40,7 @@ function renderPluginPanelHtml({ cspSource, script, style, nonce }) {
 <link rel="stylesheet" href="${style}"><title>WorkForce Plug-ins</title></head><body>
 <header><div><p class="eyebrow">WORKFORCE · INTEGRATIONS</p><h1>Plug-in control</h1><p>Choose the tools your agents can use.</p></div><button id="refresh" type="button">Refresh status</button></header>
 <main><section class="connection-settings" aria-labelledby="connections-heading"><div><h2 id="connections-heading">Client connections</h2><p>Codex and Copilot CLI use this workspace and your home configuration. Select the MCP settings file for your active VS Code profile.</p></div><button id="select-vscode" type="button">Choose VS Code MCP file…</button><p id="vscode-target" role="status">VS Code profile file not selected</p></section>
+<section class="connection-settings"><div><h2>Native worker capabilities</h2><p>Manage installed workspace skills and exact User-approved MCP bindings. Pending shutdown keeps the active workflow's frozen resources and denies new admissions.</p></div><button id="native-capabilities" type="button">Manage native capabilities…</button></section>
 <p id="notice" role="status" aria-live="polite">Reading project configuration…</p><div id="plugins" class="plugin-grid" aria-label="Available plug-ins"></div>
 <section class="help"><h2>After changing a connection</h2><p>Enable → Install pinned version → Probe MCP → Connect. Restart the affected MCP server and start a new chat. A connected configuration is not proof that the client has started or used the server. Probe starts a direct MCP check and records its result.</p><p>Disable revokes the WorkForce provider before removing owned client registrations. Edited or conflicting entries are preserved and reported for manual review. Running client processes may retain a connection until restarted.</p><p>Installation downloads only the catalog's pinned package. Your project network policy still applies. CodeGraph verification runs isolated C/C++ conformance checks on Windows. Started installation or verification may finish after closing this panel.</p></section></main>
 <script nonce="${nonce}" src="${script}"></script></body></html>`;
@@ -65,6 +66,7 @@ function createPluginHost({ vscode, context, runtime, root, alive, post }) {
     const plugins = IDS.map(id => {
       const value = state.plugins?.find(item => item.id === id) ?? {};
       return { id, enabled: value.enabled === true, installed: value.installed === true,
+        control: value.control ? { active_count: value.control.active_count, pending_action: value.control.pending_action } : null,
         version: text(value.version), availability: availabilityStates.has(value.availability) ? value.availability : 'blocked',
         reason: knownReasons.has(value.reason) ? value.reason : null,
         last_probe: value.last_probe ? { ok: value.last_probe.ok === true || value.last_probe.status === 'passed',
@@ -76,15 +78,22 @@ function createPluginHost({ vscode, context, runtime, root, alive, post }) {
   }
   async function handle(message) {
     if (!alive() || busy || !message || typeof message !== 'object' || message.type !== 'plugin-action') return;
-    if (!['refresh', 'select-vscode', 'enable', 'disable', 'install', 'probe', 'connect', 'disconnect'].includes(message.action)) return;
-    if (!['refresh', 'select-vscode'].includes(message.action) && !IDS.includes(message.plugin)) return;
+    if (!['refresh', 'select-vscode', 'native-capabilities', 'enable', 'disable', 'remove', 'install', 'probe', 'connect', 'disconnect'].includes(message.action)) return;
+    if (!['refresh', 'select-vscode', 'native-capabilities'].includes(message.action) && !IDS.includes(message.plugin)) return;
     if (['connect', 'disconnect'].includes(message.action) && !CLIENTS.includes(message.client)) return;
     busy = true;
     await send({ type: 'plugin-busy', busy: true });
-    let notice = '';
+    let notice = '', deferred = false;
     try {
       if (!alive()) return;
-      if (message.action === 'select-vscode') {
+      if (message.action === 'native-capabilities') {
+        await vscode.commands.executeCommand('workforce.capabilities.manage');
+      } else if (message.action === 'remove') {
+        const result = await runtime.removePlugin(root, message.plugin, targets());
+        deferred = result.control?.state === 'deferred';
+        notice = deferred ? `Removal queued for ${result.control.active_count} retained holder(s). New work cannot select it; active work keeps its frozen resources.`
+          : 'Plug-in deactivated and owned registrations removed. Pinned cache and verification history retained; edited or unrelated settings preserved.';
+      } else if (message.action === 'select-vscode') {
         const userDirectory = platform() === 'win32' ? join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'Code', 'User')
           : platform() === 'darwin' ? join(homedir(), 'Library', 'Application Support', 'Code', 'User') : join(homedir(), '.config', 'Code', 'User');
         const pickerOptions = { title: 'Choose existing or new MCP settings for your active VS Code profile',
@@ -118,7 +127,9 @@ function createPluginHost({ vscode, context, runtime, root, alive, post }) {
         }
         if (!alive()) return;
         // Refusal must leave client registrations intact; cleanup follows revocation.
-        await runtime.setPluginEnabled(root, message.plugin, false);
+        const changed = await runtime.setPluginEnabled(root, message.plugin, false);
+        const control = changed?.plugins?.find(item => item.id === message.plugin)?.control;
+        deferred = control?.state === 'deferred';
         for (const client of CLIENTS) {
           if (!alive()) return;
           try {
@@ -127,7 +138,8 @@ function createPluginHost({ vscode, context, runtime, root, alive, post }) {
           } catch { unresolved++; }
         }
         if (!alive()) return;
-        notice = unresolved ? 'WorkForce provider disabled. Some client entries could not be removed; review their status and restart affected clients.'
+        notice = deferred ? `Disable queued for ${control.active_count} retained holder(s). New work cannot select it; active work keeps its frozen resources.`
+          : unresolved ? 'WorkForce provider disabled. Some client entries could not be removed; review their status and restart affected clients.'
           : 'WorkForce provider disabled and owned registrations removed. Restart affected clients to close existing MCP processes.';
       } else if (message.action === 'enable') {
         await runtime.setPluginEnabled(root, message.plugin, true);
@@ -144,13 +156,15 @@ function createPluginHost({ vscode, context, runtime, root, alive, post }) {
           notice = 'Choose the MCP settings file for your active VS Code profile first.';
         } else {
           const result = await runtime.setPluginConnection(root, { plugin: message.plugin, client: message.client, connected: message.action === 'connect' }, targets());
-          notice = ['conflict', 'blocked', 'unmanaged', 'unavailable'].includes(result?.status)
+          deferred = result.control?.state === 'deferred';
+          notice = deferred ? `Disconnect queued for ${result.control.active_count} retained holder(s). Existing resources stay available to active work.`
+            : ['conflict', 'blocked', 'unmanaged', 'unavailable'].includes(result?.status)
             ? 'Connection change requires review. Existing unowned or edited settings were preserved.'
             : 'Client configuration updated. Restart its MCP server and start a new chat.';
         }
       }
       if (!alive()) return;
-      if (['enable', 'disable', 'install', 'probe', 'connect', 'disconnect'].includes(message.action) && typeof runtime.updateProject === 'function') {
+      if (!deferred && ['enable', 'disable', 'remove', 'install', 'probe', 'connect', 'disconnect'].includes(message.action) && typeof runtime.updateProject === 'function') {
         try {
           const refreshed = await runtime.updateProject(root);
           if (refreshed?.conflicts?.length) notice += ' Edited generated profiles were preserved; review WorkForce update candidates.';

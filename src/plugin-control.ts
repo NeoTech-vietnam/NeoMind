@@ -3,6 +3,7 @@ import { join, dirname, basename, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { atomicWrite, hash, now, readConfig, safePath, withOperationLock } from './storage.js';
@@ -10,6 +11,8 @@ import { invocationIsActive, readInvocation } from './routing.js';
 import { readToolPolicy, installProvider, readInstalledProvider, toolCatalog, closeCapabilitySessions, type ProviderId } from './tools.js';
 import { configureRea, reaPin, reaRegistration, reaStatus, probeRea, readReaConfiguration } from './rea.js';
 import { loadCodeGraphConfiguration, adapterNodeCommand } from './adapters.js';
+import { acquireNativeCapabilityLease, assertNativeCapabilityMutable, readNativeCapabilityControl, releaseNativeCapabilityLease,
+  withNativeCapabilityControl, type NativeCapabilityControl } from './native-capability-leases.js';
 
 type Server = { command: string; args: string[]; env?: Record<string, string> };
 export interface PluginRegistration {
@@ -19,6 +22,7 @@ export interface PluginStatus {
   id: ProviderId; name: string; version: string; enabled: boolean; installed: boolean;
   availability: 'disabled' | 'missing' | 'installed' | 'ready' | 'blocked'; reason?: string;
   last_probe?: { at: string; status: 'passed'; tool_count: number };
+  control?: NativeCapabilityControl;
 }
 const names: Record<ProviderId, string> = { rea: 'REA', codegraph: 'CodeGraph', context7: 'Context7', playwright: 'Playwright' };
 function provider(id: string) {
@@ -136,7 +140,9 @@ export function readPluginControlStatus(root: string): { schema_version: 1; plug
       } else last_probe = observation(root, item.id, registration.server!);
     }
     const availability = registration.status === 'missing' && isInstalled ? 'installed' : registration.status;
+    const control = readNativeCapabilityControl(root, `mcp:${item.id}`);
     return { id: item.id, name: names[item.id], version: item.version, enabled: isEnabled, installed: isInstalled,
+      ...(control.active_count || !control.new_admissions ? { control } : {}),
       availability, ...(registration.reason ? { reason: registration.reason } : {}), ...(last_probe ? { last_probe } : {}) };
   }) };
 }
@@ -144,7 +150,11 @@ export function readPluginControlStatus(root: string): { schema_version: 1; plug
 export function setPluginEnabled(root: string, id: string, value: boolean): ReturnType<typeof readPluginControlStatus> {
   const item = provider(id);
   if (typeof value !== 'boolean') throw new Error('Plug-in enabled must be a boolean.');
+  withPluginConfigurationLock(root, () => {}); // Preserve the legacy receipt guard before queuing.
+  withNativeCapabilityControl(root, { key: `mcp:${item.id}`, action: value ? 'enable' : 'disable' }, () => {
   withPluginConfigurationLock(root, () => {
+    if (value && enabled(root, item.id)) return; // Cancel pending shutdown without rewriting a live policy baseline.
+    if (readNativeCapabilityControl(root, `mcp:${item.id}`).active_count) throw new Error('CAPABILITY_IN_USE');
     const policy = readToolPolicy(root) ?? { schema_version: 1 as const, automatic_install: true, approved_providers: [] as ProviderId[] };
     // Parse the complete REA configuration before changing policy, preserving the verified baseline.
     let rea: Record<string, unknown> | undefined;
@@ -162,23 +172,29 @@ export function setPluginEnabled(root: string, id: string, value: boolean): Retu
   });
   // Invocation gateway rechecks policy before every call; close cached sessions too.
   if (!value) void closeCapabilitySessions(root);
+  });
   return readPluginControlStatus(root);
 }
 export async function installPlugin(root: string, id: string): Promise<ReturnType<typeof readPluginControlStatus>> {
   const item = provider(id);
+  assertNativeCapabilityMutable(root, `mcp:${item.id}`);
   if (process.versions.electron) return runPluginNodeWorker(root, 'install', item.id);
+  await withPluginMaintenance(root, item.id, 'install', async () => {
   withPluginConfigurationLock(root, () => {
     if (!enabled(root, item.id)) throw new Error('Enable the plug-in before installing it.');
     // Explicit install never silently changes automatic-install or network policy.
     installProvider(root, item.id);
   });
   if (item.id === 'rea') await configureRea(root, { enabled: true });
+  });
   return readPluginControlStatus(root);
 }
 /** Target-free handshake and tools/list only; never invokes browser, indexing or analysis tools. */
 export async function probePlugin(root: string, id: string): Promise<ReturnType<typeof readPluginControlStatus>> {
   const item = provider(id);
+  assertNativeCapabilityMutable(root, `mcp:${item.id}`);
   if (process.versions.electron) return runPluginNodeWorker(root, 'probe', item.id);
+  await withPluginMaintenance(root, item.id, 'probe', async () => {
   if (item.id === 'codegraph') {
     let configured = false;
     try { configured = Boolean(loadCodeGraphConfiguration(root)); } catch { /* Explicit Verify may regenerate conformance. */ }
@@ -189,7 +205,7 @@ export async function probePlugin(root: string, id: string): Promise<ReturnType<
     if (!enabled(root, item.id)) throw new Error('Enable the plug-in before probing it.');
     if (item.id !== 'rea') { server = serverFor(root, item.id); digest = baseline(root, item.id, server); }
   });
-  if (item.id === 'rea') { await probeRea(root); return readPluginControlStatus(root); }
+  if (item.id === 'rea') { await probeRea(root); return; }
   const client = new Client({ name: 'neomind-plugin-control', version: '1.0.0' });
   const transport = new StdioClientTransport({ ...server, cwd: root,
     env: { ...getDefaultEnvironment(), ...server.env }, stderr: 'pipe', maxBufferSize: 2 * 1024 * 1024 });
@@ -216,7 +232,19 @@ export async function probePlugin(root: string, id: string): Promise<ReturnType<
     });
   } catch { throw new Error('Plug-in MCP verification failed. Check its pinned installation, prerequisite and required tools.'); }
   finally { await client.close().catch(() => {}); }
+  });
   return readPluginControlStatus(root);
+}
+
+/** The private host maintenance holder closes the admission race across async
+ * discovery/configuration. A crashed operation is retained for reconciliation;
+ * it is never expired because a PID or progress timer disappeared. */
+async function withPluginMaintenance(root: string, id: ProviderId, action: 'install' | 'probe', apply: () => Promise<void>): Promise<void> {
+  const owner = { request_ref: 'host-plugin-maintenance', assignment_ref: `maintenance-${randomUUID()}`, generation: 0 };
+  const ref = acquireNativeCapabilityLease(root, { owner, resources: [{ key: `mcp:${id}`, fingerprint: hash(JSON.stringify({ owner, action })) }] });
+  let settled = 'rejected';
+  try { await apply(); settled = 'resolved'; }
+  finally { releaseNativeCapabilityLease(root, ref, owner, { outcome_sha256: hash(JSON.stringify({ action, id, settled })) }); }
 }
 
 /** The extension host runs Electron; all package/probe subprocesses require a real Node CLI. */

@@ -7,7 +7,8 @@ import { pathToFileURL } from 'node:url';
 import { runInNewContext } from 'node:vm';
 
 const require = createRequire(import.meta.url);
-const source = readFileSync(new URL('../extensions/vscode-model-bridge/extension.cjs', import.meta.url), 'utf8');
+// Historical bridge lifecycle stays covered, but is excluded from native distribution.
+const source = readFileSync(new URL('../extensions/vscode-model-bridge/legacy-extension.cjs', import.meta.url), 'utf8');
 // Stub only dynamic import: custom VM import hooks otherwise need experimental Node flags.
 assert.equal([...source.matchAll(/\bimport\(/g)].length, 2);
 const executable = source.replaceAll('import(', 'importRuntime(');

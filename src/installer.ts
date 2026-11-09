@@ -157,7 +157,7 @@ function manifestFor(root: string): Manifest {
   if (manifest.schema_version !== 1 || !manifest.files || typeof manifest.files !== 'object')
     throw new Error('Unsupported installation manifest.');
   // Normalize inventory paths only; authored content and historical signed bytes stay intact.
-  if (readConfig(root).execution_engine === 'opencode') manifest.files = Object.fromEntries(Object.entries(manifest.files).map(([id, entry]) => [
+  if (['opencode', 'vscode-native'].includes(readConfig(root).execution_engine ?? '')) manifest.files = Object.fromEntries(Object.entries(manifest.files).map(([id, entry]) => [
     id.replace(/^\.(?:neomind|verythinker|taskforces)(?=\/|#|$)/, '.workforce'),
     { ...entry, path: entry.path.replace(/^\.(?:neomind|verythinker|taskforces)(?=\/|$)/, '.workforce') },
   ]));
@@ -545,13 +545,14 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
     save(safePath(root, '.workforce/automation.json'), JSON.stringify(nativeAutomationPolicy(
       selectedPlatforms.includes('codex') && !selectedPlatforms.includes('copilot') ? 'codex' : 'copilot'), null, 2) + '\n');
   ensureAutomationPolicy(root);
+  const nativeExecution = readConfig(root).execution_engine === 'vscode-native';
   const policyPaths = [
-    '.workforce/routing.json',
+    ...(!nativeExecution ? ['.workforce/routing.json'] : []),
     '.workforce/archive.json',
     '.workforce/tools.json',
   ];
   const newPolicyPaths = policyPaths.filter((path) => !existsSync(safePath(root, path)));
-  const defaultLocal = workforce && readConfig(root).execution_engine === 'opencode' &&
+  const defaultLocal = workforce && ['opencode', 'vscode-native'].includes(readConfig(root).execution_engine ?? '') &&
     selectedPlatforms.includes('copilot') && config.copilot_integration === undefined;
   if (defaultLocal) config.copilot_integration = 'local';
   if (options.platforms) config.platforms = options.platforms;
@@ -582,11 +583,15 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
     const exclusions = ensureLocalGitExclusions(root);
     if (exclusions.changed && exclusions.path) report.updated.push(exclusions.path);
     if (exclusions.warning) report.warnings.push(exclusions.warning);
-    report.warnings.push(controlled
+    report.warnings.push(nativeExecution || ['opencode', 'vscode-native'].includes(readConfig(root).execution_engine ?? '')
+      ? 'The exact-project WorkForce MCP server is configured in .vscode/mcp.json for status and experience. Native Local tools execute requests. Reload/start the server to observe discovery; review existing User registrations before adding a duplicate.'
+      : controlled
       ? 'Controlled mode registers the exact-project WorkForce server in .vscode/mcp.json, preserving authored siblings and conflict candidates. Reload/start the server and verify actual tool discovery in VS Code; generated registration is not an active connection. Existing tracked MCP files remain tracked.'
       : 'Local Copilot mode does not register an MCP server. Review .workforce/mcp-server.json and register its server in VS Code user-profile MCP configuration.');
     if (['.github/copilot-instructions.md', '.vscode/mcp.json', '.mcp.json'].some(path => existsSync(safePath(root, path))))
-      report.warnings.push(controlled
+      report.warnings.push(nativeExecution || ['opencode', 'vscode-native'].includes(readConfig(root).execution_engine ?? '')
+        ? 'Authored instructions and unrelated MCP entries are preserved. Review reported conflicts and any existing User WorkForce registration; a second manual registration is not required.'
+        : controlled
         ? 'Controlled registration preserves authored shared instructions and unrelated MCP entries. Review conflicts and any previously configured user-profile WorkForce server before enabling duplicate connections.'
         : 'Local Copilot integration preserves existing shared instructions and workspace MCP configuration. Review any previously configured WorkForce, TaskForces or VeryThinker integration before enabling the user-profile server.');
   }
@@ -596,7 +601,7 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
     strong_model: 'top-models', worker_models: ['worker-models'], strong_provider: 'customendpoint', worker_provider: 'customendpoint',
     strong_effort: 'high', worker_effort: 'low', vscode_effort_policy: 'allow-unavailable',
   }, null, 2) + '\n');
-  ensureRoutingPolicy(root);
+  if (!nativeExecution) ensureRoutingPolicy(root);
   ensureArchivePolicy(root);
   ensureToolPolicy(root);
   report.installed.push(...newPolicyPaths);
@@ -612,8 +617,8 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
           historical_routing:
             'Historical records, receipts and frozen contracts retain their original bytes and evidence. A WorkForce continuation links existing obligations through a fresh execution; installation does not rewrite pending record ownership or assurance.',
           new_work:
-            'Model aliases are configured in routing.json. New WorkForce projects use Local intake and runtime-owned OpenCode sessions; actual tool discovery and model access must be observed in the client.',
-          authored_overrides: 'preserved-legacy-mappings; routing.json controls strict model selection',
+            'New work uses vscode-native/v1 in VS Code Local. The editor owns subagents and model/tool execution; WorkForce owns engineering state and actual checks. Select native models or use per-role preferences; no routing alias, Model Bridge or catalog file is required.',
+          authored_overrides: 'Existing legacy model mappings remain unchanged for history; native role preferences belong to the current VS Code workspace.',
           pending_work: pendingMigration,
         },
         null,
@@ -627,7 +632,7 @@ function installProjectClaimed(root: string, options: InstallOptions): InstallRe
       'Force does not overwrite user edits. Review and apply update candidates explicitly.',
     );
   const outputs = [
-    ...resourceOutputs(readConfig(root).execution_engine === 'opencode'),
+    ...resourceOutputs(['opencode', 'vscode-native'].includes(readConfig(root).execution_engine ?? '')),
     ...adapterOutputs(root, config),
     ...[...strongRoles, ...workerRoles].map((role) => ({
       path: `.workforce/roles/${role}.capabilities.json`,
@@ -808,8 +813,10 @@ export function doctor(root: string): DoctorReport {
   root = realpathSync(resolve(root));
   const config = configFor(root);
   const warnings: string[] = [];
-  const controlled = controlledAdapterEnabled(root);
-  if (config.platforms.includes('copilot') && config.copilot_integration === 'local' && !controlled)
+  const nativeLocal = config.execution_engine === 'vscode-native' || config.platforms.includes('copilot') && config.copilot_integration === 'local';
+  const controlled = !nativeLocal && controlledAdapterEnabled(root);
+  if (nativeLocal) warnings.push('Use WF.PM in VS Code Local. The editor owns models, subagents and permissions; no Model Bridge connection, catalog file or routing alias is required. CLI/MCP status does not prove a live model call.');
+  if (!nativeLocal && config.platforms.includes('copilot') && config.copilot_integration === 'local' && !controlled)
     warnings.push('Local Copilot mode requires VS Code user-profile MCP registration. .workforce/mcp-server.json is example metadata only; no registered connection or successful tool call is inferred.');
   if (controlled) warnings.push('Controlled execution requires the trusted exact workspace open in VS Code and its Model Bridge enabled. Config files do not prove this client loaded the server or discovered/invoked its tools. Codex is an entrypoint; worker sessions use the VS Code LM Bridge and do not rewrite the parent Codex provider.');
   let codegraph: typeof codeGraphProvider | CodeGraphConfiguration = codeGraphProvider;

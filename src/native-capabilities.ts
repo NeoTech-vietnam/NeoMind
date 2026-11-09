@@ -33,7 +33,7 @@ export const DEFAULT_NATIVE_CAPABILITY_SOURCES: readonly NativeCapabilitySource[
 })]);
 const packageName = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/);
 export const nativeCapabilityInputSchema = z.strictObject({
-  action: z.enum(['search', 'inspect', 'install', 'status']), query: z.string().trim().min(1).max(2000).describe('Required for search.').optional(),
+  action: z.enum(['search', 'inspect', 'install', 'status', 'package-status', 'package-inspect', 'package-prepare']), query: z.string().trim().min(1).max(2000).describe('Required for search.').optional(),
   source: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).describe('An approved source_name returned by discovery/status; never a URL.').optional(),
   package: packageName.describe('Exact catalog candidate name; required for inspect/install.').optional(),
   skill: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).describe('Exact SKILL.md frontmatter name; required for install or actual-content inspection.').optional(),
@@ -42,6 +42,8 @@ export const nativeCapabilityInputSchema = z.strictObject({
   if (value.action === 'search' && !value.query) ctx.addIssue({ code: 'custom', message: 'Search requires a query.' });
   if (['inspect', 'install'].includes(value.action) && !value.package) ctx.addIssue({ code: 'custom', message: 'Select an exact catalog package name.' });
   if (value.action === 'install' && !value.skill) ctx.addIssue({ code: 'custom', message: 'Select the exact SKILL.md frontmatter name.' });
+  if (['package-inspect', 'package-prepare'].includes(value.action) && (!value.source || !value.package))
+    ctx.addIssue({ code: 'custom', message: 'Select exact professional source and package names from package-status; never provide pins or paths.' });
 });
 export const nativeCapabilityJsonSchema = z.toJSONSchema(nativeCapabilityInputSchema, { io: 'input', target: 'draft-7' });
 export interface NativeCapabilityOptions {
@@ -50,6 +52,8 @@ export interface NativeCapabilityOptions {
   readPolicy?: (root: string) => { network_policy?: 'local-only' | 'remote-enabled' };
   /** Host checks its current User policy, workspace ownership and disposal. */
   isCurrent?: () => boolean;
+  nativePackages?: { status: () => unknown; inspect: (selection: { source: string; package: string }, signal?: AbortSignal) => Promise<unknown>;
+    prepare: (selection: { source: string; package: string }, signal?: AbortSignal) => Promise<unknown> };
 }
 class CapabilityRefusal extends Error {
   constructor(readonly code: string) { super(code); }
@@ -127,6 +131,15 @@ export async function manageNativeCapabilities(root: string, input: unknown, opt
   const parsed = nativeCapabilityInputSchema.safeParse(input);
   if (!parsed.success) return fallback('unknown', 'INVALID_INPUT');
   const request = parsed.data;
+  if (request.action.startsWith('package-')) {
+    if (!options.nativePackages) return fallback(request.action, 'NATIVE_PACKAGE_HOST_UNAVAILABLE');
+    try {
+      if (options.signal?.aborted || options.isCurrent && options.isCurrent() !== true) return fallback(request.action, 'CANCELLED');
+      const result = request.action === 'package-status' ? options.nativePackages.status() : await options.nativePackages[request.action === 'package-inspect' ? 'inspect' : 'prepare'](
+        { source: request.source!, package: request.package! }, options.signal);
+      return { action: request.action, result, fallback: 'ordinary-work' as const, loaded: 'not-observed', used: 'not-observed', verified: 'not-observed' };
+    } catch { return fallback(request.action, options.signal?.aborted ? 'CANCELLED' : 'NATIVE_PACKAGE_OPTIONAL_UNAVAILABLE'); }
+  }
   const policies = z.array(sourceSchema).max(32).safeParse(options?.sources);
   if (!policies.success || new Set(policies.data.map(source => source.name)).size !== policies.data.length)
     return fallback(request.action, 'INVALID_SOURCE_POLICY');

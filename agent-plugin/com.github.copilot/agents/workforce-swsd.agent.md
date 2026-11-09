@@ -2,7 +2,7 @@
 name: "WF.SWSD"
 description: "Define requirements, scope and observable acceptance criteria."
 tools: ["read","search","workforceRoleSWSD"]
-agents: ["WF.SWSD Worker"]
+agents: ["*"]
 user-invocable: true
 disable-model-invocation: true
 ---

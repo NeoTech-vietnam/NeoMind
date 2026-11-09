@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "wf-native-package-fixture",
+  "version": "1.0.0",
+  "description": "Bounded native package lifecycle fixture: one skill, one agent and one MCP server.",
+  "author": { "name": "WorkForce maintainers" },
+  "license": "MIT"
+}

@@ -13,14 +13,16 @@ function harness(overrides = {}) {
   const runtime = {
     readPluginControlStatus: async () => ({ plugins: [{ id: 'rea', enabled: true, installed: true, version: '6.7.0', availability: 'ready', api_key: 'SECRET', last_probe: { ok: true, checked_at: '2026-10-24', tool_count: 4 } }] }),
     readPluginConnections: async (_root, targets) => { calls.push(['read-connections', targets]); return [{ plugin: 'rea', client: 'codex', status: 'connected', command: 'SECRET' }]; },
-    setPluginEnabled: async (...args) => { calls.push(['enable', ...args]); },
+    setPluginEnabled: async (...args) => { calls.push(['enable', ...args]); return { plugins: [{ id: args[1], enabled: args[2], control: { state: 'apply-now', active_count: 0 } }] }; },
+    removePlugin: async (...args) => { calls.push(['remove', ...args]); return { control: { state: 'apply-now', active_count: 0 } }; },
     installPlugin: async (...args) => { calls.push(['install', ...args]); },
     probePlugin: async (...args) => { calls.push(['probe', ...args]); return { ok: true }; },
     setPluginConnection: async (...args) => { calls.push(['connection', ...args]); return { status: args[1].connected ? 'connected' : 'disconnected' }; },
     updateProject: async () => { calls.push(['update']); return { conflicts: [] }; },
     ...overrides,
   };
-  const vscode = { Uri: { file: fsPath => ({ scheme: 'file', fsPath }) }, window: { showOpenDialog: async () => chosen } };
+  const vscode = { Uri: { file: fsPath => ({ scheme: 'file', fsPath }) }, window: { showOpenDialog: async () => chosen },
+    commands: { executeCommand: async (...args) => { calls.push(['command', ...args]); } } };
   const context = { workspaceState: { get: key => storage.get(key), update: async (key, value) => storage.set(key, value) } };
   const host = createPluginHost({ vscode, context, runtime, root: join(tmpdir(), 'project'), alive: () => active, post: async item => sent.push(item) });
   return { host, sent, calls, runtime, storage, vscode, setActive: value => { active = value; }, select: value => { chosen = value; },
@@ -88,6 +90,53 @@ test('refused provider revocation does not disconnect any client', async () => {
   assert.equal(app.calls.some(item => item[0] === 'connection'), false);
   assert.equal(app.calls.some(item => item[0] === 'update'), false);
   assert.ok(app.sent.some(item => item.error && item.message.includes('active WorkForce work')));
+});
+
+test('deferred disable reports pending work without rewriting project profiles or claiming it was applied', async () => {
+  const app = harness({
+    setPluginEnabled: async (...args) => { app.calls.push(['enable', ...args]); return { plugins: [{ id: 'rea',
+      control: { state: 'deferred', active_count: 2, pending_action: 'disable', new_admissions: false } }] }; },
+    setPluginConnection: async (...args) => { app.calls.push(['connection', ...args]); return { status: 'deferred',
+      control: { state: 'deferred', active_count: 2, pending_action: 'disconnect' } }; },
+  });
+  await app.send('disable', { plugin: 'rea' });
+  assert.equal(app.calls.filter(call => call[0] === 'enable').length, 1);
+  assert.equal(app.calls.some(call => call[0] === 'update'), false);
+  const notice = app.sent.find(item => item.type === 'plugin-notice');
+  assert.match(notice.message, /Disable queued for 2 retained holder/);
+  assert.doesNotMatch(notice.message, /provider disabled|registrations removed/i);
+  assert.ok(app.sent.some(item => item.type === 'plugin-snapshot' && item.plugins.length === 4));
+});
+
+test('removal and disconnect defer their actual changes without generating new project profiles', async () => {
+  for (const action of ['remove', 'disconnect']) {
+    const control = { state: 'deferred', active_count: 1, pending_action: action, new_admissions: false };
+    const app = harness({
+      removePlugin: async (...args) => { app.calls.push(['remove', ...args]); return { control }; },
+      setPluginConnection: async (...args) => { app.calls.push(['connection', ...args]); return { status: 'deferred', control }; },
+    });
+    await app.send(action, { plugin: 'rea', ...(action === 'disconnect' ? { client: 'codex' } : {}) });
+    assert.equal(app.calls.some(call => call[0] === 'update'), false, action);
+    const notice = app.sent.find(item => item.type === 'plugin-notice');
+    assert.match(notice.message, /queued for 1 retained holder/);
+    assert.doesNotMatch(notice.message, /deactivated and owned registrations removed|Client configuration updated/);
+  }
+});
+
+test('native-capabilities dispatch opens the native picker without granting policy or updating project profiles', async () => {
+  const app = harness();
+  await app.send('native-capabilities', { plugin: 'forged', root: '/bad', connectors: ['forged'] });
+  assert.deepEqual(app.calls.filter(call => call[0] === 'command'), [['command', 'workforce.capabilities.manage']]);
+  assert.equal(app.calls.some(call => ['enable', 'connection', 'remove', 'install', 'update'].includes(call[0])), false);
+});
+
+test('applied removal uses only the built-in catalog id and native-owned client targets', async () => {
+  const app = harness();
+  await app.send('remove', { plugin: 'context7', targets: { codex: '/bad' }, command: '/bad' });
+  const call = app.calls.find(item => item[0] === 'remove');
+  assert.equal(call[2], 'context7'); assert.notEqual(call[3].codex, '/bad');
+  assert.equal(app.calls.filter(item => item[0] === 'update').length, 1);
+  assert.match(app.sent.find(item => item.type === 'plugin-notice').message, /registrations removed/);
 });
 
 test('disable adopts only exact existing unmanaged connections before revocation', async () => {
@@ -175,7 +224,7 @@ class Element {
   click() { if (!this.disabled) this.listeners.get('click')?.(); }
 }
 test('real webview controller renders four plug-ins, dispatches toggles and blocks duplicate actions', () => {
-  const elements = new Map(['refresh', 'select-vscode', 'plugins', 'notice', 'vscode-target'].map(id => [id, new Element('div')]));
+  const elements = new Map(['refresh', 'select-vscode', 'native-capabilities', 'plugins', 'notice', 'vscode-target'].map(id => [id, new Element('div')]));
   let receive; const sent = [];
   runInNewContext(readFileSync(new URL('../extensions/vscode-model-bridge/resources/monitor/plugins.js', import.meta.url), 'utf8'), {
     acquireVsCodeApi: () => ({ postMessage: value => sent.push(JSON.parse(JSON.stringify(value))) }),
@@ -191,12 +240,20 @@ test('real webview controller renders four plug-ins, dispatches toggles and bloc
   assert.deepEqual(sent.at(-1), { type: 'plugin-action', action: 'disable', plugin: 'rea' });
   const connections = rea.children[5]; connections.children[0].children[2].click();
   assert.deepEqual(sent.at(-1), { type: 'plugin-action', action: 'disconnect', plugin: 'rea', client: 'codex' });
+  actions.children[3].click();
+  assert.deepEqual(sent.at(-1), { type: 'plugin-action', action: 'remove', plugin: 'rea' });
+  elements.get('native-capabilities').click();
+  assert.deepEqual(sent.at(-1), { type: 'plugin-action', action: 'native-capabilities' });
   receive({ type: 'plugin-snapshot', vscode_selected: true, plugins: [{ id: 'rea', enabled: true, installed: true, version: '6.7.0', availability: 'installed', last_probe: null, connections: [{ client: 'codex', status: 'connected' }, { client: 'copilot-cli', status: 'disconnected' }] }] });
   assert.equal(connections.children[0].children[2].disabled, false, 'Existing connection can be disconnected before a fresh probe');
   assert.equal(connections.children[2].children[2].disabled, true, 'An unverified installation cannot be newly connected');
-  receive({ type: 'plugin-busy', busy: true }); actions.children[0].click(); assert.equal(sent.length, 2);
+  receive({ type: 'plugin-snapshot', vscode_selected: true, plugins: [{ id: 'rea', enabled: true, installed: true, availability: 'ready',
+    control: { pending_action: 'remove', active_count: 2 }, last_probe: null, connections: [] }] });
+  assert.match(rea.children[6].textContent, /remove pending · 2 retained holder/);
+  receive({ type: 'plugin-busy', busy: true }); actions.children[0].click(); elements.get('native-capabilities').click(); assert.equal(sent.length, 4);
   receive({ type: 'plugin-notice', message: '<img src=x onerror=bad()>' });
   assert.equal(elements.get('notice').textContent, '<img src=x onerror=bad()>');
   const html = renderPluginPanelHtml({ cspSource: 'webview:', script: 'plugins.js', style: 'plugins.css', nonce: 'fixed' });
+  assert.match(html, /id="native-capabilities"/);
   assert.match(html, /default-src 'none'/); assert.match(html, /script-src 'nonce-fixed'/); assert.doesNotMatch(html, /unsafe-inline/);
 });

@@ -75,3 +75,22 @@ test('monitor motion styles honor the VS Code body preference independently of t
       assert.match(declarations.get(property), new RegExp(`^${value}\\s*!important$`), property);
   }
 });
+
+test('implementation rework is visible only from an explicit backend repairing milestone', () => {
+  const { elements } = documentFixture(['diagram']);
+  const renderer = universe.create(elements.get('diagram'));
+  const rework = descendants(elements.get('diagram')).find(node => node.classList.contains('v-rework'));
+  assert.ok(rework, 'The V-model includes an explicit implementation repair route');
+  for (const request of [{ status: 'repairing' }, { stages: [{ id: 'coding', state: 'running' }] },
+    { stages: [{ id: 'coding', state: 'completed' }], review: { state: 'failed' } }]) {
+    renderer.setData(request);
+    assert.equal(rework.dataset.state, 'pending', 'A phase label or finding does not invent an active repair');
+    assert.equal(rework.getAttribute('aria-hidden'), 'true');
+  }
+  renderer.setData({ stages: [{ id: 'coding', state: 'repairing' }], review: { state: 'failed' } });
+  assert.equal(rework.dataset.state, 'repairing');
+  assert.equal(rework.getAttribute('aria-hidden'), 'false');
+  assert.match(rework.textContent, /implementation repair/i);
+  renderer.setData({ stages: [{ id: 'coding', state: 'completed' }] });
+  assert.equal(rework.dataset.state, 'pending');
+});
