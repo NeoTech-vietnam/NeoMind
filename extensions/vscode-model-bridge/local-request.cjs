@@ -5,6 +5,16 @@ const { observeNativeCall, observeNativeChecks, observeNativeQueue } = require('
 const roles = ['WF.FnD', 'WF.Reviewer', 'WF.Tester'];
 const issue = (code, category, message) => ({ code, category, message });
 const backendIssue = () => issue('NATIVE_BACKEND_FAILED', 'backend', 'The runtime could not confirm the next operation. Verified delivery is not claimed.');
+const editorRecoveryIssue = error => {
+  const messages = {
+    EDITOR_EFFECTS_UNCONFIRMED: 'The prior editor did not retain a settled native outcome or drained checker checkpoint. Existing effects are uncertain; no work was replayed.',
+    EDITOR_INPUTS_CHANGED: 'Source, products, checker inputs or selected guidance changed after the editor stopped. Retained work needs reconciliation; no evidence was reused or files overwritten.',
+    EDITOR_CHECK_RECONCILIATION_REQUIRED: 'The interrupted checker has unresolved non-cancellation findings or stale independent inspections. No check or model was replayed.',
+    NATIVE_REPAIR_ALLOWANCE_EXHAUSTED: 'The configured implementation repair allowance is spent. Retained products and findings were preserved; no new worker was started.',
+  };
+  return Object.hasOwn(messages, error?.code) ? issue(error.code,
+    error.code === 'NATIVE_REPAIR_ALLOWANCE_EXHAUSTED' ? 'product-repair' : 'interruption', messages[error.code]) : undefined;
+};
 const selectedSkillIssue = error => ['SELECTED_SKILL_UNAVAILABLE', 'SELECTED_SKILL_CHANGED'].includes(error?.code)
   ? issue(error.code, 'capability', error.code === 'SELECTED_SKILL_UNAVAILABLE'
     ? 'An explicitly selected workspace skill is missing, disabled, ambiguous or unavailable. Select an installed current skill, or omit optional skills to use ordinary project tools.'
@@ -174,9 +184,9 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
     }
     try {
       if (requestToResume) {
+        remember(await runtime.getNativeRequest(root, requestToResume)); requestRef = state.request_ref;
         let evidencePrepared = false;
         if (!recheckOnly && typeof runtime.reassessNativeTesterFindings === 'function') {
-          remember(await runtime.getNativeRequest(root, requestToResume)); requestRef = state.request_ref;
           evidencePrepared = await reassessEvidence(true);
           if (cancelled()) return interrupt(cancellationIssue());
           if (!evidencePrepared && evidenceReassessment?.code !== 'TESTER_EVIDENCE_NOT_ELIGIBLE' && evidenceReassessment) {
@@ -251,7 +261,13 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
         const outcome = await invoke({ agentName: job.agentName, prompt: job.prompt, description: job.description,
           ...(preference ? { model: { id: preference.id, vendor: preference.vendor } } : {}) },
           toolInvocationToken, operation, metadata => observeNativeCall(root, requestRef, job.assignment_ref, metadata), requestRef, job.assignment_ref,
-          Object.values(state.skill_contexts ?? {}).some(contexts => contexts.length)
+          state.editor_recovery?.status === 'prepared'
+            ? () => {
+              if (typeof runtime.assertNativeEditorRecoveryCurrent !== 'function')
+                throw Object.assign(new Error('Matching native editor recovery runtime required'), { code: 'EDITOR_EFFECTS_UNCONFIRMED' });
+              return runtime.assertNativeEditorRecoveryCurrent(root, requestRef, job.assignment_ref);
+            }
+            : Object.values(state.skill_contexts ?? {}).some(contexts => contexts.length)
             ? () => runtime.assertNativeRequestSkillsCurrent?.(root, requestRef) : undefined);
         if (outcome.metadata.host_call_id) privateValues.add(outcome.metadata.host_call_id);
         if (outcome.metadata.invoked) {
@@ -305,7 +321,11 @@ function createLocalRequestRunner(vscode, runtime, root, options = {}) {
       }
       return result();
       }
-    } catch (error) { return interrupt(cancelled() ? cancellationIssue() : selectedSkillIssue(error) ?? backendIssue()); }
+    } catch (error) {
+      const recovery = editorRecoveryIssue(error);
+      if (!cancelled() && recovery?.code === 'NATIVE_REPAIR_ALLOWANCE_EXHAUSTED') return result(recovery);
+      return interrupt(cancelled() ? cancellationIssue() : selectedSkillIssue(error) ?? recovery ?? backendIssue());
+    }
   }
 
   function start(input, toolInvocationToken, cancellationToken, requestToResume, roleOnly = false, recheckOnly = false) {

@@ -46,6 +46,7 @@ export interface NativeAssignment {
   escalation?: 'native-parent';
 }
 interface Assignment extends NativeAssignment {
+  editor_generation?: number;
   revision: number;
   state: 'issued' | 'completed' | 'findings' | 'cancelled' | 'uncertain';
   baseline?: Fingerprints;
@@ -94,7 +95,10 @@ interface State {
   repair_attempts?: number;
   repair_context?: { reports: unknown[]; checks: { title: string; state: string; exit_code?: number | null; log_path?: string }[] };
   escalate_next?: boolean;
-  interruption?: { code: string; category: string; at: string };
+  interruption?: NativeInterruption;
+  interruption_history?: NativeInterruption[];
+  editor_generation?: number;
+  editor_recovery?: { generation: number; interruption_at: string; mode: 'roles' | 'checks'; status: 'prepared' | 'started'; assignment_ref?: string };
   accepted_hashes?: Fingerprints;
   final_report_id?: string;
   preservation_baseline?: Fingerprints;
@@ -113,6 +117,13 @@ interface State {
   reuse_execution?: NativeProcedureOutcome | { status: 'running' };
   learning?: NativeLearningResult;
   learning_history?: { at: string; result: NativeLearningResult }[];
+}
+interface NativeInterruption {
+  code: string;
+  category: string;
+  at: string;
+  /** Host-only, captured after actual native promises/check processes drained. */
+  editor_checkpoint?: { generation: number; effects_hash: string; inputs: Fingerprints; membership: string[] };
 }
 const requestPattern = /^[A-Z][A-Z0-9-]{1,100}-KNW-\d{4,}$/;
 const opaque = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{8,160}$/.test(value);
@@ -197,7 +208,8 @@ function matching(root: string, state: State, baseline?: Fingerprints, row?: Mon
   return !!state.plan && !!baseline && inputMapsMatch(root, state, fingerprints(root, Object.keys(baseline), row), baseline);
 }
 function ordinarySkillReceipts(root: string, state: State): string[] {
-  return nativeSkillReceiptDependencies(root, selectedSkills(state), state.context, state.plan?.checks.flatMap(check => check.command) ?? []);
+  return nativeSkillReceiptDependencies(root, selectedSkills(state), state.context, state.plan?.checks.flatMap(check => check.command) ?? [],
+    state.plan?.checks.map(check => check.command[0]!) ?? []);
 }
 function inputMapsMatch(root: string, state: State, actual?: Fingerprints, expected?: Fingerprints): boolean {
   return nativeSkillInputsMatch(root, selectedSkills(state), actual, expected, ordinarySkillReceipts(root, state));
@@ -523,6 +535,17 @@ export function assertNativePlanSkillsAvailable(root: string, plan: NativeReques
 export function assertNativeRequestSkillsCurrent(root: string, requestRef: string): void {
   assertNativeSkillsCurrent(root, selectedSkills(load(root, requestRef)));
 }
+/** A resumed partial is checked again after queue admission. This host-only
+ * method neither issues another assignment nor changes the ordinary fast path. */
+export function assertNativeEditorRecoveryCurrent(root: string, requestRef: string, assignmentRef: string): void {
+  locked(root, requestRef, state => {
+    if (state.editor_recovery?.assignment_ref !== assignmentRef) editorRecoveryFailure(root, state, 'EDITOR_EFFECTS_UNCONFIRMED');
+    const job = state.assignments.find(item => item.assignment_ref === assignmentRef);
+    if (job?.state !== 'issued' || job.editor_generation !== state.editor_generation)
+      editorRecoveryFailure(root, state, 'EDITOR_EFFECTS_UNCONFIRMED');
+    assertEditorRecoveryInputs(root, state);
+  });
+}
 export function nextNativeAssignment(root: string, requestRef: string): NativeAssignment | undefined {
   return locked(root, requestRef, state => {
     if (!state.plan || ['accepted', 'cancelled', 'uncertain', 'findings'].includes(state.status)) return;
@@ -530,6 +553,7 @@ export function nextNativeAssignment(root: string, requestRef: string): NativeAs
     const prior = state.assignments.at(-1);
     if (prior?.state === 'issued') return { assignment_ref: prior.assignment_ref, agentName: prior.agentName, prompt: prior.prompt, description: prior.description, ...(prior.escalation ? { escalation: prior.escalation } : {}) };
     const resumed = state.resume_role;
+    if (state.editor_recovery?.status === 'prepared') assertEditorRecoveryInputs(root, state);
     const role: Role | undefined = resumed ?? (!prior ? 'WF.FnD' : prior.agentName === 'WF.FnD' ? 'WF.Reviewer' : prior.agentName === 'WF.Reviewer' ? 'WF.Tester' : undefined);
     if (!role) return;
     if (role === 'WF.Tester' && state.tester_evidence?.status === 'tester-pending' &&
@@ -549,11 +573,15 @@ export function nextNativeAssignment(root: string, requestRef: string): NativeAs
     const skillPaths = new Set(Object.keys(nativeSkillPins(selectedSkills(state))));
     const ordinaryPreservation = Object.keys(state.preservation_baseline ?? {}).filter(path => !skillPaths.has(path));
     const assignment: Assignment = { assignment_ref: randomUUID(), agentName: role, revision: state.revision, state: 'issued', baseline,
+      editor_generation: state.editor_generation ?? 0,
       ...(state.escalate_next ? { escalation: 'native-parent' as const } : {}),
       ...(role !== 'WF.FnD' ? { context_membership: sourceMembership(root, state) } : {}),
       description: `${role}: ${state.title}`.slice(0, 200),
       prompt: `${scope}\n\nRole completion: your verdict covers only this assigned role. Independent review, host check execution and final acceptance are later host-owned steps; pending later steps are not findings about your own completed work.\nThe host captured SHA256 preservation baselines for ${Object.keys(state.preservation_baseline ?? {}).length} existing non-product files (examples: ${ordinaryPreservation.slice(0, 8).join(', ') || 'none'}). The host verifies these files and runs the planned checks. Focus on the scoped product; baseline scripts and persistent shell variables are unnecessary. Coverage includes ordinary files up to 20 MiB in the stated context directories and the workspace top level. Linked paths and unrelated unlisted directories are outside that baseline.\n\nRequest (whole workflow context):\n${state.requirement}\n\nPlan (mechanical baselines/check execution are supplied by the host):\n${JSON.stringify(state.plan, null, 2)}\n\nContext paths:\n${state.context.join('\n') || '(none)'}${nativeSkillPrompt(state.skill_contexts?.[role] ?? [])}\n\n${resumed ? `Retained prior role findings, for reconciliation rather than repetition:\n${JSON.stringify(prior?.report ?? null)}\n\n` : ''}${nativeProfessionalReportInstructions()}` };
     delete state.resume_role;
+    if (state.editor_recovery?.status === 'prepared') {
+      state.editor_recovery.status = 'started'; state.editor_recovery.assignment_ref = assignment.assignment_ref;
+    }
     if (reuse) {
       const instructions = nativeProfessionalReportInstructions();
       assignment.prompt = assignment.prompt.slice(0, -instructions.length) + reuse + '\n\n' + instructions;
@@ -794,6 +822,7 @@ async function performTesterReassessment(root: string, requestRef: string, optio
  * unchanged. Product/checker edits still require the ordinary repair path. */
 export function recheckNativeRequest(root: string, requestRef: string) {
   return locked(root, requestRef, state => {
+    if (recoverEditorInterruption(root, state, true)) return view(root, state);
     if (state.status === 'accepted' && view(root, state).accepted) return view(root, state);
     if (!state.plan || state.interruption || !['findings', 'uncertain', 'accepted'].includes(state.status) ||
         !state.checks.some(check => check.result) || state.checks.some(check => check.execution_id && !check.result))
@@ -823,8 +852,117 @@ export function getNativeRequestByKey(root: string, requestKey: string) {
   return getNativeRequest(root, folder.workflow_id);
 }
 
+/** A checkpoint is evidence of a settled host channel, not an inference that a
+ * missing editor or process must have stopped. No model supplies this proof. */
+function editorEffectsHash(root: string, state: State): string | undefined {
+  try {
+    if (!state.plan || state.plan_hash !== hash(canonical(state.plan)) || state.reuse_execution?.status === 'running') return;
+    const assignments = state.assignments.map(job => {
+      if (job.state === 'issued' || !job.result_hash || !job.report_record_id) throw new Error('Unobserved invocation');
+      const saved = getRecord(root, job.report_record_id), data = saved.meta.data;
+      if (data.workflow_id !== state.request_ref || data.native_assignment_ref !== job.assignment_ref) throw new Error('Unbound outcome');
+      if (job.invocation) {
+        if (job.invocation.invoked !== true || !['returned', 'rejected', 'cancelled'].includes(job.invocation.status) ||
+            !same(data.native_invocation, job.invocation)) throw new Error('Unconfirmed native end');
+      } else if (data.invoked !== false || !data.dispatch_failure) throw new Error('Unconfirmed preflight');
+      return { assignment_ref: job.assignment_ref, state: job.state, result_hash: job.result_hash,
+        invocation: job.invocation ?? null, record_sha256: hash(readFileSync(safePath(root, saved.path))) };
+    });
+    const checks = state.checks.map(check => {
+      if (!check.execution_id) return { record_id: check.record_id, state: check.state };
+      if (!check.result || check.state === 'running' || !check.log_path || !check.log_sha256 ||
+          fingerprints(root, [check.log_path])[check.log_path] !== check.log_sha256) throw new Error('Unknown check effects');
+      if (check.result.cancelled && check.result.exit_code === null && check.result.signal === null)
+        throw new Error('Checker process close was not observed');
+      return { record_id: check.record_id, execution_id: check.execution_id, state: check.state,
+        result: check.result, log_path: check.log_path, log_sha256: check.log_sha256 };
+    });
+    return hash(canonical({ generation: state.editor_generation ?? 0, plan_hash: state.plan_hash, assignments, checks }));
+  } catch { return; }
+}
+
+const editorRecoveryMessages = {
+  EDITOR_EFFECTS_UNCONFIRMED: 'The prior editor did not retain a settled native outcome or drained checker checkpoint. Existing effects are uncertain; no work was replayed.',
+  EDITOR_INPUTS_CHANGED: 'Source, products, checker inputs or selected guidance changed after the editor stopped. Retained work needs reconciliation; no evidence was reused or files overwritten.',
+  EDITOR_CHECK_RECONCILIATION_REQUIRED: 'The interrupted checker has unresolved non-cancellation findings or stale independent inspections. No check or model was replayed.',
+} as const;
+function editorRecoveryFailure(root: string, state: State, code: keyof typeof editorRecoveryMessages): never {
+  if (state.status !== 'uncertain') { state.status = 'uncertain'; save(root, state); }
+  throw Object.assign(new Error(editorRecoveryMessages[code]), { code });
+}
+function assertEditorRecoveryInputs(root: string, state: State): void {
+  const recovery = state.editor_recovery, interruption = state.interruption_history?.findLast(item => item.at === recovery?.interruption_at);
+  const checkpoint = interruption?.editor_checkpoint;
+  if (!recovery || !checkpoint || recovery.generation !== state.editor_generation || checkpoint.generation + 1 !== recovery.generation)
+    editorRecoveryFailure(root, state, 'EDITOR_EFFECTS_UNCONFIRMED');
+  if (!selectedSkillsCurrent(root, state) || !inputMapsMatch(root, state, checkInputs(root, state), checkpoint.inputs) ||
+      !currentMembership(root, state, checkpoint.membership) ||
+      state.preservation_baseline && !matching(root, state, state.preservation_baseline))
+    editorRecoveryFailure(root, state, 'EDITOR_INPUTS_CHANGED');
+}
+
+/** Only explicit same-request recovery of an editor-owned, observed end. User
+ * cancellation and unknown crash effects retain their original interruption. */
+function recoverEditorInterruption(root: string, state: State, recheckOnly: boolean): boolean {
+  const interruption = state.interruption;
+  if (!interruption) {
+    const prepared = state.status === 'working' && state.editor_recovery?.status === 'prepared' &&
+      state.editor_recovery.generation === state.editor_generation && (state.resume_checks === true || state.resume_role !== undefined);
+    if (prepared && recheckOnly && (state.editor_recovery!.mode !== 'checks' || !state.resume_checks))
+      throw Object.assign(new Error(editorRecoveryMessages.EDITOR_CHECK_RECONCILIATION_REQUIRED), { code: 'EDITOR_CHECK_RECONCILIATION_REQUIRED' });
+    if (prepared) assertEditorRecoveryInputs(root, state);
+    return prepared;
+  }
+  if (interruption.code !== 'EDITOR_CLOSED' || interruption.category !== 'cancellation') return false;
+  const checkpoint = interruption.editor_checkpoint;
+  if (!checkpoint || checkpoint.generation !== (state.editor_generation ?? 0) ||
+      checkpoint.effects_hash !== editorEffectsHash(root, state)) editorRecoveryFailure(root, state, 'EDITOR_EFFECTS_UNCONFIRMED');
+  if (!selectedSkillsCurrent(root, state) || !inputMapsMatch(root, state, checkInputs(root, state), checkpoint.inputs) ||
+      !currentMembership(root, state, checkpoint.membership) ||
+      state.preservation_baseline && !matching(root, state, state.preservation_baseline))
+    editorRecoveryFailure(root, state, 'EDITOR_INPUTS_CHANGED');
+  const roles: Role[] = ['WF.FnD', 'WF.Reviewer', 'WF.Tester'];
+  let unfinished: Role | undefined;
+  for (const role of roles) {
+    const job = state.assignments.findLast(item => item.agentName === role);
+    if (job?.state === 'completed' && job.report?.verdict === 'pass' && !job.report.findings.length) {
+      if (!matching(root, state, job.baseline) || !currentMembership(root, state, job.context_membership))
+        editorRecoveryFailure(root, state, 'EDITOR_INPUTS_CHANGED');
+    } else { unfinished = role; break; }
+  }
+  if (recheckOnly && unfinished) editorRecoveryFailure(root, state, 'EDITOR_CHECK_RECONCILIATION_REQUIRED');
+  const passedCurrent = (check: Check) => check.state === 'passed' && !!check.evidence_id && !!check.result &&
+    check.result.exit_code === 0 && !check.result.cancelled && !check.result.timed_out && !check.result.output_limited &&
+    !check.result.error && checkCurrent(root, state, check);
+  if (!unfinished && (!inspectionsCurrent(root, state) || state.checks.some(check => check.execution_id &&
+      (!check.result?.cancelled && !passedCurrent(check)))))
+    editorRecoveryFailure(root, state, 'EDITOR_CHECK_RECONCILIATION_REQUIRED');
+  const generation = (state.editor_generation ?? 0) + 1;
+  state.interruption_history ??= []; state.interruption_history.push(structuredClone(interruption));
+  state.editor_generation = generation;
+  state.editor_recovery = { generation, interruption_at: interruption.at, mode: unfinished ? 'roles' : 'checks', status: 'prepared' };
+  if (unfinished) { state.resume_role = unfinished; delete state.resume_checks; }
+  else {
+    state.checks = state.checks.map((check, index) => {
+      if (!check.execution_id || passedCurrent(check)) return check;
+      state.check_history ??= []; state.check_history.push(structuredClone(check));
+      const saved = record(root, state, `editor-recheck-${generation}-${index}`, 'check', check.title,
+        `Level: ${check.level}\n\nCommand argv:\n\n${JSON.stringify(check.command)}\n`, { task_id: state.task_id });
+      return { title: check.title, command: check.command, level: check.level, record_id: saved.meta.id, state: 'pending' };
+    });
+    state.resume_checks = true; delete state.resume_role;
+  }
+  delete state.interruption;
+  state.status = 'working';
+  record(root, state, `editor-recovery-${generation}`, 'knowledge', `${state.title}: reconcile stopped editor`,
+    `The actual editor-owned native channel or checker ended. Continue ${unfinished ?? 'current independent checks'} with unchanged criteria, retained partial products and unchanged repair allowance.\n`,
+    { editor_generation: generation, interruption, effects_hash: checkpoint.effects_hash, repair_attempt: state.repair_attempts ?? 0 });
+  save(root, state); return true;
+}
+
 function continueNativeRequest(root: string, requestRef: string, automatic: boolean) {
   return locked(root, requestRef, state => {
+    if (!automatic && recoverEditorInterruption(root, state, false)) return view(root, state);
     if (automatic && (!state.plan || state.interruption || !['findings', 'uncertain'].includes(state.status))) return view(root, state);
     if (!state.plan || state.interruption || !['findings', 'uncertain'].includes(state.status))
       fail('This continuation requires a retained unfinished native role result.');
@@ -833,14 +971,18 @@ function continueNativeRequest(root: string, requestRef: string, automatic: bool
     const failedChecks = state.checks.filter(check => check.state === 'failed' && check.result && !check.result.cancelled);
     const professional = prior.state === 'findings' && !!prior.report;
     const incomplete = prior.state === 'uncertain' && prior.invocation?.status === 'returned' && !prior.report;
-    if (automatic && (!failedChecks.length && !professional && !incomplete ||
-        (state.repair_attempts ?? 0) >= readConfig(root).repair_attempts)) return view(root, state);
+    const productRepair = failedChecks.length > 0 || professional || incomplete;
+    if (automatic && !productRepair) return view(root, state);
+    if (productRepair && (state.repair_attempts ?? 0) >= readConfig(root).repair_attempts) {
+      if (automatic) return view(root, state);
+      throw Object.assign(new Error('The configured implementation repair allowance is spent. Retained products and findings were preserved; no new worker was started.'),
+        { code: 'NATIVE_REPAIR_ALLOWANCE_EXHAUSTED' });
+    }
     if (state.checks.some(check => check.execution_id && !check.result)) {
       if (automatic) return view(root, state);
       fail('A prior check still has unconfirmed effects; it was not replayed.');
     }
-    if (automatic) state.repair_attempts = (state.repair_attempts ?? 0) + 1;
-    else state.repair_attempts = 0; // An explicit continuation is a fresh bounded execution, with history retained.
+    if (productRepair) state.repair_attempts = (state.repair_attempts ?? 0) + 1;
     delete state.resume_checks;
     state.resume_role = failedChecks.length || professional ? 'WF.FnD' : prior.agentName;
     state.escalate_next = automatic || professional || failedChecks.length > 0;
@@ -892,13 +1034,15 @@ export function recordNativeResult(root: string, input: { request_ref: string; a
       if (assignment.result_hash === digest) return view(root, state);
       fail('This native invocation already has a different retained outcome; no callback was overwritten.');
     }
+    if ((assignment.editor_generation ?? 0) !== (state.editor_generation ?? 0))
+      fail('An earlier editor generation cannot update the current assignment, task or acceptance.');
     if (state.assignments.some(item => item !== assignment && item.invocation &&
         (item.invocation.host_call_id === invocation.host_call_id ||
           (invocation.native_context_id != null && item.invocation.native_context_id === invocation.native_context_id))))
       fail('Independent roles require separate actual owned native invocations.');
     assignment.invocation = { ...invocation }; assignment.result_hash = digest; assignment.raw_text = text;
     if (adapterError) assignment.adapter_error = adapterError;
-    const stable = selectedSkillsCurrent(root, state) && (assignment.agentName === 'WF.FnD' ||
+    const stable = !state.interruption && selectedSkillsCurrent(root, state) && (assignment.agentName === 'WF.FnD' ||
       matching(root, state, assignment.baseline) && currentMembership(root, state, assignment.context_membership));
     assignment.report = report;
     assignment.state = invocation.status === 'cancelled' ? 'cancelled'
@@ -940,6 +1084,8 @@ export function recordNativeDispatchFailure(root: string, input: {
     const assignment = state.assignments.find(item => item.assignment_ref === input.assignment_ref);
     if (!assignment) fail('Dispatch failure does not belong to this request; no state changed.');
     if (assignment.result_hash) return view(root, state);
+    if ((assignment.editor_generation ?? 0) !== (state.editor_generation ?? 0))
+      fail('An earlier editor generation cannot update current dispatch state.');
     assignment.result_hash = hash(canonical({ code: input.code, category: input.category }));
     assignment.state = input.category === 'cancellation' || input.code === 'CANCELLED' ? 'cancelled' : 'uncertain';
     const saved = record(root, state, `dispatch-${assignment.assignment_ref}`, 'knowledge',
@@ -961,8 +1107,12 @@ export function interruptNativeRequest(root: string, requestRef: string, input: 
   return locked(root, requestRef, state => {
     if (state.status === 'accepted' || state.interruption) return view(root, state);
     state.interruption = { ...input, at: now() };
-    state.status = input.category === 'cancellation' || input.code === 'CANCELLED' ? 'cancelled' : 'uncertain';
-    record(root, state, 'interruption', 'knowledge', `${state.title}: execution interrupted`,
+    const effects = input.code === 'EDITOR_CLOSED' && input.category === 'cancellation' ? editorEffectsHash(root, state) : undefined;
+    if (effects) state.interruption.editor_checkpoint = { generation: state.editor_generation ?? 0, effects_hash: effects,
+      inputs: checkInputs(root, state), membership: sourceMembership(root, state) };
+    state.status = input.code === 'EDITOR_CLOSED' && !effects ? 'uncertain'
+      : input.category === 'cancellation' || input.code === 'CANCELLED' ? 'cancelled' : 'uncertain';
+    record(root, state, `interruption-${state.editor_generation ?? 0}`, 'knowledge', `${state.title}: execution interrupted`,
       `Code: ${input.code}\nCategory: ${input.category}\n\nSaved products and observed outcomes are retained. This interruption is not a missing product input.\n`,
       { interruption: state.interruption });
     save(root, state);
@@ -995,6 +1145,7 @@ export async function runNativeChecks(root: string, requestRef: string, options:
       if (check.state === 'passed' && checkCurrent(root, state, check)) return;
       if (check.execution_id) fail('A prior check execution is retained; automatic replay requires explicit reconciliation.');
       check.execution_id = randomUUID(); check.baseline = checkInputs(root, state);
+      if (state.editor_recovery) state.editor_recovery.status = 'started';
       check.generated_inputs = { ...(state.generated_hashes ?? {}) }; check.state = 'running'; save(root, state);
       return { ...structuredClone(check), cwd: root };
     });

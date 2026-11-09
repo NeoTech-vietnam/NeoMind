@@ -55,6 +55,57 @@ function snapshot(root) {
   });
 }
 
+function ntfsShortPath(t, root) {
+  if (process.platform !== 'win32') { t.skip('Requires the native Windows short-path API.'); return undefined; }
+  // Query the OS-created spelling only; never alter volume 8dot3 settings.
+  const probe = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', String.raw`
+Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; using System.Text; public static class WFSkillShortPathProbe { [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern uint GetShortPathName(string path, StringBuilder result, uint capacity); }'
+$result = New-Object System.Text.StringBuilder 32768
+$length = [WFSkillShortPathProbe]::GetShortPathName($env:WF_SKILL_SHORT_PATH_PROBE, $result, 32768)
+if ($length -eq 0 -or $length -ge 32768) { exit 7 }
+$result.ToString()
+`], { encoding: 'utf8', windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024,
+    env: { ...process.env, WF_SKILL_SHORT_PATH_PROBE: root } });
+  const alias = probe.stdout?.trim();
+  if (probe.status !== 0 || !alias || alias.toLowerCase() === root.toLowerCase() || !alias.includes('~')) {
+    t.skip('This owned temporary directory has no available distinct NTFS 8.3 alias; volume settings were not changed.');
+    return undefined;
+  }
+  assert.equal(fs.realpathSync.native(alias).toLowerCase(), root.toLowerCase(), 'The queried alias must identify this exact owned root.');
+  t.diagnostic(JSON.stringify({ query: 'GetShortPathNameW', short_root: alias, canonical_root: root, volume_settings_changed: false }));
+  return alias;
+}
+
+test('an actual NTFS short-path spelling can install, discover and control the same ordinary workspace', async t => {
+  const f = fixture(t), alias = ntfsShortPath(t, f.root);
+  if (!alias) return;
+  fs.writeFileSync(join(f.root, 'product.md'), 'Preserve product and history.');
+  const first = await installWorkspaceSkillComponents(alias, f.approval, f.reader);
+  assert.equal(first.components[0].state, 'installed');
+  assert.deepEqual(fs.readFileSync(join(f.target, 'SKILL.md')), skill);
+  const id = first.components[0].id, original = fs.readFileSync(f.receiptFile(id)), originalSha = createHash('sha256').update(original).digest('hex');
+  assert.equal(listWorkspaceSkillComponents(alias).components[0].available, true);
+  assert.equal(controlWorkspaceSkillComponent(alias, id, 'disable').components[0].state, 'disabled');
+  await installWorkspaceSkillComponents(alias, f.approval, f.reader);
+  assert.equal(listWorkspaceSkillComponents(alias).components[0].available, true);
+  assert.equal(readWorkspaceSkillReceiptSnapshot(alias, id, originalSha).integrity, first.components[0].integrity);
+  assert.equal(fs.readFileSync(join(f.root, 'product.md'), 'utf8'), 'Preserve product and history.');
+  assert.equal(controlWorkspaceSkillComponent(alias, id, 'remove').components[0].state, 'removed');
+});
+
+test('workspace aliases never allow a linked root or an ordinary root below a linked ancestor', async t => {
+  const f = fixture(t), outside = fixture(t), linked = join(f.root, 'linked-workspace');
+  fs.mkdirSync(join(outside.root, 'nested'));
+  fs.writeFileSync(join(outside.root, 'marker.md'), 'Unrelated target data.');
+  fs.symlinkSync(outside.root, linked, process.platform === 'win32' ? 'junction' : 'dir');
+  t.after(() => { if (fs.existsSync(linked)) fs.unlinkSync(linked); });
+  const before = snapshot(outside.root);
+  for (const path of [linked, join(linked, 'nested')])
+    await assert.rejects(installWorkspaceSkillComponents(path, f.approval, f.reader), code('UNSAFE_PATH'));
+  assert.equal(f.calls.length, 0, 'Root alias validation precedes source transport and all writes.');
+  assert.deepEqual(snapshot(outside.root), before);
+});
+
 test('source approval revoked during the last awaited read publishes no component or receipt', async t => {
   const f = fixture(t), before = snapshot(f.root);
   let allowed = true;

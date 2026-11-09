@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { nativeRoleContentSchema } from '../dist/native-role-job.js';
@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const { activateNativeEntry, nativeToolNames, nativeRoleToolNames } = require('../extensions/vscode-model-bridge/native-entry.cjs');
 
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'wf-native-entry-'));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'wf-native-entry-')));
   const other = join(root, 'other'); mkdirSync(other);
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const tools = new Map(), calls = [], runners = [], loads = [], folderListeners = new Set();

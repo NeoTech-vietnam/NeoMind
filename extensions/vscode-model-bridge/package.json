@@ -467,7 +467,7 @@
         "toolReferenceName": "workforceRequestControl",
         "displayName": "WorkForce native control",
         "canBeReferencedInPrompt": true,
-        "modelDescription": "Inspect a public request key, recheck unchanged reviewed products after an environment correction, or explicitly resume retained findings with fresh specialists and checks. Keep the same request instead of submitting a replacement.",
+        "modelDescription": "Inspect a public request key, recheck unchanged reviewed products after an environment correction or confirmed ended checker interruption, or explicitly resume retained findings or a backend-reconciled editor interruption. Preserve scope, history and repair allowance; keep the same request instead of submitting a replacement. Unknown effects are not blindly replayed.",
         "inputSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "type": "object",
@@ -484,7 +484,7 @@
                 "recheck",
                 "resume"
               ],
-              "description": "Inspect results; recheck unchanged reviewed products after an environment correction; or explicitly continue retained professional findings through fresh specialist review and checks."
+              "description": "Inspect results; recheck unchanged independently reviewed products after an environment correction or confirmed ended checker interruption; or explicitly resume retained findings or a backend-reconciled editor interruption. Saved scope and repair allowance remain unchanged; unconfirmed effects are not blindly replayed."
             },
             "workspace_folder": {
               "type": "string",

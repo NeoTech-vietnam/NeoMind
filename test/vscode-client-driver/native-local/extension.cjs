@@ -14,6 +14,7 @@ const commands = {
 let lastAttemptDirectory = fixture.evidence;
 let lastAttemptRequest;
 let dispatchQueue = Promise.resolve();
+let nativePilotActivation, nativePilotShutdown;
 const evidencePath = (name, directory = fixture.evidence) => join(directory, name);
 const runId = basename(dirname(fixture.evidence));
 const write = (name, value, flag = 'w', directory = fixture.evidence) =>
@@ -283,8 +284,14 @@ function activate(context) {
     vscode.workspace.onDidGrantWorkspaceTrust(inspectTrusted),
   );
   inspectTrusted();
-  if (fixture.nativePilot) void require('./native-pilot.cjs').activateNativePilot(vscode, context, fixture, requireTrustedFixture)
+  if (fixture.nativePilot) nativePilotActivation = require('./native-pilot.cjs').activateNativePilot(vscode, context, fixture, requireTrustedFixture)
     .catch(error => write('native-pilot-error.json', { name: error?.name, code: safeLabel(error?.code) }));
 }
 
-module.exports = { activate, queueAuthorizedProof };
+function deactivate() {
+  // Match the production extension's awaited shutdown. Context subscription
+  // disposal alone does not promise that asynchronous owned work has drained.
+  return nativePilotShutdown ??= Promise.resolve(nativePilotActivation).then(entry => entry?.dispose?.());
+}
+
+module.exports = { activate, deactivate, queueAuthorizedProof };

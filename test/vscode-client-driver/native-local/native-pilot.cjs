@@ -41,12 +41,12 @@ async function activateNativePilot(vscode, context, fixture, requireTrustedFixtu
       } });
     } });
     const client = new Proxy({}, { get(_target, property) { return property === 'lm' ? lm : Reflect.get(vscode, property, vscode); } });
-    require(join(fixture.repository, 'extensions/vscode-model-bridge/native-entry.cjs')).activateNativeEntry(client, context, async () => {
+    const entry = require(join(fixture.repository, 'extensions/vscode-model-bridge/native-entry.cjs')).activateNativeEntry(client, context, async () => {
       requireTrustedFixture(); return runtime;
     });
     // This branch uses the production registered tool names and schemas.
     write('ready.json', { status: 'registered', contract: runtime.nativeLocalContractVersion, host_build: hostBuild, entry: 'product-native', model_calls: 0 });
-    return;
+    return entry;
   }
   context.subscriptions.push(runner, vscode.lm.registerTool('workforce_m4_control', {
     prepareInvocation: () => ({ invocationMessage: 'WorkForce: continue checks on the retained request' }),
@@ -93,6 +93,7 @@ async function activateNativePilot(vscode, context, fixture, requireTrustedFixtu
   // Reuse the M2 driver's durable, serialized authorization ledger for actual
   // chat dispatch. This helper only binds the isolated pilot tool.
   write('ready.json', { status: 'registered', contract: runtime.nativeLocalContractVersion, host_build: hostBuild, model_calls: 0 });
+  return { dispose: () => runner.dispose() };
 }
 
 module.exports = { activateNativePilot };

@@ -1,7 +1,7 @@
 /** Explicit pinned workspace skill references. Selection is not host loading,
  * tool authorization, execution or independent verification. */
-import { existsSync, lstatSync, readFileSync } from 'node:fs';
-import { dirname, extname, relative, resolve } from 'node:path';
+import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from 'node:fs';
+import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
 import { hash, safePath } from './storage.js';
 import { listWorkspaceSkillComponents, readWorkspaceSkillReceiptSnapshot, type WorkspaceSkillReceipt } from './workspace-skill-components.js';
 
@@ -149,10 +149,43 @@ export function nativeSkillInputsMatch(root: string, contexts: readonly NativeSk
 }
 /** Explicit ordinary receipt inputs retain raw-byte semantics even when that
  * same receipt also describes selected guidance. Root context excludes host metadata. */
+function nativeHostProgram(root: string, argument: string, executables: ReadonlySet<string>): boolean {
+  if (!isAbsolute(argument)) return false;
+  const key = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
+  if (!executables.has(key(argument))) return false;
+  const outside = (path: string) => { const rel = relative(resolve(root), path).replaceAll('\\', '/'); return rel === '..' || rel.startsWith('../') || isAbsolute(rel); };
+  // A workspace-authored checker never becomes infrastructure because of its
+  // name, ELF bytes, or placement in command[0]. Keep it conservative.
+  if (!outside(resolve(argument))) return false;
+  let descriptor: number | undefined;
+  try {
+    const physical = realpathSync.native(argument);
+    if (!outside(physical)) return false;
+    const info = lstatSync(physical);
+    if (!info.isFile()) return false;
+    descriptor = openSync(physical, 'r');
+    const header = Buffer.alloc(64), length = readSync(descriptor, header, 0, header.length, 0), magic = header.subarray(0, 4).toString('hex');
+    if (magic === '7f454c46' && length >= 20 && [1, 2].includes(header[4]!) && [1, 2].includes(header[5]!) && header[6] === 1) {
+      const kind = header[5] === 1 ? header.readUInt16LE(16) : header.readUInt16BE(16);
+      return kind === 2 || kind === 3;
+    }
+    if (length >= 16 && ['feedface', 'feedfacf', 'cefaedfe', 'cffaedfe', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca'].includes(magic)) return true;
+    if (length === 64 && header[0] === 0x4d && header[1] === 0x5a) {
+      const offset = header.readUInt32LE(60), signature = Buffer.alloc(4);
+      return offset >= 64 && offset <= 1024 * 1024 && offset + 4 <= info.size &&
+        readSync(descriptor, signature, 0, 4, offset) === 4 && signature.toString('hex') === '50450000';
+    }
+    return false;
+  } catch { return false; }
+  finally { if (descriptor !== undefined) closeSync(descriptor); }
+}
 export function nativeSkillReceiptDependencies(root: string, contexts: readonly NativeSkillContext[], context: readonly string[],
-  commandArguments: readonly string[] = []): string[] {
+  commandArguments: readonly string[] = [], executablePrograms: readonly string[] = []): string[] {
   if (!contexts.length) return [];
   const key = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
+  // Host-only hints come from actual plan command[0] boundaries, not basename
+  // guessing or worker payload fields. Old callers can recognize this runtime.
+  const executables = new Set([...executablePrograms, process.execPath].filter(isAbsolute).map(path => key(resolve(path))));
   const texts = [...commandArguments], inspected = new Set<string>();
   let inspectedBytes = 0, uncertainScript = false;
   const interpreted = commandArguments.some(argument => /(?:^|[\\/])(?:node|python(?:3)?|pwsh|powershell|bash|sh|cmd)(?:\.exe)?$/i.test(argument));
@@ -161,6 +194,7 @@ export function nativeSkillReceiptDependencies(root: string, contexts: readonly 
     const extensionless = interpreted && !extname(argument) && !argument.startsWith('-') && /^[\p{L}\p{N}\p{M}_. :/\\-]+$/u.test(argument);
     if (!knownText && !extensionless) continue;
     if (argument.length > 1024 || /[\x00-\x1f]/.test(argument)) { uncertainScript = true; continue; }
+    if (nativeHostProgram(root, argument, executables)) continue;
     try {
       const file = safePath(root, relative(resolve(root), resolve(root, argument)).replaceAll('\\', '/'));
       if (inspected.has(key(file))) continue;

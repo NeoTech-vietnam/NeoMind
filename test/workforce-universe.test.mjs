@@ -83,6 +83,7 @@ test('active extension manifest separates native tools from the historical reque
   assert.equal(manifest.engines.vscode, '^1.143.0');
   assert.deepEqual(manifest.contributes.languageModelTools.map(tool => tool.name), ['workforce_request',
     'workforce_native_request', 'workforce_native_role', 'workforce_native_prepare', 'workforce_native_control',
+    'workforce_native_capabilities',
     'workforce_native_role_swsd', 'workforce_native_role_p_res', 'workforce_native_role_fnd',
     'workforce_native_role_reviewer', 'workforce_native_role_tester']);
   assert.ok(manifest.contributes.commands.some(command => command.command === 'workforce.pm.openLocal'));

@@ -117,3 +117,48 @@ test('undecodable or NUL-containing committed scripts conservatively retain raw 
   assert.deepEqual(nativeSkillReceiptDependencies(root, contexts, [], ['pwsh', '-File', 'ordinary.ps1']), []);
   assert.deepEqual(nativeSkillReceiptDependencies(root, [], [], ['pwsh', '-File', 'utf16-receipt.ps1']), []);
 });
+
+test('a Linux-style current native Node image outside the workspace is not an unknown receipt-reading script', async t => {
+  const { root, install } = project(t); await install();
+  const contexts = resolveNativeSkills(root, ['checking']), expected = [contexts[0].receipt_path];
+  const runtimeRoot = mkdtempSync(join(tmpdir(), 'wf-linux-native-runtime-'));
+  t.after(() => rmSync(runtimeRoot, { recursive: true, force: true }));
+  const executable = join(runtimeRoot, 'node');
+  const image = Buffer.alloc(64); image.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]); image.writeUInt16LE(2, 16);
+  writeFileSync(executable, image);
+  const actualRuntime = process.execPath;
+  try {
+    // The current executable is host state, never model input. This synchronous
+    // fixture reproduces Linux's extensionless external process.execPath on Windows.
+    process.execPath = executable;
+    assert.deepEqual(nativeSkillReceiptDependencies(root, contexts, [], [executable, '-e', 'process.exit(0)']), []);
+    assert.deepEqual(nativeSkillReceiptDependencies(root, contexts, [], [executable, '-e', 'process.exit(0)', contexts[0].receipt_path]), expected,
+      'Separating the runtime must preserve explicit ordinary receipt arguments');
+    writeFileSync(join(root, 'node'), `require('node:fs').readFileSync(${JSON.stringify(contexts[0].receipt_path)})`);
+    assert.deepEqual(nativeSkillReceiptDependencies(root, contexts, [], [executable, 'node']), expected,
+      'An extensionless workspace checker named node is still inspected');
+    writeFileSync(executable, '#!/bin/sh\necho unknown wrapper\n');
+    assert.deepEqual(nativeSkillReceiptDependencies(root, contexts, [], [executable, '-e', 'process.exit(0)']), expected,
+      'An unrecognized wrapper cannot gain a native-runtime exemption from its pathname alone');
+  } finally { process.execPath = actualRuntime; }
+});
+
+test('host-declared Linux Node, GCC and Python native images stay separate from workspace scripts and receipt inputs', async t => {
+  const { root, install } = project(t); await install();
+  const contexts = resolveNativeSkills(root, ['checking']), expected = [contexts[0].receipt_path];
+  const runtimeRoot = mkdtempSync(join(tmpdir(), 'wf-linux-declared-programs-'));
+  t.after(() => rmSync(runtimeRoot, { recursive: true, force: true }));
+  const image = Buffer.alloc(64); image.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]); image.writeUInt16LE(2, 16);
+  const executables = ['node', 'gcc', 'python'].map(name => join(runtimeRoot, name));
+  for (const path of executables) writeFileSync(path, image);
+  writeFileSync(join(root, 'verify.py'), "print('ordinary checker')\n");
+  const arguments_ = [executables[0], '-e', 'process.exit(0)', executables[1], '-std=c11', 'hello.c', executables[2], 'verify.py'];
+  assert.deepEqual(nativeSkillReceiptDependencies(root, contexts, [], arguments_, executables), []);
+  assert.deepEqual(nativeSkillReceiptDependencies(root, contexts, [], [...arguments_, contexts[0].receipt_path], executables), expected);
+  writeFileSync(join(root, 'node'), image);
+  assert.deepEqual(nativeSkillReceiptDependencies(root, contexts, [], [executables[0], join(root, 'node')], [...executables, join(root, 'node')]), expected,
+    'Even an ELF-looking workspace checker cannot be excluded as host infrastructure');
+  writeFileSync(executables[2], '#!/usr/bin/env python\nprint(1)\n');
+  assert.deepEqual(nativeSkillReceiptDependencies(root, contexts, [], arguments_, executables), expected,
+    'An unknown outside wrapper is still conservative even when it is a declared program');
+});

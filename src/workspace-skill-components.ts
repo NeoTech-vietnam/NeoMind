@@ -4,7 +4,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, opendirSync, readFileSync, readdirSync, realpathSync, renameSync, rmdirSync,
   unlinkSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { parseDocument } from 'yaml';
 import type { AgentMarketplaceReader } from './agent-marketplace.js';
 import { assertNoStorageMigration, resolveManagedRoot } from './storage.js';
@@ -137,11 +137,26 @@ function workspace(value: string): string {
   if (typeof value !== 'string' || !value) fail('UNSAFE_PATH');
   const root = resolve(value);
   try {
-    if (!lstatSync(root).isDirectory() || lstatSync(root).isSymbolicLink()) fail('UNSAFE_PATH');
+    const info = lstatSync(root);
+    if (!info.isDirectory() || info.isSymbolicLink()) fail('UNSAFE_PATH');
     const actual = realpathSync.native(root);
-    if ((process.platform === 'win32' ? actual.toLowerCase() !== root.toLowerCase() : actual !== root)) fail('UNSAFE_PATH');
+    if (actual !== root) {
+      if (process.platform !== 'win32') fail('UNSAFE_PATH');
+      // Windows may expand an ordinary NTFS 8.3 spelling. Canonicalization alone
+      // cannot distinguish that alias from a junction in the supplied path.
+      // Inspect every logical ancestor before using the canonical workspace.
+      let current = root, depth = 0;
+      for (;;) {
+        if (++depth > 256) fail('BOUND_EXCEEDED');
+        const ancestor = lstatSync(current);
+        if (!ancestor.isDirectory() || ancestor.isSymbolicLink()) fail('UNSAFE_PATH');
+        const parent = dirname(current);
+        if (parent === current) break;
+        current = parent;
+      }
+    }
+    return actual;
   } catch (error) { if (error instanceof WorkspaceSkillError) throw error; return fail('UNSAFE_PATH'); }
-  return root;
 }
 /** Private relative paths are generated internally. Never pass source paths here. */
 function local(root: string, path: string, budget?: { remaining: number; directory_limit?: number }): LocalPath {
