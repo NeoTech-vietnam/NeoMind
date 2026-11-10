@@ -2,12 +2,13 @@
 
 ## Active plan
 
+- [Plug-in agent helpers, 10 November 2026](2026-11-10-plugin-agent-helpers-plan.md): approved next feature; WF.PM selects an original plug-in agent, the backend invokes it, and WF roles consume its results. Start with **H1**, then H2 and H3; implementation has not started.
 - [WorkForce Local final plan, 8 November 2026](2026-11-08-workforce-local-final-plan.md): approved scope and requirements for the native Local refactor.
 - [Milestones and acceptance checklist](2026-11-08-workforce-local-milestones.md): implementation order, dependencies, deliverables and evidence.
 
 Implementation branch: `codex/workforce-vscode-native`.
 
-Start with **M1: a minimal V-model view using the existing SVG renderer**. Native chat synchronization is a later milestone; completing the view alone does not establish native agent execution or workflow acceptance.
+The native-core release is [workforce-v0.3.0-alpha.1](https://github.com/NeoTech-vietnam/NeoMind/releases/tag/workforce-v0.3.0-alpha.1); see the [current acceptance report](../validation/2026-11-10-native-core-release-acceptance.md) for verified scope. M7/REA remains deferred. The next feature is the plug-in agent helper plan above; its proposed implementation branch is `codex/plugin-agent-helpers`, while this handoff is saved on the current branch.
 
 ## Historical plans
 
