@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { userInfo } from 'node:os';
 import { runDurableCommand, readDurableCommandResult } from '../dist/durable-command.js';
@@ -17,11 +18,14 @@ function privateFolder(root) {
 function fixture(t) {
   mkdirSync(temporary, { recursive: true });
   const root = mkdtempSync(join(temporary, 'durable-command-')), privatePath = privateFolder(root);
-  t.after(() => {
+  t.after(async () => {
     assert.equal(dirname(resolve(root)), temporary);
     assert.equal(dirname(privatePath), join(temporary, '.workforce-private'));
-    rmSync(privatePath, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    // A committed outcome may arrive just before the supervisor's IPC/exit
+    // callbacks. Yield during the same bounded Windows sharing retries rather
+    // than blocking those callbacks in synchronous test teardown.
+    await rm(privatePath, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   return root;
 }
