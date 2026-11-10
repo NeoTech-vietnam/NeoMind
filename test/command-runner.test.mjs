@@ -2,10 +2,10 @@
 import { initializeLegacy as initialize } from './helpers/legacy-project.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { runCommand, commandEnvironment } from '../dist/command-runner.js';
+import { runCommand, commandEnvironment, commandLaunch } from '../dist/command-runner.js';
 import { createRecord, hash } from '../dist/storage.js';
 import { runCheck, runCheckAsync } from '../dist/engineering.js';
 
@@ -14,6 +14,43 @@ function workspace(t) {
   t.after(() => { assert.equal(dirname(resolve(root)), resolve(tmpdir())); rmSync(root, { recursive: true, force: true }); });
   return root;
 }
+
+test('bare Windows GCC drivers resolve an existing installed toolchain without editor PATH changes', {
+  skip: process.platform !== 'win32' || !existsSync('C:/msys64/mingw64/bin/gcc.exe') || !existsSync('C:/msys64/mingw64/bin/g++.exe'),
+}, async t => {
+  const root = workspace(t), before = JSON.stringify(process.env);
+  writeFileSync(join(root, 'hello.c'), 'int main(void) { return 0; }\n');
+  writeFileSync(join(root, 'hello.cpp'), '#include <vector>\nint main() { std::vector<int> values{2, 3}; return values.front() - 2; }\n');
+  const env = { Path: join(process.env.SystemRoot ?? 'C:/Windows', 'System32') };
+  for (const [driver, standard, file] of [['gcc', 'c11', 'hello.c'], ['g++', 'c++17', 'hello.cpp']]) {
+    const result = await runCommand({ cwd: root, command: [driver, `-std=${standard}`, '-Werror', '-fsyntax-only', file], env });
+    assert.equal(result.exit_code, 0, `${driver}: ${result.stderr || result.error}`);
+    assert.equal(result.error, null);
+  }
+  assert.equal(JSON.stringify(process.env), before, 'Toolchain resolution must not alter the editor or operating-system PATH.');
+});
+
+test('compiler resolution never substitutes absolute, relative, cross-compiler or unknown programs', () => {
+  const env = { PATH: '' };
+  for (const program of [join(resolve('artifacts'), 'missing', 'gcc.exe'), './bin/gcc', 'arm-none-eabi-gcc', 'not-a-compiler'])
+    assert.deepEqual(commandLaunch([program, 'literal;argument'], env), { executable: program, args: ['literal;argument'] });
+  if (process.platform !== 'win32')
+    for (const program of ['gcc', 'g++', 'clang', 'clang++'])
+      assert.deepEqual(commandLaunch([program, '--version'], env), { executable: program, args: ['--version'] });
+});
+
+test('an unresolved bare Windows compiler never executes a newly authored cwd executable', { skip: process.platform !== 'win32' }, async t => {
+  const root = workspace(t), marker = join(root, 'must-not-run.txt');
+  const drive = ['Z:', 'Y:', 'X:'].find(value => !existsSync(`${value}/msys64`));
+  assert.ok(drive);
+  copyFileSync(process.execPath, join(root, 'gcc.exe'));
+  const result = await runCommand({ cwd: root,
+    command: ['gcc', '-e', 'require("node:fs").writeFileSync(process.argv[1],"wrong")', marker],
+    env: { Path: join(process.env.SystemRoot ?? 'C:/Windows', 'System32'), SystemDrive: drive } });
+  assert.equal(result.exit_code, null);
+  assert.equal(result.error, 'Command could not start (ENOENT).');
+  assert.equal(existsSync(marker), false);
+});
 
 test('an absolute Windows GCC toolchain locates its own compiler DLLs without global PATH changes', {
   skip: process.platform !== 'win32' || !existsSync('C:/msys64/mingw64/bin/gcc.exe'),

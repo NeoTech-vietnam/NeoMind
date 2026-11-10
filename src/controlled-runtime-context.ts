@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { hash, now, resourceRoot, readConfig } from './storage.js';
 import { runCommand } from './command-runner.js';
 import { espIdfToolchain } from './esp-idf-toolchain.js';
+import { installedWindowsCompilerCandidates } from './compiler-executable.js';
 
 export const controlledRuntimeQuerySchema = z.strictObject({
   executables: z.strictObject({ python: z.string().max(2048).optional(),
@@ -81,9 +82,8 @@ function executable(program: Program, candidate?: string, installedToolchains = 
   // VS Code can inherit a PATH older than an already-installed MSYS2 toolchain.
   // Observe only known compiler executables; never install or run a discovery shell.
   if (installedToolchains && process.platform === 'win32' && (program === 'c11' || program === 'cpp17')) {
-    const drive = /^[a-z]:$/i.test(process.env.SystemDrive ?? '') ? process.env.SystemDrive! : 'C:';
-    for (const distribution of ['ucrt64', 'mingw64', 'clang64']) for (const name of names[program]) {
-      const checked = resolveCandidate(program, `${drive}/msys64/${distribution}/bin/${name}.exe`);
+    for (const candidate of installedWindowsCompilerCandidates(names[program])) {
+      const checked = resolveCandidate(program, candidate);
       if ('path' in checked) return { ...checked, ...(rejected_candidate ? { rejected_candidate } : {}) };
     }
   }
@@ -96,7 +96,7 @@ export function controlledPythonExecutable(): string | null { return executable(
 /** Fixed version observations: no worker-supplied argv, environment or shell. */
 export async function controlledToolchain(root: string, query: ControlledRuntimeQuery, signal?: AbortSignal) {
   let installedToolchains = false;
-  try { installedToolchains = readConfig(root).execution_engine === 'opencode'; } catch { /* Historical uninitialized observations use PATH only. */ }
+  try { installedToolchains = ['opencode', 'vscode-native'].includes(readConfig(root).execution_engine ?? ''); } catch { /* Historical uninitialized observations use PATH only. */ }
   const observations = await Promise.all((Object.keys(names) as Program[]).map(async program => {
     let diagnostic: { rejected_candidate?: RejectedCandidate } = {};
     try {

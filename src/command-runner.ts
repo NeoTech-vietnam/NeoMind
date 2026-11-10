@@ -3,6 +3,7 @@ import { isAbsolute, resolve, dirname, basename, join, delimiter } from 'node:pa
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 import { espIdfCommand, espIdfToolchain } from './esp-idf-toolchain.js';
+import { isBareWindowsCompilerCommand, resolveWindowsCompilerExecutable } from './compiler-executable.js';
 
 export interface CommandInput {
   command: string[];
@@ -30,7 +31,7 @@ export interface CommandResult {
 
 export function commandEnvironment(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
-  const inherited = new Set(['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR',
+  const inherited = new Set(['PATH', 'PATHEXT', 'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR',
     'HOME', 'USERPROFILE', 'LANG', 'LC_ALL', 'TZ', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_ARCHITEW6432']);
   for (const [key, value] of Object.entries(process.env))
     if (inherited.has(key.toUpperCase()) && value !== undefined) environment[key] = value;
@@ -61,6 +62,8 @@ export function commandLaunch(command: string[], env: NodeJS.ProcessEnv = proces
     return { executable: toolchain.python, args: [script, ...command.slice(1)] };
   }
   if (!isAbsolute(program) && program !== basename(program)) return { executable: program, args: command.slice(1) };
+  const compiler = resolveWindowsCompilerExecutable(program, env);
+  if (compiler) return { executable: compiler, args: command.slice(1) };
   if (process.platform !== 'win32' || !/^(?:npm|npx)(?:\.cmd)?$/i.test(basename(program)))
     return { executable: program, args: command.slice(1) };
   const name = basename(program).replace(/\.cmd$/i, '').toLowerCase();
@@ -92,16 +95,6 @@ export async function runCommand(input: CommandInput): Promise<CommandResult> {
   if (!Number.isSafeInteger(cap) || cap < 1 || cap > 10 * 1024 * 1024)
     throw new Error('Command output limit must be between 1 byte and 10 MiB.');
   const env = commandEnvironment(input.env), started = Date.now();
-  // On Windows, GCC's cc1/cc1plus live below lib/gcc and load DLLs from
-  // the toolchain's bin directory. An absolute gcc.exe alone is insufficient.
-  // Scope this PATH adjustment to the selected compiler's child process.
-  const compiler = input.command[0]!;
-  if (process.platform === 'win32' && isAbsolute(compiler) &&
-      /^(?:[a-z0-9_]+-)*(?:gcc|g\+\+|clang|clang\+\+)(?:-\d+)?\.exe$/i.test(basename(compiler)) && existsSync(compiler)) {
-    const key = Object.keys(env).find(key => key.toUpperCase() === 'PATH') ?? 'PATH';
-    const directory = dirname(compiler);
-    env[key] = [directory, ...(env[key] ?? '').split(delimiter).filter(path => path && resolve(path).toLowerCase() !== resolve(directory).toLowerCase())].join(delimiter);
-  }
   if (input.stdin !== undefined && (typeof input.stdin !== 'string' || Buffer.byteLength(input.stdin) > 1024 * 1024))
     throw new Error('Command input exceeds one MiB.');
   const result: CommandResult = { exit_code: null, signal: null, stdout: '', stderr: '', cancelled: false,
@@ -112,6 +105,18 @@ export async function runCommand(input: CommandInput): Promise<CommandResult> {
   catch { return { ...result, error: espIdfCommand(input.command)
     ? 'The ESP-IDF SDK, installed build tools and matching Python environment could not be resolved without a shell.'
     : 'The installed Windows npm launcher could not be resolved without a shell.' }; }
+  if (isBareWindowsCompilerCommand(input.command[0]!) && launch.executable === input.command[0])
+    return { ...result, error: 'Command could not start (ENOENT).', duration_ms: Date.now() - started };
+  // GCC's cc1/cc1plus load DLLs from the selected compiler's bin directory.
+  // Apply this only after resolving the launch, including a bare installed
+  // driver. The editor and operating-system environment remain unchanged.
+  const compiler = launch.executable;
+  if (process.platform === 'win32' && isAbsolute(compiler) &&
+      /^(?:[a-z0-9_]+-)*(?:gcc|g\+\+|clang|clang\+\+)(?:-\d+(?:\.\d+)*)?\.exe$/i.test(basename(compiler)) && existsSync(compiler)) {
+    const key = Object.keys(env).find(key => key.toUpperCase() === 'PATH') ?? 'PATH';
+    const directory = dirname(compiler);
+    env[key] = [directory, ...(env[key] ?? '').split(delimiter).filter(path => path && resolve(path).toLowerCase() !== resolve(directory).toLowerCase())].join(delimiter);
+  }
   return await new Promise(resolveResult => {
     let child: ChildProcessWithoutNullStreams;
     try { child = spawn(launch.executable, launch.args, { cwd: input.cwd, shell: false,

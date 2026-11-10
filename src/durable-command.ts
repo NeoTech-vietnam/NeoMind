@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { adapterNodeCommand } from './adapters.js';
 import { commandEnvironment, type CommandInput, type CommandResult } from './command-runner.js';
 import { secureHostPrivateDirectory } from './vscode-wire.js';
+import { isBareWindowsCompilerCommand, resolveWindowsCompilerExecutable } from './compiler-executable.js';
 
 export interface DurableCommandBinding { workflow_id: string; epoch_id: string; attempt_id: string; operation_id: string; kind: 'check' | 'producer' }
 export interface DurableCommandRef { schema_version: 1; id: string; spec_sha256: string; binding_sha256: string; spec_hmac: string }
@@ -117,10 +118,15 @@ export async function runDurableCommand(root: string, input: DurableCommandInput
   const environment = { TEMP: temporary, TMP: temporary, TMPDIR: temporary, ...input.env };
   const effective = commandEnvironment(environment), supervisorTemporary = Object.fromEntries(Object.entries(effective)
     .filter(([key]) => ['TEMP', 'TMP', 'TMPDIR'].includes(key.toUpperCase()))) as Record<string, string>;
+  // Resolve a standard installed compiler before controller admission. Keep
+  // authored argv intact; the authenticated spec separately freezes its actual
+  // launch so a later supervisor never rediscovers a different PATH executable.
+  const compiler = resolveWindowsCompilerExecutable(input.command[0]!, effective);
   const supervisor = fileURLToPath(new URL('../resources/runtime/command-supervisor.mjs', import.meta.url));
   const runner = fileURLToPath(new URL('./command-runner.js', import.meta.url));
   const spec = { schema_version: 1, job_id: id, root, owner_pid: process.pid, binding: bound,
     command: [...input.command], cwd: input.cwd, timeout_ms: timeout, max_output_bytes: cap,
+    ...(isBareWindowsCompilerCommand(input.command[0]!) ? { resolved_command: compiler ? [compiler, ...input.command.slice(1)] : null } : {}),
     ...(input.stdin === undefined ? {} : { stdin: input.stdin }), env: environment,
     supervisor_sha256: digest(readFileSync(supervisor)), runner_sha256: digest(readFileSync(runner)) };
   const bytes = Buffer.from(JSON.stringify(spec) + '\n'); if (bytes.length > 2 * 1024 * 1024) throw new Error('Durable command spec exceeds its bound.');

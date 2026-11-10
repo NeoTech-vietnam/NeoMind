@@ -118,3 +118,19 @@ test('WorkForce observes installed MSYS2 C/C++ tools even when the editor PATH p
     assert.deepEqual(compiler.command, [compiler.executable, '--version']);
   }
 });
+
+test('native WorkForce observes installed C/C++ tools with the same stale-PATH resolver as actual checks', { skip: process.platform !== 'win32' }, async t => {
+  const drive = /^[a-z]:$/i.test(process.env.SystemDrive ?? '') ? process.env.SystemDrive : 'C:';
+  if (!['ucrt64', 'mingw64', 'clang64'].some(name => existsSync(`${drive}/msys64/${name}/bin/gcc.exe`))) {
+    t.skip('No installed MSYS2 toolchain on this Windows host.'); return;
+  }
+  const { root } = fixture(t);
+  initialize(root, { execution_engine: 'vscode-native' });
+  const observed = await controlledToolchain(root, {});
+  for (const program of ['c11', 'cpp17']) {
+    const compiler = observed.observations.find(item => item.program === program);
+    assert.equal(compiler.available, true, JSON.stringify(compiler));
+    assert.equal(compiler.exit_code, 0);
+    assert.match(compiler.executable, /msys64[\\/](ucrt64|mingw64|clang64)[\\/]bin[\\/]/i);
+  }
+});

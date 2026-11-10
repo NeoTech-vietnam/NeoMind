@@ -1,7 +1,7 @@
 // A private, one-job process. No daemon, shell or model-facing authentication.
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { userInfo } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 const controller = new AbortController();
@@ -37,7 +37,10 @@ function authenticate(message) {
       digest(bytes) !== ref.spec_sha256 || digest(JSON.stringify(spec.binding)) !== ref.binding_sha256 ||
       !equal(mac(key, 'workforce-command-spec-v1', bytes), ref.spec_hmac) ||
       message && (message.type !== 'start' || JSON.stringify(message.ref) !== JSON.stringify(ref)) ||
-      digest(readFileSync(fileURLToPath(import.meta.url))) !== spec.supervisor_sha256 || digest(readFileSync(runner)) !== spec.runner_sha256)
+      digest(readFileSync(fileURLToPath(import.meta.url))) !== spec.supervisor_sha256 || digest(readFileSync(runner)) !== spec.runner_sha256 ||
+      spec.resolved_command !== undefined && spec.resolved_command !== null && (!Array.isArray(spec.resolved_command) ||
+        typeof spec.resolved_command[0] !== 'string' || !isAbsolute(spec.resolved_command[0]) ||
+        JSON.stringify(spec.resolved_command.slice(1)) !== JSON.stringify(spec.command.slice(1))))
     throw new Error('Unverified durable command spec.');
   return { key, ref, spec, runner };
 }
@@ -48,7 +51,11 @@ async function run(message) {
   // Aborted before admission also has an authenticated interrupted result;
   // the authored executable never starts after its owner has vanished.
   const { runCommand } = await import(pathToFileURL(runner).href);
-  const result = await runCommand({ command: spec.command, cwd: spec.cwd, timeout_ms: spec.timeout_ms, max_output_bytes: spec.max_output_bytes,
+  const result = spec.resolved_command === null ? {
+    exit_code: null, signal: null, stdout: '', stderr: '', cancelled: controller.signal.aborted,
+    timed_out: false, output_limited: false, duration_ms: 0,
+    error: controller.signal.aborted ? 'Command cancelled before start.' : 'Command could not start (ENOENT).',
+  } : await runCommand({ command: spec.resolved_command ?? spec.command, cwd: spec.cwd, timeout_ms: spec.timeout_ms, max_output_bytes: spec.max_output_bytes,
     stdin: spec.stdin, env: spec.env, signal: controller.signal,
     onStart: pid => { if (process.connected) process.send({ type: 'started', id: ref.id, spec_sha256: ref.spec_sha256, pid }, () => {}); } });
   const payload = { job_id: ref.id, root: spec.root, spec_sha256: ref.spec_sha256, binding_sha256: ref.binding_sha256,

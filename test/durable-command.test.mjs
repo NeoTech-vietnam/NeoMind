@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { userInfo } from 'node:os';
 import { runDurableCommand, readDurableCommandResult } from '../dist/durable-command.js';
@@ -50,6 +50,59 @@ test('durable command commits its backend reference before spawn and verifies it
   assert.deepEqual(readDurableCommandResult(root, ref, binding), result);
   assert.equal(Object.keys(ref).sort().join(','), 'binding_sha256,id,schema_version,spec_hmac,spec_sha256');
   assert.ok(!JSON.stringify(ref).includes('WF_APPROVED_VALUE'));
+});
+
+test('durable Windows compiler launch is frozen before admission while authored argv remains unchanged', {
+  timeout: 30000,
+  skip: process.platform !== 'win32' || !existsSync('C:/msys64/mingw64/bin/gcc.exe'),
+}, async t => {
+  const root = fixture(t), binding = bound('bare-compiler'), output = join(root, 'hello.exe');
+  writeFileSync(join(root, 'hello.c'), 'int main(void) { return 0; }\n');
+  const command = ['gcc', '-std=c11', '-Wall', '-Wextra', '-Werror', 'hello.c', '-o', output];
+  const authored = [...command];
+  let prepared;
+  const result = await runDurableCommand(root, { binding, cwd: root, command,
+    env: { Path: join(process.env.SystemRoot ?? 'C:/Windows', 'System32') } }, {
+    onPrepared: job => {
+      assert.equal(existsSync(output), false, 'The compiler cannot run before its controller admission.');
+      const spec = JSON.parse(readFileSync(join(privateFolder(root), 'commands', job.id, 'spec.json'), 'utf8'));
+      assert.deepEqual(spec.command, authored);
+      assert.ok(Array.isArray(spec.resolved_command), 'The exact installed compiler must already be frozen in its authenticated spec.');
+      assert.match(spec.resolved_command[0], /msys64[\\/](?:ucrt64|mingw64|clang64)[\\/]bin[\\/]gcc\.exe$/i);
+      assert.deepEqual(spec.resolved_command.slice(1), authored.slice(1));
+      prepared = job;
+    },
+  });
+  assert.deepEqual(command, authored);
+  assert.equal(result.exit_code, 0, result.stderr || result.error);
+  assert.equal(result.error, null);
+  assert.equal(existsSync(output), true);
+  assert.deepEqual(readDurableCommandResult(root, prepared, binding), result);
+});
+
+test('an unavailable compiler cannot adopt a new PATH or working-directory binary after admission', {
+  timeout: 30000, skip: process.platform !== 'win32',
+}, async t => {
+  const root = fixture(t), bin = join(root, 'new-bin'), marker = join(root, 'must-not-run.txt');
+  mkdirSync(bin);
+  const drive = ['Z:', 'Y:', 'X:'].find(value => !existsSync(`${value}/msys64`));
+  assert.ok(drive, 'The negative fixture requires one absent conventional MSYS2 drive.');
+  const command = ['gcc', '-e', 'require("node:fs").writeFileSync(process.argv[1],"wrong")', marker];
+  const result = await runDurableCommand(root, { binding: bound('unavailable-compiler'), cwd: root, command,
+    env: { Path: bin, SystemDrive: drive } }, {
+    onPrepared: job => {
+      const spec = JSON.parse(readFileSync(join(privateFolder(root), 'commands', job.id, 'spec.json'), 'utf8'));
+      assert.equal(spec.resolved_command, null, 'Absence is frozen before controller admission too.');
+      // An actual harmless Node executable has the missing compiler's name.
+      // Rediscovering it after admission would execute the marker-writing code.
+      copyFileSync(process.execPath, join(bin, 'gcc.exe'));
+      copyFileSync(process.execPath, join(root, 'gcc.exe'));
+    },
+  });
+  assert.equal(result.exit_code, null);
+  assert.equal(result.error, 'Command could not start (ENOENT).');
+  assert.equal(result.durable_reason, 'completed');
+  assert.equal(existsSync(marker), false);
 });
 
 test('failed onPrepared never starts an authored command and does not invent a final result', { timeout: 30000 }, async t => {
