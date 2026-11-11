@@ -81,6 +81,7 @@ export function RunStart({ initialFlow, initialTask, flows, history, started }: 
   const bindings = Object.entries(preview?.snapshot.configuration.bindings ?? {});
   const values = (key: string, base: BindingValues): BindingValues => ({ ...base, ...overrides[key] });
   const usesClaude = bindings.some(([key, binding]) => values(key, binding.values).runner === 'claude-code');
+  const usesOpenCode = bindings.some(([key, binding]) => values(key, binding.values).runner === 'opencode');
   const parallel = definition?.definition.nodes.some(node => node.type === 'fork');
   const blockers = [...(preview?.runtimeDiagnostics ?? []), ...(preview?.runnerPreflight?.blockers ?? [])];
   const canImport = !!preview && preview.dirtyImport.changes.length > 0 && !preview.dirtyImport.blockers.length;
@@ -102,7 +103,7 @@ export function RunStart({ initialFlow, initialTask, flows, history, started }: 
   const setRunner = (key: string, base: BindingValues, runner: string) => {
     const next = runners.find(item => item.runner === runner);
     if (!next || runner === values(key, base).runner) return;
-    setOverrides(all => ({ ...all, [key]: { ...all[key], runner, provider: next.provider, model: next.models[0]! } }));
+    setOverrides(all => ({ ...all, [key]: { ...all[key], runner, provider: next.provider, model: next.models[0]!, ...runner === 'opencode' ? { reasoning: next.reasoning[0] ?? 'medium' } : {} } }));
   };
   const applyPreset = (preset: Preset) => setOverrides(() => Object.fromEntries(bindings.flatMap(([key]) => {
     const runner = preset.runner(key), next = runners.find(item => item.runner === runner);
@@ -160,6 +161,7 @@ export function RunStart({ initialFlow, initialTask, flows, history, started }: 
       {publishError && <Callout tone="danger" icon={<CircleAlert />}>Không publish được: {publishError}</Callout>}
       {previewError && !unpublished && <Callout tone="danger" icon={<CircleAlert />}>{previewError}</Callout>}
       {preview?.codexSandbox === 'disabled' && <Callout tone="attention" icon={<TriangleAlert />}>Sandbox Codex đang tắt cho agent và checks. Worktree và cơ chế dừng process vẫn được giữ; quyền chỉ đọc và phạm vi ghi không được hệ điều hành bảo đảm.</Callout>}
+      {usesOpenCode && <Callout tone="attention" icon={<TriangleAlert />}>OpenCode chạy với quyền của tài khoản hiện tại; phạm vi ghi không được bảo đảm, kể cả khi dùng worktree. NeoMind vẫn quản lý và xác nhận dừng tiến trình.</Callout>}
       {(preview?.flowExceptions ?? []).length > 0 && <Callout tone="attention" icon={<TriangleAlert />}><strong className="font-semibold text-foreground">Flow này khác Dev:</strong><ul className="m-0 mt-1 list-disc pl-4">{preview!.flowExceptions!.map(note => <li key={note}>{note}</li>)}</ul></Callout>}
     </section>
 
@@ -174,19 +176,25 @@ export function RunStart({ initialFlow, initialTask, flows, history, started }: 
           <div role="row" className="grid grid-cols-[minmax(96px,1fr)_156px_minmax(0,136px)_minmax(0,92px)] gap-x-3 border-b px-3.5 py-2 text-[11.5px] text-muted-foreground">
             <span>Bước</span><span>Runner</span><span>Model</span><span>Mức suy luận</span></div>
           {bindings.map(([key, binding]) => {
-            const current = values(key, binding.values), info: RunnerModels | undefined = runners.find(item => item.runner === current.runner);
+            // OpenCode lists one entry per connected provider, so its models are looked up by provider too.
+            const current = values(key, binding.values), info: RunnerModels | undefined = runners.find(item => item.runner === current.runner && (current.runner !== 'opencode' || item.provider === current.provider));
             const change = (value: Partial<BindingValues>) => setOverrides(all => ({ ...all, [key]: { ...all[key], ...value } }));
             return <div role="row" key={key} className="grid grid-cols-[minmax(96px,1fr)_156px_minmax(0,136px)_minmax(0,92px)] items-center gap-x-3 border-b px-3.5 py-2 last:border-b-0">
               <span className="flex min-w-0 items-center gap-1.5 text-[13px] font-medium"><span className="truncate">{bindingLabel(key, definition)}</span>
                 {edited(key) && <Tooltip label="Đã đổi so với mặc định của flow"><span aria-label="Đã đổi" className="size-1.5 shrink-0 rounded-full bg-foreground" /></Tooltip>}</span>
               <Segmented label={`Runner · ${key}`} value={current.runner} onChange={runner => setRunner(key, binding.values, runner)}
                 options={[...new Set([...runners.map(item => item.runner), current.runner])].map(id => ({ value: id, label: runnerLabel(id) }))} />
-              <Select label={`Model · ${key}`} value={current.model} onValueChange={model => change({ model })} options={[...new Set([current.model, ...(info?.models ?? [])])].map(id => ({ value: id, label: modelLabel(id) }))} />
+              <div className="flex min-w-0 flex-col gap-1">
+                {current.runner === 'opencode' && <Select label={`Provider · ${key}`} value={current.provider} onValueChange={provider => { const next = runners.find(item => item.runner === 'opencode' && item.provider === provider); if (next?.models[0]) change({ provider, model: next.models[0], reasoning: next.reasoning[0] ?? 'medium' }); }}
+                  options={runners.filter(item => item.runner === 'opencode').map(item => ({ value: item.provider, label: item.provider }))} />}
+                <Select label={`Model · ${key}`} value={current.model} onValueChange={model => change({ model })} options={[...new Set([current.model, ...(info?.models ?? [])])].map(id => ({ value: id, label: modelLabel(id) }))} />
+              </div>
               <Select label={`Mức suy luận · ${key}`} value={current.reasoning} onValueChange={reasoning => change({ reasoning })} options={[...new Set([current.reasoning, ...(info?.reasoning ?? ['low', 'medium', 'high'])])].map(id => ({ value: id, label: reasoningLabel(id) }))} />
             </div>;
           })}
         </div>}
       {usesClaude && <p className="m-0 flex gap-2 text-[12px] leading-relaxed text-muted-foreground"><Info className="mt-0.5 size-3.5 shrink-0" />Claude Code chạy bằng tài khoản Claude đang đăng nhập và chỉ được đọc, ghi file trong phạm vi được duyệt (không có shell). Checks vẫn chạy qua Codex.</p>}
+      {!runners.some(item => item.runner === 'opencode') && <p className="m-0 text-[12px] text-muted-foreground">OpenCode xuất hiện khi NeoMind tìm thấy phiên bản được hỗ trợ và provider đã kết nối.</p>}
     </section>}
 
     {preview && <section className="flex flex-col gap-3">

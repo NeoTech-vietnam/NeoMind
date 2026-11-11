@@ -119,6 +119,7 @@ export function RunMonitor({ run, setRun, rerun }: { run: Run; setRun(run: Run):
       <strong className="font-semibold tabular-nums">{formatTokens(tokensUsed)}/{formatTokens(tokenLimit)}</strong><span className="text-muted-foreground">kiểm giữa các bước</span></div>}
 
     {phase === 'waiting_approval' && <Callout tone="attention" icon={<Shield />}><strong className="font-semibold text-foreground">Chưa file nào bị sửa.</strong> Duyệt để agent bắt đầu thực hiện.</Callout>}
+    {[...bindings.values()].some(values => values.runner === 'opencode') && <Callout tone="attention" icon={<TriangleAlert />}>OpenCode chạy với quyền của tài khoản hiện tại; phạm vi ghi không được bảo đảm.</Callout>}
 
     {stopped && <section className={cn('flex flex-col gap-3 rounded-lg border px-4 py-3.5', phase === 'blocked' || timeExhausted || tokensExhausted || commitFailed ? 'border-attention/40 bg-card' : 'bg-card')}>
       <div className="flex items-center gap-2"><TriangleAlert className={cn('size-4', phase === 'blocked' || timeExhausted || tokensExhausted || commitFailed ? 'text-attention' : 'text-muted-foreground')} />

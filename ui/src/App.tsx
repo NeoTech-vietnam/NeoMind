@@ -149,7 +149,8 @@ function JsonSetting({ label, value, apply }: { label: string; value: unknown; a
  * a runner pins its provider too; picking a model pins the runner that serves it, so the binding stays consistent.
  */
 function BindingFields({ binding, runners, ariaSuffix, change }: { binding: Binding; runners: RunnerModels[]; ariaSuffix: string; change(fn: (target: Binding) => void): void }) {
-  const runner = binding.runner.mode === 'pinned' ? binding.runner.value : undefined, info = runners.find(item => item.runner === runner);
+  const provider = binding.provider.mode === 'pinned' ? binding.provider.value : undefined;
+  const runner = binding.runner.mode === 'pinned' ? binding.runner.value : undefined, info = runners.find(item => item.runner === runner && (runner !== 'opencode' || item.provider === provider));
   const model = binding.model.mode === 'pinned' ? binding.model.value : '', reasoning = binding.reasoning.mode === 'pinned' ? binding.reasoning.value : '';
   const knownModel = !model || runners.some(item => item.models.includes(model));
   const chooseRunner = (id: string) => change(target => {
@@ -164,6 +165,10 @@ function BindingFields({ binding, runners, ariaSuffix, change }: { binding: Bind
       {[{ id: 'inherit', label: 'Mặc định' }, ...[...new Set([...runners.map(item => item.runner), ...(runner ? [runner] : [])])].map(id => ({ id, label: runnerLabel(id) }))].map(option =>
         <button key={option.id} type="button" role="radio" aria-checked={(runner ?? 'inherit') === option.id} className={(runner ?? 'inherit') === option.id ? 'on' : ''} onClick={() => chooseRunner(option.id)}>{option.label}</button>)}</div>
       </Field>
+    {runner === 'opencode' && <Field label="Provider"><StudioSelect aria-label={`provider${ariaSuffix}`} value={provider ?? ''} onChange={e => change(target => {
+      const next = runners.find(item => item.runner === 'opencode' && item.provider === e.target.value);
+      if (next?.models[0]) { target.provider = { mode: 'pinned', value: next.provider }; target.model = { mode: 'pinned', value: next.models[0] }; target.reasoning = { mode: 'pinned', value: next.reasoning[0] ?? 'medium' }; }
+    })}>{runners.filter(item => item.runner === 'opencode').map(item => <option key={item.provider} value={item.provider}>{item.provider}</option>)}</StudioSelect></Field>}
     <Field label="Model"><StudioSelect aria-label={`model${ariaSuffix}`} value={model} onChange={e => change(target => {
       if (!e.target.value) { target.model = { mode: 'inherit' }; return; }
       target.model = { mode: 'pinned', value: e.target.value };
