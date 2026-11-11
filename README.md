@@ -137,6 +137,32 @@ Muốn bật lại, thêm `"codexSandbox": "enabled"` vào object `policy` hiệ
 
 Khi tắt, capability probe chỉ xác nhận dừng process và báo `sandboxVerified: false`; không giả sandbox đã được kiểm chứng. Khi bật, probe vẫn phải chứng minh ghi ngoài phạm vi bị chặn.
 
+## Dùng NeoMind qua MCP (không cần Nimbalyst)
+
+`neomind mcp <project>` mở một server MCP qua stdio cho một project. Server cung cấp cùng các tool `neomind_*` như extension Nimbalyst (trừ tool riêng của panel), giữ nguyên các bước cần người xác nhận và ghi người duyệt là `local-user (MCP session)`. Khi client ngắt kết nối, server chờ các tool đang chạy xong rồi mới đóng.
+
+Build trước (`npm run build`), rồi đăng ký với client:
+
+```bash
+# Claude Code
+claude mcp add neomind -- node /duong/dan/neomind/dist/src/cli/main.js mcp /duong/dan/project
+```
+
+```toml
+# Codex CLI: ~/.codex/config.toml
+[mcp_servers.neomind]
+command = "node"
+args = ["/duong/dan/neomind/dist/src/cli/main.js", "mcp", "/duong/dan/project"]
+```
+
+Đây là MCP cho session của bạn; agent bên trong một run vẫn không có MCP.
+
+## Runner OpenCode (thử nghiệm)
+
+Runner `opencode` đã được đăng ký, model lấy từ provider OpenCode đang kết nối trên máy (`GET /api/runners/opencode`). Chỉ hỗ trợ OpenCode 1.18.25. Mỗi lượt chạy một `opencode serve` riêng trong worker scope, với cấu hình cô lập (không MCP, plugin, agent của project) và quyền `read/glob/grep` (+ `edit` cho bước sửa).
+
+**Giới hạn quan trọng:** quyền của OpenCode không phải ranh giới của hệ điều hành. Probe 08/11 cho thấy OpenCode ghi được file ra ngoài repo qua junction. NeoMind cho bước sửa của OpenCode chạy chỉ với bằng chứng dừng được process (`sandboxVerified: false`), và `preview` báo `openCodeWarning`. Chỉ dùng trên repo và máy bạn chấp nhận rủi ro này.
+
 ## Sửa flow bằng canvas (Nimbalyst, Obsidian)
 
 Flow lưu theo schema của NeoMind; canvas trong Flow studio dùng React Flow. Để xem và sửa flow trên canvas của Nimbalyst hoặc Obsidian, xuất flow ra file JSON Canvas 1.0 rồi nhập lại:

@@ -1,7 +1,25 @@
 # NeoMind v1 — trạng thái implementation
 
-Cập nhật: **07/11/2026**. Branch: `hieu/adaptive-agent-flow`. HEAD sau đồng bộ: `7445ef3`.
+Cập nhật: **11/11/2026**. Branch: `hieu/adaptive-agent-flow`. Bàn giao: [11/11 khôi phục MCP, chạy lại flow, OpenCode](session-handoff-2026-11-11.md).
+
+## Khôi phục phần 07–08/11 — 11/11/2026
+
+Source TypeScript của MCP standalone, chạy lại flow và OpenCode không được commit; bản copy mang về bị cắt ở 30 MiB nên mất `src/`, `test/`, `ui/`. Đã dựng lại từ JavaScript `tsc` biên dịch và `.d.ts` của bản build 08/11: so lại output biên dịch khớp bản gốc (khác thứ tự một khóa và comment). Nút "Chạy lại từ đầu" viết lại theo bundle UI đã minify. README phần MCP viết lại vì README gốc bị mất. `@modelcontextprotocol/sdk` nâng từ 1.29.0 lên 1.32.2 (bản vá cùng major) vì `npm audit` báo lỗ hổng ở HTTP/OAuth; `npm audit` sạch.
+
+OpenCode giữ đúng như bản build theo quyết định người dùng 11/11: runner được đăng ký và bước sửa không cần bằng chứng sandbox.
+
+Kiểm chứng Windows: `tsc` core/UI, build UI và extension đạt; test khôi phục và test bị ảnh hưởng 24/24. `npm test` đầy đủ (khoảng 5 phút 46 giây): **270 test, 266 pass, 2 fail, 2 skip**. Hai ca lỗi là `after scheduler crash…` (worker giả không khởi động kịp) và `parallel writers run concurrently…` (đỉnh writer 1 thay vì 2); chạy riêng tuần tự đạt 2/2. Cùng nhóm chập chờn đã ghi ở [known-test-failures](known-test-failures-2026-11-07.md) và bàn giao 07/11; không sửa test.
+
+## Chạy lại flow bị chặn — 08/11/2026
+
+Run bị chặn có yêu cầu và flow được ghi nhận có nút **Chạy lại từ đầu**. Nút mở form run mới với yêu cầu và flow cũ; cấu hình được preview lại theo trạng thái hiện tại, không sửa run cũ và không tự duyệt kế hoạch. Các override của run cũ không tự sao chép. Build core, UI và test rerun đạt trên Windows; chi tiết kiểm chứng và khảo sát OpenCode trong [bàn giao 08/11](session-handoff-2026-11-08.md).
 Bàn giao hiện tại: [07/11/2026 đồng bộ bản copy và cài extension](session-handoff-2026-11-07.md); [06/11/2026 nâng cấp Gói 1–5](session-handoff-2026-11-06-upgrade.md); [06/11/2026 thiết kế lại](session-handoff-2026-11-06.md); trước đó [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md).
+
+## MCP standalone — 07/11/2026
+
+Thêm server MCP stdio theo project qua `neomind mcp <project>`, tái dùng session tools, giữ gate xác nhận và ghi nguồn duyệt là phiên MCP. Khi ngắt kết nối, server chờ các tool đang chạy trước khi đóng RunManager. Cấu hình Codex CLI/Claude Code trong README; không thay đổi quyền MCP của worker trong flow.
+
+Windows: TypeScript build và test MCP stdio/lifecycle 2/2 đạt. Không chạy inference thật; chưa kiểm chứng kết nối trực tiếp từ session Codex/Claude hoặc Linux. `npm ci` chưa kiểm chứng: cache thiếu dependency và truy cập npm bị treo. Kết quả suite và chi tiết xem [bàn giao MCP](session-handoff-2026-11-07-mcp.md).
 
 ## Mặc định tắt sandbox Codex — 07/11/2026
 
