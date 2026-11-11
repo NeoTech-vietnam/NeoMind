@@ -4,6 +4,8 @@ Ngày: **08/11/2026**. Nhánh: `codex/workforce-vscode-native`. Baseline: `ad774
 
 [Kế hoạch đầy đủ](2026-11-08-workforce-local-final-plan.md) là nguồn phạm vi và quyết định. Tài liệu này chia công việc thành milestones để triển khai, quan sát kết quả và kiểm chứng từng bước. Trạng thái milestone không phải trạng thái `draft/accepted` của records trong project người dùng.
 
+**Đợt tiếp theo — cập nhật 12/11/2026:** [kế hoạch tương thích VS Code và plug-in agent helpers](2026-11-10-plugin-agent-helpers-plan.md) chốt thứ tự **H0 → H1 → H2 → H3**. H0 kiểm chứng Copilot harness chạy trên máy người dùng qua custom endpoint trước khi mở rộng helpers. Đây là công việc chưa triển khai/nghiệm thu; không thay kết quả M0–M6/M8 đã phát hành hoặc mở lại M7/REA đang hoãn. Checklist và nhật ký native-core bên dưới giữ nguyên phạm vi lịch sử.
+
 ## Checklist phát hành native core hiện hành — 10/11/2026
 
 **Quyết định mới của người dùng: hoàn tất native core M0–M6, sau đó M8 và phát hành; M7a/M7b hoãn sang đợt riêng.** Sử dụng VS Code Local và custom endpoint/9router bên ngoài đã cấu hình. Không yêu cầu chạy REA, đăng nhập managed gateway mới hoặc nghiệm thu RTK/combo/vision cho bản này. Các checkbox/evidence M7 và M8 đầy đủ phía dưới được giữ nguyên như lịch sử/backlog, không tự đổi thành pass; checklist này là phạm vi release hiện hành.

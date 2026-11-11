@@ -2,7 +2,8 @@
 
 ## Active plan
 
-- [Plug-in agent helpers, 10 November 2026](2026-11-10-plugin-agent-helpers-plan.md): approved next feature; WF.PM selects an original plug-in agent, the backend invokes it, and WF roles consume its results. Start with **H1**, then H2 and H3; implementation has not started.
+- [VS Code compatibility and plug-in agent helpers, updated 12 November 2026](2026-11-10-plugin-agent-helpers-plan.md): current implementation order **H0 → H1 → H2 → H3**. Prove Agent Host/BYOK/dispatch first, then invoke original plug-in agents and integrate them with WF roles. Implementation and native acceptance of these milestones have not started.
+- [VS Code 1.146 compatibility research, 11 November 2026](../research/2026-11-11-vscode-1-146-workforce-compatibility.md): supporting primary-source findings and source audit; not proof that the new harness already works.
 - [WorkForce Local final plan, 8 November 2026](2026-11-08-workforce-local-final-plan.md): approved scope and requirements for the native Local refactor.
 - [Milestones and acceptance checklist](2026-11-08-workforce-local-milestones.md): implementation order, dependencies, deliverables and evidence.
 
