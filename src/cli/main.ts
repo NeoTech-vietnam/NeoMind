@@ -12,7 +12,7 @@ import { readProject } from '../runtime/project.js';
 import { ProfileLibrary } from '../storage/profile-library.js';
 import { installShutdown } from './shutdown.js';
 import { parseRunCommand, readRunCommandInput, runUsage } from './run-command.js';
-import { flowBlocks, draftFlow, getFlow, validateFlow, flowDiff, publishFlow, assess } from '../runtime/flow-authoring.js';
+import { flowBlocks, draftFlow, getFlow, validateFlow, flowDiff, publishFlow, pinFlowBindings, assess } from '../runtime/flow-authoring.js';
 import { skillCatalog, skillStatus } from '../storage/skill-catalog.js';
 import { draftProfile, getProfile, getProfileVersion, migrateProfile, profileSkillStatus, profileUsage, publishProfile } from '../runtime/profile-authoring.js';
 
@@ -179,6 +179,11 @@ async function main(args: string[]): Promise<number> {
   }
   if (args[0] === 'flow' && args[1] === 'author-publish' && args.length === 6) {
     console.log(JSON.stringify(await publishFlow(path.resolve(args[2]!), args[3]!, { author: { kind: 'ai', reason: args[5]! }, expectedRevision: args[4]! }), null, 2)); return 0;
+  }
+  // Same as "Lưu làm mặc định cho flow" in the new-run form: the user's own choice, so the author is human.
+  if (args[0] === 'flow' && args[1] === 'pin-bindings' && (args.length === 5 || (args.length === 7 && args[5] === '--save-as'))) {
+    const values = JSON.parse(await readFile(args[4]!, 'utf8')) as Parameters<typeof pinFlowBindings>[2]['values'];
+    console.log(JSON.stringify(await pinFlowBindings(path.resolve(args[2]!), args[3]!, { values, author: { kind: 'human' }, ...(args[6] ? { saveAs: { name: args[6] } } : {}) }), null, 2)); return 0;
   }
   if (args[0] === 'editor' && (args.length === 2 || (args.length === 4 && args[2] === '--port'))) {
     const port = args[3] === undefined ? 0 : Number(args[3]);
@@ -371,7 +376,7 @@ async function main(args: string[]): Promise<number> {
     console.log(JSON.stringify({ simulated: false, executables, auth: 'unknown', inference: 'not_tested', delegationEnforcement: 'unknown' }, null, 2));
     return 0;
   }
-  console.error('Usage: neomind mcp <project> | rules <project> | program create <project> <program.json> | program list <project> | program status|next <project> <programId> | program deliver <project> <programId> <phaseId> <note> | skills <project> | skills status <project> <refs.json> | profile get|skills-status|usage <project> <id> | profile version <project> <id> <n> | profile migrate <project> <id> <n> <selection.json> | profile author-draft <project> <input.json> | profile author-publish <project> <id> <revision> <reason> | assess <project> --task-file <file>|<task> | flow blocks <project> | flow get|diff|author-validate <project> <id> | flow author-draft <project> <input.json> | flow author-publish <project> <id> <revision> <reason> | editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|parallel|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | flow canvas export|import <flows-dir> <flow-id> [file.canvas] | project migrate <project> | memory configure|project-search|search|get ... | memory list|pending|propose|approve|reject|note|expire|delete|feedback|remember|compact <project> ... | doctor capabilities');
+  console.error('Usage: neomind mcp <project> | rules <project> | program create <project> <program.json> | program list <project> | program status|next <project> <programId> | program deliver <project> <programId> <phaseId> <note> | skills <project> | skills status <project> <refs.json> | profile get|skills-status|usage <project> <id> | profile version <project> <id> <n> | profile migrate <project> <id> <n> <selection.json> | profile author-draft <project> <input.json> | profile author-publish <project> <id> <revision> <reason> | assess <project> --task-file <file>|<task> | flow blocks <project> | flow get|diff|author-validate <project> <id> | flow author-draft <project> <input.json> | flow author-publish <project> <id> <revision> <reason> | flow pin-bindings <project> <id> <values.json> [--save-as <name>] | editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|parallel|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | flow canvas export|import <flows-dir> <flow-id> [file.canvas] | project migrate <project> | memory configure|project-search|search|get ... | memory list|pending|propose|approve|reject|note|expire|delete|feedback|remember|compact <project> ... | doctor capabilities');
   console.error('       neomind skill list <project> | skill get|usage <project> <id> [--source claude] | skill repin <project> <id> | skill create <project> <input.json> | skill update <project> <id> <input.json> | skill delete <project> <id> [--force] | profile templates | profile from-template <project> <id> <name> <template> | profile remove <project> <id>');
   return 2;
 }

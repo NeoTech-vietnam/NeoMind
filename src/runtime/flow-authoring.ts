@@ -2,9 +2,12 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { compileFlow, type Diagnostic } from '../domain/compiler.js';
 import { diffFlows, type FlowDiff } from '../domain/flow-diff.js';
+import { pinBindings, type BindingChoice } from '../domain/pin-bindings.js';
+import { flowHashes } from '../domain/resolve.js';
 import { flowSchema, nodeSchema, profileSchema, projectSchema, type Flow, type ProjectConfig } from '../domain/schema.js';
 import { defaultProject, newFlowFromTemplate, templates } from '../domain/templates.js';
 import { FlowLibrary, flowAuthorSchema, type FlowAuthor, type StoredFlowVersion } from '../storage/flow-library.js';
+import { RevisionConflict } from '../storage/library-lock.js';
 import { ProfileLibrary } from '../storage/profile-library.js';
 import { projectDir } from '../storage/project-dir.js';
 import { builtinProfile, defaultRoles, newProjectPolicy, readProjectRules } from './project.js';
@@ -127,6 +130,57 @@ export async function publishFlow(root: string, flowId: string, input: { author:
   const checked = input.expectedRevision === undefined || input.expectedRevision === revision ? await checkFlow(root, draft, { aiAuthored: author.kind === 'ai', project }) : { valid: true, diagnostics: [] };
   if (!checked.valid) throw new Error(`Invalid draft: ${[...new Set(checked.diagnostics.filter(item => item.severity !== 'warning').map(item => item.code))].join(', ')}`);
   return store.publish(flowId, project.policy, input.expectedRevision, author);
+}
+
+/** A flow id from a display name: ASCII slug, never a template id or an existing flow. */
+function newFlowId(name: string, taken: Set<string>) {
+  const base = name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'flow';
+  let id = base;
+  for (let index = 2; taken.has(id) || Object.hasOwn(templates, id); index++) id = `${base}-${index}`;
+  return id;
+}
+
+export type PinBindingsInput = { values: Record<string, BindingChoice>; author: FlowAuthor; expectedRevision?: string | undefined; saveAs?: { name: string; flowId?: string | undefined } | undefined };
+/**
+ * Make the runner/model chosen for a run the default of its flow: pin the values into the bindings of the latest
+ * published version and publish it again. A built-in template cannot change, so its choice is saved as a new project
+ * flow (`saveAs`), which is also how a project flow is copied. Unpublished draft edits are never published along with it.
+ */
+export async function pinFlowBindings(root: string, flowId: string, input: PinBindingsInput) {
+  const author = flowAuthorSchema.parse(input.author), project = await authoringProject(root);
+  // Checked before anything is written: a refused publish must not leave a changed draft behind.
+  if (author.kind === 'ai' && (project.ai?.flowPublish === 'deny' || project.ai?.flowPublish === 'draft-only')) throw new Error('AI flow publishing is disabled by project policy');
+  if (!Object.keys(input.values).length) throw new Error('No binding values to pin');
+  const store = library(root), builtin = await builtinFlow(store, flowId);
+  if (input.saveAs) {
+    const name = input.saveAs.name.trim();
+    if (!name) throw new Error('A name is required for a new flow');
+    const source = builtin ?? await latest(store, flowId);
+    if (!source) throw new Error('Publish the flow before saving a copy of it');
+    const flows = await store.list(), targetId = input.saveAs.flowId ?? newFlowId(name, new Set(flows.map(item => item.flowId)));
+    if (flows.some(item => item.flowId === targetId)) throw new Error(`Flow ${targetId} already exists`);
+    const { flow, pinned } = pinBindings(source, input.values), document: Flow = { ...flow, flowId: targetId, name, version: 1 };
+    const compiled = compileFlow(document, project.policy, { aiAuthored: author.kind === 'ai' });
+    if (!compiled.ok) throw new Error(`Invalid flow: ${compiled.diagnostics.map(item => item.code).join(', ')}`);
+    await store.create(targetId, name);
+    const revision = await store.saveDraft(targetId, document, null);
+    const version = await store.publish(targetId, project.policy, revision, author);
+    return { flowId: targetId, name, version: version.version, created: true, changed: true, pinned };
+  }
+  if (builtin) throw new Error('Built-in templates cannot change; save the choice as a new flow');
+  const { draft, revision } = await store.readDraftWithRevision(flowId);
+  if (input.expectedRevision && input.expectedRevision !== revision) throw new RevisionConflict('Draft đã bị sửa ở nơi khác; tải lại trước khi lưu');
+  if (author.kind === 'ai' && !input.expectedRevision) throw new Error('expectedRevision is required for AI publishing');
+  const published = await latest(store, flowId), metadata = await store.metadata(flowId);
+  if (!published) throw new Error('Publish the flow before saving default runners');
+  const current = flowSchema.safeParse(draft);
+  if (!current.success || flowHashes({ ...current.data, version: published.version, name: published.name }).contentHash !== flowHashes(published).contentHash)
+    throw new Error('Bản nháp của flow có thay đổi chưa publish; publish hoặc bỏ chúng trong Flow Studio trước khi lưu mặc định');
+  const { flow, pinned } = pinBindings(published, input.values);
+  if (flowHashes(flow).semanticHash === flowHashes(published).semanticHash) return { flowId, name: metadata.name, version: published.version, created: false, changed: false, pinned };
+  const saved = await store.saveDraft(flowId, { ...flow, version: current.data.version, name: current.data.name }, revision);
+  const version = await store.publish(flowId, project.policy, saved, author);
+  return { flowId, name: metadata.name, version: version.version, created: false, changed: true, pinned };
 }
 
 /** Deterministic initial recommendation; it does not start a run. */

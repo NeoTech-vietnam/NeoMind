@@ -5,7 +5,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { defaultProject, templates } from '../src/domain/templates.js';
 import { compileFlow } from '../src/domain/compiler.js';
-import { flowBlocks, draftFlow, getFlow, validateFlow, publishFlow, assess, diffFlows } from '../src/runtime/flow-authoring.js';
+import { flowBlocks, draftFlow, getFlow, validateFlow, publishFlow, pinFlowBindings, assess, diffFlows } from '../src/runtime/flow-authoring.js';
 import { FlowLibrary } from '../src/storage/flow-library.js';
 import { defaultRoles, snapshotProjectFlow } from '../src/runtime/project.js';
 
@@ -191,4 +191,51 @@ test('concurrent AI draft renames keep the winning name and draft together', asy
   const result = await getFlow(root, 'mine');
   assert.ok(['First', 'Second'].includes(result.metadata.name));
   assert.equal((result.draft as { name: string }).name, result.metadata.name);
+});
+
+
+test('pinning run choices publishes the flow default, and a template choice becomes a new project flow', async () => {
+  const opus = { runner: 'claude-code', provider: 'anthropic', model: 'claude-opus-5-5', reasoning: 'high' };
+  const root = await project(), created = await draftFlow(root, { flowId: 'mine', name: 'Mine', from: { template: 'dev' } });
+  await publishFlow(root, 'mine', { author: { kind: 'human' }, expectedRevision: created.revision });
+  const pinned = await pinFlowBindings(root, 'mine', { values: { implement: opus }, author: { kind: 'human' } });
+  assert.equal(pinned.version, 2); assert.equal(pinned.changed, true);
+  assert.deepEqual(pinned.pinned[0]?.steps, ['plan', 'implement']);
+  // The next run of the flow starts from the pinned choice without overrides.
+  const snapshot = await snapshotProjectFlow(root, 'mine');
+  assert.deepEqual(snapshot.configuration.bindings.implement?.values, opus);
+  assert.deepEqual(snapshot.configuration.bindings.plan?.values, opus);
+  assert.equal(snapshot.configuration.bindings['verify/required-reviewer']?.values.runner, defaultRoles.verifier!.runner);
+  assert.equal((await getFlow(root, 'mine')).versions.at(-1)?.author.kind, 'human');
+  // Pinning the same values again publishes nothing.
+  assert.equal((await pinFlowBindings(root, 'mine', { values: { plan: opus }, author: { kind: 'human' } })).changed, false);
+
+  // Unpublished draft edits are never published along with the pin.
+  const { draft, revision } = await getFlow(root, 'mine') as { draft: typeof templates.dev; revision: string };
+  await draftFlow(root, { flowId: 'mine', expectedRevision: revision, draft: { ...draft, description: 'edited' } });
+  await assert.rejects(pinFlowBindings(root, 'mine', { values: { implement: { model: 'claude-sonnet-5-5' } }, author: { kind: 'human' } }), /chưa publish/);
+  await assert.rejects(pinFlowBindings(root, 'mine', { values: { implement: opus }, author: { kind: 'human' }, expectedRevision: 'f'.repeat(64) }), /sửa ở nơi khác/);
+
+  await assert.rejects(pinFlowBindings(root, 'dev', { values: { implement: opus }, author: { kind: 'human' } }), /new flow/);
+  const copy = await pinFlowBindings(root, 'dev', { values: { implement: opus }, author: { kind: 'human' }, saveAs: { name: 'Dev của tôi' } });
+  assert.equal(copy.flowId, 'dev-cua-toi'); assert.equal(copy.created, true); assert.equal(copy.version, 1);
+  assert.deepEqual((await snapshotProjectFlow(root, 'dev-cua-toi')).configuration.bindings.implement?.values, opus);
+  assert.equal((await pinFlowBindings(root, 'dev', { values: { implement: opus }, author: { kind: 'human' }, saveAs: { name: 'Dev của tôi' } })).flowId, 'dev-cua-toi-2');
+  // A project flow can be copied the same way, from its latest published version.
+  assert.equal((await pinFlowBindings(root, 'mine', { values: { implement: opus }, author: { kind: 'human' }, saveAs: { name: 'Dev' } })).flowId, 'dev-2');
+  assert.equal(templates.dev.definition.bindings.implementer!.model.mode, 'inherit');
+});
+
+test('AI pinning follows the flow publish policy and needs the observed revision', async () => {
+  const opus = { runner: 'claude-code', provider: 'anthropic', model: 'claude-opus-5-5', reasoning: 'high' };
+  for (const flowPublish of ['draft-only', 'deny'] as const) {
+    const root = await project({ flowPublish });
+    await assert.rejects(pinFlowBindings(root, 'dev', { values: { implement: opus }, author: { kind: 'ai' }, saveAs: { name: 'Copy' } }), /disabled by project policy/);
+    assert.equal('builtin' in (await getFlow(root, 'dev')).metadata, true);
+  }
+  const root = await project({ flowPublish: 'allow' }), created = await draftFlow(root, { flowId: 'mine', name: 'Mine', from: { template: 'dev' } });
+  await publishFlow(root, 'mine', { author: { kind: 'human' }, expectedRevision: created.revision });
+  await assert.rejects(pinFlowBindings(root, 'mine', { values: { implement: opus }, author: { kind: 'ai' } }), /expectedRevision/);
+  const result = await pinFlowBindings(root, 'mine', { values: { implement: opus }, author: { kind: 'ai', sessionId: 's1', reason: 'User asked' }, expectedRevision: created.revision });
+  assert.equal(result.version, 2); assert.equal((await getFlow(root, 'mine')).versions.at(-1)?.author.kind, 'ai');
 });

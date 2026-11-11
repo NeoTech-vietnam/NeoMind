@@ -117,6 +117,24 @@ test('session authors a flow through shared API and cannot bypass project policy
   } finally { await f.manager.close(); }
 });
 
+test('session pins run choices as a flow default through the shared API, as an AI author', async () => {
+  const f = await project();
+  try {
+    assert.ok(SESSION_TOOLS.some(tool => tool.name === 'flow_pin_bindings')); assert.ok(f.tools.flow_pin_bindings);
+    const opus = { runner: 'claude-code', provider: 'anthropic', model: 'claude-opus-5-5', reasoning: 'high' };
+    const copy = await f.tools.flow_pin_bindings!({ flowId: 'dev', values: { implement: opus }, saveAs: { name: 'Dev Opus' }, reason: 'User wants Opus' }, { sessionId: 'pin-session' }) as { flowId: string; version: number };
+    assert.deepEqual([copy.flowId, copy.version], ['dev-opus', 1]);
+    const data = await f.tools.flow_get!({ flowId: 'dev-opus' }) as { revision: string; versions: { author: { kind: string; sessionId?: string; reason?: string } }[] };
+    assert.deepEqual(data.versions[0]?.author, { kind: 'ai', sessionId: 'pin-session', reason: 'User wants Opus' });
+    await assert.rejects(f.tools.flow_pin_bindings!({ flowId: 'dev-opus', values: { 'verify/required-reviewer': { reasoning: 'low' } }, reason: 'x' }), /expectedRevision/);
+    const next = await f.tools.flow_pin_bindings!({ flowId: 'dev-opus', values: { 'verify/required-reviewer': { reasoning: 'low' } }, expectedRevision: data.revision, reason: 'Cheaper review' }) as { version: number };
+    assert.equal(next.version, 2);
+    const preview = await f.manager.preview('dev-opus');
+    assert.equal(preview.snapshot.configuration.bindings['verify/required-reviewer']?.values.reasoning, 'low');
+    assert.equal(preview.snapshot.configuration.bindings.plan?.values.model, 'claude-opus-5-5');
+  } finally { await f.manager.close(); }
+});
+
 test('fake runner receives pinned SKILL.md with its name and companion paths', async () => {
   const f = await project();
   try {

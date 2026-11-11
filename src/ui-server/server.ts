@@ -16,7 +16,7 @@ import { workerScopeSupported } from '../adapters/worker-scope.js';
 import { RevisionConflict } from '../storage/library-lock.js';
 import type { RunnerId } from '../runners/agent-runner.js';
 import { projectDir } from '../storage/project-dir.js';
-import { authoringProject, flowBlocks, draftFlow, getFlow, validateFlow, flowDiff, publishFlow, assess, checkFlow } from '../runtime/flow-authoring.js';
+import { authoringProject, flowBlocks, draftFlow, getFlow, validateFlow, flowDiff, publishFlow, pinFlowBindings, assess, checkFlow } from '../runtime/flow-authoring.js';
 import { flowAuthorSchema } from '../storage/flow-library.js';
 import { runStats } from '../runtime/run-stats.js';
 import { createProgram, listPrograms, markPhaseDelivered, programNext, programStatus, startPhase } from '../runtime/programs.js';
@@ -242,7 +242,7 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
     const runInput = z.strictObject({ flowId: z.string().min(1), version: z.number().int().positive().optional(), task: z.string().min(1).optional(), configurationHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
       workspaceMode: z.enum(['isolated', 'current', 'shared']).optional(),
       importDirty: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-      limits: z.strictObject({ activeTimeSeconds: z.number().int().positive().optional(), maxConcurrency: z.number().int().positive().optional(), maxRepairRounds: z.number().int().nonnegative().optional() }).transform(value => Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined))).optional(),
+      limits: z.strictObject({ activeTimeSeconds: z.number().int().positive().optional(), maxConcurrency: z.number().int().positive().optional(), maxRepairRounds: z.number().int().nonnegative().optional(), maxTokens: z.number().int().positive().optional() }).transform(value => Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined))).optional(),
       overrides: z.record(z.string(), z.strictObject({ runner: z.string().min(1).optional(), provider: z.string().min(1).optional(), model: z.string().min(1).optional(), reasoning: z.string().min(1).optional() }).transform(value => Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined)) as BindingOverride)).optional() });
     if (url.pathname === '/api/runs/preview' && method === 'POST') {
       const input = runInput.parse(payload);
@@ -325,11 +325,17 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       const draft = { ...newFlowFromTemplate(input.template), flowId: input.id, name: input.name, version: 1 };
       return reply(201, { metadata, draft, revision: await library.saveDraft(input.id, draft) });
     }
-    const match = /^\/api\/flows\/([^/]+)\/(draft|validate|publish|archive|restore|rename|delete|clone|canvas-export|canvas-import|versions|authoring|author-validate|diff)$/.exec(url.pathname);
+    const match = /^\/api\/flows\/([^/]+)\/(draft|validate|publish|archive|restore|rename|delete|clone|canvas-export|canvas-import|versions|authoring|author-validate|diff|pin-bindings)$/.exec(url.pathname);
     if (match) {
       const id = decodeURIComponent(match[1]!), action = match[2]!;
       if (action === 'authoring' && method === 'GET') return reply(200, await getFlow(projectRoot, id));
       if (action === 'diff' && method === 'GET') return reply(200, { diff: await flowDiff(projectRoot, id) });
+      if (action === 'pin-bindings' && method === 'POST') {
+        const field = z.string().min(1).optional();
+        const input = z.strictObject({ values: z.record(z.string(), z.strictObject({ runner: field, provider: field, model: field, reasoning: field })), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+          saveAs: z.strictObject({ name: z.string().min(1), flowId: z.string().min(1).optional() }).optional(), author: flowAuthorSchema.optional() }).parse(payload);
+        return reply(200, await pinFlowBindings(projectRoot, id, { ...input, author: input.author ?? { kind: 'human' } }));
+      }
       if (action === 'author-validate' && method === 'POST') {
         const input = z.strictObject({ draft: z.json().optional() }).parse(payload);
         return reply(200, await validateFlow(projectRoot, id, input.draft));

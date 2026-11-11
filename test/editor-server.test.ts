@@ -49,6 +49,13 @@ test('local editor persists drafts and published versions while rejecting unauth
     const stale = await fetch(`${editor.url}/api/flows/demo/draft`, { method: 'PUT', headers, body: JSON.stringify({ draft: current.draft, expectedRevision: 'f'.repeat(64) }) });
     assert.equal(stale.status, 409);
     assert.equal((await fetch(`${editor.url}/api/flows/demo/publish`, { method: 'POST', headers, body: JSON.stringify({ expectedRevision: 'f'.repeat(64) }) })).status, 409);
+    // "Lưu làm mặc định cho flow" from the new-run form publishes the pinned choice as a human version.
+    const pin = (flowId: string, body: unknown) => fetch(`${editor.url}/api/flows/${flowId}/pin-bindings`, { method: 'POST', headers, body: JSON.stringify(body) });
+    assert.equal((await pin('demo', { values: { implement: { model: 'claude-opus-5-5' } }, expectedRevision: 'f'.repeat(64) })).status, 409);
+    const pinned = await (await pin('demo', { values: { implement: { model: 'claude-opus-5-5' } } })).json() as { version: number; created: boolean };
+    assert.deepEqual([pinned.version, pinned.created], [2, false]);
+    const copied = await (await pin('dev', { values: { implement: { model: 'claude-opus-5-5' } }, saveAs: { name: 'Dev nhanh' } })).json() as { flowId: string; created: boolean };
+    assert.deepEqual([copied.flowId, copied.created], ['dev-nhanh', true]);
     const bootstrap = await fetch(`${editor.url}/api/bootstrap`);
     assert.equal((await bootstrap.json() as { runtimeAvailable: boolean }).runtimeAvailable, ['linux', 'win32'].includes(process.platform));
   } finally { await editor.close(); }
