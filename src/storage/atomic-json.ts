@@ -16,6 +16,13 @@ async function replaceFile(source: string, target: string): Promise<void> {
   }
 }
 
+/** Write text to a temporary file and atomically replace `file` with it. */
+export async function replaceText(file: string, text: string): Promise<void> {
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  try { await writeFile(temporary, text, { encoding: 'utf8', flag: 'wx' }); await replaceFile(temporary, file); }
+  finally { await unlink(temporary).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; }); }
+}
+
 /** Write JSON to a temporary file and atomically replace `file` with it. */
 export async function replaceJson(file: string, value: unknown): Promise<void> {
   const temporary = `${file}.${randomUUID()}.tmp`;

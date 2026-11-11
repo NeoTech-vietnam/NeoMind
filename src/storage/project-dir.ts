@@ -9,7 +9,7 @@ import path from 'node:path';
  */
 export const PROJECT_DIR = 'neomind';
 export const LEGACY_PROJECT_DIR = '.neomind';
-const markers = ['project.json', 'flows', 'profiles', 'memory'];
+const markers = ['project.json', 'flows', 'profiles', 'memory', 'skills'];
 
 /** A `neomind/` folder is NeoMind's when it is empty or holds NeoMind data, never a project's own `neomind` source folder. */
 function isNeoMindFolder(directory: string): boolean {

@@ -6,7 +6,8 @@ import { ProfileLibrary } from '../storage/profile-library.js';
 import { projectDir } from '../storage/project-dir.js';
 import { builtinProfile } from './project.js';
 import { authoringProject } from './flow-authoring.js';
-import { skillStatus } from '../storage/skill-catalog.js';
+import { skillCatalog, skillStatus } from '../storage/skill-catalog.js';
+import { profileFromTemplate, profileTemplates, type ProfileTemplateId } from '../domain/profile-templates.js';
 
 const profiles = (root: string) => new ProfileLibrary(path.join(projectDir(root), 'profiles'));
 const flows = (root: string) => new FlowLibrary(path.join(projectDir(root), 'flows'));
@@ -110,4 +111,34 @@ export async function migrateProfile(root: string, profileId: string, version: n
     } catch (error) { results.push({ flowId: item.flowId, error: error instanceof Error ? error.message : String(error) }); }
   }
   return { results };
+}
+
+/** Create a profile draft from a code template; only skills the project actually has are pinned. */
+export async function createProfileFromTemplate(root: string, input: { profileId: string; name: string; template: ProfileTemplateId }) {
+  if (!Object.hasOwn(profileTemplates, input.template)) throw new Error('Unknown profile template');
+  const store = profiles(root);
+  if ((await store.list()).some(item => item.profileId === input.profileId) || builtinProfile(input.profileId)) throw new Error(`Profile ${input.profileId} already exists`);
+  const draft = profileFromTemplate(input.template, input.profileId, input.name, await skillCatalog(root));
+  const metadata = await store.create(input.profileId, input.name);
+  return { metadata, draft, revision: await store.saveDraft(input.profileId, draft, null) };
+}
+
+const inUse = (usage: Awaited<ReturnType<typeof profileUsage>>) => usage.filter(item => !item.builtin && (item.draft.length || item.published.length));
+
+/**
+ * Delete a project profile that no flow uses (draft or latest version). A profile still in use is refused with the
+ * flows that use it, so the caller can archive it instead: archived profiles keep every version runs may replay.
+ */
+export async function deleteProfile(root: string, profileId: string, author: FlowAuthor = { kind: 'human' }) {
+  if (author.kind === 'ai' && (await authoringProject(root)).ai?.profilePublish === 'deny') throw new Error('AI profile changes are disabled by project policy');
+  const store = profiles(root), metadata = await store.metadata(profileId), used = inUse(await profileUsage(root, profileId));
+  if (used.length) return { deleted: false as const, reason: `Agent ${metadata.name} đang được ${used.length} flow dùng; hãy lưu trữ thay vì xóa`, flows: used.map(item => ({ flowId: item.flowId, name: item.name, steps: [...new Set([...item.draft, ...item.published].map(ref => ref.label))] })) };
+  await store.deletePermanently(profileId, metadata.name);
+  return { deleted: true as const, flows: [] };
+}
+
+export async function archiveProfile(root: string, profileId: string, archived: boolean, author: FlowAuthor = { kind: 'human' }) {
+  if (author.kind === 'ai' && (await authoringProject(root)).ai?.profilePublish === 'deny') throw new Error('AI profile changes are disabled by project policy');
+  await profiles(root).setArchived(profileId, archived);
+  return { archived, flows: inUse(await profileUsage(root, profileId)).map(item => ({ flowId: item.flowId, name: item.name })) };
 }

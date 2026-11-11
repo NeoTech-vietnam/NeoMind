@@ -116,7 +116,9 @@ export const projectSchema = z.strictObject({
   schemaVersion: z.literal(1), projectId: id, policyVersion: z.number().int().min(1),
   policy: projectPolicySchema,
   memorySelection: memorySelectionSchema.optional(),
-  ai: z.strictObject({ flowPublish: z.enum(['allow', 'draft-only', 'deny']).optional(), profilePublish: z.enum(['allow', 'draft-only', 'deny']).optional() }).optional(),
+  ai: z.strictObject({ flowPublish: z.enum(['allow', 'draft-only', 'deny']).optional(), profilePublish: z.enum(['allow', 'draft-only', 'deny']).optional(),
+    // Whether session tools may create, edit or delete neomind/skills; omitted means allow.
+    skillEdit: z.enum(['allow', 'deny']).optional() }).optional(),
   roleDefaults: z.record(id, z.strictObject({ runner: z.string().min(1), provider: z.string().min(1),
     model: z.string().min(1), reasoning: z.string().min(1) })),
 });
