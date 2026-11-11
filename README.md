@@ -260,3 +260,30 @@ npm run neomind -- run start /path/to/repo dev "task" --workspace current --impo
 Lấy `BASELINE_HASH` từ preview khi checkout có thay đổi. Shared/current tuần tự hóa writer, giữ staging và chỉ commit phần run. Isolated hỗ trợ nhiều giai đoạn fork/join/integration và review/repair từng nhánh; fork lồng nhau vẫn bị chặn. `run clean` chụp worktree thành ref snapshot rồi xóa hẳn (xem *Dọn worktree* ở trên).
 
 Project memory có policy lexical/LSA/hybrid, suy ra path từ task/tên file, dedup và metadata `expiresAt`/`supersedes`. LSA chạy cục bộ theo corpus project; lesson chỉnh sửa tạo version mới và cần duyệt lại. Chi tiết kiểm chứng và giới hạn: [bàn giao 04/11](docs/adaptive-agent-flow/session-handoff-2026-11-04.md).
+
+### Memory dùng được (11/11/2026)
+
+**Không cần cấu hình.** Project chưa chọn thư mục memory dùng `neomind/memory` trong repo: chưa có thư mục thì đọc ra memory rỗng, bản ghi đầu tiên tạo thư mục. Memory nằm trong Git nên đi theo commit; cần dùng chung ngoài repo thì chọn "Dùng thư mục khác…" trên trang Memory (thư mục đã cấu hình giữ nguyên như trước).
+
+**Đề xuất và duyệt.** Ngoài lesson từ vòng sửa, run tự đề xuất (tối đa 8 mỗi run, cùng nội dung chỉ một lần): quyết định từ yêu cầu sửa kế hoạch, lesson khi reviewer thấy rule bị vi phạm, lesson từ lý do run bị chặn (khi run xong hoặc bị hủy). Nút **Ghi nhớ điều này** trên chi tiết run biến một câu của bạn thành đề xuất có nguồn là run. AI trong session đề xuất bằng `memory_propose`. Mọi đề xuất vào một hàng đợi trên trang Memory: **Duyệt**, **Sửa rồi duyệt**, **Từ chối**; đề xuất trùng nội dung được gộp, đề xuất trùng bản ghi đã có được cảnh báo.
+
+**Trang Memory.** "+ Ghi chú" lưu thẳng (bạn tự ghi nên coi là đã duyệt; lesson vẫn có biên nhận đề xuất/duyệt). Sheet chi tiết: sửa nội dung/phạm vi/tag theo revision (sửa trùng lúc bị từ chối, không ghi đè), **Hết hạn**, **Thay thế bằng…** (bản mới cùng loại, bản cũ không còn được dùng), **Xóa** có xác nhận (không xóa được bản đang bị bản khác thay thế). Mỗi bản ghi có số run đã dùng và điểm đánh giá.
+
+**Memory theo bước.** Bước agent/reviewer có trường tùy chọn `memory: { types, tags, maxRecords, off }`. Flow tạo mới từ template có `memoryDefaults: "role"`: lập kế hoạch và nghiên cứu nhận context + quyết định + lesson, bước viết code nhận cả ba nhưng chỉ bản ghi khớp phạm vi kế hoạch, reviewer chỉ nhận quyết định + lesson. Flow cũ và template dựng sẵn không đổi: mọi bước nhận cả khối memory như trước. Run vẫn ghim một tập memory khi tạo; mỗi bước lọc trên tập đó, và `node_input.sources` ghi đúng bản ghi bước nhận.
+
+**Memory đã dùng và đánh giá.** Chi tiết run có mục "Memory đã dùng": mỗi bước nhận bản ghi nào, vì sao, bộ lọc của bước. Nút **Hữu ích / Không liên quan / Sai** ghi event `memory_feedback` vào journal của run và cộng điểm trong SQLite điều phối (+1 / −1 / −3); run sau xếp hạng có cộng/trừ theo điểm (tối đa ±5, không vượt qua yêu cầu khớp task). "Sai" mở bản ghi để sửa hoặc cho hết hạn.
+
+CLI dùng cùng core:
+
+```bash
+npm run neomind -- memory list /path/to/repo [từ khóa]
+npm run neomind -- memory pending /path/to/repo
+npm run neomind -- memory approve|reject /path/to/repo <proposalId> [--body-file sửa.txt]
+npm run neomind -- memory note /path/to/repo lesson "Chạy npm run build:ui sau khi sửa giao diện" --tags ui
+npm run neomind -- memory expire|delete /path/to/repo <context|decision|lesson> <id>
+npm run neomind -- memory remember /path/to/repo <runId> "Điều cần nhớ" [--step implement]
+npm run neomind -- memory feedback /path/to/repo <runId> lesson/<id> helpful|irrelevant|wrong [--step verify]
+npm run neomind -- memory propose /path/to/repo proposal.json
+```
+
+API editor: `GET /api/memory` (kèm `location`, `stats`, `inactive`), `GET /api/memory/search`, `GET /api/memory/records/:type/:id`, `POST /api/memory/note|expire|delete`, `GET|POST /api/memory/proposals`, `POST /api/memory/proposals/approve|reject|revise`, `POST /api/runs/:id/remember`, `POST /api/runs/:id/memory-feedback`.

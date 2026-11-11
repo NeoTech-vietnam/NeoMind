@@ -58,6 +58,8 @@ flowchart LR
 
 **Rules (Gói 4, 06/11/2026):** tool `neomind_preview` trả thêm `rules` (`[R1] …`) và `ruleWarnings`; `neomind_flow_blocks` trả `rules` để AI biết review sẽ chấm theo rule. Không có tool sửa `rules.md`: rule là quyết định của người dùng, sửa qua Git.
 
+**Memory (11/11/2026):** `neomind_memory_search` (lọc theo từ khóa, loại, phạm vi, tag; trả id, loại, tóm tắt, revision, còn hiệu lực hay không), `neomind_memory_get` (đọc đủ một bản ghi), `neomind_memory_propose` (đề xuất context/quyết định/lesson kèm nguồn và lý do; trùng bản ghi hoặc đề xuất đang chờ thì không tạo mới), `neomind_memory_pending` (hàng đợi, đã gộp trùng). `neomind_memory_approve` và `neomind_memory_reject` bắt buộc `confirmed: true` sau khi người dùng đồng ý trong session; approve nhận `body` khi người dùng sửa nội dung. AI không ghi thẳng memory: mọi thứ AI đề xuất qua người duyệt. Panel dùng cùng API (`/api/memory/proposals…`, `/api/runs/:id/remember`, `/api/runs/:id/memory-feedback`).
+
 **Chi phí và quota (Gói 5, 06/11/2026):** tool `neomind_stats` (thống kê theo flow/profile/runner, không trả danh sách run chi tiết); `neomind_extend_time` nhận `seconds`, `tokens` hoặc cả hai (gia hạn ngân sách token `maxTokens`); `neomind_status` không đổi, `run list` có `tokens`. `neomind_assess` kèm `statistics` khi project có ≥ 3 run đã xong của flow.
 
 **Panel = editor đầy đủ.**
