@@ -1,4 +1,4 @@
-import { lstat, mkdir, readdir, realpath } from 'node:fs/promises';
+import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 
@@ -25,6 +25,12 @@ export class RunStore {
     try { if ((await lstat(file)).isSymbolicLink()) throw new Error('Run journal cannot be a symlink'); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     return file;
+  }
+  /** Remove a run's journal and transcripts. Callers must have closed the run first. */
+  async remove(runId: string): Promise<void> {
+    const dir = this.directory(runId), stat = await lstat(dir);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Run directory is not a real directory');
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
   async list(): Promise<string[]> {
     const entries = await readdir(this.root, { withFileTypes: true });

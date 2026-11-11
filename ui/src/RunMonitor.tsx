@@ -46,7 +46,7 @@ function stopFacts(run: Run, flow: Flow) {
 }
 const factTone = { success: 'text-success', attention: 'text-attention', danger: 'text-danger', idle: 'text-muted-foreground' };
 
-export function RunMonitor({ run, setRun, rerun }: { run: Run; setRun(run: Run): void; rerun?(): void }) {
+export function RunMonitor({ run, setRun, rerun, remove }: { run: Run; setRun(run: Run): void; rerun?(): void; remove?(): void }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [feedback, setFeedback] = useState(''), [extraMinutes, setExtraMinutes] = useState(10);
   const phase = run.runtimeState?.phase ?? 'recovering', info = phaseInfo(phase), flow = run.snapshot?.configuration.flow;
   const bindings = effectiveBindings(run), plan = run.plans.at(-1)?.plan;
@@ -98,13 +98,14 @@ export function RunMonitor({ run, setRun, rerun }: { run: Run; setRun(run: Run):
         <p className="m-0 mt-1 text-[12.5px] text-muted-foreground" title={run.usage.partial ? 'Một số lượt chưa báo token' : undefined}>{meta.join(' · ')}</p>
       </div>
       <div className="flex items-center gap-1.5">
-        {rerun && rerunDraft(run) && <Button disabled={busy} onClick={rerun}>Chạy lại từ đầu</Button>}
+        {rerun && rerunDraft(run) && <Button disabled={busy} onClick={rerun}>Chạy lại</Button>}
         {running && <Button disabled={busy} onClick={() => void act('pause')}><Pause />Tạm dừng</Button>}
         {lastSession && !running && phase !== 'waiting_approval' && <Button onClick={() => setSession({ attemptId: lastSession.meta.attemptId, key: lastSession.meta.key, source: 'neomind' })}><PanelRight />Xem session</Button>}
         {!finished && <Button variant="ghost" className="text-danger hover:text-danger" disabled={busy} onClick={cancel}>Hủy run</Button>}
         <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Tùy chọn run"><MoreHorizontal /></Button></DropdownMenuTrigger>
           <DropdownMenuContent><DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(run.runId)}>Sao chép mã run</DropdownMenuItem>
-            {canWorktreeClean && <DropdownMenuItem disabled={locked} onSelect={() => void cleanWorktree()}>Dọn worktree</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu>
+            {canWorktreeClean && <DropdownMenuItem disabled={locked} onSelect={() => void cleanWorktree()}>Dọn worktree</DropdownMenuItem>}
+            {remove && (phase === 'completed' || phase === 'cancelled') && <DropdownMenuItem danger disabled={locked} onSelect={remove}>Xóa run</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu>
       </div>
     </header>
 

@@ -60,17 +60,42 @@ export function RunPanel({ flowId, flows }: { flowId?: string; flows: { flowId: 
       if (run) setRun(await api<Run>(`/api/runs/${run.runId}`));
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setCleaning(false); }
   }
+  /** Delete a run for good after the user confirms; the list then forgets it. */
+  async function removeRun(item: RunSummary) {
+    if (!await confirmAction({ title: 'Xóa run này?', description: `“${item.task ?? item.runId}”\n\nXóa hẳn journal, transcript, worktree và ref snapshot của run. Thay đổi chưa commit trong run sẽ mất. Không khôi phục được.`, confirmLabel: 'Xóa run', danger: true })) return;
+    setError(''); setNotice('');
+    try {
+      await api(`/api/runs/${item.runId}/delete`, 'POST', {});
+      if (run?.runId === item.runId) setRun(null);
+      setNotice('Đã xóa run.'); await refresh();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }
+  async function removeFinished() {
+    const count = history.filter(item => item.phase === 'completed' || item.phase === 'cancelled').length;
+    if (!await confirmAction({ title: `Xóa ${count} run đã xong?`, description: 'Xóa hẳn journal, transcript, worktree và ref snapshot của mọi run đã hoàn tất hoặc đã hủy. Thay đổi chưa commit trong các run đó sẽ mất. Run đang chạy, chờ duyệt hoặc bị chặn không bị đụng tới.', confirmLabel: `Xóa ${count} run`, danger: true })) return;
+    setCleaning(true); setError(''); setNotice('');
+    try {
+      const { results } = await api<{ results: { runId: string; status: string; reason?: string }[] }>('/api/runs/delete', 'POST', {});
+      const kept = results.filter(item => item.status === 'kept'), deleted = results.length - kept.length;
+      if (run && results.some(item => item.runId === run.runId && item.status === 'deleted')) setRun(null);
+      setNotice(`Đã xóa ${deleted} run.${kept.length ? ` Không xóa được ${kept.length} run: ${kept.map(item => item.reason).filter(Boolean).slice(0, 2).join('; ')}` : ''}`);
+      await refresh();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setCleaning(false); }
+  }
+  const rerunFrom = (draft: { flowId: string; task: string }) => { setRerun(draft); setRun(null); };
   async function open(runId: string) { setError(''); setRerun(null); try { setRun(await api<Run>(`/api/runs/${runId}`)); setStale(false); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } }
 
   return <section className="grid h-full min-h-0 grid-cols-[272px_minmax(0,1fr)] min-[1200px]:grid-cols-[296px_minmax(0,1fr)]">
-    <RunList history={history} selectedId={run?.runId} open={id => void open(id)} startNew={() => { setRerun(null); setRun(null); }} cleaning={cleaning} clean={() => void cleanFinished()}
+    <RunList history={history} selectedId={run?.runId} open={id => void open(id)} startNew={() => { setRerun(null); setRun(null); }} cleaning={cleaning} clean={() => void cleanFinished()} removeFinished={() => void removeFinished()}
+      actions={{ rerun: item => { if (item.flowId && item.task) rerunFrom({ flowId: item.flowId, task: item.task }); }, remove: item => void removeRun(item) }}
       programs={<RunPrograms programs={programs} open={id => void open(id)} changed={id => { void refresh(); if (id) void open(id); }} />} />
     <div className="min-h-0 min-w-0 overflow-auto">
       <div className="mx-auto flex max-w-[1040px] flex-col gap-3 px-6 pb-0 pt-5">
         {error && <Callout tone="danger" icon={<CircleAlert />}><div className="flex items-start"><span className="flex-1">{error}</span><Dismiss onClick={() => setError('')} /></div></Callout>}
         {stale && <Callout tone="attention" icon={<TriangleAlert />}><span role="status">Mất kết nối cập nhật run. Trạng thái đang hiển thị có thể đã cũ; hệ thống sẽ thử đồng bộ lại.</span></Callout>}
         {notice && <Callout tone="success" icon={<CircleCheck />}><div className="flex items-start"><span className="flex-1" role="status">{notice}</span><Dismiss onClick={() => setNotice('')} /></div></Callout>}
-        {run ? <RunMonitor key={run.runId} run={run} setRun={value => { setRun(value); void refresh(); }} rerun={() => { const draft = rerunDraft(run); if (draft) { setRerun(draft); setRun(null); } }} />
+        {run ? <RunMonitor key={run.runId} run={run} setRun={value => { setRun(value); void refresh(); }} rerun={() => { const draft = rerunDraft(run); if (draft) rerunFrom(draft); }}
+          remove={() => void removeRun({ runId: run.runId, task: run.runtimeContext?.task, phase: run.runtimeState?.phase ?? '', reason: '' })} />
           : <RunStart key={rerun ? `rerun-${rerun.flowId}` : 'new'} {...rerun ? { initialFlow: rerun.flowId, initialTask: rerun.task } : flowId ? { initialFlow: flowId } : {}} flows={flows} history={history} started={value => { setRerun(null); setRun(value); void refresh(); }} />}
       </div>
     </div>

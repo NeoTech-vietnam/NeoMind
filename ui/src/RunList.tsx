@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Filter, MoreHorizontal, Plus, Search, Trash2 } from 'lucide-react';
+import { Filter, MoreHorizontal, Plus, RotateCcw, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { StatusDot } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -9,6 +9,7 @@ import { Select } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { needsYou, phaseInfo, relativeTime } from './format';
 import type { RunSummary } from './runTypes';
+import { RERUNNABLE_PHASES } from '../../src/domain/rerun';
 
 const finished = (phase: string) => phase === 'completed' || phase === 'cancelled';
 type Filters = { flow: string; phases: string[]; from: string; to: string };
@@ -64,23 +65,34 @@ function Group({ title, count, children, menu }: { title: string; count: number;
   </section>;
 }
 
-function Row({ item, selected, open }: { item: RunSummary; selected: boolean; open(): void }) {
+export type RowActions = { rerun(item: RunSummary): void; remove(item: RunSummary): void };
+
+function Row({ item, selected, open, actions }: { item: RunSummary; selected: boolean; open(): void; actions?: RowActions | undefined }) {
   const info = phaseInfo(item.phase), time = relativeTime(item.createdAt), quiet = ['completed', 'cancelled', 'running', 'waiting_approval', 'blocked'].includes(item.phase);
-  return <button type="button" onClick={open} aria-current={selected ? 'true' : undefined}
-    className={cn('flex w-full cursor-pointer items-start gap-2.5 rounded-md border-0 bg-transparent px-2.5 py-2 text-left font-sans outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring', selected && 'bg-accent')}>
-    <StatusDot status={info.status} className="mt-[5px]" />
-    <span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-medium text-foreground">{item.task || item.runId}</span>
-      <span className="block truncate text-[11.5px] text-muted-foreground">{[quiet ? '' : info.label, item.flowName, time].filter(Boolean).join(' · ')}</span></span>
-  </button>;
+  const canRerun = !!item.flowId && !!item.task?.trim() && RERUNNABLE_PHASES.includes(item.phase), canDelete = finished(item.phase), menu = !!actions && (canRerun || canDelete);
+  return <div className="group relative">
+    <button type="button" onClick={open} aria-current={selected ? 'true' : undefined}
+      className={cn('flex w-full cursor-pointer items-start gap-2.5 rounded-md border-0 bg-transparent px-2.5 py-2 text-left font-sans outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring', selected && 'bg-accent', menu && 'pr-8')}>
+      <StatusDot status={info.status} className="mt-[5px]" />
+      <span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-medium text-foreground">{item.task || item.runId}</span>
+        <span className="block truncate text-[11.5px] text-muted-foreground">{[quiet ? '' : info.label, item.flowName, time].filter(Boolean).join(' · ')}</span></span>
+    </button>
+    {menu && <span className="absolute right-1 top-1.5 opacity-0 focus-within:opacity-100 group-hover:opacity-100 has-[[data-state=open]]:opacity-100">
+      <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={`Tùy chọn run ${item.task ?? item.runId}`}><MoreHorizontal /></Button></DropdownMenuTrigger>
+        <DropdownMenuContent>
+          {canRerun && <DropdownMenuItem onSelect={() => actions!.rerun(item)}><RotateCcw />Chạy lại</DropdownMenuItem>}
+          {canDelete && <DropdownMenuItem danger onSelect={() => actions!.remove(item)}><Trash2 />Xóa run</DropdownMenuItem>}
+        </DropdownMenuContent></DropdownMenu></span>}
+  </div>;
 }
 
 /** Left column of the Runs screen: runs that need the user first, then the ones running, then everything else. */
-export function RunList({ history, selectedId, open, startNew, cleaning, clean, programs }: { history: RunSummary[]; selectedId: string | undefined; open(runId: string): void; startNew(): void; cleaning: boolean; clean(): void; programs?: React.ReactNode }) {
+export function RunList({ history, selectedId, open, startNew, cleaning, clean, removeFinished, actions, programs }: { history: RunSummary[]; selectedId: string | undefined; open(runId: string): void; startNew(): void; cleaning: boolean; clean(): void; removeFinished?(): void; actions?: RowActions; programs?: React.ReactNode }) {
   const [query, setQuery] = useState(''), [filters, setFilters] = useState<Filters>(noFilters);
   const visible = useMemo(() => applyFilters(history, query, filters), [history, query, filters]);
   const needs = visible.filter(item => needsYou(item.phase)), live = visible.filter(item => item.phase === 'running' || item.phase === 'stopping');
   const recent = visible.filter(item => !needs.includes(item) && !live.includes(item));
-  const row = (item: RunSummary) => <Row key={item.runId} item={item} selected={item.runId === selectedId} open={() => open(item.runId)} />;
+  const row = (item: RunSummary) => <Row key={item.runId} item={item} selected={item.runId === selectedId} open={() => open(item.runId)} actions={actions} />;
   return <aside className="flex min-h-0 flex-col gap-2.5 border-r px-3 py-3" aria-label="Danh sách run">
     <Button className="w-full" onClick={startNew} aria-current={selectedId ? undefined : 'page'}><Plus />Run mới</Button>
     <div className="flex gap-1.5">
@@ -97,7 +109,8 @@ export function RunList({ history, selectedId, open, startNew, cleaning, clean, 
       {live.length > 0 && <Group title="Đang chạy" count={live.length}>{live.map(row)}</Group>}
       {recent.length > 0 && <Group title="Gần đây" count={recent.length} menu={history.some(item => finished(item.phase)) && <DropdownMenu>
         <DropdownMenuTrigger asChild><Button variant="ghost" size="icon-sm" aria-label="Tùy chọn danh sách"><MoreHorizontal /></Button></DropdownMenuTrigger>
-        <DropdownMenuContent><DropdownMenuItem disabled={cleaning} onSelect={clean}><Trash2 />{cleaning ? 'Đang dọn…' : 'Dọn worktree run đã xong'}</DropdownMenuItem></DropdownMenuContent></DropdownMenu>}>{recent.map(row)}</Group>}
+        <DropdownMenuContent><DropdownMenuItem disabled={cleaning} onSelect={clean}><Trash2 />{cleaning ? 'Đang dọn…' : 'Dọn worktree run đã xong'}</DropdownMenuItem>
+          {removeFinished && <DropdownMenuItem danger disabled={cleaning} onSelect={removeFinished}><Trash2 />Xóa mọi run đã xong</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu>}>{recent.map(row)}</Group>}
     </div>
   </aside>;
 }

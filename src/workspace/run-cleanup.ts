@@ -32,6 +32,14 @@ export async function ignoredPaths(workspace: string): Promise<string[]> {
   return output.split('\0').filter(Boolean).sort();
 }
 
+/** Delete every ref NeoMind kept for one run (`refs/neomind/<runId>/...`), so its snapshots stop holding commits. */
+export async function deleteRunRefs(repo: string, runId: string): Promise<string[]> {
+  if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(runId)) throw new Error('Invalid run id');
+  const refs = (await git(repo, 'for-each-ref', '--format=%(refname)', `refs/neomind/${runId}/`)).split('\n').map(line => line.trim()).filter(Boolean);
+  for (const ref of refs) await git(repo, 'update-ref', '-d', ref);
+  return refs;
+}
+
 /** Write each ref to its commit (idempotent: an existing ref is moved to the same commit). */
 export async function preserveRefs(repo: string, refs: PreservedRef[]): Promise<void> {
   for (const item of refs) {

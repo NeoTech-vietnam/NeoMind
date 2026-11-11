@@ -18,6 +18,7 @@ import type { MemoryInput } from '../memory/store.js';
 import { LessonProposals } from '../memory/proposals.js';
 import type { Flow } from '../domain/schema.js';
 import { bindingRunners, selectAvailableBinding } from './model-selection.js';
+import { deleteRunRefs } from '../workspace/run-cleanup.js';
 import { defaultRunnerRegistry, type RunnerRegistry } from '../runners/registry.js';
 import { codexUnavailableReason } from '../runners/codex-runner.js';
 import type { AvailableRunnerModel } from '../runners/agent-runner.js';
@@ -219,6 +220,31 @@ export class RunManager {
         const report = await this.report(id);
         if (!['completed', 'cancelled'].includes(report.runtimeState?.phase ?? '') || report.workspaceCleanup?.cleaned) continue;
         await (await this.owned(id)).cleanWorkspaces(force); results.push({ runId: id, status: 'cleaned' });
+      } catch (error) { results.push({ runId: id, status: 'kept', reason: error instanceof Error ? error.message : String(error) }); }
+    }
+    return results;
+  }
+  /**
+   * Delete a finished (completed or cancelled) run for good: its worktrees, the refs NeoMind kept for it, the journal and
+   * transcripts. Unsaved changes in the worktree are discarded, so callers must ask the user first.
+   */
+  async delete(id: string) {
+    const report = await this.report(id), phase = report.runtimeState?.phase ?? '';
+    if (!['completed', 'cancelled'].includes(phase)) throw new Error('Chỉ xóa được run đã hoàn tất hoặc đã hủy; hủy run trước khi xóa');
+    const run = await this.owned(id), mode = report.runtimeContext?.workspaceMode;
+    if ((!mode || mode === 'isolated') && !report.workspaceCleanup?.cleaned) await run.cleanWorkspaces(true);
+    await run.close(); this.runs.delete(id);
+    await deleteRunRefs(report.runtimeContext?.projectRoot ?? this.projectRoot, id);
+    await this.store.remove(id);
+    return { runId: id, deleted: true };
+  }
+  /** Delete every finished run; a run that cannot be deleted is reported and left as is. */
+  async deleteFinished() {
+    const results: { runId: string; status: 'deleted' | 'kept'; reason?: string }[] = [];
+    for (const id of await this.store.list()) {
+      try {
+        if (!['completed', 'cancelled'].includes((await this.report(id)).runtimeState?.phase ?? '')) continue;
+        await this.delete(id); results.push({ runId: id, status: 'deleted' });
       } catch (error) { results.push({ runId: id, status: 'kept', reason: error instanceof Error ? error.message : String(error) }); }
     }
     return results;

@@ -178,6 +178,10 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       const { force } = z.strictObject({ force: z.boolean().default(false) }).parse(payload);
       return reply(200, cleanMatch[1] ? await (await runs()).clean(cleanMatch[1], force) : { results: await (await runs()).cleanFinished(force) });
     }
+    const deleteMatch = /^\/api\/runs\/(?:([a-z0-9-]+)\/)?delete$/.exec(url.pathname);
+    if (deleteMatch && method === 'POST') {
+      return reply(200, deleteMatch[1] ? await (await runs()).delete(deleteMatch[1]) : { results: await (await runs()).deleteFinished() });
+    }
     const lessonMatch = /^\/api\/runs\/([a-z0-9-]+)\/lessons(?:\/(approve|reject|revise))?$/.exec(url.pathname);
     if (lessonMatch) {
       if (!lessonMatch[2] && method === 'GET') { return reply(200, await (await runs()).lessons(lessonMatch[1]!)); }
