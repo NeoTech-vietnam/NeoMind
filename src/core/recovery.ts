@@ -30,6 +30,9 @@ const commitReceiptSchema = z.strictObject({ nodeId: z.string().min(1), baseline
   parent: gitObject, tree: gitObject, commit: gitObject });
 const reviewResultSchema = z.strictObject({ reviewerId: z.string().min(1), sessionId: z.string().min(1),
   baselineHash: z.string().min(1), verdict: z.enum(['pass', 'needs_changes', 'blocked', 'inconclusive']), findingIds: z.array(z.string()) });
+export const memoryFeedbackSchema = z.strictObject({ record: z.string().regex(/^(?:context|decision|lesson)\/[a-z0-9][a-z0-9-]{0,79}$/), revision: z.string().min(1).optional(),
+  nodeId: z.string().min(1).optional(), attemptId: z.string().min(1).optional(), rating: z.enum(['helpful', 'irrelevant', 'wrong']), note: z.string().max(2000).optional() });
+export type MemoryFeedback = z.infer<typeof memoryFeedbackSchema>;
 const reviewAssessmentSchema = z.strictObject({ evidenceValidated: z.boolean(), criteriaCovered: z.boolean(),
   verifiedFindingIds: z.array(z.string()), unresolvedDisagreement: z.boolean(), mandatoryCriteriaFailed: z.boolean() });
 
@@ -102,6 +105,8 @@ export interface RecoveryReport {
     baselines?: Record<string, string> | undefined; ignoredBaselines?: Record<string, string> | undefined; retained?: Record<string, string> | undefined; cleaned: boolean };
   /** Per review group, the reviewer outputs of the round the latest repair replaced. */
   priorReviewerOutputs: Record<string, RecoveryReport['reviewerOutputs']>;
+  /** Ratings the user gave memory records this run used (journals written before ratings existed have none). */
+  memoryFeedback: (MemoryFeedback & { eventId: string; timestamp: string })[];
   requiresUserContinue: true;
 }
 
@@ -153,9 +158,14 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
   let workspaceCleanup: RecoveryReport['workspaceCleanup'];
   /** Reviewer outputs from the round a repair replaced; only these may be carried forward. */
   const priorOutputs = new Map<string, RecoveryReport['reviewerOutputs']>();
+  const memoryFeedback: RecoveryReport['memoryFeedback'] = [];
   for (const event of events.slice(1)) {
     if (event.runId !== first.runId) throw new Error('Journal contains another run');
     switch (event.type) {
+      case 'memory_feedback': {
+        // A rating is about the record, not the run's state: it never changes the graph and may arrive in any phase.
+        memoryFeedback.push({ ...memoryFeedbackSchema.parse(event.payload), eventId: event.eventId, timestamp: event.timestamp }); break;
+      }
       case 'node_input': {
         const input = nodeInputSchema.parse(event.payload);
         if (nodeData.has(input.attemptId) || !flow.definition.nodes.some(node => node.id === input.nodeId) || (!input.truncated && textHash(input.prompt) !== input.promptHash)) throw new Error('Invalid node input');
@@ -556,5 +566,5 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
     branchWorkspaces: structuredClone([...branchWorkspaces.values()]), integrations: structuredClone([...integrations.values()]),
     unresolvedIntegrationNodeIds: [...integrations.values()].filter(item => !item.baselineHash).map(item => item.nodeId),
     includeImportedCommitNodeIds: [...includeImported], ...(checkoutApply ? { checkoutApply: structuredClone(checkoutApply) } : {}), ...(workspaceCleanup ? { workspaceCleanup: structuredClone(workspaceCleanup) } : {}), priorReviewerOutputs: structuredClone(Object.fromEntries(priorOutputs)),
-    requiresUserContinue: true };
+    memoryFeedback: structuredClone(memoryFeedback), requiresUserContinue: true };
 }

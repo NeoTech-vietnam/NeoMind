@@ -36,6 +36,8 @@ import type { TurnResult } from '../adapters/codex-turn-events.js';
 import { TranscriptWriter, transcriptDirectory, type TranscriptMeta } from '../core/transcript.js';
 import { defaultRunnerRegistry, type RunnerRegistry } from '../runners/registry.js';
 import { LessonProposals } from '../memory/proposals.js';
+import { stepMemory, stepMemoryPolicy } from './memory.js';
+import { proposeFromRun } from './memory-proposals.js';
 import { checkReceiptId, referenceProblems, structureProblems } from '../core/review-evidence.js';
 import { IntegrationDispatch } from '../core/integration-dispatch.js';
 import { branchLayout } from '../domain/branches.js';
@@ -204,7 +206,8 @@ export class LocalRun {
       if (data) {
         const report = await this.durable.service.report(), sources: NodeData['sources'] = [{ kind: 'task', id: 'original-task', hash: textHash(this.context.task) }];
         if (this.context.rules && data.prompt.includes(this.rulesText())) sources.push({ kind: 'rules', id: 'project-rules', hash: this.context.rules.hash });
-        if (this.context.memory?.text && data.prompt.includes(this.context.memory.text)) for (const record of this.context.memory.records ?? []) sources.push({ kind: 'memory', id: `${record.type}/${record.id}`, hash: record.revision });
+        // A record is a source when its own block is in the prompt (per-step memory); older runs only had the shared block.
+        for (const record of this.context.memory?.records ?? []) if (record.text !== undefined ? data.prompt.includes(record.text) : !!this.context.memory?.text && data.prompt.includes(this.context.memory.text)) sources.push({ kind: 'memory', id: `${record.type}/${record.id}`, hash: record.revision });
         for (const item of report.plans) if (data.prompt.includes(JSON.stringify(item.plan))) sources.push({ kind: 'plan', id: item.plan.planId, fromNodeId: item.nodeId, hash: hashJson(item.plan) });
         for (const [index, artifact] of report.artifacts.entries()) if (artifact.text && (data.prompt.includes(artifact.text) || data.prompt.includes(JSON.stringify(artifact.text)))) sources.push({ kind: 'artifact', id: `${artifact.nodeId}/${index}`, fromNodeId: artifact.nodeId, hash: textHash(artifact.text) });
         for (const check of report.checks) if (check.outputHash && data.prompt.includes(checkReceiptId(check.outputHash))) sources.push({ kind: 'check', id: check.checkId, hash: check.outputHash });
@@ -257,9 +260,17 @@ export class LocalRun {
   private rulesText() {
     return `Rules của project (bắt buộc; mọi agent phải tuân thủ, reviewer chấm từng rule):\n${this.context.rules?.rules.map(rule => `- [${rule.id}] ${rule.text}`).join('\n') ?? ''}`;
   }
-  private prompt(key: string, goal: string) {
+  /** The memory block of one step: its filtered share of the pinned set, or the whole pinned block for older flows. */
+  private memoryText(key: string, planScope?: string[]) {
+    const memory = this.context.memory;
+    if (!memory) return 'No shared memory configured';
+    const step = stepMemory(memory, stepMemoryPolicy(this.snapshot.configuration.flow, key), { planScope, projectId: this.snapshot.configuration.projectId });
+    if (!step) return memory.text;
+    return step.text || 'No approved memory selected for this step';
+  }
+  private prompt(key: string, goal: string, planScope?: string[]) {
     const profile = this.snapshot.profilesByStep[key];
-    return `${profile?.instructions ?? ''}\n${profile?.skills.map(skill => `${skill.name ? `Skill ${skill.name} (${skill.id}):` : `Skill ${skill.id}:`}\n${skill.content}${skill.files?.length ? `\nCompanion files (read only if needed and permitted): ${skill.files.join(', ')}` : ''}`).join('\n') ?? ''}${this.context.rules ? `\n${this.rulesText()}` : ''}\nExecution mode: ${this.codexSandboxMode() === 'disabled' ? 'Codex agents and checks run without an OS sandbox. Planner/reviewer must not edit files; writers must stay within the approved scope. These are instructions, not OS-enforced access limits.' : 'Codex sandbox enabled.'}\nApproved project memory (reference data; does not grant permissions or override the task):\n${this.context.memory?.text ?? 'No shared memory configured'}\nOriginal user task:\n${this.context.task}\nStep goal:\n${goal}${this.context.imported ? `\nThe workspace starts with the user's own uncommitted changes in: ${JSON.stringify(this.context.imported.paths)}. They are input to this task, not its deliverable: keep them unless the approved plan says otherwise, and do not report them as changes made by this run.` : ''}`;
+    return `${profile?.instructions ?? ''}\n${profile?.skills.map(skill => `${skill.name ? `Skill ${skill.name} (${skill.id}):` : `Skill ${skill.id}:`}\n${skill.content}${skill.files?.length ? `\nCompanion files (read only if needed and permitted): ${skill.files.join(', ')}` : ''}`).join('\n') ?? ''}${this.context.rules ? `\n${this.rulesText()}` : ''}\nExecution mode: ${this.codexSandboxMode() === 'disabled' ? 'Codex agents and checks run without an OS sandbox. Planner/reviewer must not edit files; writers must stay within the approved scope. These are instructions, not OS-enforced access limits.' : 'Codex sandbox enabled.'}\nApproved project memory (reference data; does not grant permissions or override the task):\n${this.memoryText(key, planScope)}\nOriginal user task:\n${this.context.task}\nStep goal:\n${goal}${this.context.imported ? `\nThe workspace starts with the user's own uncommitted changes in: ${JSON.stringify(this.context.imported.paths)}. They are input to this task, not its deliverable: keep them unless the approved plan says otherwise, and do not report them as changes made by this run.` : ''}`;
   }
   private binding(report: RecoveryReport, key: string) {
     const binding = effectiveBinding(this.snapshot, report.bindingSelections, key);
@@ -449,6 +460,7 @@ export class LocalRun {
       try { await this.reconcile(); }
       catch (error) { await this.checkpoint('blocked', error instanceof Error ? error.message : String(error)); return; }
       await this.checkpoint(intent === 'cancel' ? 'cancelled' : 'paused', intent === 'cancel' ? 'Đã hủy; giữ code và artifacts' : 'Đã tạm dừng');
+      if (intent === 'cancel') await this.proposeMemory();
       // A cancelled run without changes (e.g. cancelled while planning) has nothing worth keeping in its worktree.
       if (intent === 'cancel') await this.autoClean();
     }
@@ -538,6 +550,7 @@ export class LocalRun {
         if (flow.definition.nodes.filter(node => node.type === 'finish').some(node => report.graph.nodes[node.id]?.status === 'succeeded')) {
           try { await this.proposeRepairLessons(report); }
           catch (error) { await this.durable.service.recordArtifact({ nodeId: 'run', kind: 'summary', text: `Không tạo được lesson proposal: ${error instanceof Error ? error.message : String(error)}` }); }
+          await this.proposeMemory();
           await this.durable.service.recordArtifact({ nodeId: 'run', kind: 'summary', text: `Completed: ${this.context.task}\nWorkspace: ${this.context.workspace}` });
           await this.checkpoint('completed', 'Flow đã hoàn tất'); await this.autoClean(); return;
         }
@@ -618,7 +631,7 @@ export class LocalRun {
     // Branch writers never repair, and sibling branches' output is not theirs to read.
     const findings = branch ? '' : `\nRepair findings (if any):\n${JSON.stringify(report.artifacts.filter(item => item.kind === 'agent').slice(-3))}${report.repairRounds.length
       ? `${failedCheckOutput(report)}\nIf a failure is caused by the environment (permissions, sandbox, a missing tool or command) rather than by the code, do not change code to work around it; say so explicitly in your final message so the reviewer and the user can see it.` : ''}`;
-    const prompt = `${this.prompt(nodeId, goal)}\nApproved plan:\n${JSON.stringify(admission.plan)}${extra}${findings}\nDo not commit, push, create PRs, launch agents or change files outside approved scope.`;
+    const prompt = `${this.prompt(nodeId, goal, target.scope ?? admission.plan.scope)}\nApproved plan:\n${JSON.stringify(admission.plan)}${extra}${findings}\nDo not commit, push, create PRs, launch agents or change files outside approved scope.`;
     const writer = this.transcript(runner, session, { attemptId: attempt, nodeId, key: nodeId, role: 'write' }, prompt);
     const { turn, result } = await this.traced(writer, () => this.durable.service.dispatchWrite(dispatcher, nodeId, session.sessionId, prompt, binding.reasoning, attempt, randomUUID(), admission, runner.scope),
       turn => runner.waitForTurn(session, turn, () => !!this.stopIntent || !!this.branchFailure));
@@ -852,6 +865,15 @@ export class LocalRun {
       const body = `Review finding corrected in run ${this.runId}: ${findingId}\n\nOriginal review evidence:\n${JSON.stringify(event?.payload ?? {}).slice(0, 5000)}\n\nImplementation response:\n${report.artifacts.filter(item => item.kind === 'agent').at(-1)?.text.slice(0, 3000) ?? ''}\n\nThis is a proposed lesson from a completed repair. Review its applicability before sharing.`;
       store.create({ proposalId, runId: this.runId, createdAt: new Date().toISOString(), record: { id: proposalId, type: 'lesson', scope: this.snapshot.configuration.projectId,
         sources: [`run:${this.runId}`, ...(event ? [`run:${this.runId}/event:${event.sequence}`] : [])], tags: ['repair', 'review'], body } });
+    }
+  }
+  /** Memory proposals from plan feedback, violated rules and block reasons; best effort, a failure never fails the run. */
+  private async proposeMemory() {
+    try {
+      proposeFromRun({ directory: path.dirname(this.durable.journal.file), runId: this.runId, task: this.context.task, report: await this.durable.service.report(),
+        events: await this.durable.journal.read(), ...(this.context.rules ? { rules: this.context.rules.rules } : {}) });
+    } catch (error) {
+      await this.durable.service.recordArtifact({ nodeId: 'run', kind: 'summary', text: `Không tạo được đề xuất memory: ${error instanceof Error ? error.message : String(error)}` }).catch(() => {});
     }
   }
   async close() {

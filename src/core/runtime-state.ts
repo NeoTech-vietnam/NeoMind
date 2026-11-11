@@ -10,7 +10,9 @@ export const runtimeContextSchema = z.strictObject({
   lease: z.strictObject({ workspace: z.string().min(1), runId: z.string().min(1), hostId: z.string().min(1), fence: z.number().int().positive() }),
   memory: z.strictObject({ excluded: z.array(z.strictObject({ id: z.string(), reason: z.string() })).optional(), root: z.string().min(1), text: z.string().max(40000),
     selectionPolicy: memorySelectionSchema.optional(), inferredPaths: z.array(z.string().min(1)).optional(), records: z.array(z.strictObject({ id: z.string().min(1), type: z.enum(['context', 'decision', 'lesson']), scope: z.string().min(1),
-      revision: z.string().min(1), sources: z.array(z.string()), selectionReason: z.string().min(1) })).max(30).optional() }).optional(),
+      revision: z.string().min(1), sources: z.array(z.string()), selectionReason: z.string().min(1),
+      // The record's own prompt block and tags (runs created before per-step memory lack them and keep the shared block).
+      tags: z.array(z.string()).optional(), text: z.string().max(40000).optional() })).max(30).optional() }).optional(),
   /** The user's uncommitted changes copied in before the run: input to the run, never part of its commit by default. */
   /** The program phase this run executes; status is derived from runs, never stored in the program file. */
   programId: z.string().min(1).optional(), phaseId: z.string().min(1).optional(),

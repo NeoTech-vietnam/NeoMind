@@ -8,13 +8,18 @@ import { LocalRun } from './local-run.js';
 import { projectRuntimeRoot, readProject, readProjectRules, snapshotProjectFlow, standaloneDiagnostics } from './project.js';
 import { hashJson, type BindingOverride } from '../domain/resolve.js';
 import { captureBaseline } from '../workspace/baseline.js';
-import { formatMemorySnapshot, memoryForRun, openProjectMemory } from './memory.js';
+import { describeStepMemory, formatMemorySnapshot, memoryForRun, memoryLocation, openProjectMemory, stepMemoryPolicy } from './memory.js';
+import { duplicateRecord, maxUserNotesPerRun, memoryFingerprint, noteId, proposalIds, proposalInputSchema, proposalStates, type ProposalInput, type ProposalState } from './memory-proposals.js';
+import { memoryFeedbackSchema, type MemoryFeedback, type RecoveryReport } from '../core/recovery.js';
+import { DurableRun } from '../core/durable-run.js';
+import { MemoryFeedbackStore, type MemoryRating } from '../memory/feedback.js';
+import { activeMemory } from '../memory/retrieval.js';
 import { mkdir, lstat, open, readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { ProjectMemoryRegistry } from '../memory/registry.js';
 import { resolveDefaultMemoryRoot } from '../memory/project-root.js';
 import { primaryWorktree } from '../workspace/worktree.js';
-import type { MemoryInput } from '../memory/store.js';
+import { MemoryConflict, type MemoryInput } from '../memory/store.js';
 import { LessonProposals } from '../memory/proposals.js';
 import type { Flow } from '../domain/schema.js';
 import { bindingRunners, selectAvailableBinding } from './model-selection.js';
@@ -30,6 +35,8 @@ import { projectDir } from '../storage/project-dir.js';
 import { listTranscripts, readTranscript, transcriptDirectory } from '../core/transcript.js';
 import { runnerHistory, sessionTurnIndex } from './session-history.js';
 import { withLibraryLock } from '../storage/library-lock.js';
+
+type MemoryKind = 'context' | 'decision' | 'lesson';
 
 /** Plain-language notes for flow exceptions the user should know before starting (Fast). */
 export function flowExceptions(flow: Flow): string[] {
@@ -108,10 +115,11 @@ export class RunManager {
     const run = await LocalRun.create({ projectRoot: this.projectRoot, stateRoot: this.stateRoot, task, snapshot, coordinator: this.coordinator, runners: this.runners, expectedSourceHead: sourceHead, ...(importDirty ? { importDirty } : {}), ...(program ? { program } : {}), ...(rules?.rules.length ? { rules: { hash: rules.hash, rules: rules.rules } } : {}),
       ...(memory ? { memory: formatMemorySnapshot(memory, task, selectionPolicy) } : {}) });
     this.runs.set(run.runId, run);
+    if (run.context.memory?.records?.length) this.recordMemoryUse(run.runId, run.context.memory.records);
     for (const selection of selections) await run.durable.service.selectAllowedFallback(selection.key, selection.values, 'Lựa chọn chính không khả dụng; dùng model trong danh sách thay thế đã cấu hình');
     run.launch(); return run.report();
   }
-  async get(runId: string) { const report = await this.withHandoff(await this.withDelivery(await this.report(runId))); return { ...report, nodeData: report.nodeData.map(({ prompt: _prompt, output, ...input }) => ({ ...input, ...(output ? { output: { outputHash: output.outputHash, truncated: output.truncated, messageCount: output.messages.length } } : {}) })) }; }
+  async get(runId: string) { const report = await this.withHandoff(await this.withDelivery(await this.report(runId))); return { ...report, memoryUse: this.memoryUse(report), nodeData: report.nodeData.map(({ prompt: _prompt, output, ...input }) => ({ ...input, ...(output ? { output: { outputHash: output.outputHash, truncated: output.truncated, messageCount: output.messages.length } } : {}) })) }; }
   async nodeData(runId: string, attemptId: string) { const item = (await this.report(runId)).nodeData.find(item => item.attemptId === attemptId); if (!item) throw new Error('No recorded input/output for this attempt'); return item; }
   async previewMemory(task: string) {
     const selectionPolicy = (await readProject(this.projectRoot)).memorySelection;
@@ -252,10 +260,17 @@ export class RunManager {
   async revisePlan(id: string, feedback: string, planHash: string) { const run = await this.owned(id); await run.revisePlan(feedback, planHash); return run.report(); }
   async extendTime(id: string, seconds: number, tokens = 0) { const run = await this.owned(id); await run.extendTime(seconds, tokens); return run.report(); }
   async settle(id: string) { await this.runs.get(id)?.settled(); return this.get(id); }
+  /** Approved records with where memory lives (a configured folder or `neomind/memory` in the repo) and each record's use and rating totals. */
   readMemory(query?: string) {
-    const memory = openProjectMemory(this.projectRoot, path.join(this.stateRoot, 'coordination.sqlite'));
-    if (!memory) return { root: null, records: [] };
-    try { return { root: memory.root, records: memory.store.search(query ? { query } : {}) }; } finally { memory.store.close(); }
+    const database = path.join(this.stateRoot, 'coordination.sqlite'), location = memoryLocation(this.projectRoot, database);
+    const memory = openProjectMemory(this.projectRoot, database), feedback = new MemoryFeedbackStore(database);
+    try {
+      const stats = Object.fromEntries(feedback.stats());
+      if (!memory) return { root: null, records: [], location, stats, inactive: [] as { id: string; reason: string }[] };
+      // Expired, superseded and duplicate records stay listed; `inactive` says which ones retrieval skips and why.
+      const records = memory.store.search(query ? { query } : {});
+      return { root: memory.root, records, location, stats, inactive: activeMemory(records).excluded };
+    } finally { memory?.store.close(); feedback.close(); }
   }
   async configureMemory(input: { root?: string; initializeDefault: boolean; expectedPrevious: string | null }) {
     let root = input.root;
@@ -271,8 +286,9 @@ export class RunManager {
     return this.readMemory();
   }
   async writeMemory(input: MemoryInput, expectedRevision: string | null, source: 'ui' | 'cli') {
-    if (input.type === 'lesson') throw new Error('Lessons require a proposal approval');
-    const database = path.join(this.stateRoot, 'coordination.sqlite'), memory = openProjectMemory(this.projectRoot, database);
+    // A new lesson enters memory only through an approved proposal; the user may edit one that is already approved.
+    if (input.type === 'lesson' && expectedRevision === null) throw new Error('Lessons require a proposal approval');
+    const database = path.join(this.stateRoot, 'coordination.sqlite'), memory = openProjectMemory(this.projectRoot, database, true);
     if (!memory) throw new Error('Chọn memory root trước khi ghi');
     const actionId = `memory-${randomUUID()}`, directory = path.join(this.stateRoot, 'memory-actions'); await mkdir(directory, { recursive: true, mode: 0o700 });
     const persist = async (suffix: string, value: unknown) => {
@@ -282,18 +298,19 @@ export class RunManager {
     const record = { ...input, sources: [...input.sources, `user-confirmation:${actionId}`] };
     try {
       await persist('requested', { actionId, actor: 'local-user', source, root: memory.root, expectedRevision, record, timestamp: new Date().toISOString() });
-      const written = memory.store.write(record, expectedRevision, { projectWrite: true, confirmedByUser: true });
+      const written = input.type === 'lesson' ? memory.store.update(record, expectedRevision!, { projectWrite: true, confirmedByUser: true }) : memory.store.write(record, expectedRevision, { projectWrite: true, confirmedByUser: true });
       await persist('result', { actionId, state: 'confirmed', revision: written.revision });
       return { record: written, actionId };
     } finally { memory.store.close(); }
   }
   async lessons(runId: string) {
     const directory = path.dirname(await this.store.journal(runId)), proposals = new LessonProposals(directory);
-    const memory = openProjectMemory(this.projectRoot, path.join(this.stateRoot, 'coordination.sqlite'));
+    const database = path.join(this.stateRoot, 'coordination.sqlite'), memory = openProjectMemory(this.projectRoot, database);
     try {
       const files = (await readdir(directory)).filter(file => file.endsWith('.proposal.json'));
-      return { memoryRoot: memory?.root ?? null, proposals: files.map(file => {
-        const { proposal, version } = proposals.readVersion(file.slice(0, -'.proposal.json'.length)), current = memory?.store.read('lesson', proposal.record.id);
+      // Without a memory folder yet, approving creates the default one, so the default location is shown.
+      return { memoryRoot: memory?.root ?? memoryLocation(this.projectRoot, database).root, proposals: files.map(file => {
+        const { proposal, version } = proposals.readVersion(file.slice(0, -'.proposal.json'.length)), current = memory?.store.read(proposal.record.type, proposal.record.id);
         return { proposal, version, proposalHash: hashJson(proposal), expectedRevision: current?.revision ?? null, promoted: current?.header.sources.includes(`proposal:${proposal.proposalId}`) ?? false, rejected: !!proposals.rejection(proposal.proposalId) };
       }) };
     } finally { memory?.store.close(); }
@@ -314,13 +331,15 @@ export class RunManager {
   async approveLesson(runId: string, input: { proposalId: string; proposalHash: string; expectedRevision: string | null; memoryRoot: string }) {
     const directory = path.dirname(await this.store.journal(runId));
     return withLibraryLock(directory, async () => {
-    const report = await this.get(runId); if (report.runtimeState?.phase !== 'completed') throw new Error('Chỉ duyệt lessons từ run đã hoàn tất');
     const proposals = new LessonProposals(directory), proposal = proposals.read(input.proposalId);
+    // Repair lessons wait for the run to complete; other proposals (plan feedback, "remember this") can be approved any time.
+    if (!proposal.origin || proposal.origin === 'repair') { const report = await this.get(runId); if (report.runtimeState?.phase !== 'completed') throw new Error('Chỉ duyệt lessons từ run đã hoàn tất'); }
     if (proposal.runId !== runId) throw new Error('Lesson belongs to another run');
-    const memory = openProjectMemory(this.projectRoot, path.join(this.stateRoot, 'coordination.sqlite'));
+    const database = path.join(this.stateRoot, 'coordination.sqlite'), displayed = memoryLocation(this.projectRoot, database).root;
+    const memory = openProjectMemory(this.projectRoot, database, true);
     if (!memory) throw new Error('Chọn memory root trước khi duyệt lesson');
     try {
-      if (memory.root !== input.memoryRoot) throw new Error('Memory root changed since the lesson was displayed');
+      if (memory.root !== input.memoryRoot && displayed !== input.memoryRoot) throw new Error('Memory root changed since the lesson was displayed');
       const approvalId = `approval-${randomUUID()}`;
       proposals.approve(input.proposalId, approvalId, 'local-user', input.expectedRevision, { projectWrite: true, confirmedByUser: true }, input.proposalHash);
       return proposals.promote(approvalId, memory.store, { projectWrite: true });
@@ -330,11 +349,11 @@ export class RunManager {
   async rejectLesson(runId: string, input: { proposalId: string; proposalHash: string }) {
     const directory = path.dirname(await this.store.journal(runId));
     return withLibraryLock(directory, async () => {
-      const report = await this.get(runId); if (report.runtimeState?.phase !== 'completed') throw new Error('Chỉ từ chối lessons từ run đã hoàn tất');
       const proposals = new LessonProposals(directory), proposal = proposals.read(input.proposalId);
+      if (!proposal.origin || proposal.origin === 'repair') { const report = await this.get(runId); if (report.runtimeState?.phase !== 'completed') throw new Error('Chỉ từ chối lessons từ run đã hoàn tất'); }
       if (proposal.runId !== runId) throw new Error('Lesson belongs to another run');
       const memory = openProjectMemory(this.projectRoot, path.join(this.stateRoot, 'coordination.sqlite'));
-      try { if (memory?.store.read('lesson', proposal.record.id)?.header.sources.includes(`proposal:${proposal.proposalId}`)) throw new Error('Lesson đã được duyệt'); }
+      try { if (memory?.store.read(proposal.record.type, proposal.record.id)?.header.sources.includes(`proposal:${proposal.proposalId}`)) throw new Error('Lesson đã được duyệt'); }
       finally { memory?.store.close(); }
       return proposals.reject(input.proposalId, input.proposalHash, { confirmedByUser: true });
     });
@@ -342,13 +361,214 @@ export class RunManager {
   async reviseLesson(runId: string, input: { proposalId: string; proposalHash: string; body: string }) {
     const directory = path.dirname(await this.store.journal(runId));
     return withLibraryLock(directory, async () => {
-      const report = await this.get(runId); if (report.runtimeState?.phase !== 'completed') throw new Error('Chỉ sửa lessons từ run đã hoàn tất');
       const proposals = new LessonProposals(directory), proposal = proposals.read(input.proposalId);
+      if (!proposal.origin || proposal.origin === 'repair') { const report = await this.get(runId); if (report.runtimeState?.phase !== 'completed') throw new Error('Chỉ sửa lessons từ run đã hoàn tất'); }
       if (proposal.runId !== runId) throw new Error('Lesson belongs to another run');
       const memory = openProjectMemory(this.projectRoot, path.join(this.stateRoot, 'coordination.sqlite'));
-      try { if (memory?.store.read('lesson', proposal.record.id)?.header.sources.includes(`proposal:${proposal.proposalId}`)) throw new Error('Lesson đã được duyệt'); }
+      try { if (memory?.store.read(proposal.record.type, proposal.record.id)?.header.sources.includes(`proposal:${proposal.proposalId}`)) throw new Error('Lesson đã được duyệt'); }
       finally { memory?.store.close(); }
       return proposals.revise(input.proposalId, input.proposalHash, input.body, { confirmedByUser: true });
+    });
+  }
+  // Memory the user and agents can grow (11/11): proposals from AI sessions, runs and users, quick notes, edits and ratings.
+  // One core shared by session tools, the CLI and the editor API.
+  private get memoryDatabase() { return path.join(this.stateRoot, 'coordination.sqlite'); }
+  /** Proposals made outside a run (AI sessions, CLI) wait here, next to the runs' own proposal artifacts. */
+  private async projectProposalDirectory() { const directory = path.join(this.stateRoot, 'memory-proposals'); await mkdir(directory, { recursive: true, mode: 0o700 }); return directory; }
+  private async proposalDirectory(runId: string | null) { return runId ? path.dirname(await this.store.journal(runId)) : this.projectProposalDirectory(); }
+  private recordMemoryUse(runId: string, records: { type: string; id: string; revision: string }[]) {
+    const feedback = new MemoryFeedbackStore(this.memoryDatabase);
+    try { feedback.recordUse(runId, records.map(record => ({ key: `${record.type}/${record.id}`, revision: record.revision }))); } finally { feedback.close(); }
+  }
+  /** Approved records matching a query and filters, as short summaries; `active` is false for expired, superseded or duplicate ones. */
+  searchMemory(filters: { query?: string; type?: MemoryKind; scope?: string; tags?: string[]; limit?: number } = {}) {
+    const memory = openProjectMemory(this.projectRoot, this.memoryDatabase);
+    if (!memory) return { root: null, total: 0, records: [] };
+    try {
+      const all = memory.store.search({ ...(filters.query ? { query: filters.query } : {}), ...(filters.scope ? { scope: filters.scope } : {}), ...(filters.tags?.length ? { tags: filters.tags } : {}), ...(filters.type ? { types: [filters.type] } : {}) });
+      const active = new Set(activeMemory(all).active.map(record => `${record.header.type}/${record.header.id}`));
+      return { root: memory.root, total: all.length, records: all.slice(0, Math.min(100, filters.limit ?? 20)).map(record => ({ id: record.header.id, type: record.header.type, scope: record.header.scope, tags: record.header.tags,
+        summary: record.body.length > 240 ? `${record.body.slice(0, 240)}…` : record.body, revision: record.revision, updatedAt: record.header.updatedAt, active: active.has(`${record.header.type}/${record.header.id}`) })) };
+    } finally { memory.store.close(); }
+  }
+  getMemory(type: MemoryKind, id: string) {
+    const memory = openProjectMemory(this.projectRoot, this.memoryDatabase);
+    try {
+      const record = memory?.store.read(type, id);
+      if (!record) throw new Error(`Không có bản ghi memory ${type}/${id}`);
+      return { root: memory!.root, record };
+    } finally { memory?.store.close(); }
+  }
+  /**
+   * Proposals waiting for the user: the project's own queue and every run's. The same text proposed more than once (by
+   * several runs, or by a session and a run) is listed once with the others under `merged`; `duplicateOf` names an approved
+   * record that already says it.
+   */
+  async memoryProposals(options: { includeDone?: boolean } = {}) {
+    const database = this.memoryDatabase, memory = openProjectMemory(this.projectRoot, database);
+    try {
+      const states: ProposalState[] = [], errors: { runId: string; error: string }[] = [];
+      states.push(...proposalStates(await this.projectProposalDirectory(), null, memory?.store));
+      for (const runId of await this.store.list()) {
+        try { states.push(...proposalStates(path.dirname(await this.store.journal(runId)), runId, memory?.store)); }
+        catch (error) { errors.push({ runId, error: error instanceof Error ? error.message : String(error) }); }
+      }
+      const approved = memory?.store.search() ?? [], groups = new Map<string, ProposalState & { merged: { runId: string | null; proposalId: string; proposalHash: string }[]; duplicateOf?: string }>();
+      for (const state of states.filter(item => options.includeDone || (!item.promoted && !item.rejected)).sort((a, b) => a.proposal.createdAt.localeCompare(b.proposal.createdAt))) {
+        const key = memoryFingerprint(state.proposal.record), group = groups.get(key);
+        if (group && !state.promoted && !state.rejected && !group.promoted && !group.rejected) { group.merged.push({ runId: state.runId, proposalId: state.proposal.proposalId, proposalHash: state.proposalHash }); continue; }
+        const duplicate = !state.promoted ? duplicateRecord(approved, state.proposal.record) : undefined;
+        groups.set(group ? `${key}:${state.runId}:${state.proposal.proposalId}` : key, { ...state, merged: [], ...(duplicate ? { duplicateOf: `${duplicate.header.type}/${duplicate.header.id}` } : {}) });
+      }
+      return { memoryRoot: memory?.root ?? memoryLocation(this.projectRoot, database).root, proposals: [...groups.values()], errors };
+    } finally { memory?.store.close(); }
+  }
+  /**
+   * Propose a record for the user to approve (an AI session, the CLI, or "remember this" on a run). Text an approved
+   * record or a pending proposal already holds is not proposed again; the answer names it instead.
+   */
+  async proposeMemory(input: ProposalInput, origin: 'ai_session' | 'user_note' = 'ai_session', runId?: string) {
+    const value = proposalInputSchema.parse(input), memory = openProjectMemory(this.projectRoot, this.memoryDatabase);
+    let approved: ReturnType<NonNullable<typeof memory>['store']['search']> = [];
+    try { approved = memory?.store.search() ?? []; } finally { memory?.store.close(); }
+    const duplicate = duplicateRecord(approved, value);
+    if (duplicate) return { created: false as const, duplicateOf: `${duplicate.header.type}/${duplicate.header.id}`, message: 'Memory đã có bản ghi cùng nội dung; không tạo đề xuất mới' };
+    const pending = (await this.memoryProposals()).proposals.find(item => memoryFingerprint(item.proposal.record) === memoryFingerprint(value));
+    if (pending) return { created: false as const, pending: { runId: pending.runId, proposalId: pending.proposal.proposalId }, message: 'Đã có đề xuất cùng nội dung đang chờ duyệt' };
+    const directory = await this.proposalDirectory(runId ?? null);
+    return withLibraryLock(directory, async () => {
+      const proposals = new LessonProposals(directory);
+      if (runId && origin === 'user_note' && proposalIds(directory).filter(id => proposals.read(id).origin === 'user_note').length >= maxUserNotesPerRun) throw new Error(`Run này đã có ${maxUserNotesPerRun} ghi chú chờ duyệt; duyệt hoặc từ chối bớt trước`);
+      const store = openProjectMemory(this.projectRoot, this.memoryDatabase);
+      let recordId: string;
+      try { do recordId = noteId(value.body, randomUUID().slice(0, 8)); while (store?.store.read(value.type, recordId)); } finally { store?.store.close(); }
+      const proposalId = `memory-${randomUUID()}`;
+      proposals.create({ proposalId, ...(runId ? { runId } : {}), createdAt: new Date().toISOString(), origin, reason: value.reason,
+        record: { id: recordId, type: value.type, scope: value.scope, sources: value.sources, tags: value.tags, body: value.body, ...(value.supersedes?.length ? { supersedes: value.supersedes } : {}) } });
+      return { created: true as const, runId: runId ?? null, proposalId, proposalHash: hashJson(proposals.read(proposalId)), recordId };
+    });
+  }
+  /** Approve a proposal (optionally editing its text first, as a new immutable revision), then settle its duplicates. */
+  async approveMemoryProposal(input: { runId?: string | null | undefined; proposalId: string; proposalHash: string; body?: string | undefined; memoryRoot?: string | undefined }) {
+    const runId = input.runId ?? null, directory = await this.proposalDirectory(runId);
+    let proposalHash = input.proposalHash;
+    if (input.body !== undefined) proposalHash = (await this.reviseMemoryProposal({ runId, proposalId: input.proposalId, proposalHash, body: input.body })).proposalHash;
+    const location = memoryLocation(this.projectRoot, this.memoryDatabase).root, memoryRoot = input.memoryRoot ?? location;
+    let record;
+    if (runId) record = await this.approveLesson(runId, { proposalId: input.proposalId, proposalHash, expectedRevision: null, memoryRoot });
+    else record = await withLibraryLock(directory, async () => {
+      const memory = openProjectMemory(this.projectRoot, this.memoryDatabase, true);
+      if (!memory) throw new Error('Chọn memory root trước khi duyệt');
+      try {
+        if (memory.root !== memoryRoot && location !== memoryRoot) throw new Error('Memory root changed since the proposal was displayed');
+        const proposals = new LessonProposals(directory), approvalId = `approval-${randomUUID()}`;
+        proposals.approve(input.proposalId, approvalId, 'local-user', null, { projectWrite: true, confirmedByUser: true }, proposalHash);
+        return proposals.promote(approvalId, memory.store, { projectWrite: true });
+      } finally { memory.store.close(); }
+    });
+    await this.settleDuplicates(record.header.type, record.body, { runId, proposalId: input.proposalId });
+    return { record };
+  }
+  async rejectMemoryProposal(input: { runId?: string | null | undefined; proposalId: string; proposalHash: string }) {
+    const runId = input.runId ?? null, directory = await this.proposalDirectory(runId);
+    let proposal;
+    if (runId) { await this.rejectLesson(runId, input); proposal = new LessonProposals(directory).read(input.proposalId); }
+    else proposal = await withLibraryLock(directory, async () => {
+      const proposals = new LessonProposals(directory), current = proposals.read(input.proposalId), memory = openProjectMemory(this.projectRoot, this.memoryDatabase);
+      try { if (memory?.store.read(current.record.type, current.record.id)?.header.sources.includes(`proposal:${current.proposalId}`)) throw new Error('Đề xuất đã được duyệt'); } finally { memory?.store.close(); }
+      proposals.reject(input.proposalId, input.proposalHash, { confirmedByUser: true }); return current;
+    });
+    await this.settleDuplicates(proposal.record.type, proposal.record.body, { runId, proposalId: input.proposalId });
+    return { rejected: true };
+  }
+  async reviseMemoryProposal(input: { runId?: string | null | undefined; proposalId: string; proposalHash: string; body: string }) {
+    const runId = input.runId ?? null;
+    if (runId) return this.reviseLesson(runId, input);
+    const directory = await this.projectProposalDirectory();
+    return withLibraryLock(directory, async () => new LessonProposals(directory).revise(input.proposalId, input.proposalHash, input.body, { confirmedByUser: true }));
+  }
+  /** The user decided on one proposal; the same text pending elsewhere was the same decision, so it is closed as rejected (merged). */
+  private async settleDuplicates(type: MemoryKind, body: string, decided: { runId: string | null; proposalId: string }) {
+    const key = memoryFingerprint({ type, body });
+    for (const item of (await this.memoryProposals()).proposals.flatMap(group => [{ runId: group.runId, proposalId: group.proposal.proposalId, proposalHash: group.proposalHash, record: group.proposal.record }, ...group.merged.map(merged => ({ ...merged, record: group.proposal.record }))])) {
+      if (memoryFingerprint(item.record) !== key || (item.runId === decided.runId && item.proposalId === decided.proposalId)) continue;
+      const directory = await this.proposalDirectory(item.runId);
+      await withLibraryLock(directory, async () => { new LessonProposals(directory).reject(item.proposalId, item.proposalHash, { confirmedByUser: true }); }).catch(() => undefined);
+    }
+  }
+  /** "Ghi nhớ điều này" on a run: the user's sentence becomes a proposal whose source is the run (and step). */
+  async rememberFromRun(runId: string, input: { text: string; type?: MemoryKind | undefined; nodeId?: string | undefined }) {
+    await this.store.journal(runId);
+    return this.proposeMemory({ type: input.type ?? 'lesson', body: input.text, sources: [`run:${runId}`, ...(input.nodeId ? [`run:${runId}/step:${input.nodeId}`] : [])],
+      reason: 'Bạn chọn "Ghi nhớ điều này" trên run này' }, 'user_note', runId);
+  }
+  /**
+   * A note the user writes on the Memory page is approved as written. Context and decisions are written directly; a lesson
+   * goes through a proposal the user approves in the same action, so every lesson keeps a proposal and approval receipt.
+   */
+  async addMemoryNote(input: { type: MemoryKind; scope?: string | undefined; tags?: string[] | undefined; body: string; sources?: string[] | undefined; supersedes?: string[] | undefined }, source: 'ui' | 'cli' = 'ui') {
+    const body = input.body.trim(), scope = input.scope?.trim() || 'project', tags = (input.tags ?? []).map(tag => tag.trim()).filter(Boolean), sources = input.sources?.length ? input.sources : ['user-note'];
+    if (!body) throw new Error('Nội dung ghi chú không được trống');
+    if (input.type !== 'lesson') {
+      const memory = openProjectMemory(this.projectRoot, this.memoryDatabase, true);
+      let id: string;
+      try { do id = noteId(body, randomUUID().slice(0, 8)); while (memory?.store.read(input.type, id)); } finally { memory?.store.close(); }
+      return this.writeMemory({ id, type: input.type, scope, sources, tags, body, ...(input.supersedes?.length ? { supersedes: input.supersedes } : {}) }, null, source);
+    }
+    const proposed = await this.proposeMemory({ type: 'lesson', scope, tags, body, sources, reason: 'Ghi chú bạn tự thêm trên trang Memory', ...(input.supersedes?.length ? { supersedes: input.supersedes } : {}) }, 'user_note');
+    if (!proposed.created) throw new Error(proposed.message);
+    return this.approveMemoryProposal({ runId: null, proposalId: proposed.proposalId, proposalHash: proposed.proposalHash });
+  }
+  /** Mark a record expired now; retrieval skips it but the page still shows it. */
+  async expireMemory(type: MemoryKind, id: string, expectedRevision: string, source: 'ui' | 'cli' = 'ui') {
+    const current = this.getMemory(type, id).record;
+    if (current.revision !== expectedRevision) throw new MemoryConflict();
+    return this.writeMemory({ id, type, scope: current.header.scope, sources: current.header.sources, tags: current.header.tags, body: current.body, expiresAt: new Date().toISOString(),
+      ...(current.header.supersedes ? { supersedes: current.header.supersedes } : {}) }, expectedRevision, source);
+  }
+  /** Delete an approved record after the user confirmed; the request is audited like every other memory write. */
+  async deleteMemory(type: MemoryKind, id: string, expectedRevision: string, source: 'ui' | 'cli' = 'ui') {
+    const memory = openProjectMemory(this.projectRoot, this.memoryDatabase);
+    if (!memory) throw new Error('Chưa có memory');
+    const actionId = `memory-${randomUUID()}`, directory = path.join(this.stateRoot, 'memory-actions'); await mkdir(directory, { recursive: true, mode: 0o700 });
+    try {
+      const file = await open(path.join(directory, `${actionId}.deleted.json`), 'wx', 0o600);
+      try { await file.writeFile(JSON.stringify({ actionId, actor: 'local-user', source, root: memory.root, type, id, expectedRevision, record: memory.store.read(type, id), timestamp: new Date().toISOString() })); await file.sync(); } finally { await file.close(); }
+      memory.store.remove(type, id, expectedRevision, { projectWrite: true, confirmedByUser: true });
+      return { deleted: true, actionId };
+    } finally { memory.store.close(); }
+  }
+  /**
+   * The user's rating of a record a run used. The run's journal keeps the rating (`memory_feedback`); the coordination
+   * database keeps the totals retrieval ranks by. Rating never changes the run's state.
+   */
+  async memoryFeedback(runId: string, input: MemoryFeedback) {
+    const feedback = memoryFeedbackSchema.parse(input), active = this.runs.get(runId);
+    const durable = active?.durable ?? await DurableRun.recover(this.store, this.coordinator, runId);
+    try {
+      const report = await durable.service.report();
+      const used = report.runtimeContext?.memory?.records?.find(record => `${record.type}/${record.id}` === feedback.record);
+      if (!used) throw new Error('Run này không dùng bản ghi memory đó');
+      const event = await durable.service.recordMemoryFeedback({ ...feedback, ...(feedback.revision ? {} : { revision: used.revision }) });
+      const store = new MemoryFeedbackStore(this.memoryDatabase);
+      try {
+        store.recordFeedback({ eventId: event.eventId, key: feedback.record, runId, ...(feedback.nodeId ? { nodeId: feedback.nodeId } : {}), rating: feedback.rating as MemoryRating, createdAt: event.timestamp });
+        return { recorded: true, record: feedback.record, rating: feedback.rating, stats: store.stats().get(feedback.record) ?? null };
+      } finally { store.close(); }
+    } finally { if (!active) await durable.close(); }
+  }
+  /** Which pinned records each agent turn received, why, and how the step filters memory; plus the user's ratings. */
+  private memoryUse(report: Pick<RecoveryReport, 'nodeData' | 'attempts' | 'runtimeContext' | 'memoryFeedback'> & { snapshot?: unknown }) {
+    const pinned = new Map((report.runtimeContext?.memory?.records ?? []).map(record => [`${record.type}/${record.id}`, record]));
+    const flow = (report.snapshot as MaterializedRun | undefined)?.configuration.flow;
+    if (!pinned.size) return [];
+    return report.nodeData.map(item => {
+      const reviewerId = report.attempts.find(attempt => attempt.attemptId === item.attemptId)?.reviewerId, key = reviewerId ? `${item.nodeId}/${reviewerId}` : item.nodeId;
+      const records = item.sources.filter(source => source.kind === 'memory').map(source => {
+        const record = pinned.get(source.id), rating = [...(report.memoryFeedback ?? [])].reverse().find(entry => entry.record === source.id && (entry.attemptId ? entry.attemptId === item.attemptId : entry.nodeId === item.nodeId));
+        return { record: source.id, id: record?.id ?? source.id.split('/')[1]!, type: record?.type ?? source.id.split('/')[0]!, scope: record?.scope ?? '', revision: source.hash, reason: record?.selectionReason ?? '', ...(rating ? { rating: rating.rating } : {}) };
+      });
+      return { nodeId: item.nodeId, attemptId: item.attemptId, key, filter: describeStepMemory(flow ? stepMemoryPolicy(flow, key) : undefined), records };
     });
   }
   /** Pause active runs (confirming worker stop) and release resources. Returns the final state of each run this process owned. */

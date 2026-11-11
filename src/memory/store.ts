@@ -88,9 +88,38 @@ export class MemoryStore {
   /** Called by proposal service after an explicit trusted user approval. */
   promoteLesson(proposal: { proposalId: string; approvalId: string; record: MemoryInput }, expectedRevision: string | null,
     authorization: { projectWrite: boolean; confirmedByUser: boolean }): MemoryRecord {
-    idSchema.parse(proposal.proposalId); idSchema.parse(proposal.approvalId);
     if (proposal.record.type !== 'lesson') throw new Error('Proposal is not a lesson');
+    return this.promoteProposal(proposal, expectedRevision, authorization);
+  }
+  /** A proposal of any type, promoted after an explicit trusted user approval; its receipts join the record's sources. */
+  promoteProposal(proposal: { proposalId: string; approvalId: string; record: MemoryInput }, expectedRevision: string | null,
+    authorization: { projectWrite: boolean; confirmedByUser: boolean }): MemoryRecord {
+    idSchema.parse(proposal.proposalId); idSchema.parse(proposal.approvalId);
+    if (!authorization.confirmedByUser) throw new Error('User confirmation required to promote a proposal');
     return this.writeApproved({ ...proposal.record, sources: [...proposal.record.sources, `proposal:${proposal.proposalId}`, `approval:${proposal.approvalId}`] }, expectedRevision, authorization);
+  }
+  /**
+   * The user edits a record that is already approved (lessons included: their provenance stays in the sources). Creating
+   * a record goes through `write` or a proposal, so the expected revision must name an existing one.
+   */
+  update(input: MemoryInput, expectedRevision: string, authorization: { projectWrite: boolean; confirmedByUser: boolean }): MemoryRecord {
+    if (!this.read(input.type, input.id)) throw new Error('Memory record does not exist');
+    return this.writeApproved(input, expectedRevision, authorization);
+  }
+  /** Remove an approved record the user confirmed; a record another one still supersedes is kept so the chain stays valid. */
+  remove(type: z.infer<typeof kindSchema>, id: string, expectedRevision: string, authorization: { projectWrite: boolean; confirmedByUser: boolean }): void {
+    if (!authorization.projectWrite || !authorization.confirmedByUser) throw new Error('User confirmation and project memory write permission required');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const current = this.read(type, id);
+      if (!current) throw new Error('Memory record does not exist');
+      if (current.revision !== expectedRevision) throw new MemoryConflict();
+      const successor = this.search({ types: [type] }).find(record => record.header.supersedes?.includes(id));
+      if (successor) throw new Error(`Bản ghi ${successor.header.id} đang thay thế bản ghi này; xóa hoặc sửa ${successor.header.id} trước`);
+      const file = this.file(type, id);
+      unlinkSync(file); syncDirectorySync(path.dirname(file));
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   private writeApproved(input: MemoryInput, expectedRevision: string | null, authorization: { projectWrite: boolean; confirmedByUser: boolean }): MemoryRecord {
     const value = inputSchema.parse(input);

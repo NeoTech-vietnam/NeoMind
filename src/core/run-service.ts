@@ -15,7 +15,7 @@ import type { CodexWriteDispatch } from './codex-write-dispatch.js';
 import type { admitIsolatedWorkspaceWrite } from '../workspace/write-admission.js';
 import type { CodexReadOnlyDispatch } from './codex-readonly-dispatch.js';
 import type { TurnResult } from '../adapters/codex-turn-events.js';
-import { replayRun } from './recovery.js';
+import { memoryFeedbackSchema, replayRun, type MemoryFeedback } from './recovery.js';
 import { runtimeArtifactSchema, runtimeContextSchema, runtimeStateSchema, type RuntimeArtifact, type RuntimeContext, type RuntimeState } from './runtime-state.js';
 import { captureBaseline } from '../workspace/baseline.js';
 import { hashJson } from '../domain/resolve.js';
@@ -85,6 +85,8 @@ export class RunService {
   selectAllowedFallback(key: string, values: BindingValues, reason: string) { return this.serialize(() => this.append('binding_fallback_selected', { key, values, reason })); }
   recordNodeInput(input: unknown) { return this.serialize(() => this.append('node_input', input)); }
   recordNodeOutput(output: unknown) { return this.serialize(() => this.append('node_output', output)); }
+  /** The user's rating of a memory record this run used; it is recorded in any phase and never affects the graph. */
+  recordMemoryFeedback(feedback: MemoryFeedback) { return this.serialize(async () => { await this.append('memory_feedback', memoryFeedbackSchema.parse(feedback)); return (await this.journal.read()).at(-1)!; }); }
   recordArtifact(artifact: RuntimeArtifact) { return this.serialize(() => this.append('runtime_artifact', runtimeArtifactSchema.parse(artifact))); }
   recordUsage(attemptId: string, result: TurnResult) { return this.serialize(async () => {
     if (result.usage) await this.append('usage_observed', { attemptId, threadId: result.threadId, turnId: result.turnId, total: result.usage });

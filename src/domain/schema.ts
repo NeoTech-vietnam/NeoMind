@@ -34,9 +34,16 @@ export const profileSchema = z.strictObject({
 });
 
 const base = { id, label: z.string().min(1) };
+/**
+ * Which pinned memory one agent step receives (types, tags, how many records, or none). Omitted: the flow's
+ * `memoryDefaults` decides (role defaults for flows created from templates, the shared block for older flows).
+ */
+export const stepMemorySchema = z.strictObject({ types: z.array(z.enum(['context', 'decision', 'lesson'])).min(1).optional(),
+  tags: z.array(z.string().min(1)).optional(), maxRecords: z.number().int().min(0).max(30).optional(), off: z.boolean().optional() });
 const reviewer = z.strictObject({
   id, profileId: id, profileVersion: z.number().int().min(1), sessionGroup: id, required: z.boolean(),
   scope: z.array(z.string().min(1)).min(1), instructionsOverride: z.string().optional(), skillsOverride: z.array(skillReferenceSchema).optional(),
+  memory: stepMemorySchema.optional(),
 });
 
 export const nodeSchema = z.discriminatedUnion('type', [
@@ -50,12 +57,12 @@ export const nodeSchema = z.discriminatedUnion('type', [
   // Agent fields are optional in the schema; executors that resolve conflicts or repairs require them.
   z.strictObject({ ...base, type: z.literal('integration'), writeScopes: z.array(z.string().min(1)).min(1),
     profileId: id.optional(), profileVersion: z.number().int().min(1).optional(), sessionGroup: id.optional(), bindingId: id.optional(),
-    instructionsOverride: z.string().optional(), skillsOverride: z.array(skillReferenceSchema).optional() }),
+    instructionsOverride: z.string().optional(), skillsOverride: z.array(skillReferenceSchema).optional(), memory: stepMemorySchema.optional() }),
   z.strictObject({ ...base, type: z.literal('git_commit') }),
   z.strictObject({ ...base, type: z.literal('agent_task'), goal: z.string().min(1), profileId: id, profileVersion: z.number().int().min(1),
     sessionGroup: id, bindingId: id, permissions: permissionsSchema,
     writeScopes: z.array(z.string().min(1)), outputContract: z.string().min(1),
-    instructionsOverride: z.string().optional(), skillsOverride: z.array(skillReferenceSchema).optional() }),
+    instructionsOverride: z.string().optional(), skillsOverride: z.array(skillReferenceSchema).optional(), memory: stepMemorySchema.optional() }),
   z.strictObject({ ...base, type: z.literal('review_group'), targetNodeId: id,
     reviewers: z.array(reviewer).min(1), criteria: z.array(z.string().min(1)).min(1), checks: z.array(z.string().min(1)).optional(),
     // Each numbered step of the approved plan's approach becomes a required criterion; omitted keeps older flows' reviews unchanged.
@@ -84,6 +91,9 @@ export const flowDefinitionSchema = z.strictObject({
   outputContract: z.string().min(1),
   // `human`: the user reviews the changes outside the flow, so the flow has no review gate and never commits.
   review: z.enum(['independent', 'human']).optional(),
+  // `role`: a step without its own `memory` gets its role's default (plan/write: everything, review: decisions and lessons).
+  // Omitted (`shared`) keeps older flows' behaviour: every step receives the run's whole memory block.
+  memoryDefaults: z.enum(['shared', 'role']).optional(),
 });
 
 export const flowSchema = z.strictObject({
@@ -129,6 +139,7 @@ export type Binding = z.infer<typeof bindingSchema>;
 export type ProjectConfig = z.infer<typeof projectSchema>;
 export type ProjectPolicy = z.infer<typeof projectPolicySchema>;
 export type Profile = z.infer<typeof profileSchema>;
+export type StepMemory = z.infer<typeof stepMemorySchema>;
 
 export function flowJsonSchema(): unknown {
   return z.toJSONSchema(flowSchema, { target: 'draft-2020-12' });

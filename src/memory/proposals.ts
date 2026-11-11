@@ -8,9 +8,13 @@ import { syncDirectorySync } from '../storage/fs-sync.js';
 
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/);
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const proposalSchema = z.strictObject({ proposalId: id, runId: id, createdAt: z.iso.datetime(), version: z.number().int().positive().optional(),
-  record: z.strictObject({ id, type: z.literal('lesson'), scope: z.string().min(1), sources: z.array(z.string().min(1)).min(1),
-    tags: z.array(z.string().min(1)), body: z.string().min(1) }) });
+/** Where a proposal came from; omitted on lessons from repaired review findings, the only kind older runs produced. */
+export const proposalOrigins = ['repair', 'plan_revision', 'review_rule', 'run_stopped', 'user_note', 'ai_session'] as const;
+// `runId` is omitted for proposals made outside a run (an AI session); context and decisions are proposed like lessons.
+const proposalSchema = z.strictObject({ proposalId: id, runId: id.optional(), createdAt: z.iso.datetime(), version: z.number().int().positive().optional(),
+  origin: z.enum(proposalOrigins).optional(), reason: z.string().min(1).max(2000).optional(),
+  record: z.strictObject({ id, type: z.enum(['context', 'decision', 'lesson']), scope: z.string().min(1), sources: z.array(z.string().min(1)).min(1),
+    tags: z.array(z.string().min(1)), body: z.string().min(1), supersedes: z.array(id).optional() }) });
 const approvalSchema = z.strictObject({ approvalId: id, proposalId: id, proposalHash: z.string().regex(/^[a-f0-9]{64}$/),
   expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable(), actor: z.string().min(1), approvedAt: z.iso.datetime() });
 const rejectionSchema = z.strictObject({ proposalId: id, proposalHash: z.string().regex(/^[a-f0-9]{64}$/), actor: z.string().min(1), rejectedAt: z.iso.datetime() });
@@ -105,7 +109,7 @@ export class LessonProposals {
     const proposal = this.read(approval.proposalId);
     if (this.rejection(approval.proposalId)) throw new Error('Proposal was rejected');
     if (hash(proposal) !== approval.proposalHash) throw new Error('Approved proposal changed');
-    return store.promoteLesson({ proposalId: proposal.proposalId, approvalId, record: proposal.record }, approval.expectedRevision,
+    return store.promoteProposal({ proposalId: proposal.proposalId, approvalId, record: proposal.record }, approval.expectedRevision,
       { projectWrite: true, confirmedByUser: true });
   }
 }

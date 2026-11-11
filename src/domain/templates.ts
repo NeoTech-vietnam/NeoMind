@@ -157,9 +157,12 @@ export const templates: Record<'fast' | 'dev' | 'parallel' | 'research', Flow> =
 /**
  * A copy of a template for a new project flow. Flows newly created from Dev check every numbered plan step in review;
  * the built-in template itself stays unchanged so runs of the unsaved built-in and of older saved flows keep their criteria.
+ * New flows also give each agent step the memory of its role (reviewers: decisions and lessons only), for the same reason
+ * only on new flows.
  */
 export function newFlowFromTemplate(id: keyof typeof templates): Flow {
   const flow = structuredClone(templates[id]);
   if (id === 'dev') for (const node of flow.definition.nodes) if (node.type === 'review_group') node.planStepCriteria = true;
+  flow.definition.memoryDefaults = 'role';
   return flow;
 }

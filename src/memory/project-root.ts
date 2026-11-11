@@ -1,12 +1,25 @@
-import { lstatSync, realpathSync } from 'node:fs';
+import { lstatSync, mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { primaryWorktree } from '../workspace/worktree.js';
 import { projectDir } from '../storage/project-dir.js';
 
-/** Default shared root: the primary Git worktree, never the current linked worktree copy. */
-export function resolveDefaultMemoryRoot(workspace: string): string {
-  const project = primaryWorktree(workspace);
-  const metadata = projectDir(project), directory = path.join(metadata, 'memory');
+/** Where the default memory lives (`neomind/memory` of the primary worktree), whether or not it exists yet. */
+export function defaultMemoryLocation(workspace: string): string {
+  return path.join(projectDir(primaryWorktree(workspace)), 'memory');
+}
+
+/**
+ * Default shared root: the primary Git worktree, never the current linked worktree copy. With `create`, a missing
+ * folder is created (the first write of a project that never configured memory); otherwise it must already exist.
+ */
+export function resolveDefaultMemoryRoot(workspace: string, create = false): string {
+  const directory = defaultMemoryLocation(workspace), metadata = path.dirname(directory);
+  if (create) {
+    for (const target of [metadata, directory]) {
+      try { lstatSync(target); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; mkdirSync(target); }
+    }
+  }
   const metadataInfo = lstatSync(metadata);
   if (metadataInfo.isSymbolicLink() || !metadataInfo.isDirectory()) throw new Error('Project metadata directory must be a real directory');
   const info = lstatSync(directory);
