@@ -58,6 +58,23 @@ Trạng thái: **ý tưởng, đang brainstorm**, chưa duyệt để lập plan
 
 Hướng khác ghi lại để sau: **simulator** (chạy flow bằng runner giả để thử nhánh và ước tính chi phí trước khi tốn quota), **A/B firmware** (chạy song song hai phiên bản flow, giữ bản có số liệu tốt hơn — tầng 3 của [định hướng 11/2026](direction-2026-11.md)).
 
+### 2.5 Mức tối ưu (`-O0` … `-O2`, `-Os`) cho việc cấp phát session
+
+Ý người dùng 11/11: mỗi bước một session mới thì tốn ngữ cảnh; nên cho một session làm nhiều bước, như mức optimize của trình biên dịch C.
+
+Hiện trạng: NeoMind đã có `sessionGroup` — các bước cùng nhóm dùng chung một session (lượt sau resume lượt trước). Template Dev cho plan + implement + vòng sửa chung `implementation-session`; reviewer luôn ở session riêng; Fast tách planner và implementer thành hai session. Người dùng phải tự đặt nhóm trong Flow Studio.
+
+Đề xuất: một **pass cấp phát session** trong compiler, chạy theo mức tối ưu chọn ở flow hoặc khi start run:
+
+| Mức | Cấp phát | Đổi lại |
+| --- | --- | --- |
+| `-O0` | Mỗi bước một session | Dễ debug, cô lập tối đa, tốn ngữ cảnh nhất |
+| `-O1` | Các bước nối tiếp cùng vai trò và cùng runner/model chung session (như Dev hiện nay) | Mặc định cân bằng |
+| `-O2` | Gộp thêm mọi bước nối tiếp được phép gộp (planner + implementer của Fast, các bước sửa liên tiếp) | Rẻ hơn; context dài hơn, dễ "loãng" |
+| `-Os` | Như `-O1` nhưng thu gọn bàn giao: bước sau nhận tóm tắt/diff thay vì toàn bộ, memory tối thiểu | Ít token nhất cho bước mới |
+
+Ràng buộc mà tối ưu không được phá (giống `volatile` trong C): reviewer độc lập **không bao giờ** chung session với bước viết code; khác runner/model/provider thì không chung được (khác "core"); nhánh song song không chung; bước chờ duyệt người cắt session nếu runner không giữ được lâu. Preview và memory map hiện bước nào chung session và ước tính tiết kiệm; `run stats` so sánh các mức trên cùng loại task để chọn mặc định bằng số liệu.
+
 ## 3. Con chip này dùng vào việc gì? (đang brainstorm)
 
 Liên tưởng tới cách MCU thật được dùng. Mỗi dòng: kiểu dùng MCU → kiểu dùng NeoMind → khối còn thiếu.
