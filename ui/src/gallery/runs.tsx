@@ -1,6 +1,8 @@
 /**
  * Runs screen with made-up data for every run state (dev only, /__gallery/runs.html). No real run is ever started:
  * the API transport answers from the tables below. Hash options: `#<state>[,light][,panel][,session][,new][,filter]`.
+ * `#completed,duplicate` duplicates that run into the new-run form (add `template` to make Dev a built-in template,
+ * `saved` to press the save-as-default button, `clash` to make two steps sharing a binding disagree).
  */
 import React from 'react';
 import { createRoot } from 'react-dom/client';
@@ -101,12 +103,14 @@ function memoryUseOf(scenario: Scenario): MemoryUse[] {
 }
 
 function runOf(id: string, scenario: Scenario): Run {
-  const flow = scenario.flow;
+  const flow = structuredClone(scenario.flow), bindings: Scenario['bindings'] = { ...scenario.bindings };
+  // The duplicated run had a longer time limit, a token budget and a step the latest flow no longer has.
+  if (duplicating && scenario.phase === 'completed') { flow.definition.limits = { ...flow.definition.limits, activeTimeSeconds: 2400, maxTokens: 300_000 }; bindings.polish = claudeSonnet; }
   return { runId: id, busy: false, timeExtensionsMs: 0, proposedPlanHash: 'a'.repeat(64), runtimeState: { phase: scenario.phase, reason: scenario.reason, activeMs: scenario.activeMs },
     runtimeContext: { workspaceMode: 'isolated', task: scenario.task, workspace: 'C:\\Users\\dev\\AppData\\Local\\neomind\\ab12\\workspaces\\' + id, sourceHead: '3648ef2', memory: { root: 'neomind/memory', text: 'rule · test-style\nlesson · guard-invalid-input', records: [
       { id: 'test-style', type: 'context', scope: 'project', revision: '9f2c1a0e11', sources: ['AGENTS.md'], selectionReason: 'khớp đường dẫn calc.js', text: '[context:test-style revision=9f2c1a0e11]\nSources: AGENTS.md\nTest dùng node:test và assert/strict.\nMỗi hàm mới trong calc.js có test cho giá trị biên trong calc.test.js; chạy npm test trước khi giao.' },
       { id: 'guard-invalid-input', type: 'lesson', scope: 'calc.js', revision: '4b7d9e0f55', sources: ['run:run-41', 'run:run-41/event:88'], selectionReason: 'khớp đường dẫn calc.js', text: '[lesson:guard-invalid-input revision=4b7d9e0f55]\nSources: run:run-41, run:run-41/event:88\nGiữ đúng tiêu chí review: invalid input is rejected with a clear error\nVấn đề: divide() trả về Infinity khi mẫu bằng 0 thay vì báo lỗi; test chỉ kiểm số dương nên không bắt được trường hợp này.\nĐã sửa trong run run-41 (bước verify). File: calc.js:12, calc.test.js:30' }] }, rules: { hash: 'e'.repeat(64), rules: galleryRules } },
-    snapshot: { configuration: { flow, bindings: bindingsOf(scenario.bindings) } }, bindingSelections: [], usage: { totalTokens: scenario.phase === 'waiting_approval' ? 24_000 : 167_000, partial: false },
+    snapshot: { configuration: { flow, bindings: bindingsOf(bindings) } }, bindingSelections: [], usage: { totalTokens: scenario.phase === 'waiting_approval' ? 24_000 : 167_000, partial: false },
     graph: { nodes: Object.fromEntries(flow.definition.nodes.map(node => [node.id, { status: scenario.graph[node.id] ?? 'pending' }])) },
     plans: [{ nodeId: 'plan', plan }], approvals: scenario.phase === 'waiting_approval' ? [] : [{ nodeId: 'approval', approval: { source: flow.flowId === 'fast' ? 'flow' : 'user' } }],
     checks: [], reviewerOutputs: [], acceptedReviews: [], artifacts: [{ nodeId: 'plan', kind: 'agent', text: 'Kế hoạch đã ghi' }], unresolvedCommitNodeIds: [], nodeData: [], memoryUse: memoryUseOf(scenario), ...scenario.extra };
@@ -126,7 +130,9 @@ function transcriptsOf(scenario: Scenario) {
   return { transcripts, history: [] };
 }
 
-const hash = location.hash.slice(1).split(',').filter(Boolean);
+const hash = location.hash.slice(1).split(',').filter(Boolean), duplicating = hash.includes('duplicate');
+// Once saved, the flow's own default is the copied choice.
+let pinned = false;
 /** A three-phase program: the first phase delivered, the second ready, the third waiting for it (`#programs` opens its sheet). */
 const program = { programId: 'calc-power', name: 'Máy tính lũy thừa', goal: 'Thêm power vào calc.js, dùng trong CLI và cập nhật tài liệu.', progress: { delivered: 1, total: 3 }, currentPhaseId: 'cli', nextReady: 'cli',
   phases: [
@@ -144,7 +150,7 @@ setApiTransport(async (endpoint, method, body) => {
   const url = new URL(endpoint, 'http://gallery'), path = url.pathname;
   const ok = (value: unknown) => ({ status: 200, body: value });
   if (path === '/api/bootstrap') return ok({ projectName: 'neomind-demo', projectRoot: 'W:\\projects\\neomind-demo', templates: ['fast', 'dev', 'parallel', 'research'], runtimeAvailable: true,
-    flows: [{ flowId: 'dev', name: 'Dev', archived: false }, { flowId: 'parallel', name: 'Dev song song', archived: false }, { flowId: 'writing', name: 'Viết tài liệu', archived: false }] });
+    flows: [...hash.includes('template') ? [] : [{ flowId: 'dev', name: 'Dev', archived: false }], { flowId: 'parallel', name: 'Dev song song', archived: false }, { flowId: 'writing', name: 'Viết tài liệu', archived: false }] });
   if (path === '/api/runners') return ok({ runners: [{ runner: 'codex', provider: 'openai', models: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna'], reasoning: ['low', 'medium', 'high'] }, { runner: 'claude-code', provider: 'anthropic', models: ['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-opus-5-5'], reasoning: ['low', 'medium', 'high'] }] });
   if (path === '/api/runs' && method === 'GET') return ok({ runs: [...list].sort((left, right) => right[2] - left[2]).map(([id, key, ago]) => { const item = scenarios[key]!;
     return { runId: id, task: item.task, flowId: item.flow.flowId, flowName: item.flow.name, createdAt: new Date(now - ago * minute).toISOString(), phase: item.phase, reason: item.reason, activeMs: item.activeMs }; }) });
@@ -153,8 +159,11 @@ setApiTransport(async (endpoint, method, body) => {
     const source = input.flowId === 'parallel' ? scenarios.running! : scenarios.waiting!;
     // Each step lists the skills it will receive (its own list or its agent's).
     const profilesByStep = Object.fromEntries(Object.keys(source.bindings).map(key => [key, { profileId: key.includes('/') ? 'verifier' : 'implementer', version: 1, skills: key.includes('/') ? [{ id: 'review', path: 'neomind/skills/review/SKILL.md', name: 'Review' }] : [{ id: 'style-guide', path: '.claude/skills/style-guide/SKILL.md', name: 'Style guide' }, { id: 'release-notes', path: 'neomind/skills/release-notes/SKILL.md', name: 'Release notes' }] }]));
-    return ok({ runtimeDiagnostics: [], snapshot: { configuration: { flow: source.flow, bindings: bindingsOf(source.bindings) }, profilesByStep }, configurationHash: 'b'.repeat(64), sourceHead: '3648ef2a1b2c3d4e', dirtyPaths: [], gitDelivery: 'local',
+    // While duplicating, Dev's own default writes with Codex, so the copied Claude choice for implementing shows as a change.
+    const flowBindings = duplicating && input.flowId === 'dev' && !pinned ? { ...source.bindings, implement: codexTerra, ...hash.includes('clash') ? { plan: codexTerra } : {} } : source.bindings;
+    return ok({ runtimeDiagnostics: [], snapshot: { configuration: { flow: source.flow, bindings: bindingsOf(flowBindings) }, profilesByStep }, configurationHash: 'b'.repeat(64), sourceHead: '3648ef2a1b2c3d4e', dirtyPaths: [], gitDelivery: 'local',
       flowExceptions: [], rules: { rules: galleryRules, warnings: hash.includes('rulewarn') ? ['Dòng 4 không đúng dạng "- [R1] nội dung"; bỏ qua.'] : [] }, dirtyImport: { baselineHash: 'c'.repeat(64), changes: hash.includes('dirty') ? [{ path: 'calc.js', change: 'modified' }, { path: 'README.md', change: 'modified' }] : [], blockers: [] } }); }
+  if (path.startsWith('/api/flows/') && path.endsWith('/pin-bindings')) { pinned = true; return ok(hash.includes('template') ? { flowId: 'dev-cua-toi', name: 'Dev của tôi', version: 1 } : { flowId: 'dev', name: 'Dev', version: 4 }); }
   if (path === '/api/memory/preview') return ok({ root: 'neomind/memory', records: [{ id: 'test-style', type: 'rule', scope: 'project', revision: '9f2c1a0e11223344', selectionReason: 'khớp đường dẫn calc.test.js' }, { id: 'guard-invalid-input', type: 'lesson', scope: 'calc.js', revision: '4b81e3d255667788', selectionReason: 'khớp đường dẫn calc.js' }, { id: 'checks-command', type: 'fact', scope: 'project', revision: '1c07aa9399aabbcc', selectionReason: 'luôn chọn' }], inferredPaths: ['calc.js', 'calc.test.js'], excluded: [{ id: 'old-note', reason: 'quá cũ' }] });
   // Five finished Dev runs with Claude + Codex: enough for the new-run estimate (three or more).
   if (path === '/api/stats') return ok({ byFlowRunners: [{ key: 'dev|claude-code+codex', completed: 5, tokens: { median: 152_000 }, activeSeconds: { median: 290 }, costUSD: hash.includes('price') ? { median: 0.84 } : null }] });
@@ -185,6 +194,7 @@ if (!wantsNew) click(byText('aside[aria-label="Danh sách run"] button', scenari
   if (hash.includes('filter')) click(byText('button', 'Lọc'));
   if (hash.includes('memory')) click(byText('button', 'Memory đã dùng'), () => setTimeout(() => document.querySelector('[aria-label^="Đánh giá"]')?.scrollIntoView({ block: 'center' }), 300));
   if (hash.includes('remember')) click(byText('button', 'Ghi nhớ điều này'));
+  if (duplicating) click(byText('header button', 'Nhân bản'), () => { if (hash.includes('saved')) { const find = byText('button', hash.includes('template') ? 'Lưu thành flow mới' : 'Lưu làm mặc định'); click(() => { const button = find() as HTMLButtonElement | undefined; return button && !button.disabled ? button : undefined; }); } });
 });
 else if (hash.includes('filter')) click(byText('button', 'Lọc'));
 if (hash.includes('programs')) click(byText('aside[aria-label="Danh sách run"] button', program.name));
