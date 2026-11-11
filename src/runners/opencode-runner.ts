@@ -8,6 +8,7 @@ import { OpenCodeServer } from '../adapters/opencode-server.js';
 import { allocateProcessScope, type ProcessScope } from '../adapters/worker-scope.js';
 import { workerEnvironment } from '../adapters/worker-environment.js';
 import type { TurnResult } from '../adapters/codex-turn-events.js';
+import { openCodePartDone, openCodePartEvents, type TranscriptEvent } from '../core/transcript.js';
 import { stateBase } from '../platform/state-dir.js';
 import { OpenCodeSessionMap } from './opencode-session-map.js';
 import { readOpenCodeProviderConfig, openCodeModels } from './opencode-config.js';
@@ -21,6 +22,10 @@ const expectedConfigPermission = { '*': 'deny', read: 'allow', glob: 'allow', gr
 const nativeSession = z.object({ id: z.string().regex(/^ses_[A-Za-z0-9]+$/), directory: z.string(), parentID: z.string().nullish(),
   metadata: z.object({ neomindSession: z.string() }), permission: z.array(z.object({ permission: z.string(), pattern: z.string(), action: z.string() })) });
 type NativeRule = { permission: string; pattern: string; action: string };
+
+const openCodeMessages = z.array(z.object({ info: z.object({ id: z.string(), role: z.string() }).passthrough(), parts: z.array(z.record(z.string(), z.unknown())) }));
+// The no-reply message NeoMind sends to make the server resolve the agent and model; it is not part of any step's turn.
+const verificationText = 'NeoMind session verification.';
 
 function rules(write: boolean): NativeRule[] {
   return ['*', 'read', 'glob', 'grep', ...(write ? ['edit'] : [])].map((permission, index) => ({ permission, pattern: '*', action: index === 0 ? 'deny' : 'allow' }));
@@ -108,6 +113,9 @@ export class OpenCodeRunner implements AgentRunner {
   private resume = false;
   private server?: OpenCodeServer;
   private turn?: { id: string; result: Promise<TurnResult> };
+  private listener?: (event: TranscriptEvent) => void;
+  /** Native session of the running turn and the messages it had before the prompt, for the activity feed. */
+  private activity?: { nativeId: string; before: Set<string>; emitted: Set<string> };
   constructor(scope: ProcessScope, private readonly options: Options = {}) { this.scope = new OpenCodeScope(scope); }
 
   async openSession(request: RunnerSessionRequest): Promise<VerifiedRunnerSession> {
@@ -148,11 +156,12 @@ export class OpenCodeRunner implements AgentRunner {
       if (!saved) await map.create({ version: 1, logicalId: session.sessionId, sessionId: native.id, workspace: session.workspace, provider: session.provider, model: session.model });
       // A no-reply message makes the server resolve the agent and model; the reply is evidence, the request is not.
       const check = z.object({ info: z.object({ sessionID: z.string(), agent: z.string(), model: z.object({ providerID: z.string(), modelID: z.string() }) }) }).parse(await this.server.request('POST', `/session/${native.id}/message`, { noReply: true, agent: 'build', model: { providerID: session.provider, modelID: session.model },
-        tools: Object.fromEntries(wanted.map(rule => [rule.permission, rule.action === 'allow'])), parts: [{ type: 'text', text: 'NeoMind session verification.' }] }));
+        tools: Object.fromEntries(wanted.map(rule => [rule.permission, rule.action === 'allow'])), parts: [{ type: 'text', text: verificationText }] }));
       if (check.info.sessionID !== native.id || check.info.agent !== 'build' || check.info.model.providerID !== session.provider || check.info.model.modelID !== session.model) throw new Error('OpenCode session model mismatch');
       const current = nativeSession.parse(await this.server.request('GET', `/session/${native.id}`));
       if (current.id !== native.id || !samePath(current.directory, session.workspace) || current.parentID || current.metadata.neomindSession !== session.sessionId || JSON.stringify(current.permission) !== JSON.stringify(wanted)) throw new Error('OpenCode session policy changed before dispatch');
       if (Object.keys(object.parse(await this.server.request('GET', '/mcp'))).length) throw new Error('OpenCode exposes MCP servers');
+      if (this.listener) this.activity = { nativeId: native.id, before: new Set((await this.messages(native.id)).map(item => item.info.id)), emitted: new Set() };
       const id = randomUUID();
       const response = this.server.request('POST', `/session/${native.id}/message`, { agent: 'build', model: { providerID: session.provider, modelID: session.model }, ...(variants && Object.keys(variants).length ? { variant: request.effort } : {}),
         parts: [{ type: 'text', text: request.prompt }], ...(request.outputSchema === undefined ? {} : { format: { type: 'json_schema', schema: request.outputSchema } }) }, 24 * 60 * 60 * 1000)
@@ -180,7 +189,13 @@ export class OpenCodeRunner implements AgentRunner {
     if (!this.turn || this.turn.id !== turnId) throw new Error('OpenCode turn does not belong to this session');
     let done = false, result: TurnResult | undefined, fault: unknown;
     this.turn.result.then(value => { result = value; done = true; }, error => { fault = error; done = true; });
-    while (!done && !stopped()) await new Promise(resolve => setTimeout(resolve, 50));
+    let polled = Date.now();
+    while (!done && !stopped()) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+      if (Date.now() - polled >= 1000) { polled = Date.now(); await this.report(); }
+    }
+    // Last read before the server stops, so the final message and tool results are not lost.
+    await this.report();
     // One server per turn: stopping it is also how an interrupted turn is cancelled.
     if (!await this.server!.close()) throw new Error('OpenCode worker stop unconfirmed');
     if (stopped()) throw new Error('Run was interrupted');
@@ -188,6 +203,55 @@ export class OpenCodeRunner implements AgentRunner {
     return result!;
   }
   close(): Promise<boolean> { return this.server ? this.server.close() : this.scope.stop(); }
+  observe(listener: (event: TranscriptEvent) => void): void { this.listener = listener; }
+
+  private async messages(nativeId: string) { return openCodeMessages.parse(await this.server!.request('GET', `/session/${encodeURIComponent(nativeId)}/message`)); }
+  /** Forward parts of this turn's replies that reached their final form. Observation only: a failed read is skipped. */
+  private async report(): Promise<void> {
+    const activity = this.activity;
+    if (!activity || !this.listener || !this.server) return;
+    let messages: z.infer<typeof openCodeMessages>;
+    try { messages = await this.messages(activity.nativeId); } catch { return; }
+    for (const message of messages) {
+      if (activity.before.has(message.info.id) || message.info.role !== 'assistant') continue;
+      for (const part of message.parts) {
+        const id = typeof part.id === 'string' ? part.id : undefined;
+        if (!id || activity.emitted.has(id) || !openCodePartDone(part)) continue;
+        activity.emitted.add(id);
+        for (const event of openCodePartEvents(part)) this.listener(event);
+      }
+    }
+  }
+}
+
+/**
+ * One turn of a stored OpenCode session, read through a short-lived server for the session viewer. `sessionId` is
+ * NeoMind's logical id; the native id comes from the session map. A turn starts at a user prompt (the verification
+ * message is skipped); it is the one whose prompt matches NeoMind's, or else the `turnIndex`-th turn.
+ */
+export async function openCodeHistory(request: { sessionId: string; workspace?: string; prompt?: string; turnIndex?: number }, options: Options = {}): Promise<{ events: TranscriptEvent[]; note?: string }> {
+  const saved = await new OpenCodeSessionMap(path.join(stateDirectory(options), 'sessions')).get(request.sessionId).catch(() => undefined);
+  if (!saved) return { events: [], note: 'Không tìm thấy session OpenCode của bước này trên máy' };
+  const server = await serverFor(await (options.scopes ?? allocateProcessScope)(), request.workspace ?? saved.workspace, options);
+  let messages: z.infer<typeof openCodeMessages>;
+  try { messages = openCodeMessages.parse(await server.request('GET', `/session/${encodeURIComponent(saved.sessionId)}/message`)); }
+  finally { if (!await server.close()) throw new Error('OpenCode worker stop unconfirmed'); }
+  const turns: TranscriptEvent[][] = [];
+  for (const message of messages) {
+    const role = message.info.role === 'user' ? 'user' : 'assistant';
+    const time = (message.info as { time?: { created?: unknown } }).time?.created;
+    const events = message.parts.flatMap(part => openCodePartEvents(part, role)).map(event => typeof time === 'number' ? { ...event, t: time } : event);
+    if (role === 'user') {
+      if (events.length === 1 && events[0]!.text?.trim() === verificationText) continue;
+      if (events.length) turns.push(events);
+    } else if (turns.length) turns.at(-1)!.push(...events);
+  }
+  const prompt = request.prompt?.trim();
+  let index = prompt ? turns.findIndex(turn => turn[0]?.kind === 'prompt' && turn[0].text?.trim() === prompt) : -1;
+  let note: string | undefined;
+  if (index < 0 && request.turnIndex !== undefined && request.turnIndex < turns.length) { index = request.turnIndex; if (prompt) note = 'Không khớp được prompt; đang hiện lượt theo thứ tự trong session'; }
+  if (index < 0) return { events: [], note: `Session OpenCode có ${turns.length} lượt nhưng không tìm thấy lượt của bước này` };
+  return { events: turns[index]!, ...(note ? { note } : {}) };
 }
 
 export class OpenCodeRunnerFactory implements AgentRunnerFactory {

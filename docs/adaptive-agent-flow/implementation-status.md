@@ -2,6 +2,12 @@
 
 Cập nhật: **11/11/2026**. Branch: `hieu/adaptive-agent-flow`. Bàn giao: [11/11 khôi phục MCP, chạy lại flow, OpenCode](session-handoff-2026-11-11.md).
 
+## Xem hoạt động của OpenCode — 11/11/2026
+
+Runner OpenCode có `observe()`: trong lúc chờ lượt chạy, NeoMind đọc `GET /session/:id/message` mỗi giây và ghi vào transcript các phần đã xong (suy luận, tin nhắn, `read`/`glob`/`grep`/`edit`/`write`/`bash` và kết quả của chúng), đọc lần cuối trước khi dừng server. Phần còn đang chạy chỉ hiện khi xong, nên trễ tới khoảng 1 giây. Nút "Session gốc" đọc lại lượt từ session OpenCode qua một server ngắn hạn (ánh xạ id logic → `ses_…` trong session map). Lựa chọn đọc lại theo chu kỳ thay vì luồng SSE `/event` để dùng chung một cách đổi định dạng cho cả xem trực tiếp và lịch sử.
+
+Kiểm chứng Windows: test với server OpenCode giả 8/8 (đổi định dạng, chỉ báo phần đã xong, đọc lịch sử, bỏ tin nhắn kiểm tra `noReply`); test transcript/lịch sử/session tools hiện có 18/18. Đối chiếu OpenCode 1.19.5 thật bằng tin nhắn `noReply` (không gọi model): dạng `{ info: { id, role, time.created }, parts: [{ type: 'text', text }] }` khớp. Chưa xem với một lượt OpenCode thật có gọi tool: tên và tham số tool (`filePath`, `oldString`, `newString`, `command`) lấy từ đặc tả API và chưa đối chiếu bằng run thật.
+
 ## Khôi phục phần 07–08/11 — 11/11/2026
 
 Source TypeScript của MCP standalone, chạy lại flow và OpenCode không được commit; bản copy mang về bị cắt ở 30 MiB nên mất `src/`, `test/`, `ui/`. Đã dựng lại từ JavaScript `tsc` biên dịch và `.d.ts` của bản build 08/11: so lại output biên dịch khớp bản gốc (khác thứ tự một khóa và comment). Nút "Chạy lại từ đầu" viết lại theo bundle UI đã minify. README phần MCP viết lại vì README gốc bị mất. `@modelcontextprotocol/sdk` nâng từ 1.29.0 lên 1.32.2 (bản vá cùng major) vì `npm audit` báo lỗ hổng ở HTTP/OAuth; `npm audit` sạch.

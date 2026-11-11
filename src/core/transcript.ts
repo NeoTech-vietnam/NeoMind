@@ -200,6 +200,48 @@ export function claudeTranscriptEvents(input: unknown): TranscriptEvent[] {
   return events;
 }
 
+// ---------------------------------------------------------------- OpenCode
+
+/** Whether an OpenCode message part has reached its final form (later updates would only repeat it). */
+export function openCodePartDone(input: unknown): boolean {
+  const part = record(input), state = record(part.state), time = record(part.time);
+  if (part.type === 'tool') return state.status === 'completed' || state.status === 'error';
+  if (part.type === 'text' || part.type === 'reasoning') return typeof time.end === 'number';
+  return part.type === 'patch';
+}
+
+/**
+ * Transcript events for one OpenCode message part (`GET /session/:id/message`). Tool calls map to the same kinds as
+ * Claude's; the tool output follows as a `result` with the part id. Unknown part types are ignored.
+ */
+export function openCodePartEvents(input: unknown, role: 'user' | 'assistant' = 'assistant'): TranscriptEvent[] {
+  const part = record(input), id = str(part.id);
+  if (part.type === 'text') {
+    const text = str(part.text) ?? '';
+    if (!text.trim() || part.synthetic || part.ignored) return [];
+    return [{ kind: role === 'user' ? 'prompt' : 'message', text }];
+  }
+  if (role === 'user') return [];
+  if (part.type === 'reasoning') { const text = str(part.text) ?? ''; return text.trim() ? [{ kind: 'reasoning', text: headLines(text, 20).text }] : []; }
+  if (part.type === 'patch') return Array.isArray(part.files) && part.files.length ? [{ kind: 'tool', ...(id ? { id } : {}), name: 'patch', text: part.files.filter(file => typeof file === 'string').join('\n') }] : [];
+  if (part.type !== 'tool') return [];
+  const state = record(part.state), args = record(state.input), name = str(part.tool) ?? 'tool', base = { ...(id ? { id } : {}), name };
+  const file = str(args.filePath) ?? str(args.path) ?? '', events: TranscriptEvent[] = [];
+  if (name === 'read') events.push({ ...base, kind: 'read', path: file, ...(typeof args.offset === 'number' ? { text: `từ dòng ${args.offset}` } : {}) });
+  else if (name === 'glob' || name === 'grep' || name === 'list') events.push({ ...base, kind: 'search', text: str(args.pattern) ?? '', ...(file ? { path: file } : {}) });
+  else if (name === 'edit') {
+    const oldText = str(args.oldString) ?? '', newText = str(args.newString) ?? '';
+    events.push({ ...base, kind: 'edit', path: file, change: 'update', added: lineCount(newText), removed: lineCount(oldText), diff: editDiff(oldText, newText) });
+  } else if (name === 'write') {
+    const text = str(args.content) ?? '';
+    events.push({ ...base, kind: 'edit', path: file, change: 'write', added: lineCount(text), removed: 0, diff: text.split('\n').map(line => `+${line}`).join('\n') });
+  } else if (name === 'bash') events.push({ ...base, kind: 'command', command: str(args.command) ?? '', status: str(state.status) ?? 'completed' });
+  else events.push({ ...base, kind: 'tool', text: JSON.stringify(args) });
+  if (state.status === 'completed') events.push({ kind: 'result', ...(id ? { id } : {}), text: str(state.output) ?? '' });
+  else if (state.status === 'error') events.push({ kind: 'result', ...(id ? { id } : {}), text: str(state.error) ?? 'error', error: true });
+  return events;
+}
+
 // ---------------------------------------------------------------- Codex
 
 /** The script inside a shell wrapper Codex adds (`"…powershell.exe" -Command '…'`, `bash -lc '…'`), for display. */

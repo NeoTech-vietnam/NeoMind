@@ -10,7 +10,7 @@ import { claudeTranscriptEvents, clipEvent, codexItemEvents, relativePath, type 
  * and to compare with NeoMind's record. Read only: nothing here resumes or changes a session.
  */
 export interface HistoryRequest { sessionId: string; workspace?: string; runnerTurnId?: string; prompt?: string; turnIndex?: number }
-export interface HistoryResult { runner: 'codex' | 'claude-code'; events: TranscriptEvent[]; note?: string }
+export interface HistoryResult { runner: 'codex' | 'claude-code' | 'opencode'; events: TranscriptEvent[]; note?: string }
 
 /** The stored Claude Code session file, wherever its cwd was (session ids are unique across projects). */
 export function claudeSessionFile(sessionId: string, configDir = claudeConfigDir()): string | undefined {
@@ -87,8 +87,13 @@ export function sessionTurnIndex(attempts: { attemptId: string; sessionId: strin
   return attempts.filter(item => item.sessionId === attempt.sessionId && !item.core && item.runnerTurnId).findIndex(item => item.attemptId === attemptId);
 }
 
-/** Claude when its session file exists, otherwise Codex. */
+/** OpenCode by its recorded runner; otherwise Claude when its session file exists, else Codex. */
 export async function runnerHistory(request: HistoryRequest, runner?: string, configDir = claudeConfigDir()): Promise<HistoryResult> {
+  if (runner === 'opencode') {
+    const { openCodeHistory } = await import('../runners/opencode-runner.js');
+    const history = await openCodeHistory(request);
+    return { runner: 'opencode', events: number(history.events.map(event => clip(event, request.workspace))), ...(history.note ? { note: history.note } : {}) };
+  }
   const file = runner === 'codex' ? undefined : claudeSessionFile(request.sessionId, configDir);
   if (file) return claudeHistoryEvents(file, request);
   if (runner === 'claude-code') return { runner: 'claude-code', events: [], note: 'Claude Code không còn giữ session này (có thể đã bị dọn theo cleanupPeriodDays)' };

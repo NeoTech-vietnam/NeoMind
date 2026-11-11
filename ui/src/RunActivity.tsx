@@ -72,7 +72,7 @@ function Lane({ runId, summary, flow, now, filter, scroll, open, report }: { run
       <Button className="ml-auto" variant="ghost" size="sm" onClick={() => open({ attemptId: summary.meta.attemptId, key: summary.meta.key, source: 'neomind' })}><PanelRight />Xem session</Button></div>
     <p className="m-0 pl-4 text-[11.5px] text-muted-foreground">{agentOf(summary)} · {formatClock(elapsedOf(summary, now))}{summary.usage ? ` · ${formatTokens(summary.usage.totalTokens)} tokens` : ''}</p>
     <Timeline events={events ?? []} filter={filter} following scroll={scroll} mode="live" start={summary.startedAt} maxHeight="max-h-[360px]" />
-    <p className="m-0 pl-[30px] text-[11.5px] text-muted-foreground">{summary.meta.runner === 'codex' ? 'Codex gửi từng sự kiện ngay khi xảy ra; output lệnh theo dòng.' : 'Claude Code gửi theo từng tin nhắn hoàn chỉnh: trễ vài giây.'}</p>
+    <p className="m-0 pl-[30px] text-[11.5px] text-muted-foreground">{summary.meta.runner === 'codex' ? 'Codex gửi từng sự kiện ngay khi xảy ra; output lệnh theo dòng.' : summary.meta.runner === 'opencode' ? 'OpenCode được đọc lại mỗi giây; mỗi bước hiện khi đã xong.' : 'Claude Code gửi theo từng tin nhắn hoàn chỉnh: trễ vài giây.'}</p>
   </section>;
 }
 
@@ -172,7 +172,7 @@ export function SessionSheet({ run, flow, listing, target, setTarget, close }: {
         <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Tùy chọn session"><MoreHorizontal /></Button></DropdownMenuTrigger>
           <DropdownMenuContent className="w-72"><div className="px-2 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Nguồn ghi</div>
             {sourceItem('neomind', 'NeoMind ghi', 'Ghi trong lúc chạy, lưu cùng run.')}<DropdownMenuSeparator />
-            {sourceItem('runner', 'Session gốc của runner', 'Đọc lại từ lịch sử Codex / Claude Code; có thể đã bị runner dọn.')}</DropdownMenuContent></DropdownMenu></>}
+            {sourceItem('runner', 'Session gốc của runner', 'Đọc lại từ lịch sử Codex / Claude Code / OpenCode; có thể đã bị runner dọn.')}</DropdownMenuContent></DropdownMenu></>}
       subheader={<div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[12.5px] text-muted-foreground">
         {turns.length > 1 && <DropdownMenu><DropdownMenuTrigger asChild><Button size="sm">Lượt {turnIndex + 1}/{turns.length}<ChevronDown /></Button></DropdownMenuTrigger>
           <DropdownMenuContent align="start">{turns.map((turn, index) => { const state = turnBadge(turn.status, false);
