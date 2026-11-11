@@ -75,6 +75,54 @@ Hiện trạng: NeoMind đã có `sessionGroup` — các bước cùng nhóm dù
 
 Ràng buộc mà tối ưu không được phá (giống `volatile` trong C): reviewer độc lập **không bao giờ** chung session với bước viết code; khác runner/model/provider thì không chung được (khác "core"); nhánh song song không chung; bước chờ duyệt người cắt session nếu runner không giữ được lâu. Preview và memory map hiện bước nào chung session và ước tính tiết kiệm; `run stats` so sánh các mức trên cùng loại task để chọn mặc định bằng số liệu.
 
+### 2.6 Flow như một ngôn ngữ lập trình
+
+Nhận xét người dùng 11/11: tạo flow không còn đơn thuần là kéo thả khối mà có thể thành một ngôn ngữ. Thực tế NeoMind đã có nửa đường: **flow JSON là IR**, `compileFlow` là compiler, Flow Studio là trình soạn thảo trực quan cho IR (như Simulink/LabVIEW so với C). Bước tiếp là cho flow một **dạng văn bản** biên dịch về cùng IR.
+
+Phác thảo cú pháp (chưa chốt):
+
+```
+flow dev-review "Dev + review UI" {
+  opt O1
+  limits { time 30m, tokens 400k, repair 2 }
+
+  agent planner   = implementer @ codex/gpt-6.1-sol  reasoning high
+  agent coder     = implementer @ claude/sonnet-5-5  skills [c-style]
+  agent reviewer  = verifier    @ codex/gpt-6-luna   memory [decision, lesson]
+
+  plan    = planner.plan(task)                  // -> Plan
+  approve plan by user
+  code    = coder.write(plan, scope plan.scope) // -> CodeChange
+  checks  ["npm test"] on code
+  review  = reviewer.review(code, against plan) required
+  repair code until review.pass max 2
+  commit code
+}
+
+fn review_ui(change: CodeChange) -> Verdict { ... }   // chương trình con, gọi lại được
+```
+
+| Khái niệm ngôn ngữ | Trong NeoMind |
+| --- | --- |
+| Kiểu dữ liệu | Output contract (`Plan`, `CodeChange`, `Report`, `Verdict`); compiler báo lỗi khi nối sai kiểu, ở cả canvas lẫn văn bản |
+| Hàm, gọi hàm | Chương trình con (2.3), flow con có chữ ký vào/ra |
+| Vòng lặp có giới hạn | `repair … until … max N`; sau này vòng điều khiển có setpoint |
+| Cờ biên dịch | `opt O0/O1/O2/Os` (2.5) |
+| Static analysis / lint | Policy sàn: không bỏ review, không tự duyệt plan — lỗi lúc viết, không đợi lúc chạy |
+| `volatile` | Reviewer độc lập không được gộp session |
+| Thư viện, import | Skills, agent, flow dùng chung giữa các repo |
+| Debugger, trace | Breakpoint, time-travel trên journal (2.1) |
+
+Lợi ích: diff/review flow trong Git dễ hơn JSON canvas; AI viết code tốt hơn viết JSON graph nên `flow_draft` chính xác hơn; có comment và tách hàm.
+
+Nguyên tắc giữ chừng mực:
+
+- **Ngôn ngữ khai báo, nhỏ**, không đa dụng: không biến tùy ý, không vòng lặp vô hạn, mọi thứ kiểm được lúc biên dịch. Sức mạnh của NeoMind là kiểm chứng trước khi chạy; ngôn ngữ càng tự do càng khó giữ policy sàn.
+- **Một IR, hai giao diện:** văn bản và canvas cùng biên dịch về flow JSON, cùng compiler; sửa bên nào bên kia cập nhật theo.
+- Học từ tiền lệ thay vì phát minh lại: GitHub Actions (YAML khai báo), Temporal/LangGraph (workflow-as-code), Dagger (pipeline-as-code).
+
+Lộ trình: (1) kiểu dữ liệu cho output contract trong compiler hiện có → (2) cú pháp văn bản biên dịch về IR, hai chiều với canvas → (3) hàm/chương trình con → (4) cờ `opt` và các pass tối ưu.
+
 ## 3. Con chip này dùng vào việc gì? (đang brainstorm)
 
 Liên tưởng tới cách MCU thật được dùng. Mỗi dòng: kiểu dùng MCU → kiểu dùng NeoMind → khối còn thiếu.
