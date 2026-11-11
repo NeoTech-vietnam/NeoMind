@@ -8,6 +8,7 @@ import { RunMonitor } from './RunMonitor';
 import { RunStart } from './RunStart';
 import { RunPrograms, type ProgramSummary } from './RunPrograms';
 import type { Run, RunSummary } from './runTypes';
+import { rerunDraft } from '../../src/domain/rerun';
 
 const terminal = ['completed', 'cancelled'];
 
@@ -19,6 +20,8 @@ function Dismiss({ onClick }: { onClick(): void }) {
 export function RunPanel({ flowId, flows }: { flowId?: string; flows: { flowId: string; name: string; archived: boolean }[] }) {
   const [run, setRun] = useState<Run | null>(null), [history, setHistory] = useState<RunSummary[]>([]), [error, setError] = useState(''), [stale, setStale] = useState(false);
   const [programs, setPrograms] = useState<ProgramSummary[]>([]);
+  // A blocked run restarts as a new run with its flow and task prefilled; the preview and plan approval happen again.
+  const [rerun, setRerun] = useState<{ flowId: string; task: string } | null>(null);
   async function refresh() {
     setHistory((await api<{ runs: RunSummary[] }>('/api/runs')).runs.slice().reverse());
     // Programs are optional; an older backend or a broken program file must not hide the runs.
@@ -57,18 +60,18 @@ export function RunPanel({ flowId, flows }: { flowId?: string; flows: { flowId: 
       if (run) setRun(await api<Run>(`/api/runs/${run.runId}`));
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setCleaning(false); }
   }
-  async function open(runId: string) { setError(''); try { setRun(await api<Run>(`/api/runs/${runId}`)); setStale(false); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } }
+  async function open(runId: string) { setError(''); setRerun(null); try { setRun(await api<Run>(`/api/runs/${runId}`)); setStale(false); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } }
 
   return <section className="grid h-full min-h-0 grid-cols-[272px_minmax(0,1fr)] min-[1200px]:grid-cols-[296px_minmax(0,1fr)]">
-    <RunList history={history} selectedId={run?.runId} open={id => void open(id)} startNew={() => setRun(null)} cleaning={cleaning} clean={() => void cleanFinished()}
+    <RunList history={history} selectedId={run?.runId} open={id => void open(id)} startNew={() => { setRerun(null); setRun(null); }} cleaning={cleaning} clean={() => void cleanFinished()}
       programs={<RunPrograms programs={programs} open={id => void open(id)} changed={id => { void refresh(); if (id) void open(id); }} />} />
     <div className="min-h-0 min-w-0 overflow-auto">
       <div className="mx-auto flex max-w-[1040px] flex-col gap-3 px-6 pb-0 pt-5">
         {error && <Callout tone="danger" icon={<CircleAlert />}><div className="flex items-start"><span className="flex-1">{error}</span><Dismiss onClick={() => setError('')} /></div></Callout>}
         {stale && <Callout tone="attention" icon={<TriangleAlert />}><span role="status">Mất kết nối cập nhật run. Trạng thái đang hiển thị có thể đã cũ; hệ thống sẽ thử đồng bộ lại.</span></Callout>}
         {notice && <Callout tone="success" icon={<CircleCheck />}><div className="flex items-start"><span className="flex-1" role="status">{notice}</span><Dismiss onClick={() => setNotice('')} /></div></Callout>}
-        {run ? <RunMonitor key={run.runId} run={run} setRun={value => { setRun(value); void refresh(); }} />
-          : <RunStart {...(flowId ? { initialFlow: flowId } : {})} flows={flows} history={history} started={value => { setRun(value); void refresh(); }} />}
+        {run ? <RunMonitor key={run.runId} run={run} setRun={value => { setRun(value); void refresh(); }} rerun={() => { const draft = rerunDraft(run); if (draft) { setRerun(draft); setRun(null); } }} />
+          : <RunStart key={rerun ? `rerun-${rerun.flowId}` : 'new'} {...rerun ? { initialFlow: rerun.flowId, initialTask: rerun.task } : flowId ? { initialFlow: flowId } : {}} flows={flows} history={history} started={value => { setRerun(null); setRun(value); void refresh(); }} />}
       </div>
     </div>
   </section>;

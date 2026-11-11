@@ -22,6 +22,7 @@ import { modelLabel, runnerLabel } from './runners';
 import { flowSteps, repairRounds } from './runSteps';
 import { bindingLabel, effectiveBindings, type BindingValues, type Run } from './runTypes';
 import type { Flow } from '../../src/domain/schema';
+import { rerunDraft } from '../../src/domain/rerun';
 
 const agentLine = (values: BindingValues | undefined) => values ? `${runnerLabel(values.runner)} · ${modelLabel(values.model)}` : '';
 
@@ -45,7 +46,7 @@ function stopFacts(run: Run, flow: Flow) {
 }
 const factTone = { success: 'text-success', attention: 'text-attention', danger: 'text-danger', idle: 'text-muted-foreground' };
 
-export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }) {
+export function RunMonitor({ run, setRun, rerun }: { run: Run; setRun(run: Run): void; rerun?(): void }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [feedback, setFeedback] = useState(''), [extraMinutes, setExtraMinutes] = useState(10);
   const phase = run.runtimeState?.phase ?? 'recovering', info = phaseInfo(phase), flow = run.snapshot?.configuration.flow;
   const bindings = effectiveBindings(run), plan = run.plans.at(-1)?.plan;
@@ -97,6 +98,7 @@ export function RunMonitor({ run, setRun }: { run: Run; setRun(run: Run): void }
         <p className="m-0 mt-1 text-[12.5px] text-muted-foreground" title={run.usage.partial ? 'Một số lượt chưa báo token' : undefined}>{meta.join(' · ')}</p>
       </div>
       <div className="flex items-center gap-1.5">
+        {rerun && rerunDraft(run) && <Button disabled={busy} onClick={rerun}>Chạy lại từ đầu</Button>}
         {running && <Button disabled={busy} onClick={() => void act('pause')}><Pause />Tạm dừng</Button>}
         {lastSession && !running && phase !== 'waiting_approval' && <Button onClick={() => setSession({ attemptId: lastSession.meta.attemptId, key: lastSession.meta.key, source: 'neomind' })}><PanelRight />Xem session</Button>}
         {!finished && <Button variant="ghost" className="text-danger hover:text-danger" disabled={busy} onClick={cancel}>Hủy run</Button>}

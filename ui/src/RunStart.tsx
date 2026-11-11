@@ -44,9 +44,9 @@ const presets: Preset[] = [
  * Start a run: describe the task, pick a flow, adjust runner/model per step. The effective configuration is previewed
  * automatically after every change; a run can only start from the configuration that is on screen.
  */
-export function RunStart({ initialFlow, flows, history, started }: { initialFlow?: string; flows: { flowId: string; name: string; archived: boolean }[]; history: RunSummary[]; started(run: Run): void }) {
+export function RunStart({ initialFlow, initialTask, flows, history, started }: { initialFlow?: string; initialTask?: string; flows: { flowId: string; name: string; archived: boolean }[]; history: RunSummary[]; started(run: Run): void }) {
   const runners = useRunners();
-  const [flowId, setFlowId] = useState(initialFlow ?? 'dev'), [task, setTask] = useState('');
+  const [flowId, setFlowId] = useState(initialFlow ?? 'dev'), [task, setTask] = useState(initialTask ?? '');
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('');
   const [overrides, setOverrides] = useState<Record<string, Partial<BindingValues>>>({}), [limits, setLimits] = useState<Limits>({});
   const [preview, setPreview] = useState<Preview | null>(null), [loading, setLoading] = useState(false), [previewError, setPreviewError] = useState('');
