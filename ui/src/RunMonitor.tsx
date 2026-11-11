@@ -15,6 +15,7 @@ import { AgentSessions, latestAttempt, LiveActivity, SessionSheet, useTranscript
 import { RunChecks } from './RunChecks';
 import { RunGraph } from './RunGraph';
 import { RunLessons } from './RunLessons';
+import { RememberButton, RunMemoryUsed } from './RunMemory';
 import { PlanBody } from './RunPlan';
 import { RunCost, RunDelivery, RunHandoff } from './RunResult';
 import { RunStepper } from './RunStepper';
@@ -48,6 +49,8 @@ const factTone = { success: 'text-success', attention: 'text-attention', danger:
 
 export function RunMonitor({ run, setRun, rerun, remove }: { run: Run; setRun(run: Run): void; rerun?(): void; remove?(): void }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [feedback, setFeedback] = useState(''), [extraMinutes, setExtraMinutes] = useState(10);
+  // Bumped when "Ghi nhớ điều này" adds a proposal, so the run's proposal list reloads.
+  const [proposalsVersion, setProposalsVersion] = useState(0);
   const phase = run.runtimeState?.phase ?? 'recovering', info = phaseInfo(phase), flow = run.snapshot?.configuration.flow;
   const bindings = effectiveBindings(run), plan = run.plans.at(-1)?.plan;
   const timeLimitMs = run.timeLimitMs ?? (flow?.definition.limits.activeTimeSeconds ?? 0) * 1000 + run.timeExtensionsMs;
@@ -98,6 +101,7 @@ export function RunMonitor({ run, setRun, rerun, remove }: { run: Run; setRun(ru
         <p className="m-0 mt-1 text-[12.5px] text-muted-foreground" title={run.usage.partial ? 'Một số lượt chưa báo token' : undefined}>{meta.join(' · ')}</p>
       </div>
       <div className="flex items-center gap-1.5">
+        <RememberButton runId={run.runId} onCreated={() => setProposalsVersion(version => version + 1)} />
         {rerun && rerunDraft(run) && <Button disabled={busy} onClick={rerun}>Chạy lại</Button>}
         {running && <Button disabled={busy} onClick={() => void act('pause')}><Pause />Tạm dừng</Button>}
         {lastSession && !running && phase !== 'waiting_approval' && <Button onClick={() => setSession({ attemptId: lastSession.meta.attemptId, key: lastSession.meta.key, source: 'neomind' })}><PanelRight />Xem session</Button>}
@@ -159,7 +163,7 @@ export function RunMonitor({ run, setRun, rerun, remove }: { run: Run; setRun(ru
     <RunHandoff run={run} locked={locked} sharedWorkspace={sharedWorkspace} cleaned={cleaned} apply={() => void act('apply')} />
     {(run.checks.length > 0 || run.reviewerOutputs.length > 0) && <RunChecks run={run} flow={flow} />}
     {phase === 'completed' && <RunCost flow={flow} listing={listing} />}
-    {phase === 'completed' && <RunLessons runId={run.runId} />}
+    <RunLessons key={proposalsVersion} runId={run.runId} />
 
     {cleanup?.snapshots?.length ? <Callout tone="hint" icon={<Info />}><strong className="font-semibold text-foreground">Bản lưu của worktree đã dọn.</strong> Mọi file trong worktree lúc dọn (trừ file bị ignore) nằm trong ref dưới đây; lấy lại bằng lệnh:
       {cleanup.snapshots.map(item => <span key={item.ref} className="mt-1.5 flex items-center gap-2"><code className="min-w-0 flex-1 truncate rounded bg-code px-2 py-1 font-mono text-[12px]">git worktree add &lt;thư mục&gt; {item.ref}</code><CopyButton text={`git worktree add <thư mục> ${item.ref}`} label="Chép lệnh" /></span>)}</Callout>
@@ -177,6 +181,7 @@ export function RunMonitor({ run, setRun, rerun, remove }: { run: Run; setRun(ru
         {run.runtimeContext.memory.records?.map(record => <div key={`${record.type}/${record.id}`} className="mt-2 text-[12.5px]"><strong>{record.type} · {record.id}</strong><span className="block text-muted-foreground">{record.scope} · {record.selectionReason} · revision <code className="font-mono">{record.revision.slice(0, 12)}</code> · nguồn {record.sources.join(', ')}</span></div>)}
         {!!run.runtimeContext.memory.selectionPolicy && <details className="mt-2 text-[12.5px]"><summary className="cursor-pointer text-muted-foreground">Policy chọn memory khi run bắt đầu</summary><pre className="m-0 mt-1 overflow-auto rounded-md bg-code p-2.5 font-mono text-[11.5px]">{JSON.stringify(run.runtimeContext.memory.selectionPolicy, null, 2)}</pre></details>}
         <pre className="m-0 mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-code p-2.5 font-mono text-[11.5px]">{run.runtimeContext.memory.text || 'Không có bản ghi được chọn.'}</pre></Disclosure>}
+      <RunMemoryUsed run={run} setRun={setRun} />
       <RunGraph run={run} hasSession={nodeId => !!latestAttempt(listing, nodeId)} openSession={nodeId => { const attempt = latestAttempt(listing, nodeId); if (attempt) setSession(attempt); }} />
       <Disclosure title="Logs và output" count={run.artifacts.length}><div className="flex flex-col gap-2">{run.artifacts.map((artifact, index) => <details key={index} className="text-[12.5px]"><summary className="cursor-pointer">{bindingLabel(artifact.nodeId, flow)} · {artifactLabel(artifact.kind)}</summary>
         <pre className="m-0 mt-1 max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-code p-2.5 font-mono text-[11.5px]">{artifact.text}</pre></details>)}</div></Disclosure>

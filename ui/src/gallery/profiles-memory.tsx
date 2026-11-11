@@ -20,10 +20,19 @@ const galleryFlow = structuredClone(templates.dev);
 const implement = galleryFlow.definition.nodes.find(node => node.id === 'implement');
 if (implement?.type === 'agent_task') { implement.profileId = 'ts-strict'; implement.profileVersion = 2; }
 let root: string | null = hash.includes('root') ? null : 'W:\\projects\\neomind-demo\\neomind\\memory';
-const records: { revision: string; body: string; header: { id: string; type: string; scope: string; sources: string[]; tags: string[] } }[] = [
+const records: { revision: string; body: string; header: { id: string; type: string; scope: string; sources: string[]; tags: string[]; expiresAt?: string; supersedes?: string[] } }[] = [
   { revision: 'a'.repeat(64), body: 'Kiểm tra giá trị đầu vào và các trường hợp biên trước khi xử lý.', header: { id: 'guard-input', type: 'lesson', scope: 'src/', sources: ['run-1'], tags: ['validation'] } },
   { revision: 'b'.repeat(64), body: 'Chạy npm test trước khi giao thay đổi.', header: { id: 'checks', type: 'decision', scope: 'project', sources: ['AGENTS.md'], tags: ['tests'] } },
   { revision: 'c'.repeat(64), body: 'Project dùng TypeScript strict.', header: { id: 'typescript', type: 'context', scope: 'project', sources: ['tsconfig.json'], tags: ['typescript'] } },
+];
+records.push({ revision: 'd'.repeat(64), body: 'Chạy npm test và npm run build:ui trước khi giao thay đổi giao diện.', header: { id: 'checks-ui', type: 'decision', scope: 'ui', sources: ['user-note'], tags: ['tests', 'ui'], supersedes: ['checks'] } });
+const stats: Record<string, { uses: number; helpful: number; irrelevant: number; wrong: number; score: number }> = {
+  'lesson/guard-input': { uses: 7, helpful: 3, irrelevant: 0, wrong: 0, score: 3 }, 'context/typescript': { uses: 12, helpful: 1, irrelevant: 2, wrong: 0, score: -1 }, 'decision/checks-ui': { uses: 2, helpful: 0, irrelevant: 0, wrong: 1, score: -3 } };
+/** Pending proposals of every origin: plan feedback, a "remember this" merged with a run's duplicate, an AI proposal that repeats a record. */
+let pending = [
+  { proposal: { proposalId: 'decision-1', createdAt: '2026-11-11T08:00:00.000Z', origin: 'plan_revision', reason: 'Bạn đã yêu cầu sửa kế hoạch trong run này; ghi lại nếu yêu cầu đúng cho các run sau.', record: { id: 'decision-1', type: 'decision', scope: 'project', tags: ['plan-feedback'], body: 'Khi lập kế hoạch, người dùng yêu cầu: chỉ sửa một file mỗi lần và giữ test cũ.\n\n(Task gốc: Sửa parser)', sources: ['run:run-1'] } }, version: 1, proposalHash: 'b'.repeat(64), runId: 'run-1', merged: [] },
+  { proposal: { proposalId: 'memory-2', createdAt: '2026-11-11T08:05:00.000Z', origin: 'user_note', reason: 'Bạn chọn "Ghi nhớ điều này" trên run này', record: { id: 'parser-tabs', type: 'lesson', scope: 'project', tags: [], body: 'Parser phải giữ nguyên tab trong chuỗi.', sources: ['run:run-2'] } }, version: 2, proposalHash: 'c'.repeat(64), runId: 'run-2', merged: [{ runId: 'run-3', proposalId: 'memory-3' }] },
+  { proposal: { proposalId: 'memory-4', createdAt: '2026-11-11T08:09:00.000Z', origin: 'ai_session', reason: 'Người dùng nói vậy trong session.', record: { id: 'typescript-2', type: 'context', scope: 'project', tags: ['typescript'], body: 'Project dùng TypeScript strict.', sources: ['session:abc'] } }, version: 1, proposalHash: 'd'.repeat(64), runId: null, merged: [], duplicateOf: 'context/typescript' },
 ];
 const selection = { retrievalMode: 'lexical', scopes: [], tags: [], requireTaskMatch: false, inferTaskPaths: false, maxRecords: 30, maxBodyBytes: 16000 };
 const proposal = { proposalId: 'lesson-1', record: { id: 'guard-input', type: 'lesson', scope: 'src/', tags: ['validation'], body: 'Kiểm tra dữ liệu đầu vào trước khi tính toán.', sources: ['src/parser.ts'] } };
@@ -103,7 +112,13 @@ setApiTransport(async (endpoint, method, body) => {
     if (operation === 'delete') metadata = metadata.filter(item => item.profileId !== id);
     return ok({});
   }
-  if (path === '/api/memory' && method === 'GET') return ok({ root, records: root ? records : [] });
+  if (path === '/api/memory' && method === 'GET') return ok({ root, records: root ? records : [], stats: root ? stats : {}, inactive: root ? [{ id: 'checks', reason: 'superseded' }] : [],
+    location: { root: 'W:\\projects\\neomind-demo\\neomind\\memory', configured: false, isDefault: true, exists: !!root, inRepository: true, relativePath: 'neomind/memory' } });
+  if (path === '/api/memory/proposals' && method === 'GET') return ok({ memoryRoot: 'W:\\projects\\neomind-demo\\neomind\\memory', proposals: root ? pending : [], errors: [] });
+  if (path.startsWith('/api/memory/proposals/')) { pending = pending.filter(item => item.proposal.proposalId !== input?.proposalId); return ok({}); }
+  if (path === '/api/memory/note') { const id = `note-${records.length}`; records.push({ revision: 'f'.repeat(64), body: String(input?.body), header: { id, type: String(input?.type), scope: String(input?.scope), sources: ['user-note'], tags: (input?.tags as string[]) ?? [] } }); return ok({ record: records.at(-1) }); }
+  if (path === '/api/memory/expire') { const record = records.find(item => item.header.id === input?.id)!; record.header.expiresAt = new Date().toISOString(); return ok({ record }); }
+  if (path === '/api/memory/delete') { records.splice(records.findIndex(item => item.header.id === input?.id), 1); return ok({ deleted: true }); }
   if (path === '/api/memory' && method === 'POST') { const record = input?.record as { id: string; type: string; scope: string; sources: string[]; tags: string[]; body: string }; const saved = { revision: 'e'.repeat(64), body: record.body, header: { id: record.id, type: record.type, scope: record.scope, sources: record.sources, tags: record.tags } }; const index = records.findIndex(item => item.header.id === record.id && item.header.type === record.type); if (index >= 0) records[index] = saved; else records.push(saved); return ok({ record: saved }); }
   if (path === '/api/memory/configure') { root = String(input?.root ?? 'W:\\projects\\neomind-demo\\neomind\\memory'); return ok({ root, records }); }
   if (path === '/api/memory/selection') return ok({ selection, revision: 'f'.repeat(64) });
@@ -135,7 +150,9 @@ else click(byText('nav button, aside button', isMemory ? 'Memory' : 'Agents'), (
     setTimeout(() => click(() => [...document.querySelectorAll<HTMLButtonElement>('.profiles-detail-header button')].find(item => item.textContent === 'Lưu' && !item.disabled)), 300);
   });
 
-  if (hash.includes('detail')) click(() => document.querySelector('.memory-record'));
+  if (hash.includes('detail') || hash.includes('edit')) click(() => document.querySelector('.memory-record-row'), () => { if (hash.includes('edit')) click(byText('[role="dialog"] button', 'Sửa')); });
+  if (hash.includes('note')) click(byText('button', 'Ghi chú'));
+  if (hash.includes('review')) click(byText('button', 'Sửa rồi duyệt'));
   if (hash.includes('policy')) click(byText('button', 'Chọn memory cho run'));
   if (hash.includes('skills')) click(tab('Skills'));
   if (hash.includes('perm')) click(tab('Quyền'));

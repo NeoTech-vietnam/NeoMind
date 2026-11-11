@@ -9,7 +9,7 @@ import App from '../App';
 import { setApiTransport } from '../api';
 import { templates } from '../../../src/domain/templates';
 import type { Flow } from '../../../src/domain/schema';
-import type { Run } from '../runTypes';
+import type { MemoryUse, Run } from '../runTypes';
 import type { TranscriptEvent } from '../../../src/core/transcript-types';
 
 const now = Date.now(), minute = 60_000;
@@ -91,6 +91,15 @@ const scenarios: Record<string, Scenario> = {
     graph: { start: 'succeeded', plan: 'succeeded', approval: 'succeeded', implement: 'failed', repair: 'pending', verify: 'pending', commit: 'pending' }, activeMs: 9 * minute, attempts: attemptsFor('dev', true).slice(0, 1) },
 };
 
+/** What each finished step received from the pinned memory (`#memory` opens it); the reviewer rated one record. */
+function memoryUseOf(scenario: Scenario): MemoryUse[] {
+  const style = { record: 'context/test-style', id: 'test-style', type: 'context', scope: 'project', revision: '9f2c1a0e11223344', reason: 'Khớp từ khóa task: calc, test' };
+  const guard = { record: 'lesson/guard-invalid-input', id: 'guard-invalid-input', type: 'lesson', scope: 'calc.js', revision: '4b7d9e0f55667788', reason: 'Khớp đường dẫn calc.js; phản hồi người dùng +2' };
+  const filters: Record<string, string> = { plan: 'Mặc định vai trò plan: context, quyết định, lesson', implement: 'Mặc định vai trò write: context, quyết định, lesson · khớp phạm vi kế hoạch', 'verify/required-reviewer': 'Mặc định vai trò review: quyết định, lesson' };
+  return (scenario.attempts ?? []).filter(item => item.status === 'completed').map(item => ({ nodeId: item.nodeId, attemptId: item.id, key: item.key, filter: filters[item.key] ?? 'Toàn bộ memory đã ghim của run',
+    records: item.role === 'review' ? [{ ...guard, rating: 'helpful' as const }] : [style, ...(item.role === 'write' ? [{ ...guard, rating: 'wrong' as const }] : [guard])] }));
+}
+
 function runOf(id: string, scenario: Scenario): Run {
   const flow = scenario.flow;
   return { runId: id, busy: false, timeExtensionsMs: 0, proposedPlanHash: 'a'.repeat(64), runtimeState: { phase: scenario.phase, reason: scenario.reason, activeMs: scenario.activeMs },
@@ -98,7 +107,7 @@ function runOf(id: string, scenario: Scenario): Run {
     snapshot: { configuration: { flow, bindings: bindingsOf(scenario.bindings) } }, bindingSelections: [], usage: { totalTokens: scenario.phase === 'waiting_approval' ? 24_000 : 167_000, partial: false },
     graph: { nodes: Object.fromEntries(flow.definition.nodes.map(node => [node.id, { status: scenario.graph[node.id] ?? 'pending' }])) },
     plans: [{ nodeId: 'plan', plan }], approvals: scenario.phase === 'waiting_approval' ? [] : [{ nodeId: 'approval', approval: { source: flow.flowId === 'fast' ? 'flow' : 'user' } }],
-    checks: [], reviewerOutputs: [], acceptedReviews: [], artifacts: [{ nodeId: 'plan', kind: 'agent', text: 'Kế hoạch đã ghi' }], unresolvedCommitNodeIds: [], nodeData: [], ...scenario.extra };
+    checks: [], reviewerOutputs: [], acceptedReviews: [], artifacts: [{ nodeId: 'plan', kind: 'agent', text: 'Kế hoạch đã ghi' }], unresolvedCommitNodeIds: [], nodeData: [], memoryUse: memoryUseOf(scenario), ...scenario.extra };
 }
 
 const list = [
@@ -149,6 +158,8 @@ setApiTransport(async (endpoint, method, body) => {
   if (path === '/api/stats') return ok({ byFlowRunners: [{ key: 'dev|claude-code+codex', completed: 5, tokens: { median: 152_000 }, activeSeconds: { median: 290 }, costUSD: hash.includes('price') ? { median: 0.84 } : null }] });
   if (path === '/api/programs' && method === 'GET') return ok({ programs: hash.includes('noprogram') ? [] : [program], errors: [] });
   if (path === '/api/programs/calc-power/next' && method === 'POST') return ok({ started: false, reason: 'Gallery không bắt đầu run thật' });
+  if (/^\/api\/runs\/[a-z0-9-]+\/(memory-feedback|remember)$/.test(path)) return ok(path.endsWith('remember') ? { created: true, proposalId: 'memory-1' } : { recorded: true });
+  if (path.startsWith('/api/memory/records/')) return ok({ record: { revision: 'e'.repeat(64), body: 'Kiểm tra giá trị đầu vào trước khi tính toán.', header: { id: 'guard-invalid-input', type: 'lesson', scope: 'calc.js', sources: ['run-1'], tags: ['validation'] } } });
   const match = /^\/api\/runs\/([a-z0-9-]+)(?:\/(transcripts)(?:\/([A-Za-z0-9_-]+))?|\/(lessons)|\/(\w+))?$/.exec(path);
   if (match) {
     const scenario = scenarios[runIds[match[1]!]!];
@@ -170,6 +181,8 @@ const byText = (selector: string, text: string) => () => [...document.querySelec
 if (!wantsNew) click(byText('aside[aria-label="Danh sách run"] button', scenarios[wanted]!.task), () => {
   if (wantSession) click(byText('button', 'Xem session'));
   if (hash.includes('filter')) click(byText('button', 'Lọc'));
+  if (hash.includes('memory')) click(byText('button', 'Memory đã dùng'), () => setTimeout(() => document.querySelector('[aria-label^="Đánh giá"]')?.scrollIntoView({ block: 'center' }), 300));
+  if (hash.includes('remember')) click(byText('button', 'Ghi nhớ điều này'));
 });
 else if (hash.includes('filter')) click(byText('button', 'Lọc'));
 if (hash.includes('programs')) click(byText('aside[aria-label="Danh sách run"] button', program.name));

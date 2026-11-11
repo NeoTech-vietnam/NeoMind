@@ -16,11 +16,27 @@ import { Tooltip, TooltipProvider } from '@/components/ui/tooltip';
 import { confirmAction, DialogHost } from '@/dialog';
 import { PortalContainer } from '@/lib/portal';
 import { cn } from '@/lib/utils';
+import { StepMemoryField, type StepMemoryRole } from '@/StepMemoryField';
+import type { StepMemory } from '../../../src/domain/schema';
 
 const statuses: [Status, string][] = [['running', 'Đang chạy'], ['attention', 'Chờ duyệt'], ['danger', 'Lỗi'], ['success', 'Xong'], ['idle', 'Đã hủy']];
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return <section className="flex flex-col gap-3"><h2 className="m-0 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</h2>{children}</section>;
+}
+
+/** The inspector's per-step memory field in its four states, each in an inspector-wide column. */
+function StepMemorySamples() {
+  const samples: { title: string; role: StepMemoryRole; roleDefaults: boolean; initial: StepMemory | undefined }[] = [
+    { title: 'Reviewer · flow mới (theo vai trò)', role: 'review', roleDefaults: true, initial: undefined },
+    { title: 'Implementer · flow cũ', role: 'write', roleDefaults: false, initial: undefined },
+    { title: 'Tùy chỉnh', role: 'review', roleDefaults: true, initial: { types: ['decision', 'lesson'], tags: ['ui'], maxRecords: 5 } },
+    { title: 'Tắt memory', role: 'plan', roleDefaults: true, initial: { off: true } }];
+  const [values, setValues] = useState(samples.map(sample => sample.initial));
+  return <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3">{samples.map((sample, index) => <div key={sample.title} className="rounded-lg border bg-card p-3.5">
+    <p className="m-0 mb-2.5 text-[11.5px] font-semibold text-muted-foreground">{sample.title}</p>
+    <StepMemoryField memory={values[index]} role={sample.role} roleDefaults={sample.roleDefaults} onChange={next => setValues(current => current.map((value, i) => i === index ? next : value))} />
+    <pre className="m-0 mt-2.5 whitespace-pre-wrap break-all rounded bg-code p-2 font-mono text-[11px] text-muted-foreground">{JSON.stringify(values[index] ?? null)}</pre></div>)}</div>;
 }
 
 function Pane({ theme, host }: { theme: 'dark' | 'light'; host: boolean }) {
@@ -54,6 +70,8 @@ function Pane({ theme, host }: { theme: 'dark' | 'light'; host: boolean }) {
             <TabsContent value="all" className="pt-3 text-[12.5px] text-muted-foreground">Nội dung tab Tất cả.</TabsContent>
             <TabsContent value="edits" className="pt-3 text-[12.5px] text-muted-foreground">calc.js +12 −3</TabsContent></Tabs>
         </Section>
+
+        <Section title="Memory theo bước (StepMemoryField)"><StepMemorySamples /></Section>
 
         <Section title="Form">
           <div className="grid grid-cols-2 gap-3">

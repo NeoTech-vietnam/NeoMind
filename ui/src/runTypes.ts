@@ -8,6 +8,10 @@ export type MaterializedRun = { configuration: { flow: Flow; bindings: Record<st
 export type Plan = { goal: string; approach: string; scope: string[]; acceptanceCriteria: string[]; checks: string[]; riskChanges: string[] };
 export type Evidence = { criteria: { criterion: string; status: string }[]; findings: { id: string; criterion: string; explanation: string }[] };
 
+export type MemoryRating = 'helpful' | 'irrelevant' | 'wrong';
+export type MemoryUse = { nodeId: string; attemptId: string; key: string; filter: string;
+  records: { record: string; id: string; type: string; scope: string; revision: string; reason: string; rating?: MemoryRating }[] };
+
 export type Run = {
   nodeData?: { nodeId: string; attemptId: string; workspace: string; promptHash: string; truncated: boolean; sources: { kind: string; id: string; fromNodeId?: string; hash: string }[]; output?: { outputHash: string; truncated: boolean; messageCount: number } }[];
   runId: string; busy: boolean; proposedPlanHash?: string; timeLimitMs?: number; timeExtensionsMs: number; tokenLimit?: number | null; tokenExtensions?: number;
@@ -27,6 +31,8 @@ export type Run = {
   delivery?: { nodeId: string; commit: string; parent: string; files: string[] }[];
   /** A finished flow without a commit: the files it changed for the user to review and apply. */
   handoff?: { files: string[]; applied: boolean };
+  /** Per agent turn: the pinned memory records it received, why, the step's memory filter and the user's rating. */
+  memoryUse?: MemoryUse[];
   /** The run's worktrees were (or are being) removed; commits stay reachable through the listed refs. */
   workspaceCleanup?: { workspaces: string[]; refs: { ref: string; commit: string }[]; discarded: string[]; snapshots?: { workspace: string; ref: string; commit: string }[]; retained?: Record<string, string>; cleaned: boolean };
 };
