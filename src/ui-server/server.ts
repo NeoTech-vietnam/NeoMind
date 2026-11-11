@@ -23,6 +23,9 @@ import { runStats } from '../runtime/run-stats.js';
 import { createProgram, listPrograms, markPhaseDelivered, programNext, programStatus, startPhase } from '../runtime/programs.js';
 import { skillCatalog, skillStatus } from '../storage/skill-catalog.js';
 import { draftProfile, getProfile, getProfileVersion, migrateProfile, profileSkillStatus, profileUsage, publishProfile } from '../runtime/profile-authoring.js';
+import { archiveProfile, createProfileFromTemplate, deleteProfile } from '../runtime/profile-authoring.js';
+import { createSkill, deleteSkill, deleteSkillFile, getSkill, readSkillFile, repinSkill, skillActorSchema, SkillInUse, skillLibrary, skillTemplates, skillUsage, updateSkill, writeSkillFile } from '../storage/skill-library.js';
+import { profileTemplateIds, profileTemplates, type ProfileTemplateId } from '../domain/profile-templates.js';
 
 /** Static model allowlist per runner, first model is the default. Host availability is checked by the runtime, not here. */
 export const runnerModels: { runner: RunnerId; provider: string; models: string[]; reasoning: string[] }[] = [
@@ -102,6 +105,50 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
     if (url.pathname === '/api/rules' && method === 'GET') return reply(200, await readProjectRules(projectRoot) ?? { rules: [], warnings: [] });
     if (url.pathname === '/api/skills' && method === 'GET') return reply(200, { skills: await skillCatalog(projectRoot) });
     if (url.pathname === '/api/skills/status' && method === 'POST') { const input = z.strictObject({ refs: z.array(skillReferenceSchema) }).parse(payload); return reply(200, { skills: await skillStatus(projectRoot, input.refs) }); }
+    // Skill library: create/edit/delete neomind/skills; `author` marks AI session requests so ai.skillEdit applies.
+    if (url.pathname === '/api/skill-library' && method === 'GET') return reply(200, { skills: await skillLibrary(projectRoot), templates: Object.keys(skillTemplates) });
+    if (url.pathname === '/api/skills' && method === 'POST') {
+      const input = z.strictObject({ id: z.string().min(1), name: z.string().min(1), description: z.string().max(2000).optional(), body: z.string().optional(), template: z.enum(['empty', 'review-checklist']).optional(), author: skillActorSchema.optional() }).parse(payload);
+      const { author, ...skill } = input;
+      return reply(201, { skill: await createSkill(projectRoot, skill, author) });
+    }
+    const skillMatch = /^\/api\/skills\/([^/]+)(?:\/(usage|repin|delete|files)(?:\/(.+))?)?$/.exec(url.pathname);
+    if (skillMatch && !(skillMatch[1] === 'status' && !skillMatch[2])) {
+      const id = decodeURIComponent(skillMatch[1]!), action = skillMatch[2], source = url.searchParams.get('source') === 'claude' ? 'claude' : 'neomind';
+      const skillFile = source === 'claude' ? `.claude/skills/${id}/SKILL.md` : `neomind/skills/${id}/SKILL.md`;
+      if (!action && method === 'GET') return reply(200, await getSkill(projectRoot, id, source));
+      if (!action && method === 'PUT') {
+        const input = z.strictObject({ expectedSha256: z.string().regex(/^[a-f0-9]{64}$/), name: z.string().min(1).optional(), description: z.string().max(2000).optional(), body: z.string().optional(), content: z.string().optional(), author: skillActorSchema.optional() }).parse(payload);
+        const { author, ...change } = input;
+        return reply(200, await updateSkill(projectRoot, id, change, author));
+      }
+      if (action === 'usage' && method === 'GET') return reply(200, await skillUsage(projectRoot, skillFile));
+      if (action === 'repin' && method === 'POST') return reply(200, await repinSkill(projectRoot, skillFile));
+      if (action === 'delete' && method === 'POST') {
+        const input = z.strictObject({ force: z.boolean().optional(), author: skillActorSchema.optional() }).parse(payload);
+        try { return reply(200, await deleteSkill(projectRoot, id, { force: input.force }, input.author)); }
+        catch (error) { if (error instanceof SkillInUse) return reply(409, { error: error.message, usage: error.usage }); throw error; }
+      }
+      if (action === 'files' && skillMatch[3]) {
+        const file = decodeURIComponent(skillMatch[3]);
+        if (method === 'GET') return reply(200, await readSkillFile(projectRoot, id, file));
+        if (method === 'PUT') { const input = z.strictObject({ content: z.string(), expectedSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(), author: skillActorSchema.optional() }).parse(payload); return reply(200, await writeSkillFile(projectRoot, id, file, input.content, input.expectedSha256, input.author)); }
+        if (method === 'DELETE') { const input = z.strictObject({ author: skillActorSchema.optional() }).parse(payload ?? {}); return reply(200, await deleteSkillFile(projectRoot, id, file, input.author)); }
+      }
+      return reply(405, { error: 'Method not allowed' });
+    }
+    // Agents (profiles): templates, delete only when unused, archive.
+    if (url.pathname === '/api/profile-templates' && method === 'GET') return reply(200, { templates: Object.entries(profileTemplates).map(([id, template]) => ({ id, ...template })) });
+    if (url.pathname === '/api/profiles/from-template' && method === 'POST') {
+      const input = z.strictObject({ id: z.string().min(1), name: z.string().min(1), template: z.enum(profileTemplateIds as [ProfileTemplateId, ...ProfileTemplateId[]]) }).parse(payload);
+      return reply(201, await createProfileFromTemplate(projectRoot, { profileId: input.id, name: input.name, template: input.template }));
+    }
+    const profileRemove = /^\/api\/profiles\/([^/]+)\/(remove|set-archived)$/.exec(url.pathname);
+    if (profileRemove && method === 'POST') {
+      const id = decodeURIComponent(profileRemove[1]!), input = z.strictObject({ archived: z.boolean().optional(), author: flowAuthorSchema.optional() }).parse(payload);
+      if (profileRemove[2] === 'remove') { const result = await deleteProfile(projectRoot, id, input.author); return reply(result.deleted ? 200 : 409, result.deleted ? result : { error: result.reason, ...result }); }
+      return reply(200, await archiveProfile(projectRoot, id, input.archived ?? true, input.author));
+    }
     if (url.pathname === '/api/profile-draft' && method === 'POST') {
       const input = z.strictObject({ profileId: z.string().min(1), name: z.string().min(1).optional(), from: z.strictObject({ profileId: z.string().min(1) }).optional(), draft: z.json().optional(), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional() }).parse(payload);
       return reply(200, await draftProfile(projectRoot, input));

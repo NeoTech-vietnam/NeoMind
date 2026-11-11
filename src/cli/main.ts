@@ -28,6 +28,32 @@ async function executableAvailable(name: string): Promise<boolean> {
   return false;
 }
 
+/** `neomind skill get|create|update|delete|usage|repin …`: the skill library, as the editor's Skills screen (human author). */
+async function skillCommand(args: string[]): Promise<unknown> {
+  const library = await import('../storage/skill-library.js'), root = args[1] ? path.resolve(args[1]) : '', id = args[2];
+  const source = args.includes('--source') && args[args.indexOf('--source') + 1] === 'claude' ? 'claude' as const : 'neomind' as const;
+  const file = (skill: string) => source === 'claude' ? `.claude/skills/${skill}/SKILL.md` : `neomind/skills/${skill}/SKILL.md`;
+  if (args[0] === 'list' && args.length === 2) return { skills: await library.skillLibrary(root) };
+  if (args[0] === 'get' && id) return library.getSkill(root, id, source);
+  if (args[0] === 'usage' && id) return library.skillUsage(root, file(id));
+  if (args[0] === 'repin' && id && args.length === 3) return library.repinSkill(root, file(id));
+  if (args[0] === 'create' && args.length === 3) return library.createSkill(root, JSON.parse(await readFile(args[2]!, 'utf8')) as Parameters<typeof library.createSkill>[1]);
+  if (args[0] === 'update' && id && args.length === 4) return library.updateSkill(root, id, JSON.parse(await readFile(args[3]!, 'utf8')) as Parameters<typeof library.updateSkill>[2]);
+  if (args[0] === 'delete' && id && (args.length === 3 || (args.length === 4 && args[3] === '--force'))) {
+    try { return await library.deleteSkill(root, id, { force: args[3] === '--force' }); }
+    catch (error) { if (error instanceof library.SkillInUse) return { deleted: false, error: error.message, usage: error.usage }; throw error; }
+  }
+  return undefined;
+}
+/** `neomind profile templates | from-template <project> <id> <name> <template> | remove <project> <id>`. */
+async function profileTemplateCommand(args: string[]): Promise<unknown> {
+  const { profileTemplates } = await import('../domain/profile-templates.js'), authoring = await import('../runtime/profile-authoring.js');
+  if (args[0] === 'templates' && args.length === 1) return { templates: Object.entries(profileTemplates).map(([id, template]) => ({ id, ...template })) };
+  if (args[0] === 'from-template' && args.length === 5) return authoring.createProfileFromTemplate(path.resolve(args[1]!), { profileId: args[2]!, name: args[3]!, template: args[4] as keyof typeof profileTemplates });
+  if (args[0] === 'remove' && args.length === 3) return authoring.deleteProfile(path.resolve(args[1]!), args[2]!);
+  return undefined;
+}
+
 async function main(args: string[]): Promise<number> {
   if (args[0] === 'mcp' && args.length === 2) {
     const { serveMcp } = await import('./mcp.js');
@@ -37,6 +63,8 @@ async function main(args: string[]): Promise<number> {
   if (args[0] === 'rules' && args.length === 2) { const { readProjectRules } = await import('../runtime/project.js'); console.log(JSON.stringify(await readProjectRules(path.resolve(args[1]!)) ?? { rules: [], warnings: [], file: 'neomind/rules.md not found' }, null, 2)); return 0; }
   if (args[0] === 'skills' && args.length === 2) { console.log(JSON.stringify({ skills: await skillCatalog(path.resolve(args[1]!)) }, null, 2)); return 0; }
   if (args[0] === 'skills' && args[1] === 'status' && args.length === 4) { const { z } = await import('zod'), { skillReferenceSchema } = await import('../domain/schema.js'); const refs = z.array(skillReferenceSchema).parse(JSON.parse(await readFile(args[3]!, 'utf8'))); console.log(JSON.stringify({ skills: await skillStatus(path.resolve(args[2]!), refs) }, null, 2)); return 0; }
+  if (args[0] === 'skill') { const result = await skillCommand(args.slice(1)); if (result !== undefined) { console.log(JSON.stringify(result, null, 2)); return 0; } }
+  if (args[0] === 'profile' && ['templates', 'from-template', 'remove'].includes(args[1] ?? '')) { const result = await profileTemplateCommand(args.slice(1)); if (result !== undefined) { console.log(JSON.stringify(result, null, 2)); return 0; } }
   if (args[0] === 'profile' && args[1] === 'get' && args.length === 4) { console.log(JSON.stringify(await getProfile(path.resolve(args[2]!), args[3]!), null, 2)); return 0; }
   if (args[0] === 'profile' && args[1] === 'version' && args.length === 5) { console.log(JSON.stringify({ version: await getProfileVersion(path.resolve(args[2]!), args[3]!, Number(args[4])) }, null, 2)); return 0; }
   if (args[0] === 'profile' && args[1] === 'skills-status' && args.length === 4) { console.log(JSON.stringify({ skills: await profileSkillStatus(path.resolve(args[2]!), args[3]!) }, null, 2)); return 0; }
@@ -294,6 +322,7 @@ async function main(args: string[]): Promise<number> {
     return 0;
   }
   console.error('Usage: neomind mcp <project> | rules <project> | program create <project> <program.json> | program list <project> | program status|next <project> <programId> | program deliver <project> <programId> <phaseId> <note> | skills <project> | skills status <project> <refs.json> | profile get|skills-status|usage <project> <id> | profile version <project> <id> <n> | profile migrate <project> <id> <n> <selection.json> | profile author-draft <project> <input.json> | profile author-publish <project> <id> <revision> <reason> | assess <project> --task-file <file>|<task> | flow blocks <project> | flow get|diff|author-validate <project> <id> | flow author-draft <project> <input.json> | flow author-publish <project> <id> <revision> <reason> | editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|parallel|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | flow canvas export|import <flows-dir> <flow-id> [file.canvas] | project migrate <project> | memory configure|project-search|search|get ... | doctor capabilities');
+  console.error('       neomind skill list <project> | skill get|usage <project> <id> [--source claude] | skill repin <project> <id> | skill create <project> <input.json> | skill update <project> <id> <input.json> | skill delete <project> <id> [--force] | profile templates | profile from-template <project> <id> <name> <template> | profile remove <project> <id>');
   return 2;
 }
 
