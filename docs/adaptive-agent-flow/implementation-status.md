@@ -34,6 +34,17 @@ Branch `fix/flow-validate-runtime`. Biến bảng mục 2 của skill `neomind-f
 - **Flow Studio**: thẻ bước đếm cảnh báo (viền/chữ hổ phách) bên cạnh lỗi; inspector hiện cảnh báo dạng callout `attention`; ngăn "Vấn đề" liệt kê cả hai với icon khác nhau; "Lưu phiên bản" chỉ dừng vì lỗi.
 - **Kiểm chứng (Windows)**: `test/flow-validate.test.ts` 11 test (đúng/sai cho từng luật, template fast/dev/parallel/research sạch cả lỗi lẫn cảnh báo, phiên bản cũ vẫn snapshot được). `npm test` đầy đủ: 300 test, 296 pass, 2 fail, 2 skip — một là scope Claude (chập chờn đã biết, pass khi chạy lại), một là fixture `skill-library` publish flow binding kế thừa trong project không có role default (đúng là flow không chạy được; sửa fixture bằng cách ghim binding, chạy lại file pass). `tsc -p tsconfig.ui.json --noEmit`, `npm run build:ui`, build extension sạch. Chụp gallery `#errors` tối/sáng.
 
+## Nhân bản run và agent mặc định của flow — 11/11/2026
+
+Branch `feat/run-duplicate` (worktree `../test_workflow_worktrees/run-duplicate`, từ `2e78133`).
+
+- **Nhân bản** thay "Chạy lại": `rerunDraft` (`src/domain/rerun.ts`) đọc được run ở mọi phase, trả `flowId`, `task`, `overrides` (binding thực tế: snapshot, lựa chọn fallback mới nhất thắng), `limits` và `workspaceMode` (run cũ thiếu mode dùng policy của flow). `fitDraft` áp lên preview đầu tiên của phiên bản mới nhất: giữ phần khác, bỏ bước không còn (`dropped`), giới hạn vòng sửa/số agent đồng thời theo flow. UI: menu "…" từng run, nút ở màn chi tiết (run đang chạy/chờ duyệt: trong menu "…"), callout "Nhân bản từ một run trước". `RERUNNABLE_PHASES` bị bỏ.
+- **Lưu làm mặc định**: `pinBindings`/`bindingKeys` (`src/domain/pin-bindings.ts`) ghi giá trị `pinned` vào binding của bước; bước dùng chung binding đổi cùng nhau, chọn khác nhau bị từ chối (không tách binding vì sẽ đổi cách chia session). `pinFlowBindings` (`src/runtime/flow-authoring.ts`) lấy phiên bản publish mới nhất, từ chối khi bản nháp có thay đổi chưa publish, lưu draft theo revision rồi publish; giá trị không đổi thì không publish. Template (hoặc `saveAs`) tạo flow project mới (ID từ tên, không trùng template/flow có sẵn). Policy AI kiểm trước khi ghi. API `/api/flows/:id/pin-bindings`, tool `flow_pin_bindings`, CLI `flow pin-bindings`. UI: hàng "Lưu làm mặc định cho flow" / "Lưu thành flow mới…" dưới bảng agent khi có bước đã đổi, nêu bước đổi theo hoặc lý do không lưu được.
+- **Sửa kèm**: schema `limits` của API run nhận `maxTokens` (trước đây Run mới gửi ngân sách token nhưng API strict từ chối).
+- Gallery: `/__gallery/runs.html#completed,duplicate` (+ `template`, `saved`, `clash`, `light`, `panel`).
+
+Kiểm chứng Windows (11/11/2026): `npm test` đầy đủ **294 test, 292 pass, 0 fail, 2 skip** (test mới trong `rerun`, `flow-authoring`, `session-tools`, `editor-server`); `tsc` UI, `npm run build:ui`, build extension đạt; ảnh gallery tối/sáng × 1440/900 (nhân bản, xung đột binding, đã lưu, template + dialog tên, màn chi tiết). Chưa kiểm chứng: run thật, panel trong Nimbalyst, Linux.
+
 ## Skills và Agents — 11/11/2026
 
 Mảng A của [plan skills/agents/memory](plan-skills-agents-memory-2026-11-11.md), branch `feat/skills-agents`.

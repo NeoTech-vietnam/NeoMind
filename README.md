@@ -51,6 +51,19 @@ Khi sửa draft đã có, input cần `expectedRevision` từ `flow get` hoặc 
 
 Trong `neomind/project.json`, trường tùy chọn `ai.flowPublish` nhận `allow` (mặc định), `draft-only` hoặc `deny`. `draft-only` cho AI sửa draft nhưng không publish; `deny` chặn cả tạo/sửa draft bằng tool AI. Project có thể đặt `policy.maxActiveTimeSeconds` tùy chọn: thời gian flow AI publish không vượt giá trị nhỏ hơn giữa trần này và mẫu Dev (1.800 giây). Policy sàn về duyệt và review vẫn được compiler kiểm; flow do người lưu giữ hành vi trước đây. `ai.profilePublish` áp dụng tương tự cho profile (xem mục dưới).
 
+### Nhân bản run và lưu agent mặc định cho flow
+
+Mỗi run (kể cả đang chạy) có **Nhân bản** trong menu "…" của danh sách và ở màn chi tiết. Nút mở Run mới đã điền sẵn flow, yêu cầu (sửa được), runner/provider/model/mức suy luận từng bước theo đúng binding run đó đã dùng (kể cả lựa chọn fallback), giới hạn (thời gian, token, vòng sửa, số agent đồng thời) và workspace. Cấu hình áp lên **phiên bản mới nhất** của flow: chỉ giá trị khác mặc định của flow mới thành override; bước không còn trong flow bị bỏ và được nêu tên; vòng sửa và số agent đồng thời không vượt mức flow cho phép; model không còn khả dụng vẫn giữ để preview báo. Nhân bản không tự bắt đầu run và không tự duyệt.
+
+Khi đã đổi agent của một bước, Run mới hiện **Lưu làm mặc định cho flow**: ghi các giá trị đó dạng `pinned` vào binding của phiên bản publish mới nhất rồi publish phiên bản mới (tác giả người dùng); lần sau chọn flow đó đã có sẵn lựa chọn. Bước dùng chung binding (thường cùng session, như Lập kế hoạch và Thực hiện của Dev) đổi theo nhau; chọn khác nhau cho chúng thì không lưu được. Flow có thay đổi chưa publish trong bản nháp bị từ chối để không publish lẫn. Template có sẵn không sửa được nên nút thành **Lưu thành flow mới…**: hỏi tên, tạo flow project từ template với binding đã ghim, publish và chọn nó cho run.
+
+```bash
+npm run neomind -- flow pin-bindings /project my-dev values.json            # {"implement":{"runner":"claude-code","provider":"anthropic","model":"claude-opus-5-5","reasoning":"high"}}
+npm run neomind -- flow pin-bindings /project dev values.json --save-as "Dev Opus"
+```
+
+API `POST /api/flows/:id/pin-bindings` (`values`, `expectedRevision?`, `saveAs?: { name, flowId? }`); tool session `flow_pin_bindings` theo cùng policy `ai.flowPublish` như `flow_publish` và cần `expectedRevision` từ `flow_get` khi sửa flow có sẵn.
+
 ## Skills và profile
 
 Skill của project là thư mục `.claude/skills/<id>/SKILL.md` hoặc `neomind/skills/<id>/SKILL.md`; frontmatter `name`, `description` chỉ để hiển thị. Profile ghim skill bằng SHA-256; khi file đổi, trạng thái là `changed` (nút "Ghim lại" trong Profiles › Skills cập nhật sha của draft), mất file là `missing` và run sẽ từ chối bắt đầu như trước. Prompt đưa nội dung `SKILL.md` với nhãn `Skill <name> (<id>):` và chỉ liệt kê đường dẫn các file phụ trong thư mục skill.
