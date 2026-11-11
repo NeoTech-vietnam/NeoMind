@@ -58,6 +58,29 @@ npm run neomind -- profile author-publish /project my-profile <revision> "Lý do
 
 `profile migrate` chỉ sửa **draft** của các flow được chọn sang phiên bản profile mới (so revision từng flow); không publish flow. `ai.profilePublish` (`allow` mặc định, `draft-only`, `deny`) giới hạn tool AI như `ai.flowPublish`.
 
+### Soạn skill và agent (11/11/2026)
+
+Màn **Skills** (thanh điều hướng: Runs · Flows · Agents · Skills · Memory) tạo, sửa và xóa skill trong `neomind/skills/<id>/` theo chuẩn Claude (`SKILL.md` gồm frontmatter `name`, `description` và thân Markdown) cùng các file phụ dạng text. Skill trong `.claude/skills` chỉ đọc. Lưu skill phải khớp SHA-256 đã đọc (chống ghi đè). Sau khi sửa một skill đang được ghim, màn Skills báo số agent/bước còn ghim bản cũ; **Ghim lại tất cả** cập nhật sha trong **draft** của các agent và flow (không publish). Xóa skill đang được dùng bị từ chối kèm danh sách nơi dùng; người dùng xác nhận thì xóa được (`force`). **Xem đoạn chèn vào prompt** hiện đúng văn bản run đưa vào prompt.
+
+Màn **Agents** (tên mới của Profiles; code và API vẫn dùng `profile`): tạo agent từ mẫu (Implementer, Planner, Reviewer độc lập, Reviewer UI, Reviewer bảo mật, Research chỉ đọc; skill gợi ý chỉ được ghim khi project có skill cùng ID); nút **Lưu** lưu draft và publish phiên bản mới, rồi đề nghị **Cập nhật các flow** còn dùng bản cũ (chỉ sửa draft flow). Agent còn được flow dùng thì không xóa được, chỉ lưu trữ.
+
+Flow Studio: mục **Skills** nằm ở phần chính của inspector cho agent task, từng reviewer và bước tích hợp có agent, với hai chế độ **Theo agent** (skill của phiên bản agent) và **Riêng cho bước này** (ghi `skillsOverride`, thay toàn bộ skill của agent ở bước đó). Thẻ bước hiện “N skill”; Run mới liệt kê skill từng bước sẽ nhận.
+
+```bash
+npm run neomind -- skill list /project
+npm run neomind -- skill get /project review [--source claude]
+npm run neomind -- skill create /project input.json        # {"id":"review","name":"Review","template":"review-checklist"}
+npm run neomind -- skill update /project review change.json # {"expectedSha256":"…","body":"…"}
+npm run neomind -- skill usage /project review
+npm run neomind -- skill repin /project review
+npm run neomind -- skill delete /project review [--force]
+npm run neomind -- profile templates
+npm run neomind -- profile from-template /project ui-review "Reviewer UI" ui-reviewer
+npm run neomind -- profile remove /project ui-review       # từ chối khi flow còn dùng
+```
+
+API: `GET /api/skill-library`, `POST /api/skills`, `GET|PUT /api/skills/:id`, `GET /api/skills/:id/usage`, `POST /api/skills/:id/repin`, `POST /api/skills/:id/delete` (409 kèm `usage` khi đang dùng), `GET|PUT|DELETE /api/skills/:id/files/<đường dẫn>`, `GET /api/profile-templates`, `POST /api/profiles/from-template`, `POST /api/profiles/:id/remove|set-archived`. `ai.skillEdit` (`allow` mặc định, `deny`) trong `neomind/project.json` chặn tool AI tạo/sửa/xóa skill; người dùng vẫn sửa trên editor và CLI.
+
 ## Chi phí, ngân sách token và thống kê
 
 `limits.maxTokens` (tùy chọn) trong flow hoặc ô "Ngân sách token" ở Run mới › Nâng cao (override khi start) đặt ngân sách token cho run. NeoMind kiểm tổng token sau mỗi bước (lượt agent đang chạy luôn được ghi xong); khi đạt ngân sách, run `paused` với lý do "Hết ngân sách token (đã dùng/ngân sách)". Thêm token rồi tiếp tục trong màn run, bằng tool `extend_time` (`tokens`), API `POST /api/runs/:id/extend_time` `{ tokens }` hoặc CLI:
