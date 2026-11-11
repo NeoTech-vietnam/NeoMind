@@ -66,7 +66,19 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
     if (url.pathname === '/api/bootstrap' && method === 'GET') {
       return reply(200, { projectName: path.basename(projectRoot), projectRoot, flows: await library.list(), templates: Object.keys(templates), runtimeAvailable: workerScopeSupported() });
     }
-    if (url.pathname === '/api/runners' && method === 'GET') { return reply(200, { runners: runnerModels }); }
+    if (url.pathname === '/api/runners' && method === 'GET') return reply(200, { runners: runnerModels });
+    if (url.pathname === '/api/runners/opencode' && method === 'GET') {
+      // OpenCode models depend on the providers connected on this host, so they are discovered rather than allowlisted.
+      const available = await (await runs()).models(['opencode']);
+      const groups = new Map<string, { runner: 'opencode'; provider: string; models: string[]; reasoning: string[] }>();
+      for (const model of available) {
+        const group = groups.get(model.provider) ?? { runner: 'opencode' as const, provider: model.provider, models: [], reasoning: [] };
+        group.models.push(model.model);
+        group.reasoning = [...new Set([...group.reasoning, ...model.reasoning])];
+        groups.set(model.provider, group);
+      }
+      return reply(200, { runners: [...groups.values()] });
+    }
     if (url.pathname === '/api/runtime/models' && method === 'GET') { return reply(200, { models: await (await runs()).models() }); }
     if (url.pathname === '/api/memory' && method === 'GET') { return reply(200, (await runs()).readMemory(url.searchParams.get('q') ?? undefined)); }
     if (url.pathname === '/api/memory/selection' && method === 'GET') return reply(200, await readMemorySelection(projectRoot));

@@ -82,9 +82,9 @@ test('runner API lists the per-runner model allowlist with the default model fir
     const response = await fetch(`${editor.url}/api/runners`);
     assert.equal(response.status, 200);
     const { runners } = await response.json() as { runners: { runner: string; provider: string; models: string[]; reasoning: string[] }[] };
-    assert.deepEqual(runners.map(item => [item.runner, item.provider, item.models[0]]), [['codex', 'openai', 'gpt-6-luna'], ['claude-code', 'anthropic', 'claude-sonnet-5-5']]);
+    assert.deepEqual(runners.filter(item => item.runner !== 'opencode').map(item => [item.runner, item.provider, item.models[0]]), [['codex', 'openai', 'gpt-6-luna'], ['claude-code', 'anthropic', 'claude-sonnet-5-5']]);
     assert.deepEqual(runners.find(item => item.runner === 'claude-code')?.models, ['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-opus-5-5']);
-    assert.ok(runners.every(item => item.reasoning.join() === 'low,medium,high'));
+    assert.ok(runners.filter(item => item.runner !== 'opencode').every(item => item.reasoning.join() === 'low,medium,high'));
     assert.equal((await fetch(`${editor.url}/api/runners`, { method: 'POST', headers: { Origin: editor.url, 'X-NeoMind-Token': editor.token } })).status, 404);
     // fetch drops a custom Host header, so DNS-rebinding protection is checked with a raw request.
     const status = await new Promise<number | undefined>((resolve, reject) => get(`${editor.url}/api/runners`, { headers: { Host: 'evil.example' } }, response => { response.resume(); resolve(response.statusCode); }).on('error', reject));

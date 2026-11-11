@@ -12,7 +12,7 @@ import type { BindingValues } from '../domain/resolve.js';
  * - Every runtime process belonging to a turn runs inside the worker scope whose identity was journaled before launch.
  * - No delegation (sub-agents, sessions) and no external tools (MCP, web) are available to the agent.
  */
-export type RunnerId = 'codex' | 'claude-code';
+export type RunnerId = 'codex' | 'claude-code' | 'opencode';
 
 /** Logical role and approved scope. OS enforcement depends on the run sandbox mode. */
 export type RunnerAccess = { kind: 'read' } | { kind: 'write'; writableRoots: string[] };

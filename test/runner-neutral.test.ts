@@ -108,16 +108,17 @@ test('dispatch is runner-neutral: a non-Codex runner plans, writes and reviews, 
 });
 
 test('an unknown runner fails cleanly before any dispatch is journaled', async () => {
-  const f = await project({ ...claudeRole, runner: 'opencode' }), codex = checkOnlyCodex();
+  const f = await project({ ...claudeRole, runner: 'unknown-runner' }), codex = checkOnlyCodex();
   const run = await LocalRun.create({ projectRoot: f.repo, stateRoot: f.state, task: 'Add proof', snapshot: f.snapshot, coordinator: f.coordinator, workerFactory: codex.factory, runners: defaultRunnerRegistry({ workerFactory: codex.factory }) });
   try {
     run.launch(); await run.settled();
     const report = await run.report();
-    assert.equal(report.runtimeState.phase, 'blocked'); assert.match(report.runtimeState.reason, /Unknown runner "opencode"; supported runners: codex, claude-code/);
+    assert.equal(report.runtimeState.phase, 'blocked'); assert.match(report.runtimeState.reason, /Unknown runner "unknown-runner"; supported runners: codex, claude-code, opencode/);
     assert.equal(report.attempts.length, 0);
     assert.ok(!(await run.durable.journal.read()).some(event => event.type === 'dispatch_intent'));
   } finally { await run.close(); f.coordinator.close(); }
   assert.ok(defaultRunnerRegistry().get('claude-code') instanceof ClaudeRunnerFactory);
+  assert.ok(defaultRunnerRegistry().has('opencode'));
 });
 
 test('run preflight names the runners in use and needs Codex for checks even when agents use another runner', async () => {
@@ -136,9 +137,9 @@ test('run preflight names the runners in use and needs Codex for checks even whe
   manager = await RunManager.open(f.repo, f.state, new RunnerRegistry([codexReady, claudeUnproven]));
   try { await assert.rejects(manager.create('dev', 'Add proof'), /Claude Code is not logged in/); }
   finally { await manager.close(); }
-  const unknown = await project({ ...claudeRole, runner: 'opencode' }); unknown.coordinator.close();
+  const unknown = await project({ ...claudeRole, runner: 'unknown-runner' }); unknown.coordinator.close();
   manager = await RunManager.open(unknown.repo, unknown.state);
-  try { assert.match((await manager.preview('dev')).runnerPreflight.blockers.join('\n'), /Runner "opencode" chưa được hỗ trợ/); }
+  try { assert.match((await manager.preview('dev')).runnerPreflight.blockers.join('\n'), /Runner "unknown-runner" chưa được hỗ trợ/); }
   finally { await manager.close(); }
 });
 

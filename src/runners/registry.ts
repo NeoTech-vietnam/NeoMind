@@ -4,6 +4,7 @@ import type { WorkerFactory } from '../runtime/worker.js';
 import type { AgentRunner, AgentRunnerFactory, RunnerId, VerifiedRunnerSession } from './agent-runner.js';
 import { ClaudeRunnerFactory } from './claude-runner.js';
 import { CodexRunnerFactory } from './codex-runner.js';
+import { OpenCodeRunnerFactory } from './opencode-runner.js';
 
 /** Runner factories by id; the effective binding's `runner` selects the factory for each dispatch. */
 export class RunnerRegistry {
@@ -22,7 +23,7 @@ export class RunnerRegistry {
 
 /** Codex (through `workerFactory`) and Claude Code. `workspace` is the project whose Codex configuration applies to model discovery. */
 export function defaultRunnerRegistry(options: { workerFactory?: WorkerFactory; workspace?: string } = {}): RunnerRegistry {
-  return new RunnerRegistry([new CodexRunnerFactory(options.workerFactory, options.workspace), new ClaudeRunnerFactory()]);
+  return new RunnerRegistry([new CodexRunnerFactory(options.workerFactory, options.workspace), new ClaudeRunnerFactory(), new OpenCodeRunnerFactory(options.workspace ? { workspace: options.workspace } : {})]);
 }
 
 /** The session the dispatcher was given, if it is the one `sessionId` names and belongs to `runner`. */

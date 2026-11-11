@@ -29,6 +29,9 @@ test('write admission requires live approval, full scope, verified runtime, curr
   await assert.rejects(admitIsolatedWorkspaceWrite({ ...args, sandboxVerified: false, codexSandbox: 'enabled' }), /Verified sandbox/);
   await assert.rejects(admitIsolatedWorkspaceWrite({ ...args, sandboxVerified: false, stopVerified: false, codexSandbox: 'disabled' }), /Verified sandbox/);
   await assert.rejects(admitIsolatedWorkspaceWrite({ ...args, codexSandbox: 'disabled', livePolicy: { ...args.livePolicy, codexSandbox: 'enabled' } }), /Project policy requires Codex sandbox/);
+  assert.equal((await admitIsolatedWorkspaceWrite({ ...args, runner: 'opencode', sandboxVerified: false })).runId, 'run');
+  await assert.rejects(admitIsolatedWorkspaceWrite({ ...args, runner: 'opencode', sandboxVerified: false, stopVerified: false }), /Verified sandbox/);
+  await assert.rejects(admitIsolatedWorkspaceWrite({ ...args, runner: 'claude-code', sandboxVerified: false }), /Verified sandbox/);
   const scopedPlan = { ...plan, scope: ['src'] };
   const scopedApproval = recordApproval(scopedPlan, defaultProject.policy, { approvalId: 'b', actor: 'user', source: 'ui', decision: 'approved', timestamp: new Date().toISOString() });
   const scopedGrant = await admitIsolatedWorkspaceWrite({ ...args, plan: scopedPlan, approval: scopedApproval });
@@ -97,6 +100,7 @@ test('journaled writer requires the recorded approval before dispatch and captur
     workspace: real, access: { kind: 'write', writableRoots: [real] } });
   const scope = implementer.runner.scope, writer = new CodexWriteDispatch(journal, implementer.runner, implementer.session);
   await assert.rejects(service.dispatchWrite(writer, 'implement', 'thread', 'edit', 'low', 'write-attempt', 'write-request', { ...admission, stopVerified: false }, scope), /Verified sandbox/);
+  await assert.rejects(service.dispatchWrite(writer, 'implement', 'thread', 'edit', 'low', 'write-attempt', 'write-request', { ...admission, runner: 'opencode', sandboxVerified: false }, scope), /Admission runner does not match/);
   assert.equal(calls, 0);
   await service.dispatchWrite(writer, 'implement', 'thread', 'edit', 'low', 'write-attempt', 'write-request', admission, scope);
   await writeFile(path.join(workspace, 'a'), 'after');

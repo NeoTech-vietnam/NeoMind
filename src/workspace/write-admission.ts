@@ -15,7 +15,7 @@ export interface WorkspaceWriteGrant { workspace: string; runId: string; fence: 
 export async function admitIsolatedWorkspaceWrite(input: {
   workspace: string; lease: WorkspaceLease; coordinator: WorkspaceCoordinator;
   plan: Plan; approval: Approval; livePolicy: ProjectPolicy; expectedBaselineHash: string;
-  sandboxVerified: boolean; stopVerified: boolean; codexSandbox?: CodexSandboxMode;
+  sandboxVerified: boolean; stopVerified: boolean; codexSandbox?: CodexSandboxMode; runner?: string;
   repair?: { roundId: string; baselineHash: string };
   continuation?: { baselineHash: string };
   step?: { baselineHash: string };
@@ -27,8 +27,9 @@ export async function admitIsolatedWorkspaceWrite(input: {
   /** The run's recorded starting baseline, which holds imported uncommitted changes. */
   start?: { baselineHash: string };
 }): Promise<WorkspaceWriteGrant> {
-  const sandboxRequired = input.codexSandbox !== 'disabled';
-  if (!sandboxRequired && input.livePolicy.codexSandbox === 'enabled') throw new Error('Project policy requires Codex sandbox');
+  // OpenCode has no verified write confinement (session-handoff-2026-11-08); it is admitted on stop proof alone.
+  const sandboxRequired = input.runner !== 'opencode' && input.codexSandbox !== 'disabled';
+  if (input.codexSandbox === 'disabled' && input.livePolicy.codexSandbox === 'enabled') throw new Error('Project policy requires Codex sandbox');
   if ((sandboxRequired && !input.sandboxVerified) || !input.stopVerified) throw new Error('Verified sandbox and stop capabilities required');
   if (!approvalMatches(input.approval, input.plan, input.livePolicy)) throw new Error('Approval does not match current plan and policy');
   const workspace = await realpath(input.workspace);

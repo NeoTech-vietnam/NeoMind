@@ -291,7 +291,7 @@ export class LocalRun {
       ...(this.context.workspaceMode && this.context.workspaceMode !== 'isolated' ? { workspaceMode: this.context.workspaceMode } : {}),
       approval: approved.approval, livePolicy: await this.policy(), expectedBaselineHash: baseline.baselineHash,
       ...await (this.capabilities ?? ((mode) => this.runners.get(runner).verifyCapabilities(mode)))(runner === 'codex' ? this.codexSandboxMode() : 'enabled'),
-      ...(runner === 'codex' ? { codexSandbox: this.codexSandboxMode() } : {}), ...(round ? { repair: { roundId: round.roundId, baselineHash: round.baselineHash } } : {}),
+      ...(runner === 'codex' ? { codexSandbox: this.codexSandboxMode() } : runner === 'opencode' ? { runner } : {}), ...(round ? { repair: { roundId: round.roundId, baselineHash: round.baselineHash } } : {}),
       ...(prior && !round ? { step: { baselineHash: baseline.baselineHash } } : {}),
       ...(continuation ? { continuation: { baselineHash: baseline.baselineHash } } : {}),
       ...(target.scope ? { scope: target.scope } : {}), ...(target.integration && !round && !continuation ? { integration: { baselineHash: target.integration } } : {}),

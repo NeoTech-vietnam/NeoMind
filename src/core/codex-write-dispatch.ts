@@ -67,6 +67,7 @@ export class CodexWriteDispatch {
       if (!round || round.roundId !== input.repair.roundId || round.baselineHash !== input.repair.baselineHash || scope?.type !== 'repair_scope' || !scope.ownerNodeIds.includes(nodeId)) throw new Error('Write repair is not authorized by the current repair round');
     } else if (report.repairRounds.some(round => { const scope = created.flow.definition.nodes.find(item => item.id === round.scopeId); return scope?.type === 'repair_scope' && scope.ownerNodeIds.includes(nodeId); })) throw new Error('Repair write requires the current round baseline');
     if (hashJson(created.policy) !== hashJson(input.livePolicy)) throw new Error('Live project policy does not match run snapshot');
+    if (input.runner === 'opencode' && String(this.runner?.runner) !== 'opencode') throw new Error('Admission runner does not match writer');
     const grant = await admitIsolatedWorkspaceWrite(input);
     const payload = z.object({ snapshot: z.json().optional() }).parse(events[0]?.payload);
     const binding = payload.snapshot ? effectiveBinding(validateMaterializedRun(payload.snapshot), report.bindingSelections, nodeId) : undefined;
