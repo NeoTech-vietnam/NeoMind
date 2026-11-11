@@ -17,6 +17,8 @@ Kiểm chứng Windows (11/11/2026): `npm test` 281 test: 279 pass, 0 fail, 2 sk
 
 ## Memory — 11/11/2026
 
+Gộp với mảng A (session điều phối, 11/11): rebase `feat/memory` lên `feat/skills-agents`, giải xung đột chuỗi Usage của CLI, gallery và tài liệu; gắn `StepMemoryField` vào inspector (agent task, từng reviewer, integration) ngay dưới mục Skills. `npm test` đầy đủ trên bản gộp: **289 test, 287 pass, 0 fail, 2 skip**; `tsc` UI đạt; ảnh inspector (agent task tối, reviewer sáng) đã kiểm.
+
 Mảng B của [plan Skills/Agents và Memory](plan-skills-agents-memory-2026-11-11.md), branch `feat/memory` (worktree `../test_workflow_worktrees/memory`), commit `28b810c` (core), `e4d1dd1` (tool/CLI/API), `2297412` (UI) và commit tài liệu.
 
 - **B1 · Bật sẵn:** chưa cấu hình root thì dùng `neomind/memory` trong repo (`resolveDefaultMemoryRoot(…, create)`, `openProjectMemory(…, create)`); đọc khi chưa có thư mục = rỗng, ghi đầu tiên tạo thư mục. Root đã cấu hình vẫn phải tồn tại như trước. `readMemory` trả thêm `location` (đường dẫn, có trong repo/commit cùng repo, đã tồn tại chưa), `stats`, `inactive`.
