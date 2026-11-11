@@ -316,12 +316,44 @@ async function main(args: string[]): Promise<number> {
     finally { store.close(); }
     return 0;
   }
+  // Project memory through the run manager (11/11): the CLI is the user, so approvals act on what `memory pending` shows.
+  const memoryCommands = ['list', 'pending', 'propose', 'approve', 'reject', 'note', 'expire', 'delete', 'feedback', 'remember'];
+  if (args[0] === 'memory' && memoryCommands.includes(args[1] ?? '') && args.length >= 3) {
+    const { RunManager } = await import('../runtime/run-manager.js');
+    const project = await (await import('node:fs/promises')).realpath(args[2]!), rest = args.slice(3);
+    const option = (name: string) => { const index = rest.indexOf(`--${name}`); if (index < 0) return undefined; const value = rest[index + 1]; if (value === undefined) throw new Error(`--${name} cần giá trị`); rest.splice(index, 2); return value; };
+    const kind = (value: string | undefined) => { if (value !== 'context' && value !== 'decision' && value !== 'lesson') throw new Error('Loại memory: context, decision hoặc lesson'); return value; };
+    const runId = option('run'), scope = option('scope'), tags = option('tags')?.split(',').map(tag => tag.trim()).filter(Boolean), step = option('step'), bodyFile = option('body-file');
+    const manager = await RunManager.open(project);
+    try {
+      const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
+      const pendingItem = async (proposalId: string) => {
+        const item = (await manager.memoryProposals()).proposals.find(entry => entry.proposal.proposalId === proposalId && (runId === undefined || entry.runId === runId));
+        if (!item) throw new Error(`Không có đề xuất đang chờ: ${proposalId}`);
+        return item;
+      };
+      if (args[1] === 'list') print(manager.searchMemory(rest[0] ? { query: rest[0], limit: 100 } : { limit: 100 }));
+      else if (args[1] === 'pending') print(await manager.memoryProposals());
+      else if (args[1] === 'propose' && rest.length === 1) print(await manager.proposeMemory(JSON.parse(await readFile(rest[0]!, 'utf8')) as never, 'user_note'));
+      else if (args[1] === 'approve' && rest.length === 1) { const item = await pendingItem(rest[0]!); print(await manager.approveMemoryProposal({ runId: item.runId, proposalId: rest[0]!, proposalHash: item.proposalHash, ...(bodyFile ? { body: await readFile(bodyFile, 'utf8') } : {}) })); }
+      else if (args[1] === 'reject' && rest.length === 1) { const item = await pendingItem(rest[0]!); print(await manager.rejectMemoryProposal({ runId: item.runId, proposalId: rest[0]!, proposalHash: item.proposalHash })); }
+      else if (args[1] === 'note' && rest.length === 2) print(await manager.addMemoryNote({ type: kind(rest[0]), body: rest[1]!, ...(scope ? { scope } : {}), ...(tags ? { tags } : {}) }, 'cli'));
+      else if ((args[1] === 'expire' || args[1] === 'delete') && rest.length === 2) {
+        const type = kind(rest[0]), revision = manager.getMemory(type, rest[1]!).record.revision;
+        print(args[1] === 'expire' ? await manager.expireMemory(type, rest[1]!, revision, 'cli') : await manager.deleteMemory(type, rest[1]!, revision, 'cli'));
+      }
+      else if (args[1] === 'feedback' && rest.length === 3) print(await manager.memoryFeedback(rest[0]!, { record: rest[1]!, rating: rest[2] as 'helpful', ...(step ? { nodeId: step } : {}) }));
+      else if (args[1] === 'remember' && rest.length === 2) print(await manager.rememberFromRun(rest[0]!, { text: rest[1]!, ...(step ? { nodeId: step } : {}) }));
+      else { console.error('Usage: neomind memory list <project> [query] | pending <project> | propose <project> <input.json> | approve|reject <project> <proposalId> [--run <runId>] [--body-file <file>] | note <project> <context|decision|lesson> <text> [--scope s] [--tags a,b] | expire|delete <project> <type> <id> | feedback <project> <runId> <type/id> <helpful|irrelevant|wrong> [--step <nodeId>] | remember <project> <runId> <text> [--step <nodeId>]'); return 2; }
+      return 0;
+    } finally { await manager.close(); }
+  }
   if (args[0] === 'doctor' && args[1] === 'capabilities' && args.length === 2) {
     const executables = Object.fromEntries(await Promise.all(['codex', 'claude', 'opencode'].map(async name => [name, await executableAvailable(name)])));
     console.log(JSON.stringify({ simulated: false, executables, auth: 'unknown', inference: 'not_tested', delegationEnforcement: 'unknown' }, null, 2));
     return 0;
   }
-  console.error('Usage: neomind mcp <project> | rules <project> | program create <project> <program.json> | program list <project> | program status|next <project> <programId> | program deliver <project> <programId> <phaseId> <note> | skills <project> | skills status <project> <refs.json> | profile get|skills-status|usage <project> <id> | profile version <project> <id> <n> | profile migrate <project> <id> <n> <selection.json> | profile author-draft <project> <input.json> | profile author-publish <project> <id> <revision> <reason> | assess <project> --task-file <file>|<task> | flow blocks <project> | flow get|diff|author-validate <project> <id> | flow author-draft <project> <input.json> | flow author-publish <project> <id> <revision> <reason> | editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|parallel|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | flow canvas export|import <flows-dir> <flow-id> [file.canvas] | project migrate <project> | memory configure|project-search|search|get ... | doctor capabilities');
+  console.error('Usage: neomind mcp <project> | rules <project> | program create <project> <program.json> | program list <project> | program status|next <project> <programId> | program deliver <project> <programId> <phaseId> <note> | skills <project> | skills status <project> <refs.json> | profile get|skills-status|usage <project> <id> | profile version <project> <id> <n> | profile migrate <project> <id> <n> <selection.json> | profile author-draft <project> <input.json> | profile author-publish <project> <id> <revision> <reason> | assess <project> --task-file <file>|<task> | flow blocks <project> | flow get|diff|author-validate <project> <id> | flow author-draft <project> <input.json> | flow author-publish <project> <id> <revision> <reason> | editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|parallel|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | flow canvas export|import <flows-dir> <flow-id> [file.canvas] | project migrate <project> | memory configure|project-search|search|get ... | memory list|pending|propose|approve|reject|note|expire|delete|feedback|remember <project> ... | doctor capabilities');
   console.error('       neomind skill list <project> | skill get|usage <project> <id> [--source claude] | skill repin <project> <id> | skill create <project> <input.json> | skill update <project> <id> <input.json> | skill delete <project> <id> [--force] | profile templates | profile from-template <project> <id> <name> <template> | profile remove <project> <id>');
   return 2;
 }

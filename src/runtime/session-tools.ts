@@ -81,6 +81,18 @@ export const SESSION_TOOLS: SessionTool[] = [
     inputSchema: object({ ...runId, force: { type: 'boolean' }, ...confirmed }, ['runId']) },
   { name: 'session', description: 'What the run\'s agents did. Without attemptId: one line per agent turn (step, runner, files changed, commands, tokens). With attemptId: that turn\'s events (messages, reads, edits, commands) from event number `after`.',
     inputSchema: object({ ...runId, attemptId: { type: 'string' }, after: { type: 'number' } }, ['runId']) },
+  // Project memory (11/11): agents read it and propose records; only the user decides what becomes memory.
+  { name: 'memory_search', description: 'Search the project\'s approved memory (context, decisions, lessons). Returns id, type, scope, tags, a short summary, revision and whether the record is active (not expired or superseded). Read a record in full with memory_get.',
+    inputSchema: object({ query: { type: 'string' }, type: { type: 'string', enum: ['context', 'decision', 'lesson'] }, scope: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, limit: { type: 'number', description: '1-100, default 20' } }) },
+  { name: 'memory_get', description: 'Read one approved memory record in full: body, sources, tags, revision, expiry and the records it supersedes.', inputSchema: object({ type: { type: 'string', enum: ['context', 'decision', 'lesson'] }, id: { type: 'string' } }, ['type', 'id']) },
+  { name: 'memory_propose', description: 'Propose a memory record for the user to approve: a project fact (context), a decision the user made, or a lesson learned. It does not become memory until the user approves it in the NeoMind panel or CLI. Give sources (files, run ids, "session:<id>") and the reason. Text that an approved record or a pending proposal already holds is not proposed again.',
+    inputSchema: object({ type: { type: 'string', enum: ['context', 'decision', 'lesson'] }, body: { type: 'string' }, scope: { type: 'string', description: 'project (default) or a repository directory' }, tags: { type: 'array', items: { type: 'string' } },
+      sources: { type: 'array', items: { type: 'string' } }, reason: { type: 'string', description: 'Why this is worth remembering' }, supersedes: { type: 'array', items: { type: 'string' }, description: 'Ids of same-type records this replaces' } }, ['type', 'body', 'sources', 'reason']) },
+  { name: 'memory_pending', description: 'Memory proposals waiting for the user (from runs, sessions and "remember this"), with proposalId, runId, proposalHash, origin and reason. Duplicates are merged into one entry.', inputSchema: object() },
+  { name: 'memory_approve', description: 'Approve a pending memory proposal so it becomes shared memory. This is the user\'s decision: show them the proposal text first and call only after they agree, with confirmed: true. body replaces the text (the user\'s edit) before approval.',
+    inputSchema: object({ proposalId: { type: 'string' }, runId: { type: 'string', description: 'From memory_pending; omit for session proposals' }, proposalHash: { type: 'string' }, body: { type: 'string' }, ...confirmed }, ['proposalId', 'proposalHash', 'confirmed']) },
+  { name: 'memory_reject', description: 'Reject a pending memory proposal. The user\'s decision: call only after they agree, with confirmed: true.',
+    inputSchema: object({ proposalId: { type: 'string' }, runId: { type: 'string' }, proposalHash: { type: 'string' }, ...confirmed }, ['proposalId', 'proposalHash', 'confirmed']) },
   // The NeoMind panel reaches the editor API through this tool; agents never see it.
   { name: 'api', panelOnly: true, description: 'NeoMind panel: one editor API request.', inputSchema: object({ method: { type: 'string' }, path: { type: 'string' }, body: {} }, ['method', 'path']) },
 ];
@@ -278,6 +290,23 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
         ...(event.status ? { status: event.status } : {}), ...(event.text ? { text: clip(event.text) } : {}) }));
       return { source: page.source, events, ...(page.events.length > 100 ? { more: `call again with after: ${events.at(-1)!.i! + 1}` } : {}), ...('note' in page && page.note ? { note: page.note } : {}) };
     },
+    memory_search: async args => {
+      const type = optional(args, 'type'), limit = args.limit === undefined ? undefined : Math.max(1, Math.min(100, Math.floor(Number(args.limit)) || 20));
+      if (type && !['context', 'decision', 'lesson'].includes(type)) throw new Error('type must be context, decision or lesson');
+      const tags = Array.isArray(args.tags) ? args.tags.filter((tag): tag is string => typeof tag === 'string' && !!tag.trim()) : [];
+      return (await runs()).searchMemory({ ...(optional(args, 'query') ? { query: optional(args, 'query')! } : {}), ...(type ? { type: type as 'context' } : {}), ...(optional(args, 'scope') ? { scope: optional(args, 'scope')! } : {}), ...(tags.length ? { tags } : {}), ...(limit ? { limit } : {}) });
+    },
+    memory_get: async args => (await runs()).getMemory(text(args, 'type') as 'context', text(args, 'id')),
+    memory_propose: async args => (await runs()).proposeMemory({ type: text(args, 'type') as 'context', body: text(args, 'body'), reason: text(args, 'reason'), sources: args.sources as string[],
+      ...(optional(args, 'scope') ? { scope: optional(args, 'scope')! } : {}), ...(Array.isArray(args.tags) ? { tags: args.tags as string[] } : {}), ...(Array.isArray(args.supersedes) ? { supersedes: args.supersedes as string[] } : {}) }, 'ai_session'),
+    memory_pending: async () => {
+      const { proposals, errors } = await (await runs()).memoryProposals();
+      return { proposals: proposals.map(item => ({ proposalId: item.proposal.proposalId, runId: item.runId, proposalHash: item.proposalHash, version: item.version, origin: item.proposal.origin ?? 'repair',
+        reason: item.proposal.reason, type: item.proposal.record.type, scope: item.proposal.record.scope, tags: item.proposal.record.tags, body: clip(item.proposal.record.body, 3000), sources: item.proposal.record.sources,
+        ...(item.duplicateOf ? { duplicateOf: item.duplicateOf } : {}), ...(item.merged.length ? { alsoProposedBy: item.merged.map(merged => merged.runId ?? 'session') } : {}) })), ...(errors.length ? { errors } : {}) };
+    },
+    memory_approve: async args => { requireConfirmed(args, 'Approving a memory proposal'); return (await runs()).approveMemoryProposal({ runId: optional(args, 'runId') ?? null, proposalId: text(args, 'proposalId'), proposalHash: text(args, 'proposalHash'), ...(optional(args, 'body') ? { body: optional(args, 'body')! } : {}) }); },
+    memory_reject: async args => { requireConfirmed(args, 'Rejecting a memory proposal'); return (await runs()).rejectMemoryProposal({ runId: optional(args, 'runId') ?? null, proposalId: text(args, 'proposalId'), proposalHash: text(args, 'proposalHash') }); },
     api: async args => api({ method: text(args, 'method').toUpperCase(), path: text(args, 'path'), body: args.body ?? {} }),
   };
 }

@@ -22,6 +22,8 @@ import { flowAuthorSchema } from '../storage/flow-library.js';
 import { runStats } from '../runtime/run-stats.js';
 import { createProgram, listPrograms, markPhaseDelivered, programNext, programStatus, startPhase } from '../runtime/programs.js';
 import { skillCatalog, skillStatus } from '../storage/skill-catalog.js';
+import { proposalInputSchema } from '../runtime/memory-proposals.js';
+import { memoryFeedbackSchema } from '../core/recovery.js';
 import { draftProfile, getProfile, getProfileVersion, migrateProfile, profileSkillStatus, profileUsage, publishProfile } from '../runtime/profile-authoring.js';
 import { archiveProfile, createProfileFromTemplate, deleteProfile } from '../runtime/profile-authoring.js';
 import { createSkill, deleteSkill, deleteSkillFile, getSkill, readSkillFile, repinSkill, skillActorSchema, SkillInUse, skillLibrary, skillTemplates, skillUsage, updateSkill, writeSkillFile } from '../storage/skill-library.js';
@@ -99,8 +101,39 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       return reply(200, await (await runs()).configureMemory({ initializeDefault: input.initializeDefault, expectedPrevious: input.expectedPrevious, ...(input.root ? { root: input.root } : {}) }));
     }
     if (url.pathname === '/api/memory' && method === 'POST') {
-      const input = z.strictObject({ record: z.strictObject({ id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/), type: z.enum(['context', 'decision']), scope: z.string().min(1), sources: z.array(z.string().min(1)).min(1), tags: z.array(z.string()), body: z.string().min(1), expiresAt: z.iso.datetime().optional(), supersedes: z.array(z.string().min(1)).optional() }), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable() }).parse(payload);
+      const input = z.strictObject({ record: z.strictObject({ id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/), type: z.enum(['context', 'decision', 'lesson']), scope: z.string().min(1), sources: z.array(z.string().min(1)).min(1), tags: z.array(z.string()), body: z.string().min(1), expiresAt: z.iso.datetime().optional(), supersedes: z.array(z.string().min(1)).optional() }), expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).nullable() }).parse(payload);
       return reply(200, await (await runs()).writeMemory(input.record, input.expectedRevision, 'ui'));
+    }
+    // Memory proposals, notes, edits and ratings (11/11).
+    const memoryRecordId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/), memoryType = z.enum(['context', 'decision', 'lesson']), revisionHash = z.string().regex(/^[a-f0-9]{64}$/);
+    if (url.pathname === '/api/memory/search' && method === 'GET') {
+      const type = url.searchParams.get('type'), scope = url.searchParams.get('scope'), query = url.searchParams.get('q'), tags = url.searchParams.getAll('tag');
+      return reply(200, (await runs()).searchMemory({ ...(query ? { query } : {}), ...(type ? { type: memoryType.parse(type) } : {}), ...(scope ? { scope } : {}), ...(tags.length ? { tags } : {}) }));
+    }
+    const memoryRecordMatch = /^\/api\/memory\/records\/(context|decision|lesson)\/([a-z0-9-]+)$/.exec(url.pathname);
+    if (memoryRecordMatch && method === 'GET') return reply(200, (await runs()).getMemory(memoryRecordMatch[1] as 'context', memoryRecordId.parse(memoryRecordMatch[2])));
+    if (url.pathname === '/api/memory/note' && method === 'POST') {
+      const input = z.strictObject({ type: memoryType, scope: z.string().max(500).optional(), tags: z.array(z.string().min(1).max(80)).max(20).optional(), body: z.string().trim().min(1).max(30000),
+        sources: z.array(z.string().min(1)).max(20).optional(), supersedes: z.array(memoryRecordId).optional() }).parse(payload);
+      return reply(200, await (await runs()).addMemoryNote(input, 'ui'));
+    }
+    if ((url.pathname === '/api/memory/expire' || url.pathname === '/api/memory/delete') && method === 'POST') {
+      const input = z.strictObject({ type: memoryType, id: memoryRecordId, expectedRevision: revisionHash }).parse(payload);
+      return reply(200, url.pathname.endsWith('expire') ? await (await runs()).expireMemory(input.type, input.id, input.expectedRevision, 'ui') : await (await runs()).deleteMemory(input.type, input.id, input.expectedRevision, 'ui'));
+    }
+    if (url.pathname === '/api/memory/proposals' && method === 'GET') return reply(200, await (await runs()).memoryProposals({ includeDone: url.searchParams.get('all') === '1' }));
+    if (url.pathname === '/api/memory/proposals' && method === 'POST') return reply(200, await (await runs()).proposeMemory(proposalInputSchema.parse(payload), 'ai_session'));
+    const proposalAction = /^\/api\/memory\/proposals\/(approve|reject|revise)$/.exec(url.pathname);
+    if (proposalAction && method === 'POST') {
+      const base = { runId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/).nullable().optional(), proposalId: z.string().min(1), proposalHash: revisionHash };
+      if (proposalAction[1] === 'approve') { const input = z.strictObject({ ...base, body: z.string().trim().min(1).max(30000).optional(), memoryRoot: z.string().min(1).optional() }).parse(payload); return reply(200, await (await runs()).approveMemoryProposal(input)); }
+      if (proposalAction[1] === 'reject') return reply(200, await (await runs()).rejectMemoryProposal(z.strictObject(base).parse(payload)));
+      return reply(200, await (await runs()).reviseMemoryProposal(z.strictObject({ ...base, body: z.string().trim().min(1).max(30000) }).parse(payload)));
+    }
+    const runMemoryMatch = /^\/api\/runs\/([a-z0-9-]+)\/(remember|memory-feedback)$/.exec(url.pathname);
+    if (runMemoryMatch && method === 'POST') {
+      if (runMemoryMatch[2] === 'remember') { const input = z.strictObject({ text: z.string().trim().min(1).max(30000), type: memoryType.optional(), nodeId: z.string().min(1).optional() }).parse(payload); return reply(200, await (await runs()).rememberFromRun(runMemoryMatch[1]!, input)); }
+      return reply(200, await (await runs()).memoryFeedback(runMemoryMatch[1]!, memoryFeedbackSchema.parse(payload)));
     }
     if (url.pathname === '/api/rules' && method === 'GET') return reply(200, await readProjectRules(projectRoot) ?? { rules: [], warnings: [] });
     if (url.pathname === '/api/skills' && method === 'GET') return reply(200, { skills: await skillCatalog(projectRoot) });
