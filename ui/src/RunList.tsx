@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Filter, MoreHorizontal, Plus, RotateCcw, Search, Trash2 } from 'lucide-react';
+import { Copy, Filter, MoreHorizontal, Plus, Search, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { StatusDot } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -9,7 +9,6 @@ import { Select } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { needsYou, phaseInfo, relativeTime } from './format';
 import type { RunSummary } from './runTypes';
-import { RERUNNABLE_PHASES } from '../../src/domain/rerun';
 
 const finished = (phase: string) => phase === 'completed' || phase === 'cancelled';
 type Filters = { flow: string; phases: string[]; from: string; to: string };
@@ -65,11 +64,12 @@ function Group({ title, count, children, menu }: { title: string; count: number;
   </section>;
 }
 
-export type RowActions = { rerun(item: RunSummary): void; remove(item: RunSummary): void };
+export type RowActions = { duplicate(item: RunSummary): void; remove(item: RunSummary): void };
 
 function Row({ item, selected, open, actions }: { item: RunSummary; selected: boolean; open(): void; actions?: RowActions | undefined }) {
   const info = phaseInfo(item.phase), time = relativeTime(item.createdAt), quiet = ['completed', 'cancelled', 'running', 'waiting_approval', 'blocked'].includes(item.phase);
-  const canRerun = !!item.flowId && !!item.task?.trim() && RERUNNABLE_PHASES.includes(item.phase), canDelete = finished(item.phase), menu = !!actions && (canRerun || canDelete);
+  // Duplicating only reads the run's configuration, so a run in any phase can be copied.
+  const canDuplicate = !!item.flowId && !!item.task?.trim(), canDelete = finished(item.phase), menu = !!actions && (canDuplicate || canDelete);
   return <div className="group relative">
     <button type="button" onClick={open} aria-current={selected ? 'true' : undefined}
       className={cn('flex w-full cursor-pointer items-start gap-2.5 rounded-md border-0 bg-transparent px-2.5 py-2 text-left font-sans outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring', selected && 'bg-accent', menu && 'pr-8')}>
@@ -80,7 +80,7 @@ function Row({ item, selected, open, actions }: { item: RunSummary; selected: bo
     {menu && <span className="absolute right-1 top-1.5 opacity-0 focus-within:opacity-100 group-hover:opacity-100 has-[[data-state=open]]:opacity-100">
       <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={`Tùy chọn run ${item.task ?? item.runId}`}><MoreHorizontal /></Button></DropdownMenuTrigger>
         <DropdownMenuContent>
-          {canRerun && <DropdownMenuItem onSelect={() => actions!.rerun(item)}><RotateCcw />Chạy lại</DropdownMenuItem>}
+          {canDuplicate && <DropdownMenuItem onSelect={() => actions!.duplicate(item)}><Copy />Nhân bản</DropdownMenuItem>}
           {canDelete && <DropdownMenuItem danger onSelect={() => actions!.remove(item)}><Trash2 />Xóa run</DropdownMenuItem>}
         </DropdownMenuContent></DropdownMenu></span>}
   </div>;

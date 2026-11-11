@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CircleAlert, Clock, Info, MoreHorizontal, PanelRight, Pause, Shield, TriangleAlert } from 'lucide-react';
+import { CircleAlert, Clock, Copy, Info, MoreHorizontal, PanelRight, Pause, Shield, TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/CopyButton';
@@ -47,7 +47,7 @@ function stopFacts(run: Run, flow: Flow) {
 }
 const factTone = { success: 'text-success', attention: 'text-attention', danger: 'text-danger', idle: 'text-muted-foreground' };
 
-export function RunMonitor({ run, setRun, rerun, remove }: { run: Run; setRun(run: Run): void; rerun?(): void; remove?(): void }) {
+export function RunMonitor({ run, setRun, duplicate, remove }: { run: Run; setRun(run: Run): void; duplicate?(): void; remove?(): void }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [feedback, setFeedback] = useState(''), [extraMinutes, setExtraMinutes] = useState(10);
   // Bumped when "Ghi nhớ điều này" adds a proposal, so the run's proposal list reloads.
   const [proposalsVersion, setProposalsVersion] = useState(0);
@@ -92,6 +92,7 @@ export function RunMonitor({ run, setRun, rerun, remove }: { run: Run; setRun(ru
   const uniqueAgents = agents.filter((item, index) => item.values && agents.findIndex(other => other.label === item.label) === index);
   const meta = [flow && `${flow.name} v${flow.version}`, workspaceName(run.runtimeContext?.workspaceMode), formatDuration(activeMs), run.usage.totalTokens !== null ? `${formatTokens(run.usage.totalTokens)} tokens${run.usage.partial ? '*' : ''}` : ''].filter(Boolean);
   const facts = flow ? stopFacts(run, flow) : [];
+  const canDuplicate = !!duplicate && !!rerunDraft(run), active = running || phase === 'waiting_approval' || phase === 'stopping';
 
   return <div className="flex flex-col gap-3.5 pb-8">
     <header className="flex flex-wrap items-start gap-x-4 gap-y-2">
@@ -102,12 +103,14 @@ export function RunMonitor({ run, setRun, rerun, remove }: { run: Run; setRun(ru
       </div>
       <div className="flex items-center gap-1.5">
         <RememberButton runId={run.runId} onCreated={() => setProposalsVersion(version => version + 1)} />
-        {rerun && rerunDraft(run) && <Button disabled={busy} onClick={rerun}>Chạy lại</Button>}
+        {/* A run that is still working keeps its header for its own actions; duplicating it stays in the menu. */}
+        {canDuplicate && !active && <Button onClick={duplicate}><Copy />Nhân bản</Button>}
         {running && <Button disabled={busy} onClick={() => void act('pause')}><Pause />Tạm dừng</Button>}
         {lastSession && !running && phase !== 'waiting_approval' && <Button onClick={() => setSession({ attemptId: lastSession.meta.attemptId, key: lastSession.meta.key, source: 'neomind' })}><PanelRight />Xem session</Button>}
         {!finished && <Button variant="ghost" className="text-danger hover:text-danger" disabled={busy} onClick={cancel}>Hủy run</Button>}
         <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Tùy chọn run"><MoreHorizontal /></Button></DropdownMenuTrigger>
-          <DropdownMenuContent><DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(run.runId)}>Sao chép mã run</DropdownMenuItem>
+          <DropdownMenuContent>{canDuplicate && active && <DropdownMenuItem onSelect={duplicate}><Copy />Nhân bản</DropdownMenuItem>}
+            <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(run.runId)}>Sao chép mã run</DropdownMenuItem>
             {canWorktreeClean && <DropdownMenuItem disabled={locked} onSelect={() => void cleanWorktree()}>Dọn worktree</DropdownMenuItem>}
             {remove && (phase === 'completed' || phase === 'cancelled') && <DropdownMenuItem danger disabled={locked} onSelect={remove}>Xóa run</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu>
       </div>

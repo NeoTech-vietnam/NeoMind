@@ -1,5 +1,7 @@
-import type { BindingValues } from './resolve.js';
 import type { Flow } from './schema.js';
+
+// Same shape as resolve.ts, which the editor UI cannot import (it hashes with node:crypto).
+type BindingValues = Record<'runner' | 'provider' | 'model' | 'reasoning', string>;
 
 type WorkspaceMode = Flow['definition']['workspacePolicy'];
 export type DraftLimits = Partial<Flow['definition']['limits']>;

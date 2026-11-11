@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, CircleAlert, GitCommitHorizontal, Info, Play, RotateCcw, TriangleAlert, UserRound } from 'lucide-react';
+import { ChevronRight, CircleAlert, CircleCheck, Copy, GitCommitHorizontal, Info, Play, RotateCcw, Save, TriangleAlert, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tag } from '@/components/ui/badge';
 import { Disclosure } from '@/components/ui/disclosure';
@@ -9,13 +9,16 @@ import { Select } from '@/components/ui/select';
 import { Tooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { api } from './api';
+import { askText } from './dialog';
 import { formatDuration, formatTokens } from './format';
 import { flowSteps } from './runSteps';
 import { modelLabel, reasoningLabel, runnerLabel, useRunners, type RunnerModels } from './runners';
 import { bindingLabel, type BindingValues, type Preview, type Run, type RunSummary } from './runTypes';
 import { estimateFor, type EstimateGroup } from '../../src/domain/estimate';
+import { bindingKeys } from '../../src/domain/pin-bindings';
+import { fitDraft, type DraftLimits, type RunDraft } from '../../src/domain/rerun';
 
-type Limits = { activeTimeSeconds?: number; maxConcurrency?: number; maxTokens?: number };
+type Limits = DraftLimits;
 type WorkspaceMode = 'isolated' | 'current' | 'shared' | '';
 type MemoryPreview = { excluded?: { id: string; reason: string }[]; root: string | null; selectionPolicy?: Record<string, unknown>; inferredPaths?: string[]; records: { id: string; type: string; scope: string; revision: string; selectionReason: string }[] };
 const templateFlows = [{ flowId: 'dev', name: 'Dev' }, { flowId: 'parallel', name: 'Dev song song' }, { flowId: 'fast', name: 'Fast' }, { flowId: 'research', name: 'Research' }];
@@ -42,11 +45,12 @@ const presets: Preset[] = [
 
 /**
  * Start a run: describe the task, pick a flow, adjust runner/model per step. The effective configuration is previewed
- * automatically after every change; a run can only start from the configuration that is on screen.
+ * automatically after every change; a run can only start from the configuration that is on screen. `draft` (a duplicated
+ * run) prefills everything; the chosen runners can be saved as the flow's default so the next run starts with them.
  */
-export function RunStart({ initialFlow, initialTask, flows, history, started }: { initialFlow?: string; initialTask?: string; flows: { flowId: string; name: string; archived: boolean }[]; history: RunSummary[]; started(run: Run): void }) {
+export function RunStart({ initialFlow, initialTask, draft, flows, history, started, flowsChanged }: { initialFlow?: string; initialTask?: string; draft?: RunDraft; flows: { flowId: string; name: string; archived: boolean }[]; history: RunSummary[]; started(run: Run): void; flowsChanged?(): Promise<unknown> }) {
   const runners = useRunners();
-  const [flowId, setFlowId] = useState(initialFlow ?? 'dev'), [task, setTask] = useState(initialTask ?? '');
+  const [flowId, setFlowId] = useState(draft?.flowId ?? initialFlow ?? 'dev'), [task, setTask] = useState(draft?.task ?? initialTask ?? '');
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('');
   const [overrides, setOverrides] = useState<Record<string, Partial<BindingValues>>>({}), [limits, setLimits] = useState<Limits>({});
   const [preview, setPreview] = useState<Preview | null>(null), [loading, setLoading] = useState(false), [previewError, setPreviewError] = useState('');
@@ -54,6 +58,16 @@ export function RunStart({ initialFlow, initialTask, flows, history, started }: 
   const [memoryPreview, setMemoryPreview] = useState<MemoryPreview | null>(null), [memoryError, setMemoryError] = useState('');
   const [publishing, setPublishing] = useState(false), [publishError, setPublishError] = useState(''), [refresh, setRefresh] = useState(0);
   const request = useRef(0);
+  // A duplicated run's choices wait for the first preview of the flow's latest version, then keep only what differs from it.
+  const pending = useRef(draft), [copied, setCopied] = useState<{ dropped: string[] } | null>(draft ? { dropped: [] } : null);
+  const [saving, setSaving] = useState(false), [saveError, setSaveError] = useState(''), [saved, setSaved] = useState('');
+  function adopt(value: Preview) {
+    const source = pending.current, flow = value.snapshot.configuration.flow;
+    if (!source || flow.flowId !== source.flowId) return;
+    pending.current = undefined;
+    const fitted = fitDraft(source, flow, Object.fromEntries(Object.entries(value.snapshot.configuration.bindings).map(([key, binding]) => [key, binding.values])));
+    setOverrides(fitted.overrides); setLimits(fitted.limits); setWorkspaceMode(fitted.workspaceMode ?? ''); setCopied({ dropped: fitted.dropped });
+  }
   useEffect(() => { if (initialFlow) chooseFlow(initialFlow); }, [initialFlow]);
   useEffect(() => {
     if (!task.trim()) { setMemoryPreview(null); setMemoryError(''); return; }
@@ -68,13 +82,13 @@ export function RunStart({ initialFlow, initialTask, flows, history, started }: 
     const id = ++request.current; setLoading(true);
     const timer = setTimeout(() => {
       api<Preview>('/api/runs/preview', 'POST', { flowId, overrides, limits, ...(workspaceMode ? { workspaceMode } : {}) })
-        .then(value => { if (id === request.current) { setPreview(value); setPreviewError(''); } })
+        .then(value => { if (id === request.current) { setPreview(value); setPreviewError(''); adopt(value); } })
         .catch(e => { if (id === request.current) { setPreview(null); setPreviewError(e instanceof Error ? e.message : String(e)); } })
         .finally(() => { if (id === request.current) setLoading(false); });
     }, 250);
     return () => clearTimeout(timer);
   }, [flowId, overrides, limits, workspaceMode, refresh]);
-  function chooseFlow(id: string) { setFlowId(id); setOverrides({}); setLimits({}); setImportDirty(false); setPublishError(''); }
+  function chooseFlow(id: string) { pending.current = undefined; setCopied(null); setSaved(''); setSaveError(''); setFlowId(id); setOverrides({}); setLimits({}); setImportDirty(false); setPublishError(''); }
   const choices = [...flows.filter(flow => !flow.archived).map(flow => ({ ...flow, template: false })),
     ...templateFlows.filter(item => !flows.some(flow => flow.flowId === item.flowId)).map(item => ({ ...item, archived: false, template: true }))];
   const definition = preview?.snapshot.configuration.flow;
@@ -111,6 +125,32 @@ export function RunStart({ initialFlow, initialTask, flows, history, started }: 
   })));
   const activePreset = bindings.length ? presets.find(preset => bindings.every(([key, binding]) => values(key, binding.values).runner === preset.runner(key)))?.id : undefined;
 
+  // Saving the choice as the flow default: a template cannot change, so it becomes a new project flow instead.
+  const template = choices.find(item => item.flowId === flowId)?.template ?? false;
+  const editedKeys = bindings.filter(([key]) => edited(key)).map(([key]) => key);
+  const keys = useMemo(() => definition ? bindingKeys(definition) : [], [definition]);
+  const pinnedBindings = new Set(keys.filter(item => editedKeys.includes(item.key)).map(item => item.bindingId));
+  // Steps reading the same flow binding (usually one shared session) change together and must agree.
+  const followers = keys.filter(item => pinnedBindings.has(item.bindingId) && !editedKeys.includes(item.key)).map(item => item.key);
+  const bindingOf = (key: string) => values(key, preview!.snapshot.configuration.bindings[key]!.values);
+  const differs = (a: BindingValues, b: BindingValues) => a.runner !== b.runner || a.provider !== b.provider || a.model !== b.model || a.reasoning !== b.reasoning;
+  const clash = keys.flatMap((item, index) => editedKeys.includes(item.key) ? keys.slice(index + 1).filter(other => other.bindingId === item.bindingId && editedKeys.includes(other.key)
+    && differs(bindingOf(item.key), bindingOf(other.key))).map(other => [item.key, other.key] as const) : []).at(0);
+  async function saveDefaults() {
+    if (!preview || !editedKeys.length || clash) return;
+    const base = definition?.name ?? flowId;
+    const name = template ? (await askText({ title: 'Lưu thành flow mới', description: `Flow mẫu ${base} không sửa được. NeoMind tạo một flow của project từ nó, với agent từng bước như đang chọn, rồi publish phiên bản 1.`, label: 'Tên flow', initial: `${base} của tôi`, confirmLabel: 'Tạo flow' }))?.trim() : undefined;
+    if (template && !name) return;
+    setSaving(true); setSaveError(''); setSaved('');
+    try {
+      const chosen = Object.fromEntries(editedKeys.map(key => [key, bindingOf(key)]));
+      const result = await api<{ flowId: string; name: string; version: number }>(`/api/flows/${encodeURIComponent(flowId)}/pin-bindings`, 'POST', { values: chosen, ...(name ? { saveAs: { name } } : {}) });
+      if (result.flowId !== flowId) { await flowsChanged?.(); setFlowId(result.flowId); setImportDirty(false); setCopied(null); }
+      setOverrides({}); setRefresh(value => value + 1);
+      setSaved(template ? `Đã tạo flow “${result.name}” với lựa chọn này và chọn nó cho run này.` : `Đã lưu vào ${result.name} (phiên bản ${result.version}). Lần sau chọn flow này sẽ có sẵn lựa chọn.`);
+    } catch (e) { setSaveError(e instanceof Error ? e.message : String(e)); } finally { setSaving(false); }
+  }
+
   async function publish() {
     setPublishing(true); setPublishError('');
     try { await api(`/api/flows/${encodeURIComponent(flowId)}/publish`, 'POST', {}); setRefresh(value => value + 1); }
@@ -145,6 +185,8 @@ export function RunStart({ initialFlow, initialTask, flows, history, started }: 
       <div><h2 className="m-0 text-[18px] font-semibold tracking-tight">Run mới</h2><p className="m-0 mt-1 text-[12.5px] text-muted-foreground">Agent lập kế hoạch trước và chờ bạn duyệt rồi mới sửa file.</p></div>
       {preview && <Tooltip label="Run bắt đầu từ commit này của checkout"><span className="ml-auto inline-flex h-[26px] items-center gap-1.5 rounded-md border px-2.5 text-[12px] text-fg-2"><GitCommitHorizontal className="size-3.5 text-muted-foreground" />HEAD <code className="font-mono">{preview.sourceHead.slice(0, 7)}</code></span></Tooltip>}
     </div>
+    {copied && <Callout tone="hint" icon={<Copy />}><span>Nhân bản từ một run trước: flow, agent từng bước, giới hạn và workspace được điền theo run đó, trên phiên bản mới nhất của flow. Sửa yêu cầu hoặc cấu hình rồi bấm Bắt đầu.
+      {copied.dropped.length > 0 && <span className="mt-1 block">Bỏ cấu hình của bước không còn trong flow: {copied.dropped.map(key => <code key={key} className="mr-1.5 font-mono">{key}</code>)}</span>}</span></Callout>}
 
     <Field label="Yêu cầu" help={<span className="flex justify-between gap-3"><span>Nói rõ cần làm gì, ở file nào, xong khi nào.</span><span className="hidden shrink-0 sm:inline">Ctrl + Enter để bắt đầu</span></span>}>
       <Textarea aria-label="Yêu cầu" rows={4} autoFocus value={task} onChange={e => setTask(e.target.value)} placeholder="Ví dụ: Thêm hàm power(a, b) vào calc.js và viết test cho nó"
@@ -195,6 +237,13 @@ export function RunStart({ initialFlow, initialTask, flows, history, started }: 
             </div>;
           })}
         </div>}
+      {preview && editedKeys.length > 0 && <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-dashed px-3 py-2">
+        <span className="min-w-0 flex-1 basis-64 text-[12px] leading-relaxed text-muted-foreground">{clash ? `${bindingLabel(clash[0], definition)} và ${bindingLabel(clash[1], definition)} dùng chung cấu hình của flow; chọn giống nhau để lưu làm mặc định.`
+          : template ? 'Flow mẫu không sửa được: lưu lựa chọn này thành một flow mới của project.' : 'Lưu lựa chọn này vào flow (publish phiên bản mới) để lần sau không phải chọn lại.'}
+          {!clash && followers.length > 0 && ` Bước dùng chung cấu hình cũng đổi theo: ${followers.map(key => bindingLabel(key, definition)).join(', ')}.`}</span>
+        <Button size="sm" disabled={saving || loading || !!clash} onClick={() => void saveDefaults()}><Save />{saving ? 'Đang lưu…' : template ? 'Lưu thành flow mới…' : 'Lưu làm mặc định cho flow'}</Button></div>}
+      {saveError && <Callout tone="danger" icon={<CircleAlert />}>Không lưu được: {saveError}</Callout>}
+      {saved && <Callout tone="success" icon={<CircleCheck />}>{saved}</Callout>}
       {usesClaude && <p className="m-0 flex gap-2 text-[12px] leading-relaxed text-muted-foreground"><Info className="mt-0.5 size-3.5 shrink-0" />Claude Code chạy bằng tài khoản Claude đang đăng nhập và chỉ được đọc, ghi file trong phạm vi được duyệt (không có shell). Checks vẫn chạy qua Codex.</p>}
       {!runners.some(item => item.runner === 'opencode') && <p className="m-0 text-[12px] text-muted-foreground">OpenCode xuất hiện khi NeoMind tìm thấy phiên bản được hỗ trợ và provider đã kết nối.</p>}
     </section>}
@@ -212,7 +261,7 @@ export function RunStart({ initialFlow, initialTask, flows, history, started }: 
               <Input type="number" min="1000" step="1000" placeholder="Không giới hạn" value={limits.maxTokens ?? definition!.definition.limits.maxTokens ?? ''}
                 onChange={e => setLimits(value => { const next = { ...value }; if (Number(e.target.value) >= 1) next.maxTokens = Math.round(Number(e.target.value)); else delete next.maxTokens; return next; })} /></Field>
           </div>
-          <p className="m-0 mt-3 text-[12px] text-muted-foreground">Vòng sửa tối đa <strong className="text-foreground">{definition!.definition.limits.maxRepairRounds}</strong> (theo flow) · Bắt đầu từ commit <code className="font-mono">{preview.sourceHead.slice(0, 10)}</code></p>
+          <p className="m-0 mt-3 text-[12px] text-muted-foreground">Vòng sửa tối đa <strong className="text-foreground">{definition!.definition.limits.maxRepairRounds}</strong> ({limits.maxRepairRounds !== undefined ? 'theo run gốc' : 'theo flow'}) · Bắt đầu từ commit <code className="font-mono">{preview.sourceHead.slice(0, 10)}</code></p>
           <p className="m-0 mt-1.5 text-[12px] text-muted-foreground">{shared ? 'Run sửa trực tiếp checkout, giữ staging có sẵn và commit chỉ thay đổi của run.' : 'Run làm việc trong worktree riêng; checkout chỉ đổi khi bạn áp dụng kết quả.'} Commit local không chạy Git hooks.</p>
         </Disclosure>
       </div>

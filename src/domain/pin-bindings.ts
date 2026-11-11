@@ -1,5 +1,8 @@
-import type { BindingField, BindingValues } from './resolve.js';
 import type { Flow } from './schema.js';
+
+// Same shapes as resolve.ts, which the editor UI cannot import (it hashes with node:crypto).
+type BindingField = 'runner' | 'provider' | 'model' | 'reasoning';
+type BindingValues = Record<BindingField, string>;
 
 /** Every runner choice a run makes, keyed like the run snapshot (`node` or `node/reviewer`), with the flow binding it reads. */
 export function bindingKeys(flow: Pick<Flow, 'definition'>): { key: string; bindingId: string }[] {

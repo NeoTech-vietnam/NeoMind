@@ -8,7 +8,7 @@ import { RunMonitor } from './RunMonitor';
 import { RunStart } from './RunStart';
 import { RunPrograms, type ProgramSummary } from './RunPrograms';
 import type { Run, RunSummary } from './runTypes';
-import { rerunDraft } from '../../src/domain/rerun';
+import { rerunDraft, type RunDraft } from '../../src/domain/rerun';
 
 const terminal = ['completed', 'cancelled'];
 
@@ -17,11 +17,12 @@ function Dismiss({ onClick }: { onClick(): void }) {
 }
 
 /** Runs screen: the list of runs on the left, the selected run or the new-run form on the right (docs/design/mockups/13-runs-v2). */
-export function RunPanel({ flowId, flows }: { flowId?: string; flows: { flowId: string; name: string; archived: boolean }[] }) {
+export function RunPanel({ flowId, flows, flowsChanged }: { flowId?: string; flows: { flowId: string; name: string; archived: boolean }[]; flowsChanged?(): Promise<unknown> }) {
   const [run, setRun] = useState<Run | null>(null), [history, setHistory] = useState<RunSummary[]>([]), [error, setError] = useState(''), [stale, setStale] = useState(false);
   const [programs, setPrograms] = useState<ProgramSummary[]>([]);
-  // A blocked run restarts as a new run with its flow and task prefilled; the preview and plan approval happen again.
-  const [rerun, setRerun] = useState<{ flowId: string; task: string } | null>(null);
+  // Any run can be duplicated into the new-run form: flow, task, runners, limits and workspace prefilled; nothing starts
+  // until the user does, and the preview and plan approval happen again. `id` remounts the form for every duplicate.
+  const [draft, setDraft] = useState<{ id: number; value: RunDraft } | null>(null);
   async function refresh() {
     setHistory((await api<{ runs: RunSummary[] }>('/api/runs')).runs.slice().reverse());
     // Programs are optional; an older backend or a broken program file must not hide the runs.
@@ -82,21 +83,23 @@ export function RunPanel({ flowId, flows }: { flowId?: string; flows: { flowId: 
       await refresh();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setCleaning(false); }
   }
-  const rerunFrom = (draft: { flowId: string; task: string }) => { setRerun(draft); setRun(null); };
-  async function open(runId: string) { setError(''); setRerun(null); try { setRun(await api<Run>(`/api/runs/${runId}`)); setStale(false); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } }
+  const duplicateFrom = (source: Run) => { const value = rerunDraft(source); if (!value) return; setDraft(current => ({ id: (current?.id ?? 0) + 1, value })); setRun(null); };
+  async function duplicateById(runId: string) { setError(''); try { duplicateFrom(await api<Run>(`/api/runs/${runId}`)); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } }
+  async function open(runId: string) { setError(''); setDraft(null); try { setRun(await api<Run>(`/api/runs/${runId}`)); setStale(false); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } }
 
   return <section className="grid h-full min-h-0 grid-cols-[272px_minmax(0,1fr)] min-[1200px]:grid-cols-[296px_minmax(0,1fr)]">
-    <RunList history={history} selectedId={run?.runId} open={id => void open(id)} startNew={() => { setRerun(null); setRun(null); }} cleaning={cleaning} clean={() => void cleanFinished()} removeFinished={() => void removeFinished()}
-      actions={{ rerun: item => { if (item.flowId && item.task) rerunFrom({ flowId: item.flowId, task: item.task }); }, remove: item => void removeRun(item) }}
+    <RunList history={history} selectedId={run?.runId} open={id => void open(id)} startNew={() => { setDraft(null); setRun(null); }} cleaning={cleaning} clean={() => void cleanFinished()} removeFinished={() => void removeFinished()}
+      actions={{ duplicate: item => void duplicateById(item.runId), remove: item => void removeRun(item) }}
       programs={<RunPrograms programs={programs} open={id => void open(id)} changed={id => { void refresh(); if (id) void open(id); }} />} />
     <div className="min-h-0 min-w-0 overflow-auto">
       <div className="mx-auto flex max-w-[1040px] flex-col gap-3 px-6 pb-0 pt-5">
         {error && <Callout tone="danger" icon={<CircleAlert />}><div className="flex items-start"><span className="flex-1">{error}</span><Dismiss onClick={() => setError('')} /></div></Callout>}
         {stale && <Callout tone="attention" icon={<TriangleAlert />}><span role="status">Mất kết nối cập nhật run. Trạng thái đang hiển thị có thể đã cũ; hệ thống sẽ thử đồng bộ lại.</span></Callout>}
         {notice && <Callout tone="success" icon={<CircleCheck />}><div className="flex items-start"><span className="flex-1" role="status">{notice}</span><Dismiss onClick={() => setNotice('')} /></div></Callout>}
-        {run ? <RunMonitor key={run.runId} run={run} setRun={value => { setRun(value); void refresh(); }} rerun={() => { const draft = rerunDraft(run); if (draft) rerunFrom(draft); }}
+        {run ? <RunMonitor key={run.runId} run={run} setRun={value => { setRun(value); void refresh(); }} duplicate={() => duplicateFrom(run)}
           remove={() => void removeRun({ runId: run.runId, task: run.runtimeContext?.task, phase: run.runtimeState?.phase ?? '', reason: '' })} />
-          : <RunStart key={rerun ? `rerun-${rerun.flowId}` : 'new'} {...rerun ? { initialFlow: rerun.flowId, initialTask: rerun.task } : flowId ? { initialFlow: flowId } : {}} flows={flows} history={history} started={value => { setRerun(null); setRun(value); void refresh(); }} />}
+          : <RunStart key={draft ? `duplicate-${draft.id}` : 'new'} {...draft ? { draft: draft.value } : flowId ? { initialFlow: flowId } : {}}
+            flows={flows} history={history} {...flowsChanged ? { flowsChanged } : {}} started={value => { setDraft(null); setRun(value); void refresh(); }} />}
       </div>
     </div>
   </section>;
