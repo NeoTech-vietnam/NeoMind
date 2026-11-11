@@ -144,3 +144,38 @@ Câu hỏi để chốt tiếp:
 1. Kiểu dùng nào sát nhu cầu thật nhất (công việc firmware/thiết bị y tế, học tập, phát triển chính NeoMind)?
 2. Có muốn NeoMind chạy **không cần người bấm** (sự kiện, hẹn giờ) không, hay luôn do người/AI khởi động?
 3. Với kiểu "thiết bị an toàn", bằng chứng nào cần xuất ra (ma trận truy vết, báo cáo review, nhật ký)?
+
+## 4. Nghiên cứu tiền lệ (11/11/2026)
+
+Tìm trên web, chưa chạy thử. **(?)** = nguồn thứ cấp hoặc chưa kiểm chứng.
+
+**Tiền lệ gần nhất:** [ArbiterOS](https://arxiv.org/html/2510.13857) (10/2025) mô hình hóa agent thành máy von Neumann: LLM là "Probabilistic CPU", context là RAM, tool là I/O; một kernel tất định kiểm mọi chuyển trạng thái theo policy; ISA 5 nhóm lệnh có kiểu (Cognitive, Memory, Execution, Normative VERIFY/CONSTRAIN, Metacognitive EVALUATE_PROGRESS); có flight recorder cho time-travel. Nên đọc trước khi chốt 2.6.
+
+### Theo từng hướng
+
+| Hướng | Tiền lệ | Nên mượn / tránh |
+| --- | --- | --- |
+| 2.1 Debugger | [LangGraph time-travel](https://docs.langchain.com/oss/python/langgraph/use-time-travel), [Temporal replay](https://docs.temporal.io/child-workflows) | Tách hai chế độ: **xem lại từ journal** (tất định, miễn phí) và **chạy lại bước** (tốn quota, ra kết quả khác — so cấu hình cần nhiều mẫu). Quay lại quá khứ luôn tạo nhánh/run mới |
+| 2.1 Memory map | [Prompt caching của Anthropic](https://platform.claude.com/docs/en/build-with-claude/prompt-caching), [OpenTelemetry GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans) | Hiện cả token đọc từ cache / ghi cache / mới, không chỉ dung lượng |
+| 2.2 RAM → Flash | [Anthropic context engineering](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents), [MemGPT](https://arxiv.org/abs/2310.08560), [Letta](https://docs.letta.com/guides/agents/memory) | Mượn "cảnh báo áp lực bộ nhớ" để agent kịp ghi chú trước khi context đầy; **tránh** để agent tự sửa memory không duyệt |
+| 2.3 Chương trình con | [GitHub Actions reusable workflows](https://docs.github.com/en/actions/sharing-automations/reusing-workflows), [Temporal child workflow](https://docs.temporal.io/child-workflows) | Giới hạn độ sâu, cấm vòng lặp, input/output có kiểu; **quyền chỉ giữ hoặc giảm, không bao giờ nâng**; journal riêng cho flow con + chính sách khi flow cha bị hủy |
+| 2.4 Ngắt / watchdog | [Claude Code hooks](https://code.claude.com/docs/en/hooks), [SWE-agent](https://arxiv.org/abs/2405.15793), [SWE-smith](https://arxiv.org/pdf/2504.21798) | Hook của runner (PreToolUse, Stop, PreCompact) là bảng vector sẵn có. Chuỗi lặp dài gắn chặt với thất bại, nhưng can thiệp không làm tăng tỉ lệ giải được → watchdog nên **dừng và báo người** để giữ quota, không cố "cứu" run |
+| 2.5 Mức tối ưu | [LLMCompiler](https://arxiv.org/abs/2312.04511), [SGLang RadixAttention](https://arxiv.org/abs/2312.07104) | Pass tìm bước chạy song song được (LLMCompiler báo tới 3,7x nhanh, 6,7x rẻ hơn ReAct); RadixAttention chỉ hữu ích khi tự host model |
+| 2.6 Ngôn ngữ | [DSPy](https://arxiv.org/abs/2310.03714), [BAML](https://www.boundaryml.com/blog/schema-aligned-parsing), [LMQL](https://arxiv.org/abs/2212.06094), [AFlow](https://arxiv.org/abs/2410.10762) | Signature vào/ra có kiểu; AFlow dùng workflow dạng code vì graph khó diễn tả điều kiện (ủng hộ dạng văn bản); ArbiterOS diễn đạt policy bằng ràng buộc thứ tự ("GENERATE phải có VERIFY trước TOOL_CALL rủi ro") — compiler kiểm được |
+
+### Ý tưởng mới
+
+1. **Pass bố trí prefix cho cache** (như linker xếp `.rodata`): cache Anthropic tính theo tools → system → messages; prefix giống hệt và còn TTL thì trúng cache kể cả khác conversation. Đặt rules/skills/memory ổn định lên đầu và giống nhau giữa các bước, task/plan để cuối; không chèn timestamp vào prefix; nhánh song song khởi động lệch nhau.
+2. **Reviewer khác họ model** (dissimilar redundancy): LLM chấm thiên vị output của chính nó ([Panickssery et al. 2024](https://arxiv.org/abs/2404.13076)) và của cùng họ model ([2026](https://www.alphaxiv.org/abs/2604.06996), (?)). Ở chế độ an toàn, "volatile" nên gồm cả khác provider, không chỉ khác session.
+3. **Rút workflow từ journal thành skill/flow con** ([Agent Workflow Memory](https://arxiv.org/abs/2409.07429)): promote RAM → ROM, không chỉ RAM → Flash.
+4. **Tối ưu flow offline từ journal** ([AFlow](https://arxiv.org/abs/2410.10762), [ADAS](https://arxiv.org/abs/2408.08435), [Microsoft Trace](https://microsoft.github.io/Trace/)) trong ngân sách cố định hoặc trên fake runner — nền cho A/B firmware.
+5. **Mức governance theo môi trường** (dev/staging/prod như ArbiterOS), ghép với cờ `opt`; sàn không bao giờ hạ.
+6. **Cache kết quả checks theo content hash** ([Dagger](https://docs.dagger.io/)): tree hash + lệnh không đổi thì dùng lại kết quả, ghi rõ vào journal.
+
+### Chỗ nghiên cứu thách thức giả định
+
+- **"Chung session thì tiết kiệm token" chưa chắc đúng.** Với prompt caching, prefix lặp lại chỉ tốn khoảng 0,1x giá input (ghi cache 1,25x với TTL 5 phút, 2x với TTL 1 giờ). Session chung phải đọc lại lịch sử ngày càng dài; lợi thật của nó là không phải khám phá lại repo. TTL mặc định 5 phút ngắn hơn thời gian chờ duyệt plan, nên resume sau duyệt có thể phải ghi lại cache cả lịch sử — implementer mới nhận plan + tóm tắt có thể rẻ hơn. Có báo cáo `--resume` tốn token bất thường (?). **Phải đo bằng các trường cache trước khi chọn mức mặc định.**
+- **Context dài làm chất lượng giảm**: [Lost in the Middle](https://arxiv.org/abs/2307.03172), [Chroma Context Rot](https://www.trychroma.com/research/context-rot) (prompt tập trung ~300 token tốt hơn rõ so với ~113k token). `-O2` có rủi ro chất lượng thật, không chỉ "dễ loãng".
+- **Ngược lại, tóm tắt bàn giao (`-Os`) làm mất quyết định ngầm** ([Cognition](https://cognition.ai/blog/dont-build-multi-agents)): bàn giao nên gồm plan + quyết định + diff, không chỉ tóm tắt.
+- **Song song tốn kém**: hệ multi-agent dùng khoảng 15x token so với chat ([Anthropic](https://www.anthropic.com/engineering/multi-agent-research-system), qua nguồn thứ cấp). Parallel writers chỉ đáng cho việc giá trị cao.
+- **Thiết bị an toàn**: chưa có chuẩn/FDA guidance riêng cho code AI sinh; thực hành ([Innolitics](https://innolitics.com/articles/ai-generated-code-fda-clearance/)) coi nghĩa vụ như code người viết, khoảng trống chính là truy vết code → yêu cầu → hazard → bằng chứng (?). Journal là audit trail nhưng chưa đủ.
