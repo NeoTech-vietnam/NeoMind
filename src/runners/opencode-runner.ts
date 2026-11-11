@@ -13,8 +13,9 @@ import { OpenCodeSessionMap } from './opencode-session-map.js';
 import { readOpenCodeProviderConfig, openCodeModels } from './opencode-config.js';
 import type { AgentRunner, AgentRunnerFactory, AvailableRunnerModel, RunnerScope, RunnerSessionRequest, RunnerTurnRequest, VerifiedRunnerSession } from './agent-runner.js';
 
-// Only the probed release; another version may resolve permissions or project configuration differently.
-const version = '1.18.25';
+// Allowed releases only: another version may resolve permissions or project configuration differently.
+// 1.18.25 was probed on 2026-11-08; 1.19.5 was allowed by the user on 2026-11-11 without that adversarial probe.
+const versions = ['1.18.25', '1.19.5'] as const;
 const object = z.record(z.string(), z.unknown());
 const expectedConfigPermission = { '*': 'deny', read: 'allow', glob: 'allow', grep: 'allow', edit: 'allow' };
 const nativeSession = z.object({ id: z.string().regex(/^ses_[A-Za-z0-9]+$/), directory: z.string(), parentID: z.string().nullish(),
@@ -78,7 +79,7 @@ async function serverFor(scope: Pick<ProcessScope, 'identity' | 'start' | 'isAct
     throw error;
   }
   try {
-    z.object({ healthy: z.literal(true), version: z.literal(version) }).parse(await server.request('GET', '/global/health'));
+    z.object({ healthy: z.literal(true), version: z.enum(versions) }).parse(await server.request('GET', '/global/health'));
     const mcp = object.parse(await server.request('GET', '/mcp'));
     if (Object.keys(mcp).length) throw new Error('OpenCode exposes MCP servers');
     const config = object.parse(await server.request('GET', '/config'));

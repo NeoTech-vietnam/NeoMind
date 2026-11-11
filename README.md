@@ -159,7 +159,7 @@ args = ["/duong/dan/neomind/dist/src/cli/main.js", "mcp", "/duong/dan/project"]
 
 ## Runner OpenCode (thử nghiệm)
 
-Runner `opencode` đã được đăng ký, model lấy từ provider OpenCode đang kết nối trên máy (`GET /api/runners/opencode`). Chỉ hỗ trợ OpenCode 1.18.25. Mỗi lượt chạy một `opencode serve` riêng trong worker scope, với cấu hình cô lập (không MCP, plugin, agent của project) và quyền `read/glob/grep` (+ `edit` cho bước sửa).
+Runner `opencode` đã được đăng ký, model lấy từ provider OpenCode đang kết nối trên máy (`GET /api/runners/opencode`). Chỉ nhận OpenCode 1.18.25 (đã probe 08/11) và 1.19.5 (người dùng cho phép 11/11, chưa probe đối kháng). Mỗi lượt chạy một `opencode serve` riêng trong worker scope, với cấu hình cô lập (không MCP, plugin, agent của project) và quyền `read/glob/grep` (+ `edit` cho bước sửa).
 
 **Giới hạn quan trọng:** quyền của OpenCode không phải ranh giới của hệ điều hành. Probe 08/11 cho thấy OpenCode ghi được file ra ngoài repo qua junction. NeoMind cho bước sửa của OpenCode chạy chỉ với bằng chứng dừng được process (`sandboxVerified: false`), và `preview` báo `openCodeWarning`. Chỉ dùng trên repo và máy bạn chấp nhận rủi ro này.
 
