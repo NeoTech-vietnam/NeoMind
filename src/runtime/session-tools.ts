@@ -103,7 +103,7 @@ export function runSummary(run: Run) {
 }
 
 /** Handlers for every tool in SESSION_TOOLS over one project. */
-export function sessionToolHandlers(runs: () => Promise<RunManager>, api: EditorApi, options: { onStart?(runId: string, call?: SessionToolCall): Promise<void> | void } = {}): Record<string, Handler> {
+export function sessionToolHandlers(runs: () => Promise<RunManager>, api: EditorApi, options: { onStart?(runId: string, call?: SessionToolCall): Promise<void> | void; approvalActor?: string } = {}): Record<string, Handler> {
   const summary = async (id: string) => runSummary(await (await runs()).get(id));
   const act = async (args: Record<string, unknown>, action: Parameters<RunManager['action']>[1]) => {
     await (await runs()).action(text(args, 'runId'), action, 'session');
@@ -149,6 +149,7 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
         steps: Object.fromEntries(Object.entries(preview.snapshot.configuration.bindings).map(([key, binding]) => [key, binding.values])),
         blockers: [...preview.runtimeDiagnostics, ...(preview.runnerPreflight?.blockers ?? [])], exceptions: preview.flowExceptions ?? [],
         rules: preview.rules.rules.map(rule => `[${rule.id}] ${rule.text}`), ...(preview.rules.warnings.length ? { ruleWarnings: preview.rules.warnings } : {}),
+        ...(Object.values(preview.snapshot.configuration.bindings).some(binding => binding.values.runner === 'opencode' || binding.fallback.some(item => item.runner === 'opencode')) ? { openCodeWarning: 'OpenCode runs with the account permissions; write scope is not enforced. Process stop must still be verified.' } : {}),
         uncommittedChanges: preview.dirtyImport.changes.length ? { count: preview.dirtyImport.changes.length, files: preview.dirtyImport.changes.slice(0, 30).map(change => `${change.change} ${change.path}`), importDirty: preview.dirtyImport.baselineHash } : null };
     },
     start: async (args, call) => {
@@ -185,7 +186,7 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
     approve: async args => {
       requireConfirmed(args, 'Approving the plan');
       const id = text(args, 'runId'), planHash = text(args, 'planHash');
-      await (await runs()).action(id, 'approve', 'session', planHash, 'local-user (Nimbalyst session)');
+      await (await runs()).action(id, 'approve', 'session', planHash, options.approvalActor ?? 'local-user (Nimbalyst session)');
       return summary(id);
     },
     request_changes: async args => { await (await runs()).revisePlan(text(args, 'runId'), text(args, 'feedback'), text(args, 'planHash')); return summary(text(args, 'runId')); },

@@ -29,6 +29,11 @@ async function executableAvailable(name: string): Promise<boolean> {
 }
 
 async function main(args: string[]): Promise<number> {
+  if (args[0] === 'mcp' && args.length === 2) {
+    const { serveMcp } = await import('./mcp.js');
+    await serveMcp(path.resolve(args[1]!));
+    return 0;
+  }
   if (args[0] === 'rules' && args.length === 2) { const { readProjectRules } = await import('../runtime/project.js'); console.log(JSON.stringify(await readProjectRules(path.resolve(args[1]!)) ?? { rules: [], warnings: [], file: 'neomind/rules.md not found' }, null, 2)); return 0; }
   if (args[0] === 'skills' && args.length === 2) { console.log(JSON.stringify({ skills: await skillCatalog(path.resolve(args[1]!)) }, null, 2)); return 0; }
   if (args[0] === 'skills' && args[1] === 'status' && args.length === 4) { const { z } = await import('zod'), { skillReferenceSchema } = await import('../domain/schema.js'); const refs = z.array(skillReferenceSchema).parse(JSON.parse(await readFile(args[3]!, 'utf8'))); console.log(JSON.stringify({ skills: await skillStatus(path.resolve(args[2]!), refs) }, null, 2)); return 0; }
@@ -288,7 +293,7 @@ async function main(args: string[]): Promise<number> {
     console.log(JSON.stringify({ simulated: false, executables, auth: 'unknown', inference: 'not_tested', delegationEnforcement: 'unknown' }, null, 2));
     return 0;
   }
-  console.error('Usage: neomind rules <project> | program create <project> <program.json> | program list <project> | program status|next <project> <programId> | program deliver <project> <programId> <phaseId> <note> | skills <project> | skills status <project> <refs.json> | profile get|skills-status|usage <project> <id> | profile version <project> <id> <n> | profile migrate <project> <id> <n> <selection.json> | profile author-draft <project> <input.json> | profile author-publish <project> <id> <revision> <reason> | assess <project> --task-file <file>|<task> | flow blocks <project> | flow get|diff|author-validate <project> <id> | flow author-draft <project> <input.json> | flow author-publish <project> <id> <revision> <reason> | editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|parallel|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | flow canvas export|import <flows-dir> <flow-id> [file.canvas] | project migrate <project> | memory configure|project-search|search|get ... | doctor capabilities');
+  console.error('Usage: neomind mcp <project> | rules <project> | program create <project> <program.json> | program list <project> | program status|next <project> <programId> | program deliver <project> <programId> <phaseId> <note> | skills <project> | skills status <project> <refs.json> | profile get|skills-status|usage <project> <id> | profile version <project> <id> <n> | profile migrate <project> <id> <n> <selection.json> | profile author-draft <project> <input.json> | profile author-publish <project> <id> <revision> <reason> | assess <project> --task-file <file>|<task> | flow blocks <project> | flow get|diff|author-validate <project> <id> | flow author-draft <project> <input.json> | flow author-publish <project> <id> <revision> <reason> | editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|parallel|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | flow canvas export|import <flows-dir> <flow-id> [file.canvas] | project migrate <project> | memory configure|project-search|search|get ... | doctor capabilities');
   return 2;
 }
 
