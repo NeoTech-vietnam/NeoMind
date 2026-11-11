@@ -179,3 +179,16 @@ Tìm trên web, chưa chạy thử. **(?)** = nguồn thứ cấp hoặc chưa k
 - **Ngược lại, tóm tắt bàn giao (`-Os`) làm mất quyết định ngầm** ([Cognition](https://cognition.ai/blog/dont-build-multi-agents)): bàn giao nên gồm plan + quyết định + diff, không chỉ tóm tắt.
 - **Song song tốn kém**: hệ multi-agent dùng khoảng 15x token so với chat ([Anthropic](https://www.anthropic.com/engineering/multi-agent-research-system), qua nguồn thứ cấp). Parallel writers chỉ đáng cho việc giá trị cao.
 - **Thiết bị an toàn**: chưa có chuẩn/FDA guidance riêng cho code AI sinh; thực hành ([Innolitics](https://innolitics.com/articles/ai-generated-code-fda-clearance/)) coi nghĩa vụ như code người viết, khoảng trống chính là truy vết code → yêu cầu → hazard → bằng chứng (?). Journal là audit trail nhưng chưa đủ.
+
+### Đọc kỹ ArbiterOS (arXiv 2510.13857v1)
+
+Đây là **bài quan điểm**, không có hệ thống chạy thật hay số liệu đánh giá; NeoMind đã hiện thực nhiều thứ bài chỉ mô tả. Những ý đáng mượn:
+
+- **Tập lệnh 20 lệnh, 5 nhóm ("core")**: Cognitive (`GENERATE`, `DECOMPOSE`, `REFLECT`), Memory (`LOAD`, `STORE`, `COMPRESS`, `FILTER`, `STRUCTURE`, `RENDER`), Execution (`TOOL_CALL`, `TOOL_BUILD`, `DELEGATE`, `RESPOND`), Metacognitive (`PREDICT_SUCCESS`, `EVALUATE_PROGRESS`, `MONITOR_RESOURCES`), Normative (`VERIFY`, `CONSTRAIN`, `FALLBACK`, `INTERRUPT`). Policy viết theo **nhóm lệnh** chứ không theo chữ trong prompt.
+- **Policy dạng YAML theo thứ tự lệnh**, ví dụ "Cognitive không được nối thẳng sang Execution, phải có Normative ở giữa". Kiểm **tĩnh** (lint graph trước khi chạy) và **động** (Arbiter Loop kiểm mọi chuyển trạng thái lúc chạy, vì nhánh `FALLBACK` chỉ biết lúc chạy). Gợi ý cho NeoMind: cho người dùng viết policy sàn riêng bằng luật theo loại khối.
+- **Golden Dataset + CI cho flow**: mỗi thay đổi flow/model/skill chạy lại một bộ task mẫu, so với baseline, chặn publish nếu kém đi; **mỗi run thất bại quan trọng thành test hồi quy vĩnh viễn**. Ba kiểu chuẩn: output chính xác, rubric, tuân thủ quy trình.
+- **Reliability Budget, ba mức kiểm chứng**: mềm (LLM chấm, có điểm tin cậy), cứng (test, validator tất định), hình thức (oracle ngoài / người duyệt). **Leo thang theo độ tin cậy**: reviewer tự tin thấp hơn ngưỡng thì chuyển kiểm cứng hơn hoặc gọi người.
+- **Ensemble verification**: k trên n reviewer khác nhau phải đồng ý.
+- **Agent Compiler tối ưu chi phí kiểm soát**: chọn mức kiểm cho từng bước lúc biên dịch, gộp `GENERATE` + `VERIFY` mức 1 vào một lượt gọi mà vẫn giữ audit trail, chạy song song các `VERIFY` độc lập.
+- **Áp dụng dần**: giai đoạn 1 chỉ bật flight recorder; giai đoạn 2 thêm `VERIFY`/`FALLBACK`; giai đoạn 3 thêm memory và metacognitive. Môi trường dev/staging/prod có độ chặt khác nhau.
+- **Cognitive Corruption**: tóm tắt/nén context gây lỗi im lặng — *bỏ sót* (quên dữ kiện) hoặc *thêm sai* (bịa khi tóm tắt). Vì vậy `COMPRESS` phải có `VERIFY` theo sau — liên quan trực tiếp tới `-Os` và bàn giao bằng tóm tắt.
