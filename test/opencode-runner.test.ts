@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { OpenCodeRunner } from '../src/runners/opencode-runner.js';
+import { OpenCodeRunner, OpenCodeRunnerFactory } from '../src/runners/opencode-runner.js';
 import type { OpenCodeServer } from '../src/adapters/opencode-server.js';
 import type { ProcessScope } from '../src/adapters/worker-scope.js';
 
@@ -62,5 +62,29 @@ test('OpenCode preserves logical session identity across turns and rejects a cha
     await assert.rejects(changed.startTurn(session, { prompt: 'test', effort: 'medium' }), /unavailable|binding changed/);
     assert.equal(starts, 3);
     assert.equal(stops, 3);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('OpenCode is found through a Windows-style Path key in a copied environment', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'neo-ocp-'));
+  try {
+    const name = process.platform === 'win32' ? 'opencode.exe' : 'opencode';
+    await writeFile(path.join(dir, name), '');
+    let command = '';
+    const server = (async (options: { command: string }) => {
+      command = options.command;
+      return { close: async () => true, request: async (_method: string, url: string) => {
+        if (url === '/global/health') return { healthy: true, version: '1.19.5' };
+        if (url === '/mcp') return {};
+        if (url === '/config') return { permission: { '*': 'deny', read: 'allow', glob: 'allow', grep: 'allow', edit: 'allow' } };
+        if (url === '/agent') return [{ name: 'build', mode: 'primary', permission: [] }];
+        if (url === '/provider') return { connected: ['fake'], all: [{ id: 'fake', models: { model: {} } }] };
+        throw new Error(`Unexpected ${url}`);
+      } } as unknown as OpenCodeServer;
+    }) as unknown as typeof OpenCodeServer.start;
+    const scopes = async (): Promise<ProcessScope> => ({ identity: { unit: 'test', controlGroup: 'test' }, start: async () => { throw new Error('unused'); }, isActive: async () => true, stop: async () => true });
+    const factory = new OpenCodeRunnerFactory({ workspace: dir, stateDir: dir, dataHome: dir, config: {}, env: { Path: dir }, scopes, server });
+    assert.deepEqual(await factory.models(), [{ runner: 'opencode', provider: 'fake', model: 'model', reasoning: ['medium'] }]);
+    assert.equal(command, path.join(dir, name));
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

@@ -28,7 +28,9 @@ function rules(write: boolean): NativeRule[] {
 function samePath(a: string, b: string) { const x = path.resolve(a), y = path.resolve(b); return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y; }
 function executable(env: NodeJS.ProcessEnv): string {
   const name = process.platform === 'win32' ? 'opencode.exe' : 'opencode';
-  const dirs = [path.join(homedir(), '.local', 'bin'), ...(env.PATH ?? '').split(path.delimiter)];
+  // A copied Windows environment keeps the original key casing (`Path` when launched from Explorer), unlike process.env.
+  const searchPath = Object.entries(env).find(([key]) => key.toUpperCase() === 'PATH')?.[1] ?? '';
+  const dirs = [path.join(homedir(), '.local', 'bin'), ...searchPath.split(path.delimiter)];
   const result = dirs.filter(Boolean).map(dir => path.join(dir, name)).find(file => path.isAbsolute(file) && existsSync(file));
   if (!result) throw new Error(`OpenCode native executable (${name}) not found`);
   return result;
