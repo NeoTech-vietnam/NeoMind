@@ -2,7 +2,9 @@ import type { Flow } from '../../src/domain/schema';
 import { stepName } from './format';
 
 export type BindingValues = { runner: string; provider: string; model: string; reasoning: string };
-export type MaterializedRun = { configuration: { flow: Flow; bindings: Record<string, { values: BindingValues }> } };
+export type MaterializedRun = { configuration: { flow: Flow; bindings: Record<string, { values: BindingValues }> };
+  // Optional: older snapshots in tests and galleries leave it out.
+  profilesByStep?: Record<string, { profileId: string; version: number; skills: { id: string; path: string; name?: string | undefined }[] }> };
 export type Plan = { goal: string; approach: string; scope: string[]; acceptanceCriteria: string[]; checks: string[]; riskChanges: string[] };
 export type Evidence = { criteria: { criterion: string; status: string }[]; findings: { id: string; criterion: string; explanation: string }[] };
 

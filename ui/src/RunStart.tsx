@@ -180,8 +180,10 @@ export function RunStart({ initialFlow, initialTask, flows, history, started }: 
             const current = values(key, binding.values), info: RunnerModels | undefined = runners.find(item => item.runner === current.runner && (current.runner !== 'opencode' || item.provider === current.provider));
             const change = (value: Partial<BindingValues>) => setOverrides(all => ({ ...all, [key]: { ...all[key], ...value } }));
             return <div role="row" key={key} className="grid grid-cols-[minmax(96px,1fr)_240px_minmax(0,136px)_minmax(0,92px)] items-center gap-x-3 border-b px-3.5 py-2 last:border-b-0">
-              <span className="flex min-w-0 items-center gap-1.5 text-[13px] font-medium"><span className="truncate">{bindingLabel(key, definition)}</span>
+              <div className="flex min-w-0 flex-col gap-0.5"><span className="flex min-w-0 items-center gap-1.5 text-[13px] font-medium"><span className="truncate">{bindingLabel(key, definition)}</span>
                 {edited(key) && <Tooltip label="Đã đổi so với mặc định của flow"><span aria-label="Đã đổi" className="size-1.5 shrink-0 rounded-full bg-foreground" /></Tooltip>}</span>
+                {/* Skills this step will receive, already resolved (step override or agent) and pinned by the preview. */}
+                {!!preview.snapshot.profilesByStep?.[key]?.skills.length && <span className="truncate text-[11.5px] text-muted-foreground" title={preview.snapshot.profilesByStep?.[key]!.skills.map(skill => `${skill.name ?? skill.id} · ${skill.path}`).join('\n')}>Skill: {preview.snapshot.profilesByStep?.[key]!.skills.map(skill => skill.name ?? skill.id).join(', ')}</span>}</div>
               <Segmented label={`Runner · ${key}`} value={current.runner} onChange={runner => setRunner(key, binding.values, runner)}
                 options={[...new Set([...runners.map(item => item.runner), current.runner])].map(id => ({ value: id, label: runnerLabel(id) }))} />
               <div className="flex min-w-0 flex-col gap-1">

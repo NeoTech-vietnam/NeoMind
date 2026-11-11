@@ -11,6 +11,9 @@ const hash = location.hash.slice(1).split(',');
 localStorage.setItem('neomind.theme', hash.includes('light') ? 'light' : 'dark');
 document.documentElement.classList.add(hash.includes('light') ? 'light-theme' : 'dark-theme');
 const drafts: Record<string, Flow> = { dev: { ...structuredClone(templates.dev), version: 3 }, parallel: { ...structuredClone(templates.parallel), version: 1 } };
+// #own: the implement step chooses its own skills instead of its agent's.
+const ownStep = drafts.dev!.definition.nodes.find(node => node.id === 'implement');
+if (hash.includes('own') && ownStep?.type === 'agent_task') ownStep.skillsOverride = [{ id: 'review', path: 'neomind/skills/review/SKILL.md', sha256: 'a'.repeat(64) }];
 const diagnostics = [{ code: 'sample', nodeId: 'repair', message: 'Chọn ít nhất một agent sửa.' }, { code: 'sample', nodeId: 'verify', message: 'Kiểm tra lại cấu hình reviewer.' }];
 setApiTransport(async (endpoint, method, body) => {
   const url = new URL(endpoint, 'http://gallery'), path = url.pathname;
@@ -19,6 +22,11 @@ setApiTransport(async (endpoint, method, body) => {
   if (path === '/api/runs') return ok({ runs: [] });
   if (path === '/api/skills' && method === 'GET') return ok({ skills: [{ id: 'review', path: 'neomind/skills/review/SKILL.md', sha256: 'a'.repeat(64), name: 'Review', description: 'Review độc lập', source: 'neomind' }] });
   if (path === '/api/skills/status' && method === 'POST') return ok({ skills: ((body as { refs?: unknown[] }).refs ?? []).map(ref => ({ ...(ref as object), status: 'ok' })) });
+  // Agents pin skills, so canvas cards show "N skill" and the inspector shows the inherited list.
+  const profileVersion = /^\/api\/profiles\/([^/]+)\/versions\/(\d+)$/.exec(path);
+  if (profileVersion) return ok({ version: { profileId: profileVersion[1], version: Number(profileVersion[2]), skills: profileVersion[1] === 'verifier'
+    ? [{ id: 'review', path: 'neomind/skills/review/SKILL.md', sha256: 'a'.repeat(64) }]
+    : [{ id: 'style-guide', path: '.claude/skills/style-guide/SKILL.md', sha256: 'b'.repeat(64) }, { id: 'release-notes', path: 'neomind/skills/release-notes/SKILL.md', sha256: 'e'.repeat(64) }] } });
   if (path === '/api/runners') return ok({ runners: [{ runner: 'codex', provider: 'openai', models: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna'], reasoning: ['low', 'medium', 'high'] }, { runner: 'claude-code', provider: 'anthropic', models: ['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-opus-5-5'], reasoning: ['low', 'medium', 'high'] }] });
   const match = /^\/api\/flows\/([^/]+)\/(draft|validate|versions|publish)$/.exec(path);
   if (match) {
@@ -46,4 +54,5 @@ click(byText('nav button, aside button', 'Flows'), () => {
   else if (hash.includes('menu')) click(() => document.querySelector('[aria-label="Quản lý flow"]'));
   if (hash.includes('insp')) click(() => document.querySelector('.react-flow__node[data-id="implement"]'));
   if (hash.includes('repair')) click(() => document.querySelector('.react-flow__node[data-id="repair"]'));
+  if (hash.includes('reviewer')) click(() => document.querySelector('.react-flow__node[data-id="verify"]'));
 });

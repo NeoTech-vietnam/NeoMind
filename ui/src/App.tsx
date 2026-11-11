@@ -14,7 +14,8 @@ import type { Binding, Flow, FlowNode } from '../../src/domain/schema';
 import { duplicateNodes } from '../../src/domain/duplicate-nodes';
 import { RunPanel } from './RunPanel';
 import { FlowVersions } from './FlowVersions';
-import { SkillOverride } from './SkillPicker';
+import { StepSkills, flowProfileKeys, nodeSkillCount, useProfileSkills } from './SkillPicker';
+import { SkillsPanel, type SkillSource } from './SkillsPanel';
 import { Dialog, SheetContent } from './components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from './components/ui/popover';
 import { Tooltip } from './components/ui/tooltip';
@@ -28,7 +29,7 @@ import { modelLabel, reasoningLabel, runnerLabel, useRunners, type RunnerModels 
 
 type Bootstrap = { projectName: string; projectRoot: string; flows: FlowMeta[]; templates: string[]; runtimeAvailable: boolean };
 type Diagnostic = { code: string; message: string; nodeId?: string };
-type GraphNode = Node<{ label: string; kind: FlowNode['type']; detail: string; agent?: string; problems?: string[] }, 'studio'>;
+type GraphNode = Node<{ label: string; kind: FlowNode['type']; detail: string; agent?: string; problems?: string[]; skills?: number }, 'studio'>;
 type Kind = FlowNode['type'];
 
 const kindInfo: Record<Kind, { label: string; icon: string; tone: string }> = {
@@ -58,7 +59,7 @@ function StudioNode({ data, selected }: NodeProps<GraphNode>) {
   return <div className={`graph-card tone-${info.tone} ${selected ? 'graph-card-selected' : ''} ${data.problems?.length ? 'graph-card-error' : ''}`}>
     {data.kind !== 'start' && <Handle type="target" position={Position.Left} />}
     <div className="graph-head"><span className="graph-icon"><KindIcon kind={data.kind} /></span><span className="graph-kind">{info.label}</span></div>
-    <strong>{data.label}</strong><div className="graph-detail">{data.detail}</div>{data.agent && <span className="graph-runner">{data.agent}</span>}{!!data.problems?.length && <div className="graph-error">{data.problems.length} lỗi cấu hình</div>}
+    <strong>{data.label}</strong><div className="graph-detail">{data.detail}</div>{data.agent && <span className="graph-runner">{data.agent}</span>}{!!data.skills && <span className="graph-skills" title="Skill bước này nhận (của agent hoặc riêng cho bước)">{data.skills} skill</span>}{!!data.problems?.length && <div className="graph-error">{data.problems.length} lỗi cấu hình</div>}
     {data.kind !== 'finish' && <Handle type="source" position={Position.Right} />}
   </div>;
 }
@@ -224,6 +225,9 @@ function Workspace({ shell }: { shell: ShellKind }) {
   const [diagnostics, setDiagnostics] = useState<Diagnostic[]>([]);
   const [message, setMessage] = useState(''), [error, setError] = useState('');
   const runners = useRunners();
+  const profileSkills = useProfileSkills(flowProfileKeys(flow));
+  const [skillFocus, setSkillFocus] = useState<{ id: string; source: SkillSource; nonce: number } | undefined>(undefined);
+  const openSkills = useCallback((id?: string, source: SkillSource = 'neomind') => { if (id) setSkillFocus({ id, source, nonce: Date.now() }); setView('skills'); }, []);
   const [createOpen, setCreateOpen] = useState(false), [createTemplate, setCreateTemplate] = useState<Template>('dev');
   const openCreate = useCallback((template: Template = 'dev') => { setCreateTemplate(template); setCreateOpen(true); }, []);
   const refresh = useCallback(async () => { const data = await api<Bootstrap>('/api/bootstrap'); setBoot(data); return data; }, []);
@@ -251,8 +255,8 @@ function Workspace({ shell }: { shell: ShellKind }) {
     setGraphNodes(previous => flow.definition.nodes.map((node, index) => ({ id: node.id, type: 'studio',
       selected: selectedIds ? selectedIds.includes(node.id) : !!previous.find(item => item.id === node.id)?.selected,
       position: flow.layout[node.id] ?? { x: 80 + (index % 4) * 255, y: 110 + Math.floor(index / 4) * 165 },
-      data: { label: node.label, kind: node.type, detail: detailFor(node), ...agentFor(node, flow), problems: diagnostics.filter(item => item.nodeId === node.id).map(item => item.message) } })));
-  }, [flow, diagnostics]);
+      data: { label: node.label, kind: node.type, detail: detailFor(node), ...agentFor(node, flow), skills: nodeSkillCount(node, profileSkills), problems: diagnostics.filter(item => item.nodeId === node.id).map(item => item.message) } })));
+  }, [flow, diagnostics, profileSkills]);
   const edges = useMemo<Edge[]>(() => (flow?.definition.edges ?? []).map((edge, index) => ({
     id: `edge-${index}`, source: edge.from, target: edge.to, label: edge.outcome === 'completed' ? '' : edge.outcome,
     type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--faint)' }, style: { stroke: 'var(--faint)', strokeWidth: 1.6, ...(edge.outcome === 'needs_changes' ? { strokeDasharray: '5 4' } : {}) },
@@ -440,6 +444,7 @@ function Workspace({ shell }: { shell: ShellKind }) {
                   <label className="check-row"><input type="checkbox" checked={active.permissions.write} onChange={e => updateNode(node => { if (node.type === 'agent_task') { node.permissions.write = e.target.checked; node.writeScopes = e.target.checked ? ['.'] : []; } })} /> <span>Được sửa file<small>Cho phép agent thay đổi file trong phạm vi bên dưới.</small></span></label>
                   {active.permissions.write && <ScopeField key={active.id} scopes={active.writeScopes} change={value => updateNode(node => { if (node.type === 'agent_task') node.writeScopes = value; })} />}
                   <label className="check-row"><input type="checkbox" checked={active.permissions.checks} onChange={e => updateNode(node => { if (node.type === 'agent_task') node.permissions.checks = e.target.checked; })} /> <span>Được đề xuất checks<small>Cho phép agent đề xuất lệnh kiểm tra.</small></span></label><p className="my-2 text-[12.5px] leading-relaxed text-muted-foreground">Checks chạy qua Codex theo chế độ sandbox của project.</p>
+                  <div className="section-rule" /><StepSkills holder={active} onOpenSkills={() => openSkills()} onChange={skills => updateNode(node => { if (node.type === 'agent_task') { if (skills) node.skillsOverride = skills; else delete node.skillsOverride; } })} />
                   <details className="advanced"><summary>Nâng cao</summary>
                     <Field label="Hướng dẫn bổ sung"><Textarea rows={2} value={active.instructionsOverride ?? ''} onChange={e => updateNode(node => { if (node.type === 'agent_task') node.instructionsOverride = e.target.value; })} placeholder="Tùy chọn" /></Field>
                     <div className="field-grid"><Field label="Phiên bản"><Input type="number" min="1" value={active.profileVersion} onChange={e => updateNode(node => { if (node.type === 'agent_task') node.profileVersion = Number(e.target.value); })} /></Field>
@@ -447,7 +452,6 @@ function Workspace({ shell }: { shell: ShellKind }) {
                     <Field label="Session group" hint="Các bước cùng session group nối tiếp một phiên agent."><Input value={active.sessionGroup} onChange={e => updateNode(node => { if (node.type === 'agent_task') node.sessionGroup = e.target.value; })} /></Field>
                     <Field label="Binding" hint="Các bước cùng binding dùng chung runner/model."><StudioSelect value={active.bindingId} onChange={e => updateNode(node => { if (node.type === 'agent_task') node.bindingId = e.target.value; })}>{Object.keys(flow.definition.bindings).map(key => <option key={key}>{key}</option>)}</StudioSelect></Field>
                     <Field label="Output contract"><Input value={active.outputContract} onChange={e => updateNode(node => { if (node.type === 'agent_task') node.outputContract = e.target.value; })} /></Field>
-                    <SkillOverride refs={active.skillsOverride} onChange={skills => updateNode(node => { if (node.type === 'agent_task') { if (skills) node.skillsOverride = skills; else delete node.skillsOverride; } })} />
                     {binding && <JsonSetting label="Model thay thế (JSON)" value={binding.fallback} apply={value => { const fallback = fallbackValues(value); mutate(next => { const target = next.definition.bindings[active.bindingId]; if (target) target.fallback = fallback; }); }} />}
                   </details>
                 </>}
@@ -466,12 +470,12 @@ function Workspace({ shell }: { shell: ShellKind }) {
                         {shared && <p className="my-2 text-[12.5px] leading-relaxed text-muted-foreground">Cấu hình này dùng chung với bước khác (binding {group.bindingId}). <button className="cursor-pointer border-0 bg-transparent p-0 font-semibold text-foreground underline" onClick={() => mutate(next => { const target = next.definition.nodes.find(item => item.id === active.id); if (target?.type !== 'review_group' || !target.reviewers[index]) return; let n = 1; while (next.definition.sessionGroups.some(item => item.id === `${active.id}-reviewer-${n}`) || Object.hasOwn(next.definition.bindings, `${active.id}-binding-${n}`)) n++; const groupId = `${active.id}-reviewer-${n}`, bindingId = `${active.id}-binding-${n}`; next.definition.bindings[bindingId] = structuredClone(reviewerBinding); next.definition.sessionGroups.push({ id: groupId, bindingId }); target.reviewers[index].sessionGroup = groupId; })}>Tách riêng cho reviewer này</button></p>}
                         <label className="check-row"><input type="checkbox" checked={reviewer.required} onChange={e => updateNode(node => { if (node.type === 'review_group' && node.reviewers[index]) node.reviewers[index].required = e.target.checked; })} /> Bắt buộc đạt</label>
                         <Field label="Phạm vi review" hint="Thư mục hoặc file, phân tách bằng dấu phẩy; . là toàn bộ project."><Input value={reviewer.scope.join(', ')} onChange={e => updateNode(node => { if (node.type === 'review_group' && node.reviewers[index]) node.reviewers[index].scope = e.target.value.split(',').map(v => v.trim()).filter(Boolean); })} /></Field>
+                        <StepSkills holder={reviewer} label={`Skills của reviewer ${index + 1}`} onChange={skills => updateNode(node => { if (node.type === 'review_group' && node.reviewers[index]) { if (skills) node.reviewers[index].skillsOverride = skills; else delete node.reviewers[index].skillsOverride; } })} />
                         <details className="advanced"><summary>Nâng cao</summary>
                           <Field label="Hướng dẫn reviewer"><Textarea rows={2} value={reviewer.instructionsOverride ?? ''} onChange={e => updateNode(node => { if (node.type === 'review_group' && node.reviewers[index]) node.reviewers[index].instructionsOverride = e.target.value; })} placeholder="Tùy chọn" /></Field>
                           <div className="field-grid"><Field label="Phiên bản"><Input type="number" min="1" value={reviewer.profileVersion} onChange={e => updateNode(node => { if (node.type === 'review_group' && node.reviewers[index]) node.reviewers[index].profileVersion = Number(e.target.value); })} /></Field>
                             <Field label="Profile"><Input value={reviewer.profileId} onChange={e => updateNode(node => { if (node.type === 'review_group' && node.reviewers[index]) node.reviewers[index].profileId = e.target.value; })} /></Field></div>
                           <Field label="Session group"><StudioSelect value={reviewer.sessionGroup} onChange={e => updateNode(node => { if (node.type === 'review_group' && node.reviewers[index]) node.reviewers[index].sessionGroup = e.target.value; })}>{flow.definition.sessionGroups.map(g => <option key={g.id} value={g.id}>{g.id}</option>)}</StudioSelect></Field>
-                          <SkillOverride refs={reviewer.skillsOverride} onChange={skills => updateNode(node => { if (node.type === 'review_group' && node.reviewers[index]) { if (skills) node.reviewers[index].skillsOverride = skills; else delete node.reviewers[index].skillsOverride; } })} />
                           <Field label="Binding" hint="Các session cùng binding dùng chung runner/model."><StudioSelect value={group.bindingId} onChange={e => mutate(next => { const target = next.definition.sessionGroups.find(item => item.id === reviewer.sessionGroup); if (target) target.bindingId = e.target.value; })}>{Object.keys(flow.definition.bindings).map(key => <option key={key} value={key}>{key}</option>)}</StudioSelect></Field>
                           <JsonSetting label="Model thay thế (JSON)" value={reviewerBinding.fallback} apply={value => { const fallback = fallbackValues(value); mutate(next => { const target = next.definition.bindings[group.bindingId]; if (target) target.fallback = fallback; }); }} /></details></>;
                     })()}</div>)}
@@ -490,7 +494,7 @@ function Workspace({ shell }: { shell: ShellKind }) {
                   node.sessionGroup = group.id; node.bindingId = group.bindingId; node.profileId ??= 'implementer'; node.profileVersion ??= 1;
                 })}><option value="">Không có agent (chỉ gộp khi không conflict)</option>{flow.definition.sessionGroups.map(g => <option key={g.id} value={g.id}>{g.id}</option>)}</StudioSelect></Field>}
                 {active.type === 'integration' && <Field label="Phạm vi tích hợp"><Input value={active.writeScopes.join(', ')} onChange={e => updateNode(node => { if (node.type === 'integration') node.writeScopes = e.target.value.split(',').map(v => v.trim()).filter(Boolean); })} /></Field>}
-                {active.type === 'integration' && <details className="advanced"><summary>Nâng cao</summary><SkillOverride refs={active.skillsOverride} onChange={skills => updateNode(node => { if (node.type === 'integration') { if (skills) node.skillsOverride = skills; else delete node.skillsOverride; } })} /></details>}
+                {active.type === 'integration' && active.profileId && <><div className="section-rule" /><StepSkills holder={active} label="Skills khi xử lý conflict/repair" onOpenSkills={() => openSkills()} onChange={skills => updateNode(node => { if (node.type === 'integration') { if (skills) node.skillsOverride = skills; else delete node.skillsOverride; } })} /></>}
                 {active.type === 'condition' && <><Field label="Trường dữ liệu"><Input value={active.field} onChange={e => updateNode(node => { if (node.type === 'condition') node.field = e.target.value; })} /></Field><Field label="Toán tử"><StudioSelect value={active.operator} onChange={e => updateNode(node => { if (node.type === 'condition') node.operator = e.target.value as typeof node.operator; })}>{['eq', 'ne', 'in', 'exists', 'all', 'any'].map(v => <option key={v}>{v}</option>)}</StudioSelect></Field><details className="advanced"><summary>Nâng cao</summary><JsonSetting label="Giá trị điều kiện (JSON)" value={active.value ?? null} apply={value => updateNode(node => { if (node.type === 'condition') node.value = value as Exclude<typeof node.value, undefined>; })} /></details><p className="my-2 text-[12.5px] leading-relaxed text-muted-foreground">Trường: result, checks.passed, checks.results, review.accepted, repair.rounds hoặc node.ID.status/outcome.</p></>}
                 <div className="section-rule" /><button className="cursor-pointer border-0 bg-transparent p-0 text-[13px] font-semibold text-danger" onClick={() => void removeNode()}>⌫ &nbsp; Xóa bước này</button></div> : selectedEdge !== null && flow.definition.edges[selectedEdge] ? <div className="inspector-scroll"><div className="connection-summary">{flow.definition.edges[selectedEdge]!.from} <span>→</span> {flow.definition.edges[selectedEdge]!.to}</div><Field label="Điều kiện chuyển bước"><StudioSelect value={flow.definition.edges[selectedEdge]!.outcome} onChange={e => mutate(next => { const edge = next.definition.edges[selectedEdge]; if (edge) edge.outcome = e.target.value as typeof edge.outcome; })}>{outcomes.map(value => <option key={value}>{value}</option>)}</StudioSelect></Field><button className="cursor-pointer border-0 bg-transparent p-0 text-[13px] font-semibold text-danger" onClick={() => void removeEdge(selectedEdge)}>⌫ &nbsp; Xóa kết nối</button></div> : <div className="inspector-scroll"><div className="inspector-section">Cài đặt flow</div>
                 <Field label="Mô tả"><Textarea rows={3} value={flow.description} onChange={e => mutate(next => { next.description = e.target.value; })} /></Field>
@@ -510,7 +514,7 @@ function Workspace({ shell }: { shell: ShellKind }) {
     <div className={view === 'runs' ? 'flex h-full flex-col' : view === 'flows' && flow ? 'studio-page' : shell === 'panel' ? 'px-5 py-4' : 'px-7 py-5'}>
       {error && <Callout tone="danger" icon={<CircleAlert />} className={cn('mb-3', view === 'runs' && 'mx-6 mt-3')}><div className="flex items-start"><span className="flex-1">{error}</span>{dismiss(() => setError(''))}</div></Callout>}
       {message && <Callout tone="success" icon={<CircleCheck />} className={cn('mb-3', view === 'runs' && 'mx-6 mt-3')}><div className="flex items-start"><span className="flex-1">{message}</span>{dismiss(() => setMessage(''))}</div></Callout>}
-      {view === 'memory' ? <MemoryPanel /> : view === 'profiles' ? <ProfilePanel /> : view === 'runs' ? <div className="min-h-0 flex-1"><RunPanel {...(flow ? { flowId: flow.flowId } : {})} flows={flows} /></div>
+      {view === 'memory' ? <MemoryPanel /> : view === 'profiles' ? <ProfilePanel onOpenSkill={openSkills} /> : view === 'skills' ? <SkillsPanel focus={skillFocus} /> : view === 'runs' ? <div className="min-h-0 flex-1"><RunPanel {...(flow ? { flowId: flow.flowId } : {})} flows={flows} /></div>
         : !flow ? (boot && !hasFlows ? <NoFlows onPick={openCreate} /> : null) : <>
         <div className="studio-header"><div className="studio-heading"><div className="studio-title"><h1>{flow.name}</h1>{latestAuthor === 'ai' && <Tag>AI</Tag>}<span className="studio-draft">Bản nháp{dirty ? ' · chưa lưu' : ''}</span></div><p>dựa trên {flow.version ? `v${flow.version}` : 'bản mới'} · {flow.definition.nodes.length} bước · {flow.definition.edges.length} kết nối</p></div>
           <div className="studio-actions"><Tooltip label="Hoàn tác"><Button variant="ghost" size="icon" aria-label="Hoàn tác" disabled={!past.length} onClick={undo}><Undo2 /></Button></Tooltip><Tooltip label="Làm lại"><Button variant="ghost" size="icon" aria-label="Làm lại" disabled={!future.length} onClick={redo}><Redo2 /></Button></Tooltip>

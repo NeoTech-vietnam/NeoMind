@@ -1,4 +1,4 @@
-/** Profiles and Memory gallery: all API responses are in-memory fixtures. */
+/** Agents (profiles), Skills and Memory gallery: all API responses are in-memory fixtures. */
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import '../app.css';
@@ -7,7 +7,7 @@ import { setApiTransport } from '../api';
 import { templates } from '../../../src/domain/templates';
 import type { Profile } from '../../../src/domain/schema';
 
-const hash = location.hash.slice(1).split(','), isMemory = location.pathname.includes('memory');
+const hash = location.hash.slice(1).split(','), isMemory = location.pathname.includes('memory'), isSkills = location.pathname.includes('skills');
 localStorage.setItem('neomind.theme', hash.includes('light') ? 'light' : 'dark');
 document.documentElement.classList.add(hash.includes('light') ? 'light-theme' : 'dark-theme');
 const makeProfile = (profileId: string, name: string, write: boolean): Profile => ({ schemaVersion: 1, profileId, name, version: 1, instructions: 'Đọc yêu cầu và cấu trúc project.\n\nThực hiện thay đổi nhỏ, có thể kiểm chứng.\nGiải thích các quyết định quan trọng.', skills: [], requestedPermissions: { read: true, write, checks: true, gitCommit: false }, outputDefaults: {} });
@@ -27,6 +27,32 @@ const records: { revision: string; body: string; header: { id: string; type: str
 ];
 const selection = { retrievalMode: 'lexical', scopes: [], tags: [], requireTaskMatch: false, inferTaskPaths: false, maxRecords: 30, maxBodyBytes: 16000 };
 const proposal = { proposalId: 'lesson-1', record: { id: 'guard-input', type: 'lesson', scope: 'src/', tags: ['validation'], body: 'Kiểm tra dữ liệu đầu vào trước khi tính toán.', sources: ['src/parser.ts'] } };
+type GallerySkill = { id: string; source: 'neomind' | 'claude'; name: string; description: string; body: string; files: Record<string, string>; sha256: string };
+const skillLibrary: GallerySkill[] = [
+  { id: 'review', source: 'neomind', name: 'Review', description: 'Review độc lập có bằng chứng', body: '# Checklist review\n\n- Thay đổi đúng yêu cầu và kế hoạch đã duyệt\n- Có test cho hành vi mới\n- Trích dẫn file và dòng làm bằng chứng\n', files: { 'reference.md': '# Tham khảo\n\nCác lỗi thường gặp khi review.\n' }, sha256: 'c'.repeat(64) },
+  { id: 'release-notes', source: 'neomind', name: 'Release notes', description: 'Viết ghi chú phát hành ngắn', body: '# Ghi chú phát hành\n\nMỗi thay đổi một dòng, bắt đầu bằng động từ.\n', files: {}, sha256: 'e'.repeat(64) },
+  { id: 'style-guide', source: 'claude', name: 'Style guide', description: 'Quy tắc code', body: 'Dùng TypeScript strict.\n', files: {}, sha256: 'b'.repeat(64) },
+];
+const skillContent = (skill: GallerySkill) => `---\nname: ${skill.name}\ndescription: ${skill.description}\n---\n\n${skill.body}`;
+const skillPathOf = (skill: GallerySkill) => `${skill.source === 'claude' ? '.claude' : 'neomind'}/skills/${skill.id}/SKILL.md`;
+const skillUsageOf = (skill: GallerySkill) => skill.id === 'review' ? { sha256: skill.sha256,
+  profiles: [{ profileId: 'ts-strict', name: 'Implementer · TypeScript strict', revision: 'd'.repeat(64), draft: { sha256: hash.includes('stale') ? 'a'.repeat(64) : skill.sha256, stale: hash.includes('stale') }, latest: { version: 2, sha256: 'a'.repeat(64), stale: true } }],
+  flows: [{ flowId: 'dev', name: 'Dev', revision: 'd'.repeat(64), draft: [{ nodeId: 'verify/independent-reviewer', label: 'Review · independent-reviewer', sha256: 'a'.repeat(64), stale: hash.includes('stale') }], published: [{ nodeId: 'verify/independent-reviewer', label: 'Review · independent-reviewer', sha256: 'a'.repeat(64), stale: true }], publishedVersion: 3 }] }
+  : { sha256: skill.sha256, profiles: [], flows: [] };
+const skillDetail = (skill: GallerySkill) => {
+  const files = Object.keys(skill.files).map(file => `neomind/skills/${skill.id}/${file}`);
+  return { id: skill.id, path: skillPathOf(skill), source: skill.source, editable: skill.source === 'neomind', sha256: skill.sha256, content: skillContent(skill), name: skill.name, description: skill.description, body: skill.body, frontmatter: {},
+    files: Object.keys(skill.files), prompt: `Skill ${skill.name} (${skill.id}):\n${skillContent(skill)}${files.length ? `\nCompanion files (read only if needed and permitted): ${files.join(', ')}` : ''}` };
+};
+const readOnly = { read: true, write: false, checks: true, gitCommit: false };
+const agentTemplates = [
+  { id: 'implementer', label: 'Implementer', description: 'Lập kế hoạch ngắn rồi sửa code trong phạm vi được duyệt.', reviewer: false, suggestedSkills: [], instructions: '', requestedPermissions: { read: true, write: true, checks: true, gitCommit: false } },
+  { id: 'planner', label: 'Planner', description: 'Đọc code và đề xuất kế hoạch có tiêu chí nghiệm thu; không sửa file.', reviewer: false, suggestedSkills: [], instructions: '', requestedPermissions: readOnly },
+  { id: 'reviewer', label: 'Reviewer độc lập', description: 'Đánh giá kết quả so với yêu cầu và kế hoạch, có bằng chứng.', reviewer: true, suggestedSkills: ['review-checklist'], instructions: '', requestedPermissions: readOnly },
+  { id: 'ui-reviewer', label: 'Reviewer UI', description: 'Review giao diện: trạng thái, khả năng truy cập, sáng/tối, màn hẹp.', reviewer: true, suggestedSkills: ['review-checklist', 'ui-review'], instructions: '', requestedPermissions: readOnly },
+  { id: 'security-reviewer', label: 'Reviewer bảo mật', description: 'Tìm lỗ hổng: input không tin cậy, đường dẫn, quyền, bí mật.', reviewer: true, suggestedSkills: ['review-checklist', 'security-review'], instructions: '', requestedPermissions: readOnly },
+  { id: 'research', label: 'Research (chỉ đọc)', description: 'Tìm hiểu và viết báo cáo; không sửa file, không chạy checks.', reviewer: true, suggestedSkills: [], instructions: '', requestedPermissions: { read: true, write: false, checks: false, gitCommit: false } },
+];
 let proposalVersion = 1, proposalStatus: 'pending' | 'promoted' | 'rejected' = 'pending';
 setApiTransport(async (endpoint, method, body) => {
   const url = new URL(endpoint, 'http://gallery'), path = url.pathname, input = body as Record<string, unknown> | undefined;
@@ -36,6 +62,28 @@ setApiTransport(async (endpoint, method, body) => {
   if (path === '/api/skills' && method === 'GET') return ok({ skills: catalog });
   if (path === '/api/skills/status' && method === 'POST') return ok({ skills: (input?.refs as { id: string; path: string; sha256: string }[] ?? []).map(ref => { const found = catalog.find(item => item.path === ref.path); return found ? { ...ref, status: found.sha256 === ref.sha256 ? 'ok' : 'changed', currentSha256: found.sha256 } : { ...ref, status: 'missing' }; }) });
   if (path === '/api/flows/dev/draft') return ok({ draft: galleryFlow, revision: 'd'.repeat(64) });
+  if (path === '/api/skill-library') return ok({ skills: skillLibrary.map(skill => { const usage = skillUsageOf(skill); return { id: skill.id, path: skillPathOf(skill), sha256: skill.sha256, name: skill.name, description: skill.description, source: skill.source, editable: skill.source === 'neomind', used: usage.profiles.length + usage.flows.length, stale: hash.includes('stale') && skill.id === 'review' ? 2 : 0 }; }), templates: ['empty', 'review-checklist'] });
+  if (path === '/api/skills' && method === 'POST') { const skill: GallerySkill = { id: String(input?.id), source: 'neomind', name: String(input?.name), description: String(input?.description ?? ''), body: '# Khi nào dùng\n\n# Cách làm\n', files: {}, sha256: 'f'.repeat(64) }; skillLibrary.push(skill); return ok({ skill: skillDetail(skill) }); }
+  const skillRoute = /^\/api\/skills\/([^/]+)(?:\/(usage|repin|delete|files)(?:\/(.+))?)?$/.exec(path);
+  if (skillRoute && skillRoute[1] !== 'status') {
+    const skill = skillLibrary.find(item => item.id === decodeURIComponent(skillRoute[1]!) && item.source === (url.searchParams.get('source') === 'claude' ? 'claude' : 'neomind'));
+    if (!skill) return { status: 404, body: { error: 'Không có skill' } };
+    if (!skillRoute[2] && method === 'PUT') { Object.assign(skill, { name: input?.name ?? skill.name, description: input?.description ?? skill.description, body: input?.body ?? skill.body }); return ok({ skill: skillDetail(skill), usage: skillUsageOf(skill) }); }
+    if (!skillRoute[2]) return ok(skillDetail(skill));
+    if (skillRoute[2] === 'usage') return ok(skillUsageOf(skill));
+    if (skillRoute[2] === 'repin') return ok({ sha256: skill.sha256, profiles: [{ profileId: 'ts-strict' }], flows: [{ flowId: 'dev', changed: 1 }] });
+    if (skillRoute[2] === 'delete') { skillLibrary.splice(skillLibrary.indexOf(skill), 1); return ok({ deleted: true }); }
+    if (skillRoute[2] === 'files' && skillRoute[3]) {
+      const file = decodeURIComponent(skillRoute[3]);
+      if (method === 'GET') return ok({ path: file, content: skill.files[file] ?? '', sha256: 'a'.repeat(64) });
+      if (method === 'DELETE') delete skill.files[file]; else skill.files[file] = String(input?.content ?? '');
+      return ok({ path: file, sha256: 'b'.repeat(64) });
+    }
+  }
+  if (path === '/api/profile-templates') return ok({ templates: agentTemplates });
+  if (path === '/api/profiles/from-template') { const id = String(input?.id), name = String(input?.name); drafts[id] = makeProfile(id, name, input?.template === 'implementer'); metadata.push({ profileId: id, name, archived: false }); return ok({ draft: drafts[id], revision: 'e'.repeat(64) }); }
+  const removal = /^\/api\/profiles\/([^/]+)\/(remove|set-archived)$/.exec(path);
+  if (removal) { const id = decodeURIComponent(removal[1]!); metadata = removal[2] === 'remove' ? metadata.filter(item => item.profileId !== id) : metadata.map(item => item.profileId === id ? { ...item, archived: true } : item); return ok({}); }
   if (path === '/api/profiles' && method === 'GET') return ok({ profiles: metadata, builtins });
   if (path === '/api/profiles' && method === 'POST') { const id = String(input?.id), name = String(input?.name), template = builtins.find(item => item.profileId === input?.template) ?? builtins[0]!; drafts[id] = { ...structuredClone(template), profileId: id, name }; metadata.push({ profileId: id, name, archived: false }); return ok({ draft: drafts[id], revision: 'e'.repeat(64) }); }
   const savedProfile = /^\/api\/profiles\/([^/]+)\/versions\/(\d+)$/.exec(path);
@@ -66,15 +114,32 @@ setApiTransport(async (endpoint, method, body) => {
   return { status: 404, body: { error: `Gallery has no ${method} ${path}` } };
 });
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App shell={hash.includes('panel') ? 'panel' : 'web'} /></React.StrictMode>);
-const click = (find: () => Element | undefined | null, next?: () => void, tries = 80) => { const item = find(); if (item) { if (item.getAttribute('role') === 'tab') item.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 })); else (item as HTMLElement).click(); next?.(); } else if (tries) setTimeout(() => click(find, next, tries - 1), 100); };
+const click = (find: () => Element | undefined | null, next?: () => void, tries = 80) => { const item = find(); if (item) { if (item.getAttribute('role') === 'tab') item.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 })); else if (item.getAttribute('aria-label') === 'Quản lý agent') item.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' })); else (item as HTMLElement).click(); next?.(); } else if (tries) setTimeout(() => click(find, next, tries - 1), 100); };
 const byText = (selector: string, text: string) => () => [...document.querySelectorAll(selector)].find(item => item.textContent?.includes(text));
-click(byText('nav button, aside button', isMemory ? 'Memory' : 'Profiles'), () => {
-  if (hash.includes('create')) click(byText('button', 'Tạo profile'));
+const tab = (text: string) => () => [...document.querySelectorAll('[role="tab"]')].find(item => item.textContent?.includes(text));
+if (isSkills) click(byText('nav button, aside button', 'Skills'), () => {
+  if (hash.includes('create')) click(byText('button', 'Skill mới'));
+  if (hash.includes('claude')) click(byText('.profiles-list button', 'Style guide'));
+  if (hash.includes('files')) click(tab('File phụ'), () => click(byText('.profiles-tab button', 'reference.md')));
+  if (hash.includes('usage')) click(tab('Nơi dùng'));
+  if (hash.includes('prompt')) click(byText('button', 'Xem đoạn chèn vào prompt'));
+  if (hash.includes('delete')) click(() => document.querySelector('button[aria-label="Xóa skill"]'));
+});
+else click(byText('nav button, aside button', isMemory ? 'Memory' : 'Agents'), () => {
+
+  if (hash.includes('create')) click(byText('button', 'Agent mới'));
+  if (hash.includes('remove')) click(() => document.querySelector('[aria-label="Quản lý agent"]'), () => click(byText('[role="menuitem"]', 'Xóa agent')));
+  if (hash.includes('saved')) click(() => document.querySelector('textarea[aria-label="Hướng dẫn"]'), () => {
+    const el = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Hướng dẫn"]');
+    if (el) { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(el, `${el.value}\nĐã sửa.`); el.dispatchEvent(new Event('input', { bubbles: true })); }
+    setTimeout(() => click(() => [...document.querySelectorAll<HTMLButtonElement>('.profiles-detail-header button')].find(item => item.textContent === 'Lưu' && !item.disabled)), 300);
+  });
+
   if (hash.includes('detail')) click(() => document.querySelector('.memory-record'));
   if (hash.includes('policy')) click(byText('button', 'Chọn memory cho run'));
-  if (hash.includes('skills')) click(byText('button', 'Skills'));
-  if (hash.includes('perm')) click(byText('button', 'Quyền'));
-  if (hash.includes('usage')) click(byText('button', 'Được dùng ở'));
+  if (hash.includes('skills')) click(tab('Skills'));
+  if (hash.includes('perm')) click(tab('Quyền'));
+  if (hash.includes('usage')) click(tab('Được dùng ở'));
   if (hash.includes('migrate')) click(byText('button', 'Chuyển flow sang bản này'));
   if (hash.includes('edited')) click(() => document.querySelector('textarea[aria-label="Hướng dẫn"]'), () => { const el = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Hướng dẫn"]'); if (el) { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(el, `${el.value}\nThay đổi mẫu.`); el.dispatchEvent(new Event('input', { bubbles: true })); } });
 });

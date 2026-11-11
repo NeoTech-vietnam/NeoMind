@@ -3,7 +3,7 @@
  * Web: topbar + sidebar. Panel: a 40px tab bar only, because Nimbalyst already shows its own navigation around it.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Archive, Database, Moon, Play, Plus, Search, Sun, UserRound, Workflow } from 'lucide-react';
+import { Archive, BookOpen, Database, Moon, Play, Plus, Search, Sun, UserRound, Workflow } from 'lucide-react';
 import { api } from '@/api';
 import { DialogHost } from '@/dialog';
 import { Button } from '@/components/ui/button';
@@ -16,12 +16,13 @@ import { ThemeProvider, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
 export type ShellKind = 'web' | 'panel';
-export type View = 'runs' | 'flows' | 'profiles' | 'memory';
+export type View = 'runs' | 'flows' | 'profiles' | 'skills' | 'memory';
 export type FlowMeta = { flowId: string; name: string; archived: boolean };
 
 export const views: { id: View; label: string; icon: ReactNode }[] = [
   { id: 'runs', label: 'Runs', icon: <Play /> }, { id: 'flows', label: 'Flows', icon: <Workflow /> },
-  { id: 'profiles', label: 'Profiles', icon: <UserRound /> }, { id: 'memory', label: 'Memory', icon: <Database /> },
+  // 'profiles' stays the view id (and the API name); users know them as agents.
+  { id: 'profiles', label: 'Agents', icon: <UserRound /> }, { id: 'skills', label: 'Skills', icon: <BookOpen /> }, { id: 'memory', label: 'Memory', icon: <Database /> },
 ];
 
 /** Theme, portal target, tooltips and in-page dialogs: everything the screens need before they render. */

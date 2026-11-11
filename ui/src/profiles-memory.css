@@ -16,6 +16,13 @@
   .profiles-permission input:checked { background: var(--foreground); }
   .profiles-permission input:checked::before { transform: translateX(12px); background: var(--background); }
   .profiles-permission input:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  .agent-templates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .agent-template { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--background); color: var(--fg-2); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+  .agent-template:hover { background: var(--accent); }
+  .agent-template strong { color: var(--foreground); font-size: 12.5px; }
+  .agent-template small { color: var(--muted-foreground); font-size: 11px; }
+  .agent-template-selected { border-color: var(--foreground); background: var(--accent); }
+  .agent-template:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
   .profiles-skill { display: grid; grid-template-columns: 1fr 1.5fr 2fr 30px; gap: 8px; align-items: end; padding: 10px 0; border-bottom: 1px solid var(--border); }
   .memory-root { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
   .memory-root p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 12px; overflow-wrap: anywhere; }
@@ -32,5 +39,5 @@
   .memory-record { border: 0; border-top: 1px solid var(--border); background: var(--background); color: var(--fg-2); cursor: pointer; }
   .memory-record:hover { background: var(--accent); }
   .memory-record small { display: block; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
-  @media (max-width: 1000px) { .profiles-layout { grid-template-columns: 210px minmax(0,1fr); } .profiles-detail-header { flex-wrap: wrap; } .profiles-skill { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 1000px) { .profiles-layout { grid-template-columns: 210px minmax(0,1fr); } .profiles-detail-header { flex-wrap: wrap; } .profiles-skill { grid-template-columns: 1fr 1fr; } .agent-templates { grid-template-columns: 1fr; } }
 }
