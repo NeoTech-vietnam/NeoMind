@@ -236,6 +236,7 @@ export function openCodePartEvents(input: unknown, role: 'user' | 'assistant' = 
     const text = str(args.content) ?? '';
     events.push({ ...base, kind: 'edit', path: file, change: 'write', added: lineCount(text), removed: 0, diff: text.split('\n').map(line => `+${line}`).join('\n') });
   } else if (name === 'bash') events.push({ ...base, kind: 'command', command: str(args.command) ?? '', status: str(state.status) ?? 'completed' });
+  else if (name === 'StructuredOutput') { events.push({ ...base, kind: 'structured_output', text: JSON.stringify(args, null, 2) }); return events; }
   else events.push({ ...base, kind: 'tool', text: JSON.stringify(args) });
   if (state.status === 'completed') events.push({ kind: 'result', ...(id ? { id } : {}), text: str(state.output) ?? '' });
   else if (state.status === 'error') events.push({ kind: 'result', ...(id ? { id } : {}), text: str(state.error) ?? 'error', error: true });

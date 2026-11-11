@@ -33,10 +33,13 @@ test('OpenCode reports finished parts of the running turn and reads the turn bac
   let release!: () => void;
   const answered = new Promise<void>(resolve => { release = resolve; });
   const scope = (): ProcessScope => ({ identity: { unit: 'test', controlGroup: 'test' }, start: async () => { throw new Error('unused'); }, isActive: async () => true, stop: async () => true });
-  const server = (async () => ({ close: async () => true, request: async (method: string, url: string, body?: unknown) => {
+  // The live feed comes from the event stream; the stored list is only for the history reader.
+  let listener: ((event: unknown) => void) | undefined;
+  const emit = (value: Record<string, unknown>) => listener?.({ type: 'message.part.updated', properties: { part: value } });
+  const server = (async () => ({ close: async () => true, subscribe: (on: (event: unknown) => void) => { listener = on; return () => { listener = undefined; }; }, request: async (method: string, url: string, body?: unknown) => {
     if (url === '/global/health') return { healthy: true, version: '1.19.5' };
     if (url === '/mcp') return {};
-    if (url === '/config') return { permission: { '*': 'deny', read: 'allow', glob: 'allow', grep: 'allow', edit: 'allow' } };
+    if (url === '/config') return { permission: { '*': 'deny', read: 'allow', glob: 'allow', grep: 'allow', edit: 'allow', StructuredOutput: 'allow' } };
     if (url === '/agent') return [{ name: 'build', mode: 'primary', permission: [] }];
     if (url === '/provider') return { connected: ['fake'], all: [{ id: 'fake', models: { model: {} } }] };
     if (url === '/session' && method === 'POST') { const value = body as { metadata: unknown; permission: unknown }; session.metadata = value.metadata; session.permission = value.permission; return session; }
@@ -50,15 +53,19 @@ test('OpenCode reports finished parts of the running turn and reads the turn bac
         return { info: { sessionID: 'ses_ABC123', agent: 'build', model: { providerID: 'fake', modelID: 'model' } } };
       }
       stored.push({ info: { id: 'msg_u', role: 'user' }, parts: [part('prt_u', { type: 'text', text: value.parts[0]!.text })] });
+      listener?.({ type: 'message.updated', properties: { info: { id: 'msg_u', sessionID: 'ses_ABC123', role: 'user' } } });
+      emit({ ...part('prt_u', { type: 'text', text: value.parts[0]!.text, time: { start: 0, end: 0 } }), messageID: 'msg_u' });
       stored.push({ info: { id: 'msg_a', role: 'assistant' }, parts: [
         part('prt_r', { type: 'reasoning', text: 'Look first', time: { start: 1, end: 2 } }),
         part('prt_t', { type: 'tool', callID: 'c', tool: 'read', state: { status: 'completed', input: { filePath: path.join(dir, 'a.ts') }, output: 'x', title: '', metadata: {}, time: { start: 1, end: 2 } } }),
         part('prt_b', { type: 'tool', callID: 'd', tool: 'bash', state: { status: 'running', input: { command: 'ls' }, time: { start: 1 } } }),
       ] });
+      for (const item of stored.at(-1)!.parts) emit({ ...item, messageID: 'msg_a' });
       await answered;
       // The running command finishes and the answer arrives after the first activity read.
       stored.at(-1)!.parts[2] = part('prt_b', { type: 'tool', callID: 'd', tool: 'bash', state: { status: 'completed', input: { command: 'ls' }, output: 'a.ts', title: '', metadata: {}, time: { start: 1, end: 3 } } });
       stored.at(-1)!.parts.push(part('prt_m', { type: 'text', text: 'All good.', time: { start: 3, end: 4 } }));
+      for (const item of stored.at(-1)!.parts) emit({ ...item, messageID: 'msg_a' });
       return { info: { role: 'assistant', sessionID: 'ses_ABC123', providerID: 'fake', modelID: 'model' }, parts: [{ type: 'text', text: 'All good.' }] };
     }
     throw new Error(`Unexpected ${method} ${url}`);

@@ -18,7 +18,11 @@ import type { AgentRunner, AgentRunnerFactory, AvailableRunnerModel, RunnerScope
 // 1.18.25 was probed on 2026-11-08; 1.19.5 was allowed by the user on 2026-11-11 without that adversarial probe.
 const versions = ['1.18.25', '1.19.5'] as const;
 const object = z.record(z.string(), z.unknown());
-const expectedConfigPermission = { '*': 'deny', read: 'allow', glob: 'allow', grep: 'allow', edit: 'allow' };
+// StructuredOutput is how OpenCode returns a json_schema answer; with `*` denied the model can never finish and, because a
+// json_schema turn requires a tool call every step, keeps reading files until it is stopped.
+const expectedConfigPermission = { '*': 'deny', read: 'allow', glob: 'allow', grep: 'allow', edit: 'allow', StructuredOutput: 'allow' };
+/** Model steps one turn may take; a turn that keeps calling tools without answering is stopped instead of using quota. */
+export const OPENCODE_MAX_STEPS = 60;
 const nativeSession = z.object({ id: z.string().regex(/^ses_[A-Za-z0-9]+$/), directory: z.string(), parentID: z.string().nullish(),
   metadata: z.object({ neomindSession: z.string() }), permission: z.array(z.object({ permission: z.string(), pattern: z.string(), action: z.string() })) });
 type NativeRule = { permission: string; pattern: string; action: string };
@@ -28,7 +32,7 @@ const openCodeMessages = z.array(z.object({ info: z.object({ id: z.string(), rol
 const verificationText = 'NeoMind session verification.';
 
 function rules(write: boolean): NativeRule[] {
-  return ['*', 'read', 'glob', 'grep', ...(write ? ['edit'] : [])].map((permission, index) => ({ permission, pattern: '*', action: index === 0 ? 'deny' : 'allow' }));
+  return ['*', 'read', 'glob', 'grep', ...(write ? ['edit'] : []), 'StructuredOutput'].map((permission, index) => ({ permission, pattern: '*', action: index === 0 ? 'deny' : 'allow' }));
 }
 function samePath(a: string, b: string) { const x = path.resolve(a), y = path.resolve(b); return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y; }
 function executable(env: NodeJS.ProcessEnv): string {
@@ -115,7 +119,8 @@ export class OpenCodeRunner implements AgentRunner {
   private turn?: { id: string; result: Promise<TurnResult> };
   private listener?: (event: TranscriptEvent) => void;
   /** Native session of the running turn and the messages it had before the prompt, for the activity feed. */
-  private activity?: { nativeId: string; before: Set<string>; emitted: Set<string> };
+  // Built from the event stream: OpenCode 1.19.5 cannot list the messages of a session that asked for json_schema output.
+  private activity?: { nativeId: string; prompt: string; userMessages: Set<string>; emitted: Set<string>; steps: number; stop: () => void };
   constructor(scope: ProcessScope, private readonly options: Options = {}) { this.scope = new OpenCodeScope(scope); }
 
   async openSession(request: RunnerSessionRequest): Promise<VerifiedRunnerSession> {
@@ -161,7 +166,9 @@ export class OpenCodeRunner implements AgentRunner {
       const current = nativeSession.parse(await this.server.request('GET', `/session/${native.id}`));
       if (current.id !== native.id || !samePath(current.directory, session.workspace) || current.parentID || current.metadata.neomindSession !== session.sessionId || JSON.stringify(current.permission) !== JSON.stringify(wanted)) throw new Error('OpenCode session policy changed before dispatch');
       if (Object.keys(object.parse(await this.server.request('GET', '/mcp'))).length) throw new Error('OpenCode exposes MCP servers');
-      if (this.listener) this.activity = { nativeId: native.id, before: new Set((await this.messages(native.id)).map(item => item.info.id)), emitted: new Set() };
+      const activity = { nativeId: native.id, prompt: request.prompt.trim(), userMessages: new Set<string>(), emitted: new Set<string>(), steps: 0, stop: () => {} };
+      activity.stop = this.server.subscribe(event => this.onServerEvent(activity, event));
+      this.activity = activity;
       const id = randomUUID();
       const response = this.server.request('POST', `/session/${native.id}/message`, { agent: 'build', model: { providerID: session.provider, modelID: session.model }, ...(variants && Object.keys(variants).length ? { variant: request.effort } : {}),
         parts: [{ type: 'text', text: request.prompt }], ...(request.outputSchema === undefined ? {} : { format: { type: 'json_schema', schema: request.outputSchema } }) }, 24 * 60 * 60 * 1000)
@@ -192,10 +199,11 @@ export class OpenCodeRunner implements AgentRunner {
     let polled = Date.now();
     while (!done && !stopped()) {
       await new Promise(resolve => setTimeout(resolve, 50));
-      if (Date.now() - polled >= 1000) { polled = Date.now(); await this.report(); }
+      if (Date.now() - polled >= 1000) { polled = Date.now(); if ((this.activity?.steps ?? 0) > OPENCODE_MAX_STEPS) { done = true; result = { threadId: session.sessionId, turnId, status: 'failed', messages: [], error: `OpenCode stopped after ${OPENCODE_MAX_STEPS} model steps without a result` }; } }
     }
-    // Last read before the server stops, so the final message and tool results are not lost.
-    await this.report();
+    // Let the last part updates arrive before the server stops.
+    await new Promise(resolve => setTimeout(resolve, 300));
+    this.activity?.stop();
     // One server per turn: stopping it is also how an interrupted turn is cancelled.
     if (!await this.server!.close()) throw new Error('OpenCode worker stop unconfirmed');
     if (stopped()) throw new Error('Run was interrupted');
@@ -205,22 +213,20 @@ export class OpenCodeRunner implements AgentRunner {
   close(): Promise<boolean> { return this.server ? this.server.close() : this.scope.stop(); }
   observe(listener: (event: TranscriptEvent) => void): void { this.listener = listener; }
 
-  private async messages(nativeId: string) { return openCodeMessages.parse(await this.server!.request('GET', `/session/${encodeURIComponent(nativeId)}/message`)); }
   /** Forward parts of this turn's replies that reached their final form. Observation only: a failed read is skipped. */
-  private async report(): Promise<void> {
-    const activity = this.activity;
-    if (!activity || !this.listener || !this.server) return;
-    let messages: z.infer<typeof openCodeMessages>;
-    try { messages = await this.messages(activity.nativeId); } catch { return; }
-    for (const message of messages) {
-      if (activity.before.has(message.info.id) || message.info.role !== 'assistant') continue;
-      for (const part of message.parts) {
-        const id = typeof part.id === 'string' ? part.id : undefined;
-        if (!id || activity.emitted.has(id) || !openCodePartDone(part)) continue;
-        activity.emitted.add(id);
-        for (const event of openCodePartEvents(part)) this.listener(event);
-      }
-    }
+  /** Count model steps and forward this session's parts once they reached their final form. */
+  private onServerEvent(activity: NonNullable<OpenCodeRunner['activity']>, input: unknown): void {
+    const event = input && typeof input === 'object' ? input as { type?: unknown; properties?: unknown; data?: unknown } : {};
+    const body = (event.properties ?? event.data) as { info?: { id?: unknown; role?: unknown; sessionID?: unknown }; part?: Record<string, unknown> } | undefined;
+    if (event.type === 'message.updated' && body?.info?.sessionID === activity.nativeId && body.info.role === 'user' && typeof body.info.id === 'string') activity.userMessages.add(body.info.id);
+    if (event.type !== 'message.part.updated' || !body?.part || body.part.sessionID !== activity.nativeId) return;
+    const part = body.part, id = typeof part.id === 'string' ? part.id : undefined;
+    if (!id || activity.emitted.has(id) || activity.userMessages.has(String(part.messageID))) return;
+    if (part.type === 'step-start') { activity.emitted.add(id); activity.steps++; return; }
+    if (!openCodePartDone(part)) return;
+    activity.emitted.add(id);
+    if (part.type === 'text' && typeof part.text === 'string' && part.text.trim() === activity.prompt) return;
+    for (const item of openCodePartEvents(part)) this.listener?.(item);
   }
 }
 
@@ -235,6 +241,8 @@ export async function openCodeHistory(request: { sessionId: string; workspace?: 
   const server = await serverFor(await (options.scopes ?? allocateProcessScope)(), request.workspace ?? saved.workspace, options);
   let messages: z.infer<typeof openCodeMessages>;
   try { messages = openCodeMessages.parse(await server.request('GET', `/session/${encodeURIComponent(saved.sessionId)}/message`)); }
+  // OpenCode 1.19.5 rejects listing a session whose prompt asked for json_schema output (plan and review steps).
+  catch { return { events: [], note: 'OpenCode không đọc lại được session này (lỗi của OpenCode khi lượt có yêu cầu kết quả JSON); xem hoạt động NeoMind đã ghi' }; }
   finally { if (!await server.close()) throw new Error('OpenCode worker stop unconfirmed'); }
   const turns: TranscriptEvent[][] = [];
   for (const message of messages) {

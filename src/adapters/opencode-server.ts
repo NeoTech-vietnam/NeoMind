@@ -64,5 +64,29 @@ export class OpenCodeServer {
     return response.json();
   }
 
+  /**
+   * Follow the server's event stream (`GET /event`, server-sent events). Returns a function that ends the subscription.
+   * Observation only: a broken stream is dropped silently and never fails the turn.
+   */
+  subscribe(onEvent: (event: unknown) => void): () => void {
+    const controller = new AbortController();
+    void (async () => {
+      const response = await fetch(new URL('/event', this.origin), { headers: { authorization: this.authorization, accept: 'text/event-stream' }, redirect: 'error', signal: controller.signal });
+      if (!response.ok || !response.body) return;
+      const decoder = new TextDecoder();
+      let buffer = '';
+      for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+        buffer += decoder.decode(chunk, { stream: true });
+        let end: number;
+        while ((end = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, end).replace(/\r$/, ''); buffer = buffer.slice(end + 1);
+          if (!line.startsWith('data:')) continue;
+          try { onEvent(JSON.parse(line.slice(5).trim()) as unknown); } catch { /* Not JSON: ignore the event. */ }
+        }
+      }
+    })().catch(() => undefined);
+    return () => controller.abort();
+  }
+
   async close(): Promise<boolean> { const stopped = await this.scope.stop(); this.child.kill(); return stopped; }
 }

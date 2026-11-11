@@ -8,6 +8,16 @@ Runner OpenCode có `observe()`: trong lúc chờ lượt chạy, NeoMind đọc
 
 Kiểm chứng Windows: test với server OpenCode giả 8/8 (đổi định dạng, chỉ báo phần đã xong, đọc lịch sử, bỏ tin nhắn kiểm tra `noReply`); test transcript/lịch sử/session tools hiện có 18/18. Đối chiếu OpenCode 1.19.5 thật bằng tin nhắn `noReply` (không gọi model): dạng `{ info: { id, role, time.created }, parts: [{ type: 'text', text }] }` khớp. Chưa xem với một lượt OpenCode thật có gọi tool: tên và tham số tool (`filePath`, `oldString`, `newString`, `command`) lấy từ đặc tả API và chưa đối chiếu bằng run thật.
 
+## OpenCode: sửa vòng lặp ở bước plan/review — 11/11/2026
+
+Hai run Fast thật trên `leetcode-practice` (OpenCode 1.19.5, GPT-6.1 Sol) không xong bước plan: agent lặp read/glob 37–49 lượt (khoảng 1 triệu token cộng dồn) tới khi bị hủy. Nguyên nhân: lượt có `format: json_schema` thì OpenCode thêm tool `StructuredOutput` và bắt gọi tool mỗi lượt, nhưng runner đặt quyền `*: deny` nên chặn luôn tool này; model không nộp được kết quả. Sửa:
+
+- Cho phép `StructuredOutput` trong quyền cấu hình và quyền session.
+- Giới hạn `OPENCODE_MAX_STEPS = 60` lượt model mỗi bước; vượt thì bước thất bại với lý do rõ, không tiêu tiếp quota.
+- Hoạt động (đọc, tìm, sửa, lệnh, kết quả JSON) lấy từ luồng sự kiện `GET /event`, vì OpenCode 1.19.5 trả HTTP 400 khi liệt kê tin nhắn của session có yêu cầu JSON. Cùng lỗi đó khiến "Xem session gốc" không đọc lại được bước plan/review; giao diện báo rõ.
+
+Kiểm chứng Windows: test OpenCode và runner/admission 14/14. Chạy thật OpenCode 1.19.5 + `gpt-6-luna` (reasoning low) trên repo tạm, một lượt plan có json_schema: xong sau 16,5 giây, kết quả JSON đúng; sự kiện glob → read → structured_output hiện theo thời gian thực.
+
 ## Khôi phục phần 07–08/11 — 11/11/2026
 
 Source TypeScript của MCP standalone, chạy lại flow và OpenCode không được commit; bản copy mang về bị cắt ở 30 MiB nên mất `src/`, `test/`, `ui/`. Đã dựng lại từ JavaScript `tsc` biên dịch và `.d.ts` của bản build 08/11: so lại output biên dịch khớp bản gốc (khác thứ tự một khóa và comment). Nút "Chạy lại từ đầu" viết lại theo bundle UI đã minify. README phần MCP viết lại vì README gốc bị mất. `@modelcontextprotocol/sdk` nâng từ 1.29.0 lên 1.32.2 (bản vá cùng major) vì `npm audit` báo lỗ hổng ở HTTP/OAuth; `npm audit` sạch.
