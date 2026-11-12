@@ -121,6 +121,8 @@ function build(db: DatabaseSync, store: MemoryStore, hash: string): void {
 const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 /** Windows refuses to replace a file another process holds open; those errors are worth a short retry. */
 const busy = (error: unknown) => ['EPERM', 'EBUSY', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '');
+/** The cache folder or its files cannot be written: a read-only folder or medium, or SQLite unable to create the file. */
+const unwritable = (error: unknown) => busy(error) || (error as NodeJS.ErrnoException).code === 'EROFS' || [8, 14].includes((error as { errcode?: number }).errcode ?? 0);
 function removeQuietly(file: string) { try { unlinkSync(file); } catch { /* already gone or still open elsewhere */ } }
 
 export class MemoryIndex {
@@ -132,17 +134,21 @@ export class MemoryIndex {
    * the cache. If Windows keeps the old cache open in another process, this read uses the scratch file and deletes it.
    */
   static open(store: MemoryStore): MemoryIndex {
-    const file = indexFile(store.root);
-    let hash = memorySourceHash(store.root);
+    const file = indexFile(store.root), hash = memorySourceHash(store.root);
     const current = cacheDirectory(store.root, false) ? openCurrent(file, hash) : undefined;
     if (current) return new MemoryIndex(current, file, false);
-    let directory: string;
-    try { directory = cacheDirectory(store.root, true)!; }
+    try { return MemoryIndex.rebuild(store, file, hash); }
     catch (error) {
-      // A read-only memory folder still gets correct ratings and search, only without the cache.
-      if (!busy(error) && (error as NodeJS.ErrnoException).code !== 'EROFS') throw error;
-      const db = new DatabaseSync(':memory:'); build(db, store, hash); return new MemoryIndex(db, ':memory:', true);
+      // A memory folder this process cannot write still gets correct ratings and search, only without the cache.
+      if (!unwritable(error)) throw error;
+      const db = new DatabaseSync(':memory:');
+      try { build(db, store, hash); } catch (inner) { db.close(); throw inner; }
+      return new MemoryIndex(db, ':memory:', true);
     }
+  }
+
+  private static rebuild(store: MemoryStore, file: string, hash: string): MemoryIndex {
+    const directory = cacheDirectory(store.root, true)!;
     for (const name of readdirSync(directory)) {
       // Scratch files of a crashed rebuild; a recent one may belong to a rebuild still running.
       const leftover = path.join(directory, name);
@@ -199,7 +205,8 @@ export class MemoryIndex {
 /** The memory's cache after exporting ratings an older NeoMind kept only in this machine's coordination database. */
 export function openMemoryIndex(store: MemoryStore): MemoryIndex {
   const legacy = new MemoryFeedbackStore(store.coordinationDatabase);
-  try { legacy.exportLegacyFeedback(store); } finally { legacy.close(); }
+  // Without write access to the memory root the export waits for a later read; the marker is only set once it succeeded.
+  try { legacy.exportLegacyFeedback(store); } catch { /* retried on the next read */ } finally { legacy.close(); }
   return MemoryIndex.open(store);
 }
 
