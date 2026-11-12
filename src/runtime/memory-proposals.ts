@@ -90,8 +90,8 @@ export function proposeFromRun(input: { directory: string; runId: string; task: 
   };
   // Every body is a title line plus a few short lines (at most `maxLessonBodyLength`); evidence stays in the run, cited by the sources.
   for (const revision of input.report.planRevisions.slice(0, 3)) add('plan_revision', 'decision',
-    `Khi lập kế hoạch, người dùng yêu cầu: ${clipText(revision.feedback, 600)}\n(Task gốc: ${task})`, ['plan-feedback'],
-    [`run:${input.runId}/plan:${revision.planId}@${revision.version}`], 'Bạn đã yêu cầu sửa kế hoạch trong run này; ghi lại nếu yêu cầu đúng cho các run sau.');
+    `When planning, the user asked: ${clipText(revision.feedback, 600)}\n(Original task: ${task})`, ['plan-feedback'],
+    [`run:${input.runId}/plan:${revision.planId}@${revision.version}`], 'You asked for plan changes in this run; keep this if the request holds for later runs.');
   const rules = new Map((input.rules ?? []).map(rule => [ruleCriterion(rule), rule]));
   const violated = new Set<string>();
   for (const event of input.events) {
@@ -102,8 +102,8 @@ export function proposeFromRun(input: { directory: string; runId: string; task: 
       if (!rule || violated.has(rule.id)) continue;
       violated.add(rule.id);
       const { files } = referenceLabels(finding.references);
-      add('review_rule', 'lesson', `Tuân thủ rule ${rule.id}: ${clipText(rule.text, 200)}\nVấn đề reviewer thấy: ${clipText(finding.explanation, 400)}${files.length ? `\nFile: ${files.join(', ')}` : ''}`,
-        ['rule', 'review'], [`run:${input.runId}/event:${event.sequence}`], `Reviewer thấy rule ${rule.id} bị vi phạm; ghi lại để agent sau tránh lặp lại.`);
+      add('review_rule', 'lesson', `Follow rule ${rule.id}: ${clipText(rule.text, 200)}\nProblem the reviewer found: ${clipText(finding.explanation, 400)}${files.length ? `\nFiles: ${files.join(', ')}` : ''}`,
+        ['rule', 'review'], [`run:${input.runId}/event:${event.sequence}`], `The reviewer found rule ${rule.id} violated; keep this so later agents avoid repeating it.`);
     }
   }
   const reasons = new Set<string>();
@@ -112,8 +112,8 @@ export function proposeFromRun(input: { directory: string; runId: string; task: 
     const state = event.payload as { phase?: string; reason?: string };
     if (state.phase !== 'blocked' || !state.reason?.trim() || reasons.has(state.reason) || reasons.size >= 2) continue;
     reasons.add(state.reason);
-    add('run_stopped', 'lesson', `Run bị chặn: ${clipText(state.reason, 500)}\n(Task gốc: ${task})`, ['blocked'],
-      [`run:${input.runId}/event:${event.sequence}`], 'Run bị chặn ở bước này; ghi lại nếu nguyên nhân sẽ lặp lại ở run khác.');
+    add('run_stopped', 'lesson', `Run blocked: ${clipText(state.reason, 500)}\n(Original task: ${task})`, ['blocked'],
+      [`run:${input.runId}/event:${event.sequence}`], 'The run was blocked at this step; keep this if the cause will recur in other runs.');
   }
   return created;
 }

@@ -16,7 +16,7 @@ export function referenceLabels(references: Reference[] = []): { files: string[]
   const files = new Set<string>(), other = new Set<string>();
   for (const ref of references) {
     if (ref.kind === 'source' && ref.path) files.add(ref.line ? `${ref.path}:${ref.line}` : ref.path);
-    else if (ref.kind === 'artifact' && ref.nodeId) other.add(`kết quả bước ${ref.nodeId}`);
+    else if (ref.kind === 'artifact' && ref.nodeId) other.add(`output of step ${ref.nodeId}`);
     else if (ref.kind === 'check' && ref.command) other.add(`check \`${clipText(ref.command, 80)}\``);
   }
   return { files: [...files].slice(0, 4), other: [...other].slice(0, 3) };
@@ -28,15 +28,63 @@ export function referenceLabels(references: Reference[] = []): { files: string[]
  */
 export function repairLessonBody(input: { runId: string; nodeId?: string | undefined; finding: LessonFinding }): string {
   const { files, other } = referenceLabels(input.finding.references);
-  const lines = [`Giữ đúng tiêu chí review: ${clipText(input.finding.criterion, 200)}`, `Vấn đề: ${clipText(input.finding.explanation, maxExplanation)}`,
-    `Đã sửa trong run ${input.runId}${input.nodeId ? ` (bước ${input.nodeId})` : ''}.${files.length ? ` File: ${files.join(', ')}` : other.length ? ` Tham chiếu: ${other.join(', ')}` : ''}`];
-  const body = lines.join('\n');
-  return body.length > maxLessonBodyLength ? `${body.slice(0, maxLessonBodyLength - 1)}…` : body;
+  const lines = [`Keep review criterion: ${clipText(input.finding.criterion, 200)}`, `Problem: ${clipText(input.finding.explanation, maxExplanation)}`,
+    `Fixed in run ${input.runId}${input.nodeId ? ` (step ${input.nodeId})` : ''}.${files.length ? ` Files: ${files.join(', ')}` : other.length ? ` References: ${other.join(', ')}` : ''}`];
+  return clipLesson(lines.join('\n'));
 }
+
+const clipLesson = (body: string) => body.length > maxLessonBodyLength ? `${body.slice(0, maxLessonBodyLength - 1)}…` : body;
 
 /** The lesson when the reviewer output naming a finding cannot be found (older journals): still short, still pointing at the run. */
 export function fallbackRepairLessonBody(runId: string, findingId: string): string {
-  return `Review yêu cầu sửa finding ${clipText(findingId, 80)}\nĐã sửa trong run ${runId}; xem bằng chứng trong run nguồn trước khi duyệt.`;
+  return `Review asked to fix finding ${clipText(findingId, 80)}\nFixed in run ${runId}; check the evidence in the source run before approving.`;
+}
+
+type LineRule = [RegExp, (...groups: string[]) => string];
+const fromVietnameseReferences = (text: string) => text.replace(/kết quả bước /gu, 'output of step ');
+/**
+ * Bodies NeoMind generated in Vietnamese before stored memory moved to English: each template is its lines in order and
+ * the first `required` must be present. Only the template words change; the criterion, explanation, file list, rule
+ * text and the user's own feedback are kept as written.
+ */
+const vietnameseTemplates: { required: number; lines: LineRule[] }[] = [
+  { required: 3, lines: [
+    [/^Giữ đúng tiêu chí review: (.*)$/u, criterion => `Keep review criterion: ${criterion}`],
+    [/^Vấn đề: (.*)$/u, explanation => `Problem: ${explanation}`],
+    [/^Đã sửa trong run ([a-z0-9-]+)( \(bước [^)]*\))?\.(?: File: (.*)| Tham chiếu: (.*))?$/u, (runId, step, files, other) =>
+      `Fixed in run ${runId}${step ? step.replace(' (bước ', ' (step ') : ''}.${files ? ` Files: ${files}` : other ? ` References: ${fromVietnameseReferences(other)}` : ''}`]] },
+  { required: 2, lines: [
+    [/^Review yêu cầu sửa finding (.*)$/u, findingId => `Review asked to fix finding ${findingId}`],
+    [/^Đã sửa trong run ([a-z0-9-]+); xem bằng chứng trong run nguồn trước khi duyệt\.$/u, runId => `Fixed in run ${runId}; check the evidence in the source run before approving.`]] },
+  { required: 2, lines: [
+    [/^Khi lập kế hoạch, người dùng yêu cầu: (.*)$/u, feedback => `When planning, the user asked: ${feedback}`],
+    [/^\(Task gốc: (.*)\)$/u, task => `(Original task: ${task})`]] },
+  { required: 2, lines: [
+    [/^Tuân thủ rule (\S+): (.*)$/u, (ruleId, text) => `Follow rule ${ruleId}: ${text}`],
+    [/^Vấn đề reviewer thấy: (.*)$/u, explanation => `Problem the reviewer found: ${explanation}`],
+    [/^File: (.*)$/u, files => `Files: ${files}`]] },
+  { required: 2, lines: [
+    [/^Run bị chặn: (.*)$/u, reason => `Run blocked: ${reason}`],
+    [/^\(Task gốc: (.*)\)$/u, task => `(Original task: ${task})`]] },
+];
+
+/**
+ * The English body for a lesson or proposal NeoMind wrote from a Vietnamese template (repair lessons, plan feedback,
+ * violated rules, blocked runs). Undefined unless every line fits one template, so a body a person wrote is never touched.
+ */
+export function englishTemplateBody(body: string): string | undefined {
+  const lines = body.split('\n');
+  for (const template of vietnameseTemplates) {
+    if (lines.length < template.required || lines.length > template.lines.length) continue;
+    const translated: string[] = [];
+    for (const [index, line] of lines.entries()) {
+      const [pattern, rewrite] = template.lines[index]!, match = pattern.exec(line);
+      if (!match) break;
+      translated.push(rewrite(...match.slice(1).map(group => group ?? '')));
+    }
+    if (translated.length === lines.length) return clipLesson(translated.join('\n'));
+  }
+  return undefined;
 }
 
 const legacyPattern = /^Review finding corrected in run ([a-z0-9-]+): (\S+)\n\nOriginal review evidence:\n([^\n]*)/;

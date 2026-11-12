@@ -10,7 +10,7 @@ import { RunnerRegistry } from '../src/runners/registry.js';
 import { compactLegacyLesson } from '../src/runtime/memory-proposals.js';
 import { createEditorApi } from '../src/ui-server/server.js';
 import { readProject } from '../src/runtime/project.js';
-import { compactLegacyLessonBody, maxLessonBodyLength, memoryTitle, repairLessonBody, sourceRunIds, splitBodyParts } from '../src/memory/lesson-body.js';
+import { compactLegacyLessonBody, englishTemplateBody, maxLessonBodyLength, memoryTitle, repairLessonBody, sourceRunIds, splitBodyParts } from '../src/memory/lesson-body.js';
 
 const quote = 'Hint: Thử lần theo hai chỉ số `i` và `j` ngay ở lần lặp đầu tiên với mảng một phần tử. '.repeat(3);
 const artifact = (text: string) => ({ kind: 'artifact', nodeId: 'coach', sha256: 'a'.repeat(64), quote: text });
@@ -25,7 +25,26 @@ function reviewerOutput(criteria: number) {
 }
 /** Exactly what `proposeRepairLessons` wrote before 12/11: header, reviewer JSON cut at 5000, the agent's reply. */
 const legacyBody = (runId: string, findingId: string, payload: unknown) => `Review finding corrected in run ${runId}: ${findingId}\n\nOriginal review evidence:\n${JSON.stringify(payload).slice(0, 5000)}\n\nImplementation response:\n${'Đã sửa báo cáo. '.repeat(150)}\n\nThis is a proposed lesson from a completed repair. Review its applicability before sharing.`;
-const expected = (runId: string) => `Giữ đúng tiêu chí review: R5 every claim backed by trace or run\nVấn đề: Báo cáo nói "O(n) thời gian" nhưng code thật là O(n²) vì vòng lặp lồng nhau.\nĐã sửa trong run ${runId} (bước audit). File: c/hash/0217-contains-duplicate/solution.c:9`;
+const expected = (runId: string) => `Keep review criterion: R5 every claim backed by trace or run\nProblem: Báo cáo nói "O(n) thời gian" nhưng code thật là O(n²) vì vòng lặp lồng nhau.\nFixed in run ${runId} (step audit). Files: c/hash/0217-contains-duplicate/solution.c:9`;
+/** What repair lessons looked like between 933f5f1 and the move to English, and the other Vietnamese run proposals. */
+const vietnameseRepair = (runId: string) => `Giữ đúng tiêu chí review: R5 every claim backed by trace or run\nVấn đề: Báo cáo nói "O(n) thời gian" nhưng code thật là O(n²) vì vòng lặp lồng nhau.\nĐã sửa trong run ${runId} (bước audit). File: c/hash/0217-contains-duplicate/solution.c:9`;
+const vietnameseBodies: [string, string][] = [
+  [vietnameseRepair('run-vi'), expected('run-vi')],
+  ['Giữ đúng tiêu chí review: R2 one hint\nVấn đề: Hai gợi ý.\nĐã sửa trong run run-vi. Tham chiếu: kết quả bước coach, check `npm test`', 'Keep review criterion: R2 one hint\nProblem: Hai gợi ý.\nFixed in run run-vi. References: output of step coach, check `npm test`'],
+  ['Giữ đúng tiêu chí review: R2\nVấn đề: x\nĐã sửa trong run run-vi (bước verify).', 'Keep review criterion: R2\nProblem: x\nFixed in run run-vi (step verify).'],
+  ['Review yêu cầu sửa finding F9\nĐã sửa trong run run-vi; xem bằng chứng trong run nguồn trước khi duyệt.', 'Review asked to fix finding F9\nFixed in run run-vi; check the evidence in the source run before approving.'],
+  ['Khi lập kế hoạch, người dùng yêu cầu: Đừng đổi tên hàm\n(Task gốc: Sửa lỗi (parser))', 'When planning, the user asked: Đừng đổi tên hàm\n(Original task: Sửa lỗi (parser))'],
+  ['Tuân thủ rule R1: Keep it small\nVấn đề reviewer thấy: f1 explained\nFile: a:1', 'Follow rule R1: Keep it small\nProblem the reviewer found: f1 explained\nFiles: a:1'],
+  ['Tuân thủ rule R1: Keep it small\nVấn đề reviewer thấy: f1 explained', 'Follow rule R1: Keep it small\nProblem the reviewer found: f1 explained'],
+  ['Run bị chặn: Check failed: npm test\n(Task gốc: Do it)', 'Run blocked: Check failed: npm test\n(Original task: Do it)'],
+];
+
+test('bodies NeoMind wrote from the Vietnamese templates get the English template, and nothing else is rewritten', () => {
+  for (const [before, after] of vietnameseBodies) assert.equal(englishTemplateBody(before), after, before);
+  for (const [, after] of vietnameseBodies) assert.equal(englishTemplateBody(after), undefined, 'English bodies stay as they are');
+  for (const other of ['Chạy npm test trước khi giao thay đổi.', 'Vấn đề: một ghi chú người dùng tự viết', 'Run bị chặn: x\n(Task gốc: y)\nthêm một dòng người dùng viết',
+    'Giữ đúng tiêu chí review: R2\nVấn đề: x', legacyBody('run-x', 'F2', reviewerOutput(2))]) assert.equal(englishTemplateBody(other), undefined, other);
+});
 
 test('old repair lessons compact to the criterion, explanation and file of their own finding, even when the JSON was cut', () => {
   const whole = legacyBody('run-whole', 'F2', reviewerOutput(2));
@@ -36,7 +55,7 @@ test('old repair lessons compact to the criterion, explanation and file of their
   assert.ok(f2 > 0 && f2 < 5000 && text.indexOf('"quote":"for (int') < 5000 && text.length > 5000, 'fixture: the cut lands inside F2');
   const compacted = compactLegacyLessonBody(legacyBody('run-cut', 'F2', cut));
   assert.equal(compacted?.body, expected('run-cut')); assert.equal(compacted?.findingId, 'F2');
-  assert.equal(compactLegacyLessonBody(legacyBody('run-cut', 'F1', cut))?.body.split('\n')[0], 'Giữ đúng tiêu chí review: R2 one hint per issue');
+  assert.equal(compactLegacyLessonBody(legacyBody('run-cut', 'F1', cut))?.body.split('\n')[0], 'Keep review criterion: R2 one hint per issue');
   // A finding cut before it starts, or text in any other format, is left alone.
   assert.equal(compactLegacyLessonBody(legacyBody('run-lost', 'F2', reviewerOutput(40))), undefined);
   assert.equal(compactLegacyLessonBody('Chạy npm test trước khi giao thay đổi.'), undefined);
@@ -106,7 +125,7 @@ test('memory compact rewrites old approved lessons and pending proposals, dry-ru
     assert.ok(record.header.sources.includes('compacted') && record.header.sources.some(source => source.startsWith('user-confirmation:')));
     assert.equal(f.manager.getMemory('lesson', note.header.id).record.revision, note.revision, 'a record in another format is not touched');
     const revised = await queue();
-    assert.equal(revised.version, 2); assert.match(revised.proposal.record.body, /^Giữ đúng tiêu chí review: R2 one hint per issue\n/);
+    assert.equal(revised.version, 2); assert.match(revised.proposal.record.body, /^Keep review criterion: R2 one hint per issue\n/);
     assert.equal((await f.manager.compactMemory({ dryRun: true })).changes.length, 0, 'compacting again finds nothing');
 
     // One item at a time, as the UI does it.
@@ -115,6 +134,35 @@ test('memory compact rewrites old approved lessons and pending proposals, dry-ru
     const targeted = await f.api({ method: 'POST', path: '/api/memory/compact', body: { target: { runId: null, proposalId: single.proposalId } } });
     assert.equal(targeted.status, 200, JSON.stringify(targeted.body));
     assert.deepEqual((targeted.body as { changes: { key: string }[] }).changes.map(change => change.key), [`project/${single.proposalId}`]);
+  } finally { await f.manager.close(); }
+});
+
+test('memory compact rewrites Vietnamese-template records and proposals in English; dry-run writes nothing and a second pass changes nothing', async () => {
+  const f = await project();
+  try {
+    const proposed = await f.manager.proposeMemory({ type: 'lesson', tags: ['repair'], body: vietnameseRepair('run-vi'), sources: ['run:run-vi', 'run:run-vi/event:9'], reason: 'fixture' }, 'user_note');
+    assert.ok(proposed.created);
+    const approved = (await f.manager.approveMemoryProposal({ runId: null, proposalId: proposed.proposalId, proposalHash: proposed.proposalHash })).record;
+    const note = (await f.manager.addMemoryNote({ type: 'lesson', body: 'Vấn đề: người dùng tự viết câu này bằng tiếng Việt.' })).record;
+    const pending = await f.manager.proposeMemory({ type: 'decision', body: 'Khi lập kế hoạch, người dùng yêu cầu: Đừng đổi tên hàm\n(Task gốc: Sửa parser)', sources: ['run:run-vi'], reason: 'fixture' }, 'user_note');
+    assert.ok(pending.created);
+    const queue = async () => (await f.manager.memoryProposals()).proposals.find(item => item.proposal.proposalId === pending.proposalId)!;
+
+    const dry = await f.manager.compactMemory({ dryRun: true });
+    assert.deepEqual(dry.changes.map(change => [change.key, change.before, change.after, change.applied]), [
+      [`lesson/${approved.header.id}`, vietnameseRepair('run-vi'), expected('run-vi'), false],
+      [`project/${pending.proposalId}`, 'Khi lập kế hoạch, người dùng yêu cầu: Đừng đổi tên hàm\n(Task gốc: Sửa parser)', 'When planning, the user asked: Đừng đổi tên hàm\n(Original task: Sửa parser)', false]]);
+    assert.deepEqual(dry.skipped, []);
+    assert.equal(f.manager.getMemory('lesson', approved.header.id).record.revision, approved.revision, 'dry-run leaves the record'); assert.equal((await queue()).version, 1, 'and the proposal');
+
+    const applied = await f.manager.compactMemory({ source: 'cli' });
+    assert.deepEqual(applied.changes.map(change => change.applied), [true, true]);
+    const record = f.manager.getMemory('lesson', approved.header.id).record;
+    assert.equal(record.body, expected('run-vi')); assert.ok(record.header.sources.includes('compacted') && record.header.sources.includes('run:run-vi/event:9'));
+    assert.equal((await queue()).proposal.record.body, 'When planning, the user asked: Đừng đổi tên hàm\n(Original task: Sửa parser)');
+    assert.equal(f.manager.getMemory('lesson', note.header.id).record.revision, note.revision, 'a note the user wrote is not touched');
+    const again = await f.manager.compactMemory({ source: 'cli' });
+    assert.deepEqual([again.changes.length, again.skipped.length], [0, 0], 'the second pass changes nothing');
   } finally { await f.manager.close(); }
 });
 

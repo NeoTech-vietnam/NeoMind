@@ -132,7 +132,7 @@ test('repair runs through the same services, keeps approval and reuses independe
     // The repaired finding becomes a short lesson a person can read: criterion, problem, run, step and file; no raw JSON.
     const directory = path.dirname(f.run.durable.journal.file), [lessonId] = proposalIds(directory), lesson = new LessonProposals(directory).read(lessonId!);
     assert.equal(lesson.origin, 'repair'); assert.equal(lesson.record.scope, 'project');
-    assert.equal(lesson.record.body, `Giữ đúng tiêu chí review: proof\nVấn đề: Expected ok\nĐã sửa trong run ${f.run.runId} (bước verify). File: proof.txt:1`);
+    assert.equal(lesson.record.body, `Keep review criterion: proof\nProblem: Expected ok\nFixed in run ${f.run.runId} (step verify). Files: proof.txt:1`);
     assert.ok(lesson.record.body.length <= maxLessonBodyLength && !lesson.record.body.includes('{'));
     const reviewEvent = (await f.run.durable.journal.read()).find(event => event.type === 'reviewer_output')!;
     assert.deepEqual(lesson.record.sources, [`run:${f.run.runId}`, `run:${f.run.runId}/event:${reviewEvent.sequence}`]);

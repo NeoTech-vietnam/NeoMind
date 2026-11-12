@@ -865,7 +865,7 @@ export class LocalRun {
       const found = repairedFinding(events, findingId);
       // A few readable lines; the reviewer's full output and the fix stay in the run, cited by the sources.
       const body = found ? repairLessonBody({ runId: this.runId, nodeId: found.nodeId, finding: found.finding }) : fallbackRepairLessonBody(this.runId, findingId);
-      store.create({ proposalId, runId: this.runId, createdAt: new Date().toISOString(), origin: 'repair', reason: 'Reviewer yêu cầu sửa và run đã sửa xong; ghi lại để agent sau tránh lặp lại.',
+      store.create({ proposalId, runId: this.runId, createdAt: new Date().toISOString(), origin: 'repair', reason: 'The reviewer asked for a fix and the run made it; keep this so later agents avoid repeating it.',
         record: { id: proposalId, type: 'lesson', scope: 'project', sources: [`run:${this.runId}`, ...(found ? [`run:${this.runId}/event:${found.sequence}`] : [])], tags: ['repair', 'review'], body } });
     }
   }

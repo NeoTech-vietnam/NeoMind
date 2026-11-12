@@ -20,7 +20,7 @@ import { ProjectMemoryRegistry } from '../memory/registry.js';
 import { resolveDefaultMemoryRoot } from '../memory/project-root.js';
 import { primaryWorktree } from '../workspace/worktree.js';
 import { MemoryConflict, type MemoryInput, type MemoryRecord } from '../memory/store.js';
-import { compactLegacyLessonBody, legacyLessonHeader, maxSessionProposalLength } from '../memory/lesson-body.js';
+import { compactLegacyLessonBody, englishTemplateBody, legacyLessonHeader, maxSessionProposalLength } from '../memory/lesson-body.js';
 import { LessonProposals } from '../memory/proposals.js';
 import type { Flow } from '../domain/schema.js';
 import { bindingRunners, selectAvailableBinding } from './model-selection.js';
@@ -494,16 +494,22 @@ export class RunManager {
   /**
    * Rewrite lessons in the old repair format (raw reviewer JSON plus the agent's whole reply) as the short body new runs
    * write. An approved record gets a new revision through the audited write path, keeping its sources plus `compacted`
-   * (and `project` instead of the project id as scope); a pending proposal gets a new revision of its text. Bodies not in
-   * the old format are never touched. `target` limits the pass to one record or one proposal; `dryRun` writes nothing.
+   * (and `project` instead of the project id as scope); a pending proposal gets a new revision of its text. Bodies NeoMind
+   * generated from the earlier Vietnamese templates are rewritten in English the same way. Bodies in neither format are
+   * never touched. `target` limits the pass to one record or one proposal; `dryRun` writes nothing.
    */
   async compactMemory(options: { dryRun?: boolean; target?: { type: MemoryKind; id: string } | { runId: string | null; proposalId: string }; source?: 'ui' | 'cli' } = {}) {
     const { projectId } = await readProject(this.projectRoot), target = options.target;
     type Change = { kind: 'record' | 'proposal'; key: string; runId?: string | null; before: string; after: string; applied: boolean };
     const changes: Change[] = [], skipped: { kind: 'record' | 'proposal'; key: string; reason: string }[] = [];
     const reason = 'Không tìm thấy finding trong bằng chứng cũ hay journal của run nguồn';
-    /** The short body, from the embedded evidence or, when that was cut before the finding, from the source run's journal. */
+    /**
+     * The English template for a body NeoMind wrote in Vietnamese, or the short body for an old JSON repair lesson, from
+     * the embedded evidence or, when that was cut before the finding, from the source run's journal.
+     */
     const shorten = async (body: string) => {
+      const english = englishTemplateBody(body);
+      if (english) return english;
       const header = legacyLessonHeader(body);
       if (!header) return undefined;
       let events: RunEvent[] | undefined;
@@ -558,7 +564,7 @@ export class RunManager {
   async rememberFromRun(runId: string, input: { text: string; type?: MemoryKind | undefined; nodeId?: string | undefined }) {
     await this.store.journal(runId);
     return this.proposeMemory({ type: input.type ?? 'lesson', body: input.text, sources: [`run:${runId}`, ...(input.nodeId ? [`run:${runId}/step:${input.nodeId}`] : [])],
-      reason: 'Bạn chọn "Ghi nhớ điều này" trên run này' }, 'user_note', runId);
+      reason: 'You chose "Remember this" on this run' }, 'user_note', runId);
   }
   /**
    * A note the user writes on the Memory page is approved as written. Context and decisions are written directly; a lesson
@@ -573,7 +579,7 @@ export class RunManager {
       try { do id = noteId(body, randomUUID().slice(0, 8)); while (memory?.store.read(input.type, id)); } finally { memory?.store.close(); }
       return this.writeMemory({ id, type: input.type, scope, sources, tags, body, ...(input.supersedes?.length ? { supersedes: input.supersedes } : {}) }, null, source);
     }
-    const proposed = await this.proposeMemory({ type: 'lesson', scope, tags, body, sources, reason: 'Ghi chú bạn tự thêm trên trang Memory', ...(input.supersedes?.length ? { supersedes: input.supersedes } : {}) }, 'user_note');
+    const proposed = await this.proposeMemory({ type: 'lesson', scope, tags, body, sources, reason: 'A note you added on the Memory page', ...(input.supersedes?.length ? { supersedes: input.supersedes } : {}) }, 'user_note');
     if (!proposed.created) throw new Error(proposed.message);
     return this.approveMemoryProposal({ runId: null, proposalId: proposed.proposalId, proposalHash: proposed.proposalHash });
   }

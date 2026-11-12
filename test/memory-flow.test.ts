@@ -202,9 +202,14 @@ test('a finished run proposes violated rules and block reasons once each, within
   assert.equal(created.filter(item => item.origin === 'review_rule').length, 1, 'one proposal per violated rule');
   assert.equal(created.filter(item => item.origin === 'run_stopped').length, 1, 'the same block reason once');
   // Short bodies a person reads in the queue: a title line, then the problem and the file.
-  assert.equal(created.find(item => item.origin === 'review_rule')?.record.body, 'Tuân thủ rule R1: Keep it small\nVấn đề reviewer thấy: f1 explained\nFile: a:1');
-  assert.equal(created.find(item => item.origin === 'run_stopped')?.record.body, 'Run bị chặn: Check failed: npm test\n(Task gốc: Do it)');
-  assert.equal(created.find(item => item.origin === 'plan_revision')?.record.body, 'Khi lập kế hoạch, người dùng yêu cầu: feedback 0\n(Task gốc: Do it)');
+  // Stored in English; the user's own plan feedback stays in their words.
+  assert.equal(created.find(item => item.origin === 'review_rule')?.record.body, 'Follow rule R1: Keep it small\nProblem the reviewer found: f1 explained\nFiles: a:1');
+  assert.equal(created.find(item => item.origin === 'run_stopped')?.record.body, 'Run blocked: Check failed: npm test\n(Original task: Do it)');
+  assert.equal(created.find(item => item.origin === 'plan_revision')?.record.body, 'When planning, the user asked: feedback 0\n(Original task: Do it)');
+  for (const item of created) assert.doesNotMatch(item.reason ?? '', /[ạảãàáâấầẩẫậăắằẳẵặđẹẻẽèéêếềểễệịỉĩìíọỏõòóôốồổỗộơớờởỡợụủũùúưứừửữựỵỷỹỳý]/iu, `${item.origin} reason is English`);
+  const viDirectory = await mkdtemp(path.join(tmpdir(), 'nm-vi-'));
+  const [typed] = proposeFromRun({ ...input, directory: viDirectory, report: { planRevisions: [{ planningNodeId: 'plan', planId: 'p', version: 2, feedback: 'Giữ nguyên API cũ, đừng đổi tên hàm' }] } as unknown as typeof report, events: [], rules: [] });
+  assert.equal(new LessonProposals(viDirectory).read(typed!).record.body, 'When planning, the user asked: Giữ nguyên API cũ, đừng đổi tên hàm\n(Original task: Do it)');
   assert.deepEqual(proposeFromRun(input), [], 'running again proposes nothing new');
   const rules = Array.from({ length: 10 }, (_, index) => ({ id: `R${index}`, text: `Rule text ${index}` }));
   const many = [reviewerOutput(5, rules.map(rule => finding(`f-${rule.id}`, `Rule ${rule.id}: ${rule.text}`)))] as unknown as typeof events;
@@ -248,6 +253,10 @@ test('plan feedback and "remember this" become proposals; ratings are journaled 
     const planProposal = pending.find(item => item.proposal.origin === 'plan_revision')!;
     assert.equal(planProposal.proposal.record.type, 'decision'); assert.match(planProposal.proposal.record.body, /Luôn giữ thay đổi nhỏ/);
     assert.ok(planProposal.proposal.record.sources.includes(`run:${runId}`));
+    // "Remember this" keeps the user's sentence as typed; only the text NeoMind adds is English.
+    const note = pending.find(item => item.proposal.origin === 'user_note')!;
+    assert.equal(note.proposal.record.body, 'Proof chỉ cần một dòng'); assert.equal(note.proposal.reason, 'You chose "Remember this" on this run');
+    assert.match(planProposal.proposal.record.body, /^When planning, the user asked: Luôn giữ thay đổi nhỏ trong một file\n\(Original task: .+\)$/);
     // Ratings: the last record is rated helpful twice and the first wrong, which reverses their order next time.
     const [first, , last] = before;
     await f.api({ method: 'POST', path: `/api/runs/${runId}/memory-feedback`, body: { record: last, nodeId: 'verify', rating: 'helpful' } });
