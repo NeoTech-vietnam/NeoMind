@@ -2,6 +2,18 @@
 
 Cập nhật: **11/11/2026**. Branch: `hieu/adaptive-agent-flow`. Bàn giao: [11/11 khôi phục MCP, chạy lại flow, OpenCode](session-handoff-2026-11-11.md).
 
+## Skill ở `.agents/skills` (chuẩn Agent Skills) — 12/11/2026
+
+Cùng branch `feat/init-agents-ref`. Chuẩn mở Agent Skills (agentskills.io) khuyên client quét `<project>/.agents/skills/`; Codex CLI 0.166 và OpenCode 1.19.5 có quét, Claude Code chưa chắc nên vẫn giữ `.claude/skills`.
+
+- Cài skill soạn flow vào hai chỗ: `installProjectGuide` trả mảng `[.agents/skills/…, .claude/skills/…]`, mỗi bản trạng thái riêng (`created | up-to-date | modified-kept | replaced`), `--force` áp từng bản; tự cài khi tạo `neomind/` cảnh báo riêng từng bản. `init` trả `guides` (thay cho `guide`), CLI in hai dòng. Repo đã có bản `.claude/skills` thì `init` thêm bản `.agents/skills` không cần `--force`.
+- Dòng tham chiếu trong `AGENTS.md` vẫn trỏ `.claude/skills/…`; dòng nhắc `neomind-flow-authoring/SKILL.md` ở bất kỳ thư mục nào được coi là đã có.
+- Danh mục skill (`skillCatalog`) đọc thêm `.agents/skills` với `source: 'agents'`, chỉ đọc như `.claude/skills` (`getSkill`, `skillUsage`, `repinSkill`, API `?source=agents`, CLI `--source agents`, tool `skill_get`/`skill_usage` enum `agents`). Ghim theo đường dẫn + SHA-256 như cũ, nên không đổi schema; ghim cũ tới `.claude/skills` chạy như trước. `createSkill` từ chối ID đã có ở `.agents/skills`.
+- Trùng ID giữa các nguồn: danh mục chỉ đưa một bản theo thứ tự `neomind` > `agents` > `claude`, các bản khác vào `shadowed: [{ path, source, sha256 }]`. Lý do: ít đụng schema nhất (ghim vẫn là `{ id, path, sha256 }`, danh mục vẫn duy nhất theo ID nên `SkillPicker` và `profileFromTemplate` tìm theo ID không đổi). Màn Skills có nhóm "AGENT SKILLS · chỉ đọc · sửa trong .agents/skills" và cảnh báo bản trùng (cùng/khác nội dung); gallery có trạng thái này.
+- Repo NeoMind có `.agents/skills/neomind-flow-authoring/SKILL.md`, do `scripts/sync-project-guide.mjs` chép từ `.claude/skills`; `.gitignore` vẫn bỏ qua phần `.agents/` Nimbalyst sinh (`.agents/skills/.nimbalyst-generated/` …), chỉ trừ thư mục này. Thư mục `.nimbalyst-generated` không hợp lệ làm ID nên danh mục bỏ qua.
+
+Kiểm chứng Windows (12/11/2026): `test/project-guide.test.ts` 12 test và `test/skill-library.test.ts` 8 test, đạt (mới: cài hai chỗ, một bản đã sửa thì giữ còn bản kia vẫn tạo, `--force` thay cả hai, repo chỉ có `.claude/skills` → `init` thêm `.agents/skills`, bản đóng gói khớp cả hai file trong repo; danh mục liệt kê `.agents/skills` chỉ đọc, sửa/xóa/tạo trùng bị từ chối, thứ tự trùng tên và `shadowed`, API/tool `source: agents`, thư mục junction bị bỏ qua và bị từ chối khi ra ngoài project; ghim skill `.agents/skills` vào agent và prompt của bước plan (fake runner) chứa đúng đoạn chèn). Danh mục giữ thứ tự xuất cũ (`.claude`, `.agents`, `neomind`) để test và output CLI cũ không đổi. `npm test` đầy đủ: 323 test, 321 pass, 0 fail, 2 skip. `tsc -p tsconfig.ui.json --noEmit`, `npm run build:ui`, build extension đạt. Chưa kiểm chứng: xem màn Skills/gallery bằng mắt, Linux, cài extension vào Nimbalyst, Codex/OpenCode thật đọc skill từ `.agents/skills` của project đã `init`.
+
 ## Tham chiếu skill soạn flow trong `AGENTS.md` — 12/11/2026
 
 Branch `feat/init-agents-ref` (worktree `../test_workflow_worktrees/init-agents-ref`). Codex không đọc `.claude/skills/`, nên session mới được giao soạn flow có thể bỏ qua skill.
