@@ -81,6 +81,9 @@ test('usage lists pins, delete refuses a used skill unless forced, and repin upd
   const flow = structuredClone(templates.dev) as Flow, plan = flow.definition.nodes.find(node => node.id === 'plan');
   assert.ok(plan?.type === 'agent_task'); plan.skillsOverride = [ref(one)];
   const review = flow.definition.nodes.find(node => node.type === 'review_group'); assert.ok(review?.type === 'review_group'); review.reviewers[0]!.skillsOverride = [ref(one), ref(two)];
+  // The fixture project has no role defaults, so a runnable flow pins every binding field.
+  const pinned = (value: string) => ({ mode: 'pinned' as const, value });
+  for (const binding of Object.values(flow.definition.bindings)) Object.assign(binding, { runner: pinned('codex'), provider: pinned('openai'), model: pinned('gpt-6-luna'), reasoning: pinned('low') });
   const created = await draftFlow(root, { flowId: 'mine', name: 'Mine', draft: flow }); assert.deepEqual(created.diagnostics, []);
   await publishFlow(root, 'mine', { author: { kind: 'human' }, expectedRevision: created.revision });
 

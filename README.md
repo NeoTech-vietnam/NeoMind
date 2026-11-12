@@ -47,6 +47,8 @@ npm run neomind -- flow author-publish /project my-dev <revision> "Lý do"
 
 Khi sửa draft đã có, input cần `expectedRevision` từ `flow get` hoặc lần lưu trước; khi publish AI cũng cần revision này. `assess.available: false` nghĩa là flow được gợi ý hiện không sẵn sàng; chọn phương án khác hoặc tạo flow. Mỗi phiên bản AI ghi tác giả, session nếu có và lý do; phiên bản cũ không có tác giả được coi là do người lưu. `contentHash` tiếp tục chỉ bao phủ nội dung flow; metadata tác giả không có hash riêng.
 
+`author-validate`, tool `flow_validate`, API validate và nút "Kiểm tra" của Flow Studio kiểm thêm những gì preview sẽ từ chối, không tạo run và không gọi model: binding của từng bước giải ra runner/provider/model/reasoning, runner có trong registry, model nằm trong allowlist, profile có phiên bản đã publish và đủ quyền, skill ghim còn tồn tại. Diagnostic có `severity: "warning"` (skill đã đổi, yêu cầu chạy lệnh ở runner không có shell, "UTF-8 without BOM", flow chỉ đọc nhưng đòi ghi file) không chặn publish; lỗi thì chặn. Luật soạn flow mới chỉ áp khi validate/publish, nên phiên bản đã publish trước đó vẫn chạy.
+
 Trong `neomind/project.json`, trường tùy chọn `ai.flowPublish` nhận `allow` (mặc định), `draft-only` hoặc `deny`. `draft-only` cho AI sửa draft nhưng không publish; `deny` chặn cả tạo/sửa draft bằng tool AI. Project có thể đặt `policy.maxActiveTimeSeconds` tùy chọn: thời gian flow AI publish không vượt giá trị nhỏ hơn giữa trần này và mẫu Dev (1.800 giây). Policy sàn về duyệt và review vẫn được compiler kiểm; flow do người lưu giữ hành vi trước đây. `ai.profilePublish` áp dụng tương tự cho profile (xem mục dưới).
 
 ## Skills và profile
