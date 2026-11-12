@@ -73,3 +73,7 @@ Extension Nimbalyst: `cd extensions/nimbalyst && npm run build` (dùng `node_mod
 - Test tạo thư mục tạm bằng `mkdtemp(os.tmpdir())`; `scripts/run-tests.mjs` gom chúng vào một thư mục và xóa sau. Trên Windows giữ đường dẫn fixture ngắn (Git từ chối đường dẫn worktree quá dài).
 - Ghi kết quả kiểm chứng (test, run thật, nền tảng) vào `implementation-status.md`. Cuối đợt làm việc, viết bàn giao mới trong `docs/adaptive-agent-flow/session-handoff-<ngày>.md` và trỏ file này tới nó.
 - Commit nhỏ theo từng việc, message dạng `feat:`/`fix:`/`docs:`/`chore:` tiếng Anh.
+
+## References
+
+- Authoring NeoMind flows: read extensions/nimbalyst/claude-plugin/skills/neomind-flow-authoring/SKILL.md first.
