@@ -1,7 +1,7 @@
 import { api } from './api';
 import { askText, confirmAction } from './dialog';
 import { Children, createContext, isValidElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Bot, Check, CircleAlert, CircleCheck, CirclePlay, Ellipsis, GitBranch, GitCommit, GitMerge, GitPullRequest, ListChecks, PanelRight, Plus, Redo2, Repeat2, Split, Undo2, X } from 'lucide-react';
+import { Bot, Check, CircleAlert, CircleCheck, CirclePlay, Ellipsis, GitBranch, GitCommit, GitMerge, GitPullRequest, ListChecks, PanelRight, Plus, Redo2, Repeat2, Split, TriangleAlert, Undo2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AppRoot, Shell, type FlowMeta, type ShellKind, type View } from './shell/AppShell';
 import { CreateFlowDialog, NoFlows, slug, type Template } from './shell/FlowStart';
@@ -29,8 +29,10 @@ import { MemoryPanel } from './MemoryPanel';
 import { modelLabel, reasoningLabel, runnerLabel, useRunners, type RunnerModels } from './runners';
 
 type Bootstrap = { projectName: string; projectRoot: string; flows: FlowMeta[]; templates: string[]; runtimeAvailable: boolean };
-type Diagnostic = { code: string; message: string; nodeId?: string };
-type GraphNode = Node<{ label: string; kind: FlowNode['type']; detail: string; agent?: string; problems?: string[]; skills?: number }, 'studio'>;
+// Omitted severity is an error; warnings do not block saving a version.
+type Diagnostic = { code: string; message: string; nodeId?: string; severity?: 'error' | 'warning' };
+const isWarning = (item: Diagnostic) => item.severity === 'warning';
+type GraphNode = Node<{ label: string; kind: FlowNode['type']; detail: string; agent?: string; problems?: string[]; warnings?: string[]; skills?: number }, 'studio'>;
 type Kind = FlowNode['type'];
 
 const kindInfo: Record<Kind, { label: string; icon: string; tone: string }> = {
@@ -57,10 +59,10 @@ function KindIcon({ kind }: { kind: Kind }) { const Icon = kindIcons[kind]; retu
 
 function StudioNode({ data, selected }: NodeProps<GraphNode>) {
   const info = kindInfo[data.kind];
-  return <div className={`graph-card tone-${info.tone} ${selected ? 'graph-card-selected' : ''} ${data.problems?.length ? 'graph-card-error' : ''}`}>
+  return <div className={`graph-card tone-${info.tone} ${selected ? 'graph-card-selected' : ''} ${data.problems?.length ? 'graph-card-error' : data.warnings?.length ? 'graph-card-warning' : ''}`}>
     {data.kind !== 'start' && <Handle type="target" position={Position.Left} />}
     <div className="graph-head"><span className="graph-icon"><KindIcon kind={data.kind} /></span><span className="graph-kind">{info.label}</span></div>
-    <strong>{data.label}</strong><div className="graph-detail">{data.detail}</div>{data.agent && <span className="graph-runner">{data.agent}</span>}{!!data.skills && <span className="graph-skills" title="Skill bước này nhận (của agent hoặc riêng cho bước)">{data.skills} skill</span>}{!!data.problems?.length && <div className="graph-error">{data.problems.length} lỗi cấu hình</div>}
+    <strong>{data.label}</strong><div className="graph-detail">{data.detail}</div>{data.agent && <span className="graph-runner">{data.agent}</span>}{!!data.skills && <span className="graph-skills" title="Skill bước này nhận (của agent hoặc riêng cho bước)">{data.skills} skill</span>}{!!data.problems?.length && <div className="graph-error">{data.problems.length} lỗi cấu hình</div>}{!!data.warnings?.length && <div className="graph-warning">{data.warnings.length} cảnh báo</div>}
     {data.kind !== 'finish' && <Handle type="source" position={Position.Right} />}
   </div>;
 }
@@ -256,7 +258,7 @@ function Workspace({ shell }: { shell: ShellKind }) {
     setGraphNodes(previous => flow.definition.nodes.map((node, index) => ({ id: node.id, type: 'studio',
       selected: selectedIds ? selectedIds.includes(node.id) : !!previous.find(item => item.id === node.id)?.selected,
       position: flow.layout[node.id] ?? { x: 80 + (index % 4) * 255, y: 110 + Math.floor(index / 4) * 165 },
-      data: { label: node.label, kind: node.type, detail: detailFor(node), ...agentFor(node, flow), skills: nodeSkillCount(node, profileSkills), problems: diagnostics.filter(item => item.nodeId === node.id).map(item => item.message) } })));
+      data: { label: node.label, kind: node.type, detail: detailFor(node), ...agentFor(node, flow), skills: nodeSkillCount(node, profileSkills), problems: diagnostics.filter(item => item.nodeId === node.id && !isWarning(item)).map(item => item.message), warnings: diagnostics.filter(item => item.nodeId === node.id && isWarning(item)).map(item => item.message) } })));
   }, [flow, diagnostics, profileSkills]);
   const edges = useMemo<Edge[]>(() => (flow?.definition.edges ?? []).map((edge, index) => ({
     id: `edge-${index}`, source: edge.from, target: edge.to, label: edge.outcome === 'completed' ? '' : edge.outcome,
@@ -352,8 +354,9 @@ function Workspace({ shell }: { shell: ShellKind }) {
     const result = await api<{ valid: boolean; diagnostics?: Diagnostic[] }>(`/api/flows/${encodeURIComponent(current.flowId)}/validate`, 'POST', { draft: current });
     const issues = result.diagnostics ?? [];
     setDiagnostics(issues); setProblemOpen(true);
-    if (!result.valid && issues[0]?.nodeId) selectProblem(issues[0].nodeId);
-    return result.valid;
+    const first = issues.find(item => !isWarning(item));
+    if (!result.valid && first?.nodeId) selectProblem(first.nodeId);
+    return { valid: result.valid, warnings: issues.filter(isWarning).length };
   }
   function addNode(kind: Kind, position?: { x: number; y: number }) { if (!flow) return; let index = 1; while (flow.definition.nodes.some(node => node.id === `${kind}-${index}`)) index++;
     const node = makeNode(kind, `${kind}-${index}`, flow); pastedSelection.current = [node.id]; mutate(next => { next.definition.nodes.push(node); next.layout[node.id] = position ?? { x: 120 + (next.definition.nodes.length % 4) * 180, y: 350 }; }); setSelected(node.id); setSelectedEdge(null); }
@@ -435,7 +438,7 @@ function Workspace({ shell }: { shell: ShellKind }) {
 
   const inspectorTitle = active ? <span className="studio-inspector-title"><Input aria-label="Tên bước" value={active.label} onChange={e => updateNode(node => { node.label = e.target.value; })} /><span><KindIcon kind={active.type} />{kindInfo[active.type].label}</span></span> : <span>{selectedEdge !== null ? 'Kết nối' : 'Cài đặt flow'}</span>;
   const inspector = flow && <aside className="inspector"><div className="inspector-head">{inspectorTitle}</div>
-              {active ? <div className="inspector-scroll">{diagnostics.filter(item => item.nodeId === active.id).map((item, index) => <Callout tone="danger" key={`${item.code}-${index}`}>{item.message}</Callout>)}
+              {active ? <div className="inspector-scroll">{diagnostics.filter(item => item.nodeId === active.id).map((item, index) => <Callout tone={isWarning(item) ? 'attention' : 'danger'} key={`${item.code}-${index}`}>{item.message}</Callout>)}
                 {active.type === 'agent_task' && <>
                   <Field label="Mục tiêu"><Textarea rows={3} value={active.goal} onChange={e => updateNode(node => { if (node.type === 'agent_task') node.goal = e.target.value; })} /></Field>
                   <div className="section-rule" /><div className="inspector-section">Agent</div>
@@ -527,8 +530,8 @@ function Workspace({ shell }: { shell: ShellKind }) {
         <div className="studio-header"><div className="studio-heading"><div className="studio-title"><h1>{flow.name}</h1>{latestAuthor === 'ai' && <Tag>AI</Tag>}<span className="studio-draft">Bản nháp{dirty ? ' · chưa lưu' : ''}</span></div><p>dựa trên {flow.version ? `v${flow.version}` : 'bản mới'} · {flow.definition.nodes.length} bước · {flow.definition.edges.length} kết nối</p></div>
           <div className="studio-actions"><Tooltip label="Hoàn tác"><Button variant="ghost" size="icon" aria-label="Hoàn tác" disabled={!past.length} onClick={undo}><Undo2 /></Button></Tooltip><Tooltip label="Làm lại"><Button variant="ghost" size="icon" aria-label="Làm lại" disabled={!future.length} onClick={redo}><Redo2 /></Button></Tooltip>
             {compact && <Tooltip label="Thuộc tính"><Button variant="ghost" size="icon" aria-label="Thuộc tính" onClick={() => setInspectorOpen(true)}><PanelRight /></Button></Tooltip>}
-            <Button variant="outline" disabled={busy} onClick={() => void action(async () => { const valid = await validate(flow); setMessage(valid ? 'Flow hợp lệ.' : ''); })}>Kiểm tra</Button>
-            <Button variant="primary" disabled={busy} onClick={() => void action(async () => { if (!await validate(flow)) return; const expectedRevision = await saveDraft(); const saved = await api<{ version: { version: number } }>(`/api/flows/${encodeURIComponent(flow.flowId)}/publish`, 'POST', { expectedRevision, author: { kind: 'human' } }); setVersionsReload(value => value + 1); setMessage(`Đã lưu phiên bản ${saved.version.version}.`); })}>Lưu phiên bản</Button>
+            <Button variant="outline" disabled={busy} onClick={() => void action(async () => { const { valid, warnings } = await validate(flow); setMessage(!valid ? '' : warnings ? `Flow hợp lệ, có ${warnings} cảnh báo.` : 'Flow hợp lệ.'); })}>Kiểm tra</Button>
+            <Button variant="primary" disabled={busy} onClick={() => void action(async () => { if (!(await validate(flow)).valid) return; const expectedRevision = await saveDraft(); const saved = await api<{ version: { version: number } }>(`/api/flows/${encodeURIComponent(flow.flowId)}/publish`, 'POST', { expectedRevision, author: { kind: 'human' } }); setVersionsReload(value => value + 1); setMessage(`Đã lưu phiên bản ${saved.version.version}.`); })}>Lưu phiên bản</Button>
             <DropdownMenu><Tooltip label="Quản lý flow"><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Quản lý flow"><Ellipsis /></Button></DropdownMenuTrigger></Tooltip><DropdownMenuContent>
               <DropdownMenuItem onSelect={() => setVersionsOpen(true)}>So sánh phiên bản</DropdownMenuItem>
               <DropdownMenuItem shortcut="Ctrl S" onSelect={() => void action(async () => { await saveDraft(); setMessage('Đã lưu bản nháp.'); })}>Lưu nháp</DropdownMenuItem><DropdownMenuSeparator />
@@ -555,7 +558,7 @@ function Workspace({ shell }: { shell: ShellKind }) {
               onNodeDragStop={(_, node, dragged) => mutate(next => { for (const item of dragged.length ? dragged : [node]) next.layout[item.id] = item.position; })} colorMode={theme} deleteKeyCode={null} fitView fitViewOptions={{ padding: 0.08, maxZoom: 1 }} minZoom={0.25} maxZoom={1.8}>
               <Background color="var(--border)" gap={23} size={1.1} /><Controls showInteractive={false} /><MiniMap pannable zoomable nodeColor="var(--muted-foreground)" maskColor="var(--overlay)" /></ReactFlow>
               {connectMenu && <div className="connect-menu" role="dialog" aria-label="Chọn bước để kết nối" style={{ left: Math.max(12, Math.min(connectMenu.x, window.innerWidth - 235)), top: Math.max(12, Math.min(connectMenu.y, window.innerHeight - 350)) }} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setConnectMenu(null); } if (event.key === 'Tab') { const buttons = Array.from(event.currentTarget.querySelectorAll('button')); const target = event.target; if (event.shiftKey && target === buttons[0]) { event.preventDefault(); buttons.at(-1)?.focus(); } else if (!event.shiftKey && target === buttons.at(-1)) { event.preventDefault(); buttons[0]?.focus(); } } }}><strong>Thêm bước được kết nối</strong>{palette.map(kind => <button type="button" autoFocus={kind === palette[0]} key={kind} onClick={() => addConnectedNode(kind)}><KindIcon kind={kind} /> &nbsp; {kindInfo[kind].label}</button>)}<button type="button" onClick={() => setConnectMenu(null)}>Hủy</button></div>}
-              <div className="studio-problems"><button className="studio-problems-toggle" onClick={() => setProblemOpen(!problemOpen)} aria-expanded={problemOpen}>Vấn đề ({diagnostics.length}) <span>{problemOpen ? '⌄' : '⌃'}</span></button>{problemOpen && <div className="studio-problems-list">{diagnostics.length ? diagnostics.map((item, index) => <button key={`${item.code}-${index}`} onClick={() => { if (item.nodeId) selectProblem(item.nodeId); }}><CircleAlert />{item.message}</button>) : <p>Không có vấn đề.</p>}</div>}</div></div>
+              <div className="studio-problems"><button className="studio-problems-toggle" onClick={() => setProblemOpen(!problemOpen)} aria-expanded={problemOpen}>Vấn đề ({diagnostics.length}) <span>{problemOpen ? '⌄' : '⌃'}</span></button>{problemOpen && <div className="studio-problems-list">{diagnostics.length ? diagnostics.map((item, index) => <button key={`${item.code}-${index}`} className={isWarning(item) ? 'studio-problem-warning' : undefined} onClick={() => { if (item.nodeId) selectProblem(item.nodeId); }}>{isWarning(item) ? <TriangleAlert aria-label="Cảnh báo" /> : <CircleAlert aria-label="Lỗi" />}{item.message}</button>) : <p>Không có vấn đề.</p>}</div>}</div></div>
             {compact ? <Dialog open={inspectorOpen} onOpenChange={setInspectorOpen}><SheetContent className="studio-inspector-sheet w-[320px]" title={inspectorTitle}>{inspector}</SheetContent></Dialog> : inspector}</div>
 
         </div>

@@ -19,6 +19,7 @@
   .studio-page .graph-card { width: 196px; min-height: 82px; padding: 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--card); box-shadow: none; }
   .studio-page .graph-card-selected { border-color: var(--foreground); box-shadow: 0 0 0 2px var(--ring); }
   .studio-page .graph-card-error { border-color: var(--danger); }
+  .studio-page .graph-card-warning { border-color: var(--attention); }
   .studio-page .graph-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
   .studio-page .graph-icon { display: inline-flex; width: auto; height: auto; background: transparent; color: var(--muted-foreground); }
   .studio-page .graph-kind { font-size: 10px; color: var(--muted-foreground); }
@@ -27,6 +28,7 @@
   .studio-page .graph-runner { display: inline-block; margin-top: 6px; padding: 2px 6px; background: var(--muted); color: var(--muted-foreground); border-radius: 4px; font-size: 10px; }
   .studio-page .graph-skills { display: inline-block; margin-top: 6px; margin-left: 4px; padding: 1px 6px; border: 1px dashed var(--border); color: var(--muted-foreground); border-radius: 99px; font-size: 10px; }
   .studio-page .graph-error { color: var(--danger); font-size: 11px; }
+  .studio-page .graph-warning { color: var(--attention); font-size: 11px; }
   .studio-page .graph-card .react-flow__handle { width: 9px; height: 9px; border: 2px solid var(--card); background: var(--faint); }
   .studio-page .canvas .react-flow__controls, .studio-page .canvas .react-flow__minimap { border: 1px solid var(--border); background: var(--card); box-shadow: none; }
   .studio-page .canvas .react-flow__minimap { width: 130px; height: 80px; border-radius: 6px; }
@@ -80,6 +82,7 @@
   .studio-problems-list button { display: flex; gap: 8px; align-items: center; width: 100%; padding: 7px; border: 0; border-radius: 4px; background: transparent; color: var(--fg-2); text-align: left; cursor: pointer; }
   .studio-problems-list button:hover { background: var(--accent); }
   .studio-problems-list svg { width: 14px; height: 14px; flex: none; color: var(--danger); }
+  .studio-problems-list .studio-problem-warning svg { color: var(--attention); }
   .studio-problems-list p { margin: 4px; color: var(--muted-foreground); }
   .studio-add-dialog { width: 390px; padding: 0; }
   .studio-add-dialog > h2 { padding: 14px 16px 0; }

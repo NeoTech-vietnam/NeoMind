@@ -14,7 +14,9 @@ const drafts: Record<string, Flow> = { dev: { ...structuredClone(templates.dev),
 // #own: the implement step chooses its own skills instead of its agent's.
 const ownStep = drafts.dev!.definition.nodes.find(node => node.id === 'implement');
 if (hash.includes('own') && ownStep?.type === 'agent_task') ownStep.skillsOverride = [{ id: 'review', path: 'neomind/skills/review/SKILL.md', sha256: 'a'.repeat(64) }];
-const diagnostics = [{ code: 'sample', nodeId: 'repair', message: 'Chọn ít nhất một agent sửa.' }, { code: 'sample', nodeId: 'verify', message: 'Kiểm tra lại cấu hình reviewer.' }];
+const diagnostics = [{ code: 'sample', nodeId: 'repair', message: 'Chọn ít nhất một agent sửa.' }, { code: 'sample', nodeId: 'verify', message: 'Kiểm tra lại cấu hình reviewer.' },
+  { code: 'bom_instruction', nodeId: 'implement', severity: 'warning', message: 'Asking for "UTF-8 without BOM" made an agent write the system code page on Windows. Say "keep non-ASCII characters intact (UTF-8)" instead.' },
+  { code: 'review_needs_commands', nodeId: 'verify', severity: 'warning', message: 'Review asks reviewers to run commands, but Reviewer required-reviewer runs on claude-code, which has no shell.' }];
 setApiTransport(async (endpoint, method, body) => {
   const url = new URL(endpoint, 'http://gallery'), path = url.pathname;
   const ok = (value: unknown) => ({ status: 200, body: value });
