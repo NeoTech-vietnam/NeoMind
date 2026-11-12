@@ -47,6 +47,11 @@ test('session tools cover the CLI commands; panel-only tools are marked', () => 
   for (const name of ['approve', 'apply', 'include_imported']) assert.ok((SESSION_TOOLS.find(tool => tool.name === name)!.inputSchema.required as string[]).includes('confirmed'));
 });
 
+test('the tools that store text an AI writes ask for English', () => {
+  const storing = ['memory_propose', 'skill_create', 'skill_update', 'profile_draft', 'flow_draft'];
+  for (const tool of SESSION_TOOLS) assert.equal(tool.description.includes('Write stored content in English.'), storing.includes(tool.name), tool.name);
+});
+
 test('a session previews and starts Fast, waits for it, reads what the agents did, and applies only once the user confirmed', async () => {
   const f = await project();
   try {
