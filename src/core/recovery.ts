@@ -37,7 +37,7 @@ const reviewAssessmentSchema = z.strictObject({ evidenceValidated: z.boolean(), 
   verifiedFindingIds: z.array(z.string()), unresolvedDisagreement: z.boolean(), mandatoryCriteriaFailed: z.boolean() });
 
 /** Conservative lexical scope check; wildcard expansion is not treated as evidence. */
-function insideScope(child: string, parent: string): boolean {
+export function insideScope(child: string, parent: string): boolean {
   const normalize = (value: string): string | null => {
     const normalized = value.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '');
     if (!normalized || normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized) || normalized.split('/').includes('..')) return null;
@@ -72,7 +72,8 @@ export interface RecoveryReport {
   tokenExtensions: number;
   usage: { totalTokens: number | null; partial: boolean; reportedAttemptIds: string[]; bySession: Record<string, TokenUsage>; costUSD: null };
   reviewValidationRetries: { nodeId: string; round: number; reviewerIds: string[] }[];
-  planRevisions: { planningNodeId: string; planId: string; version: number; feedback: string }[];
+  /** `author: 'neomind'` marks a revision NeoMind requested itself because the plan broke a plan rule; absent means the user. */
+  planRevisions: { planningNodeId: string; planId: string; version: number; feedback: string; author?: 'neomind' }[];
   artifacts: RuntimeArtifact[];
   continuationBaselines: string[];
   runtimeContext?: RuntimeContext;
@@ -243,10 +244,11 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
         break;
       }
       case 'plan_revision_requested': {
-        const request = z.strictObject({ planningNodeId: z.string().min(1), planId: z.string().min(1), version: z.number().int().positive(), feedback: z.string().min(1).max(10000) }).parse(event.payload);
+        const request = z.strictObject({ planningNodeId: z.string().min(1), planId: z.string().min(1), version: z.number().int().positive(), feedback: z.string().min(1).max(10000), author: z.literal('neomind').optional() }).parse(event.payload);
         const previous = plans.get(request.planningNodeId);
         if (!previous || previous.plan.planId !== request.planId || previous.plan.version + 1 !== request.version || approvals.length || [...attempts.values()].some(item => item.status === 'unresolved')) throw new Error('Plan revision does not match an unapproved plan');
-        scheduler.replan(request.planningNodeId); plans.delete(request.planningNodeId); planRevisions.push(request); break;
+        const { author, ...rest } = request;
+        scheduler.replan(request.planningNodeId); plans.delete(request.planningNodeId); planRevisions.push(author ? { ...rest, author } : rest); break;
       }
       case 'runtime_artifact': {
         const artifact = runtimeArtifactSchema.parse(event.payload);

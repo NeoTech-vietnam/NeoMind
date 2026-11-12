@@ -89,7 +89,8 @@ export function proposeFromRun(input: { directory: string; runId: string; task: 
     seen.add(key); budget--; created.push(proposalId);
   };
   // Every body is a title line plus a few short lines (at most `maxLessonBodyLength`); evidence stays in the run, cited by the sources.
-  for (const revision of input.report.planRevisions.slice(0, 3)) add('plan_revision', 'decision',
+  // NeoMind's own plan-rule revisions were fixed within the run and are not the user's preference.
+  for (const revision of input.report.planRevisions.filter(item => item.author !== 'neomind').slice(0, 3)) add('plan_revision', 'decision',
     `When planning, the user asked: ${clipText(revision.feedback, 600)}\n(Original task: ${task})`, ['plan-feedback'],
     [`run:${input.runId}/plan:${revision.planId}@${revision.version}`], 'You asked for plan changes in this run; keep this if the request holds for later runs.');
   const rules = new Map((input.rules ?? []).map(rule => [ruleCriterion(rule), rule]));

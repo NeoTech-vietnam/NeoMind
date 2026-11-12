@@ -14,7 +14,6 @@ import { CodexReviewDispatch } from '../core/codex-review-dispatch.js';
 import { CodexCheckDispatch } from '../core/codex-check-dispatch.js';
 import { GitCommitDispatch } from '../core/git-commit-dispatch.js';
 import type { RuntimeContext, RuntimeState } from '../core/runtime-state.js';
-import type { RecoveryReport } from '../core/recovery.js';
 import type { FlowNode } from '../domain/schema.js';
 import type { MaterializedRun } from '../domain/materialize.js';
 import { hashJson } from '../domain/resolve.js';
@@ -45,16 +44,19 @@ import { IntegrationDispatch } from '../core/integration-dispatch.js';
 import { branchLayout } from '../domain/branches.js';
 import { filesWithConflictMarkers } from '../workspace/integration.js';
 import { importDirtyChanges, runOnlyTree, treeOf } from '../workspace/dirty-import.js';
-import type { Plan } from '../domain/approval.js';
+import { checkArgCharacters, type Plan } from '../domain/approval.js';
+import { insideScope, type RecoveryReport } from '../core/recovery.js';
 
 type Admission = Parameters<typeof admitIsolatedWorkspaceWrite>[0];
 const importOverlapMarker = 'Chồng lên thay đổi có sẵn';
 type Stop = 'pause' | 'cancel' | 'deadline';
 /** A repair round is not started with less active time left than this, or than the previous round took. */
 const minRepairRoundMs = 5 * 60 * 1000;
+/** How often NeoMind sends a plan that breaks a plan rule back to its planning step, per planning step and run, before it waits for the user. */
+export const maxPlanSelfRepairs = 2;
 export function parseCheck(command: string): string[] {
   const argv = command.trim().split(/\s+/);
-  if (!argv.length || argv.some(arg => !simpleCheckArg.test(arg))) throw new Error(`Check cần dùng argv đơn giản, không có shell: ${command}`);
+  if (!argv.length || argv.some(arg => !simpleCheckArg.test(arg))) throw new Error(`Check "${command}" is not a plain argv command: checks run without a shell, so every argument may only contain the characters ${checkArgCharacters} (no quotes, pipes, redirects or placeholders such as <id>). Write the concrete command with real paths.`);
   return argv;
 }
 
@@ -321,14 +323,29 @@ export class LocalRun {
   private packetProblems(plan: Plan): string[] {
     const writers = branchLayout(this.snapshot.configuration.flow).branchWriters, packets = plan.workPackets ?? [], problems: string[] = [];
     const within = (child: string, parent: string) => parent === '.' || child === parent || child.startsWith(`${parent.replace(/\/$/, '')}/`);
-    if (!writers.length) return packets.length ? ['Flow không có bước ghi song song nhưng kế hoạch có work packets'] : [];
+    if (!writers.length) return packets.length ? ['the flow has no parallel writers, so workPackets must be empty'] : [];
     for (const writer of writers) {
       const matching = packets.filter(packet => packet.nodeId === writer.id);
-      if (matching.length !== 1) { problems.push(`Cần đúng một work packet cho ${writer.id}`); continue; }
-      for (const scope of matching[0]!.scope) if (!plan.scope.some(allowed => within(scope, allowed)) || !writer.writeScopes.some(allowed => within(scope, allowed))) problems.push(`${writer.id}: phạm vi ${scope} nằm ngoài kế hoạch hoặc phạm vi của bước`);
+      if (matching.length !== 1) { problems.push(`return exactly one work packet for ${writer.id}`); continue; }
+      for (const scope of matching[0]!.scope) if (!plan.scope.some(allowed => within(scope, allowed)) || !writer.writeScopes.some(allowed => within(scope, allowed))) problems.push(`${writer.id}: packet scope ${scope} must lie inside both plan.scope and the step's writeScopes ${JSON.stringify(writer.writeScopes)}`);
     }
-    for (const packet of packets) if (!writers.some(writer => writer.id === packet.nodeId)) problems.push(`Work packet cho bước không tồn tại: ${packet.nodeId}`);
+    for (const packet of packets) if (!writers.some(writer => writer.id === packet.nodeId)) problems.push(`remove the work packet for ${packet.nodeId}, which is not a parallel writer`);
     return problems;
+  }
+  /**
+   * Writers after the planning step that edit within the plan scope itself (no work packet): writer agent steps, including
+   * repair, and integration steps. Each claims `plan.scope` when it starts, so the scope must lie inside its writeScopes.
+   */
+  private planScopeWriters(planningNodeId: string) {
+    const flow = this.snapshot.configuration.flow, branch = new Set(branchLayout(flow).branchWriters.map(writer => writer.id));
+    const reached = new Set([planningNodeId]);
+    for (let changed = true; changed;) { changed = false; for (const edge of flow.definition.edges) if (reached.has(edge.from) && !reached.has(edge.to)) { reached.add(edge.to); changed = true; } }
+    return flow.definition.nodes.flatMap(node => reached.has(node.id) && !branch.has(node.id) && (node.type === 'integration' || (node.type === 'agent_task' && node.permissions.write)) ? [{ nodeId: node.id, writeScopes: node.writeScopes }] : []);
+  }
+  /** The rules a plan must follow, stated in the planning prompt; `planDefects` enforces the same rules. */
+  private planRules(planningNodeId: string): string {
+    const writers = this.planScopeWriters(planningNodeId);
+    return ` Plan rules (NeoMind sends back a plan that breaks one): every scope entry, in the plan and in work packets, is a workspace-relative directory that already exists in the repository ("." for the root); never a file and never a directory this run will create (to add a new directory, use its nearest existing parent).${writers.length ? ` Every plan.scope entry must also lie inside the writeScopes of each of these writers, which edit within the plan scope: ${JSON.stringify(writers)}.` : ''} Each checks entry is one complete command line such as "npm test"; never split one command into several entries. Checks run as plain argv without a shell: every argument may only contain the characters ${checkArgCharacters}, so no quotes, pipes, redirects, shell operators or placeholders such as <id>; write concrete paths.`;
   }
   async approve(actor = 'local-user', source: 'ui' | 'cli' | 'session' = 'ui', expectedPlanHash?: string) {
     if (this.busy || !['waiting_approval', 'recovering'].includes(this.state.phase)) throw new Error('Run không chờ duyệt kế hoạch');
@@ -340,34 +357,68 @@ export class LocalRun {
     if (!approval || !planning) throw new Error('Không tìm thấy kế hoạch cần duyệt');
     const plan = report.plans.find(item => item.nodeId === planning.from)!.plan;
     if (expectedPlanHash !== undefined && hashJson(plan) !== expectedPlanHash) throw new Error('Kế hoạch đã thay đổi; cần đọc lại trước khi duyệt');
-    const problem = await this.planProblem(plan);
+    const problem = await this.planProblem(plan, planning.from);
     if (problem) throw new Error(problem);
     await this.durable.service.approveProposedPlan(approval.id, planning.from, actor, source);
     await this.checkpoint('paused', 'Đã duyệt kế hoạch');
     this.launch();
   }
-  /** Why a proposed plan cannot be approved as it is (checks, scopes, work packets, workspace), or undefined. */
-  private async planProblem(plan: Plan): Promise<string | undefined> {
-    try { for (const command of plan.checks) parseCheck(command); for (const node of this.snapshot.configuration.flow.definition.nodes) if (node.type === 'review_group') for (const command of node.checks ?? []) { parseCheck(command); if (!plan.checks.includes(command)) return `Kế hoạch cần liệt kê check đã cấu hình ở ${node.id}: ${command}`; } } catch (error) { return error instanceof Error ? error.message : String(error); }
+  /** A configured review check that cannot run is the flow author's to fix, not the planner's. */
+  private configurationProblem(): string | undefined {
+    for (const node of this.snapshot.configuration.flow.definition.nodes) if (node.type === 'review_group') for (const command of node.checks ?? []) {
+      try { parseCheck(command); } catch (error) { return `The check configured on ${node.id} cannot run; fix the flow. ${error instanceof Error ? error.message : String(error)}`; }
+    }
+    return undefined;
+  }
+  /** Plan-rule violations the planning step can fix itself (checks, scopes, work packets), each with how to fix it. */
+  private async planDefects(plan: Plan, planningNodeId: string): Promise<string[]> {
+    const defects: string[] = [];
+    for (const command of plan.checks) { try { parseCheck(command); } catch (error) { defects.push(error instanceof Error ? error.message : String(error)); } }
+    for (const node of this.snapshot.configuration.flow.definition.nodes) if (node.type === 'review_group') for (const command of node.checks ?? []) if (!plan.checks.includes(command)) defects.push(`plan.checks must include the check configured on ${node.id}, exactly as written: ${command}`);
     const notDirectories: string[] = [];
     for (const scope of [...plan.scope, ...(plan.workPackets ?? []).flatMap(packet => packet.scope)]) {
       const target = path.resolve(this.context.workspace, scope), relative = path.relative(this.context.workspace, target);
       if (relative.startsWith('..') || path.isAbsolute(relative) || !(await lstat(target).then(info => info.isDirectory() && !info.isSymbolicLink(), () => false))) notDirectories.push(scope);
     }
-    if (notDirectories.length) return `Phạm vi kế hoạch phải là thư mục có sẵn trong repo (dùng "." cho thư mục gốc), không phải file: ${[...new Set(notDirectories)].join(', ')}. Hãy yêu cầu sửa kế hoạch.`;
+    if (notDirectories.length) defects.push(`Scope entries must be directories that already exist in the repository ("." for the root), not files or directories the run will create: ${[...new Set(notDirectories)].join(', ')}. Use the nearest existing parent directory.`);
+    // The same lexical check the journal applies when a writer claims the plan scope, so it fails here instead of at the writer.
+    for (const writer of this.planScopeWriters(planningNodeId)) {
+      const outside = plan.scope.filter(scope => !writer.writeScopes.some(allowed => insideScope(scope, allowed)));
+      if (outside.length) defects.push(`Plan scope ${outside.join(', ')} is outside the writeScopes of ${writer.nodeId} (${JSON.stringify(writer.writeScopes)}); use only directories inside them.`);
+    }
     const packetProblems = this.packetProblems(plan);
-    if (packetProblems.length) return `Kế hoạch chưa chia việc hợp lệ cho các nhánh: ${packetProblems.join('; ')}. Hãy yêu cầu sửa kế hoạch.`;
-    if ((await captureBaseline(this.context.workspace)).baselineHash !== this.context.initialBaselineHash) return 'Workspace đã thay đổi từ khi khảo sát; cần xem lại kế hoạch';
+    if (packetProblems.length) defects.push(`The work is not split validly across the parallel writers: ${packetProblems.join('; ')}.`);
+    return defects;
+  }
+  /** Why a proposed plan cannot be approved as it is (flow checks, plan rules, workspace), or undefined. */
+  private async planProblem(plan: Plan, planningNodeId: string): Promise<string | undefined> {
+    const configuration = this.configurationProblem();
+    if (configuration) return configuration;
+    const defects = await this.planDefects(plan, planningNodeId);
+    if (defects.length) return defects.join(' ');
+    if ((await captureBaseline(this.context.workspace)).baselineHash !== this.context.initialBaselineHash) return 'The workspace changed since the plan was made; review the plan again.';
     return undefined;
   }
-  /** An automatic approval node: NeoMind approves the plan itself; a plan it cannot approve waits for the user instead. */
-  private async autoApprove(node: Extract<FlowNode, { type: 'approval' }>, report: RecoveryReport): Promise<boolean> {
+  /**
+   * Before any approval, automatic or the user's: a plan that breaks a plan rule goes back to its planning step (same
+   * session) with the reasons, at most `maxPlanSelfRepairs` times per planning step. The request is journaled with author
+   * `neomind`, so a resumed run counts the revisions it already made. `revised` means the planning step runs again;
+   * otherwise `problem` says why the plan cannot be approved, if it cannot.
+   */
+  private async planGate(node: Extract<FlowNode, { type: 'approval' }>, report: RecoveryReport): Promise<{ revised: boolean; planningNodeId?: string; problem?: string }> {
     const planning = this.snapshot.configuration.flow.definition.edges.find(edge => edge.to === node.id && report.plans.some(plan => plan.nodeId === edge.from));
-    const plan = planning && report.plans.find(item => item.nodeId === planning.from)!.plan;
-    const problem = plan ? await this.planProblem(plan) : 'Không có kế hoạch để tự duyệt';
-    if (problem || !planning) { await this.checkpoint('waiting_approval', `Không tự duyệt được kế hoạch: ${problem}`); return false; }
-    await this.durable.service.approveProposedPlan(node.id, planning.from, 'neomind', 'flow');
-    return true;
+    const proposal = planning && report.plans.find(item => item.nodeId === planning.from);
+    if (!planning || !proposal) return { revised: false };
+    const defects = this.configurationProblem() ? [] : await this.planDefects(proposal.plan, planning.from);
+    if (defects.length) {
+      const used = report.planRevisions.filter(item => item.planningNodeId === planning.from && item.author === 'neomind').length;
+      if (used >= maxPlanSelfRepairs) return { revised: false, planningNodeId: planning.from, problem: `${defects.join(' ')} (NeoMind already sent the plan back ${used} times.)` };
+      const feedback = `NeoMind rejected plan version ${proposal.plan.version} before approval because it breaks the plan rules: ${defects.join(' ')} Return a corrected plan that follows every plan rule.`;
+      await this.durable.service.requestPlanRevision(planning.from, feedback.slice(0, 10000), hashJson(proposal.plan), 'neomind');
+      return { revised: true };
+    }
+    const problem = await this.planProblem(proposal.plan, planning.from);
+    return { revised: false, planningNodeId: planning.from, ...(problem ? { problem } : {}) };
   }
   async revisePlan(feedback: string, expectedPlanHash: string) {
     if (this.busy || !['waiting_approval', 'recovering'].includes(this.state.phase)) throw new Error('Run không chờ sửa kế hoạch');
@@ -559,8 +610,12 @@ export class LocalRun {
         const node = shared ? ready.find(item => item.type === 'review_group') ?? ready[0] : ready[0];
         if (!node) throw new Error('Flow không có bước sẵn sàng; cần kiểm tra các bước đang chờ');
         if (node.type === 'approval') {
-          if (node.mode === 'auto' && this.snapshot.policy.allowAutoApproval !== false) { if (await this.autoApprove(node, report)) continue; return; }
-          await this.checkpoint('waiting_approval', node.purpose); return;
+          const gate = await this.planGate(node, report);
+          if (gate.revised) continue;
+          // An automatic approval node: NeoMind approves the plan itself; a plan it cannot approve waits for the user instead.
+          const auto = node.mode === 'auto' && this.snapshot.policy.allowAutoApproval !== false;
+          if (auto && gate.planningNodeId && !gate.problem) { await this.durable.service.approveProposedPlan(node.id, gate.planningNodeId, 'neomind', 'flow'); continue; }
+          await this.checkpoint('waiting_approval', auto ? `Không tự duyệt được kế hoạch: ${gate.problem ?? 'There is no plan to approve.'}` : gate.problem ? `Kế hoạch chưa duyệt được: ${gate.problem}` : node.purpose); return;
         }
         if (!await this.openRound(node, report)) return;
         if (['start', 'fork', 'join', 'repair_scope', 'finish'].includes(node.type)) await this.durable.service.completeControl(node.id);
@@ -602,7 +657,7 @@ export class LocalRun {
       const { runner, session, binding } = await this.session(node.id, node.sessionGroup, { kind: 'read' }, workspace);
       const dispatcher = new CodexReadOnlyDispatch(this.durable.journal, runner, session);
       const context = { workspace, lease, coordinator: this.coordinator };
-      const instruction = node.outputContract === 'plan' ? `Requested plan revision (if present, keep planId and use the specified version):\n${JSON.stringify(report.planRevisions.filter(item => item.planningNodeId === node.id).at(-1) ?? null)}\nReturn the required plan JSON. The plan describes the changes a later implementation step will make to accomplish the original user task; it does not describe this read-only survey. Its goal is the user's intended outcome, its approach lists the concrete edits, its acceptance criteria are verifiable properties of the finished change, and its checks verify that change (prefer the project's own test or build command). Do not put this step's read-only restriction into the plan.${this.packetInstruction()} Scope entries (in the plan and in work packets) must be existing workspace-relative directories, never files; use "." for the repository root. Each checks entry is one complete command line such as "npm test"; never split one command into several entries. Checks must be simple argv commands (no pipes, redirects or shell operators). Checks must not write files into the repository working tree (bytecode such as __pycache__, build output, coverage reports): a check that changes the tree blocks the run. Choose commands or flags that avoid writing, and when a check needs files, put them in the system temp directory or a path the repository already ignores.${process.platform === 'win32' ? ' Checks run on Windows without a shell: use real programs such as npm, node, git or python, not POSIX shell builtins such as test or ls.' : ''}`
+      const instruction = node.outputContract === 'plan' ? `Requested plan revision (if present, keep planId and use the specified version):\n${JSON.stringify(report.planRevisions.filter(item => item.planningNodeId === node.id).at(-1) ?? null)}\nReturn the required plan JSON. The plan describes the changes a later implementation step will make to accomplish the original user task; it does not describe this read-only survey. Its goal is the user's intended outcome, its approach lists the concrete edits, its acceptance criteria are verifiable properties of the finished change, and its checks verify that change (prefer the project's own test or build command). Do not put this step's read-only restriction into the plan.${this.packetInstruction()}${this.planRules(node.id)} Checks must not write files into the repository working tree (bytecode such as __pycache__, build output, coverage reports): a check that changes the tree blocks the run. Choose commands or flags that avoid writing, and when a check needs files, put them in the system temp directory or a path the repository already ignores.${process.platform === 'win32' ? ' Checks run on Windows without a shell: use real programs such as npm, node, git or python, not POSIX shell builtins such as test or ls.' : ''}`
         : `Your current directory is the project workspace: inspect its files with your tools before answering. ${report.repairRounds.length ? `Address these review findings on your previous report:\n${JSON.stringify(report.artifacts.filter(item => item.kind === 'agent' && item.nodeId !== node.id).slice(-1))}\n` : ''}Produce a report that answers the original task, with concrete references to local project sources. Cite sources as workspace-relative paths with line numbers (for example src/cli/main.ts:39), never as absolute paths. This executor has no web or external connector access. Do not assert facts you cannot verify locally.`;
       const prompt = `${this.prompt(node.id, node.goal)}\nRead-only task; do not edit files. ${instruction}`;
       const writer = this.transcript(runner, session, { attemptId: attempt, nodeId: node.id, key: node.id, role: node.outputContract === 'plan' ? 'plan' : 'read' }, prompt);

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { replayRun } from '../src/core/recovery.js';
 import { captureBaseline } from '../src/workspace/baseline.js';
-import { LocalRun } from '../src/runtime/local-run.js';
+import { LocalRun, maxPlanSelfRepairs } from '../src/runtime/local-run.js';
 import { templates, defaultProject } from '../src/domain/templates.js';
 import { builtinProfile, standaloneDiagnostics } from '../src/runtime/project.js';
 import { materializeRun } from '../src/domain/materialize.js';
@@ -58,7 +58,9 @@ async function fixture(mode: Mode, keepRunWorktrees = false, flow: Flow = templa
       const schema = params.outputSchema as { properties?: Record<string, unknown> } | undefined;
       let output: unknown, delay = 0, status = 'completed';
       if (schema?.properties?.planId) {
-        output = { planId: 'parallel-plan', version: 1, goal: 'Add parts A and B', scope: ['.'], approach: 'Each branch adds its part', acceptanceCriteria: ['parts present'], checks: mode === 'branch-repair' ? ['node branch-check.cjs', 'node complete-check.cjs'] : [], riskChanges: [],
+        // A planner asked to revise returns the requested version.
+        const revision = JSON.parse(promptText.split('use the specified version):\n')[1]?.split('\n')[0] ?? 'null') as { version: number } | null;
+        output = { planId: 'parallel-plan', version: revision?.version ?? 1, goal: 'Add parts A and B', scope: ['.'], approach: 'Each branch adds its part', acceptanceCriteria: ['parts present'], checks: mode === 'branch-repair' ? ['node branch-check.cjs', 'node complete-check.cjs'] : [], riskChanges: [],
           workPackets: mode === 'no-packets' ? [] : [{ nodeId: 'implement-a', goal: 'Part A', scope: separate ? ['a'] : ['.'] }, { nodeId: 'implement-b', goal: 'Part B', scope: separate ? ['b'] : ['.'] }, ...(mode === 'advanced' ? ['c', 'd'].map(part => ({ nodeId: `implement-${part}`, goal: `Part ${part}`, scope: ['.'] })) : [])] };
       } else if (schema?.properties?.evidence) {
         const refFile = thread.cwd.endsWith('--implement-b') ? 'b/b.txt' : 'a/a.txt';
@@ -164,11 +166,15 @@ test('an integration result that still has conflict markers blocks the run befor
   } finally { await f.run.close(); f.coordinator.close(); }
 });
 
-test('a plan without a work packet per branch writer cannot be approved', async () => {
+test('a plan without a work packet per branch writer goes back to the planner, then cannot be approved', async () => {
   const f = await fixture('no-packets');
   try {
     f.run.launch(); await f.run.settled();
-    await assert.rejects(f.run.approve('fixture-user', 'cli'), /work packet cho implement-a/);
+    const report = await f.run.report();
+    assert.equal(report.runtimeState.phase, 'waiting_approval', report.runtimeState.reason);
+    assert.deepEqual(report.planRevisions.map(item => item.author), Array(maxPlanSelfRepairs).fill('neomind'));
+    assert.match(report.runtimeState.reason, /return exactly one work packet for implement-a/);
+    await assert.rejects(f.run.approve('fixture-user', 'cli'), /return exactly one work packet for implement-a/);
     assert.equal((await f.run.report()).approvals.length, 0);
   } finally { await f.run.close(); f.coordinator.close(); }
 });

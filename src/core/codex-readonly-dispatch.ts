@@ -1,7 +1,7 @@
 import { effectiveBinding } from './run-binding.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { normalizePlan, plannerOutputSchema } from '../domain/approval.js';
+import { normalizePlan, plannerJsonSchema } from '../domain/approval.js';
 import type { TurnResult } from '../adapters/codex-turn-events.js';
 import type { AgentRunner, RunnerScope, VerifiedRunnerSession } from '../runners/agent-runner.js';
 import { assertSessionBound, verifiedSession } from '../runners/registry.js';
@@ -53,7 +53,8 @@ export class CodexReadOnlyDispatch {
     }
     if (scope) await this.append('worker_scope_bound', { attemptId, unit: scope.identity.unit, controlGroup: scope.identity.controlGroup }, requestId);
     let turnId: string;
-    try { const output = node.outputContract === 'plan' ? z.toJSONSchema(plannerOutputSchema) : undefined;
+    // OpenCode forwards the schema to whichever provider it is configured with, which may not support `pattern`.
+    try { const output = node.outputContract === 'plan' ? plannerJsonSchema(runner.runner !== 'opencode') : undefined;
       turnId = await runner.startTurn(session, { prompt, effort, ...(output === undefined ? {} : { outputSchema: output }) }); }
     catch (error) {
       await this.append('dispatch_receipt', { attemptId, status: 'unknown' }, requestId);

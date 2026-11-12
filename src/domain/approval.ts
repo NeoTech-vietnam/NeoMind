@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { hashJson } from './resolve.js';
 import { projectPolicySchema, type ProjectPolicy } from './schema.js';
+import { simpleCheckArg } from './compiler.js';
 
 /** One branch writer's share of an approved plan; its scope bounds that writer's sandbox. */
 export const workPacketSchema = z.strictObject({ nodeId: z.string().min(1), goal: z.string().min(1), scope: z.array(z.string().min(1)).min(1) });
@@ -16,6 +17,23 @@ export type Plan = z.infer<typeof planSchema>;
 export type WorkPacket = z.infer<typeof workPacketSchema>;
 /** Structured-output schema for planners: every field is required; an empty packet list means none. */
 export const plannerOutputSchema = z.strictObject({ ...planFields, workPackets: z.array(workPacketSchema) });
+/**
+ * The character class of `simpleCheckArg` (e.g. `A-Za-z0-9_./:=+,%@-`), for prompts and schemas: checks run as argv without
+ * a shell, so quoting, globbing and redirection cannot work.
+ */
+export const checkArgCharacters = /^\^\[(.+)\]\+\$$/.exec(simpleCheckArg.source)![1]!;
+/** A whole check command line as a planner should write it: allowed arguments separated by single spaces. */
+export const checkCommandPattern = `^[${checkArgCharacters}]+( [${checkArgCharacters}]+)*$`;
+/**
+ * Structured-output JSON Schema for planners. With `constrainChecks` each check carries `checkCommandPattern`, so a runner
+ * whose structured output enforces `pattern` refuses a shell-style check on the model side. Parsing never uses the pattern:
+ * a plan that breaks it is still recorded and sent back to the planner with the reason, instead of failing the attempt.
+ */
+export function plannerJsonSchema(constrainChecks: boolean): Record<string, unknown> {
+  const schema = z.toJSONSchema(plannerOutputSchema) as unknown as { properties: { checks: { items: Record<string, unknown> } } };
+  if (constrainChecks) schema.properties.checks.items.pattern = checkCommandPattern;
+  return schema as unknown as Record<string, unknown>;
+}
 export function normalizePlan(input: unknown): Plan {
   const plan = plannerOutputSchema.partial({ workPackets: true }).parse(input);
   const { workPackets, ...rest } = plan;

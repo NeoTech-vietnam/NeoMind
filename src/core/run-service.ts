@@ -91,11 +91,12 @@ export class RunService {
   recordUsage(attemptId: string, result: TurnResult) { return this.serialize(async () => {
     if (result.usage) await this.append('usage_observed', { attemptId, threadId: result.threadId, turnId: result.turnId, total: result.usage });
   }); }
-  requestPlanRevision(planningNodeId: string, feedback: string, expectedPlanHash: string) {
+  /** `author: 'neomind'` is for NeoMind's own request after a plan broke a plan rule; the user's requests carry no author. */
+  requestPlanRevision(planningNodeId: string, feedback: string, expectedPlanHash: string, author?: 'neomind') {
     return this.serialize(async () => {
       const report = replayRun(await this.journal.read()), proposal = report.plans.find(item => item.nodeId === planningNodeId);
       if (!proposal || hashJson(proposal.plan) !== expectedPlanHash) throw new Error('Kế hoạch đã thay đổi; cần xem lại');
-      await this.append('plan_revision_requested', { planningNodeId, planId: proposal.plan.planId, version: proposal.plan.version + 1, feedback });
+      await this.append('plan_revision_requested', { planningNodeId, planId: proposal.plan.planId, version: proposal.plan.version + 1, feedback, ...(author ? { author } : {}) });
     });
   }
   authorizeWorkspaceContinuation() {
