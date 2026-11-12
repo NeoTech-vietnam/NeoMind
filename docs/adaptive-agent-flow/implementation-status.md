@@ -2,6 +2,15 @@
 
 Cập nhật: **11/11/2026**. Branch: `hieu/adaptive-agent-flow`. Bàn giao: [11/11 khôi phục MCP, chạy lại flow, OpenCode](session-handoff-2026-11-11.md).
 
+## Cảnh báo check và scope của kế hoạch — 12/11/2026
+
+Branch `feat/validate-plan-rules` (worktree `../test_workflow_worktrees/validate-plan-rules`). Hai hàng mới ở mục 2 skill soạn flow (rút từ các run `lc-new-problem` bị chặn) thành cảnh báo khi soạn flow (`authoring: true`); không chặn publish, phiên bản đã publish vẫn chạy.
+
+- `plan_check_placeholder` (`src/domain/compiler.ts`, `planCheckProblem`): bước `outputContract: 'plan'` có goal/`instructionsOverride` chứa placeholder `<word>` dính vào đường dẫn (`c/<topic>/…`, `<id4>_<slug>`, `src/<module>.ts`) hoặc nằm trong inline code có khoảng trắng hay `/`; hoặc trong câu nói về check (`check(s)`/`kiểm tra`) có lệnh trong backtick không phải argv đơn giản (cùng mẫu `simpleCheckArg` mà `parseCheck` giờ dùng chung) hay `&&`/`||` ngoài backtick. Bỏ qua thẻ HTML thường gặp, kiểu `Array<string>`, placeholder đứng riêng trong văn xuôi. Preflight báo thêm khi instructions của profile (bước plan không override) có cùng vấn đề.
+- `plan_scope_outside_write_scope`: writer phía sau bước plan (agent_task có write hoặc integration) có `writeScopes` không chứa `.` mà câu "Scope"/"phạm vi" của goal không nêu thư mục nào bằng hoặc nằm trong `writeScopes` (so cả token, nên `c` không khớp `cpp/` hay `c/<topic>/`); goal không có câu scope thì xét cả goal. Giới hạn: không biết thư mục đã tồn tại chưa (goal nêu thư mục con mới như bản v3 vẫn sạch), không đọc scope ghim trong profile.
+- Đối chiếu flow thật (chỉ đọc): `lc-new-problem` v1 → cả hai, v2 → scope, v3 (writer `.`) và v4/draft → sạch; `lc-review` v5–v11 và draft → cả hai (scope `<problem-dir>/review.md` là file kèm placeholder: báo đúng).
+- Kiểm chứng (Windows): `test/flow-validate.test.ts` 15 test, 4 mới (dựng lại lc-new-problem v1/v2/v4, ca đúng/sai từng heuristic, profile, publish vẫn được khi có cảnh báo; bốn template vẫn sạch). `npm test` đầy đủ: 340 test, 338 đạt, 0 lỗi, 2 skip; `tsc -p tsconfig.ui.json --noEmit` và build extension đạt. Không chạy run thật.
+
 ## Memory lưu bằng tiếng Anh — 12/11/2026
 
 Branch `feat/memory-english` (worktree `../test_workflow_worktrees/memory-english`). Người dùng quyết định: dữ liệu NeoMind lưu trữ viết bằng tiếng Anh khi có thể; nhãn UI, chat, tài liệu cho người đọc vẫn tiếng Việt.
