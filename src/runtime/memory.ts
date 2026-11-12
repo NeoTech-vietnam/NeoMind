@@ -59,16 +59,18 @@ export function inferProjectPaths(projectRoot: string, task: string): string[] {
 const maxFeedbackBonus = 5;
 type Kind = 'context' | 'decision' | 'lesson';
 
-export function memoryForRun(projectRoot: string, database: string, task: string, policy: ProjectConfig['memorySelection'] = {}): { root: string; records: MemoryRecord[]; inferredPaths?: string[]; reasons?: Record<string, string>; excluded?: { id: string; reason: string }[]; feedback?: Record<string, number> } | undefined {
+export function memoryForRun(projectRoot: string, database: string, task: string, policy: ProjectConfig['memorySelection'] = {}, projectId?: string): { root: string; records: MemoryRecord[]; inferredPaths?: string[]; reasons?: Record<string, string>; excluded?: { id: string; reason: string }[]; feedback?: Record<string, number> } | undefined {
   const memory = openProjectMemory(projectRoot, database); if (!memory) return undefined;
   const feedbackStore = new MemoryFeedbackStore(database);
   try {
     const words = [...new Set(task.toLocaleLowerCase().split(/[^\p{L}\p{N}_-]+/u).filter(word => word.length > 2))];
     const paths = policy.inferTaskPaths ? inferProjectPaths(projectRoot, task) : [];
     const withinScope = (recordScope: string, selected: string) => recordScope === selected || recordScope.startsWith(`${selected.replace(/\/$/, '')}/`);
+    // Older repair lessons carry the project id as scope; like `project` they apply to the whole repository.
+    const scopeOf = (record: MemoryRecord) => projectId && record.header.scope === projectId ? 'project' : record.header.scope;
     const { active, excluded } = activeMemory(memory.store.search());
-    const eligible = active.filter(record => (!policy.scopes?.length || policy.scopes.some(scope => withinScope(record.header.scope, scope))) && (!policy.tags?.length || policy.tags.every(tag => record.header.tags.includes(tag)))
-      && (!paths.length || record.header.scope === 'project' || paths.some(file => withinScope(file, record.header.scope) || withinScope(record.header.scope, file))));
+    const eligible = active.filter(record => (!policy.scopes?.length || policy.scopes.some(scope => withinScope(scopeOf(record), scope))) && (!policy.tags?.length || policy.tags.every(tag => record.header.tags.includes(tag)))
+      && (!paths.length || scopeOf(record) === 'project' || paths.some(file => withinScope(file, record.header.scope) || withinScope(record.header.scope, file))));
     const semantic = policy.retrievalMode && policy.retrievalMode !== 'lexical' ? semanticScores(eligible, task) : [];
     // Ratings from earlier runs (Hữu ích / Không liên quan / Sai) shift the order; a record nobody rated keeps its task score.
     const stats = feedbackStore.stats(), feedback: Record<string, number> = {};

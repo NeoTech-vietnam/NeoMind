@@ -201,6 +201,10 @@ test('a finished run proposes violated rules and block reasons once each, within
   assert.equal(created.filter(item => item.origin === 'plan_revision').length, 3, 'at most three plan feedback proposals');
   assert.equal(created.filter(item => item.origin === 'review_rule').length, 1, 'one proposal per violated rule');
   assert.equal(created.filter(item => item.origin === 'run_stopped').length, 1, 'the same block reason once');
+  // Short bodies a person reads in the queue: a title line, then the problem and the file.
+  assert.equal(created.find(item => item.origin === 'review_rule')?.record.body, 'Tuân thủ rule R1: Keep it small\nVấn đề reviewer thấy: f1 explained\nFile: a:1');
+  assert.equal(created.find(item => item.origin === 'run_stopped')?.record.body, 'Run bị chặn: Check failed: npm test\n(Task gốc: Do it)');
+  assert.equal(created.find(item => item.origin === 'plan_revision')?.record.body, 'Khi lập kế hoạch, người dùng yêu cầu: feedback 0\n(Task gốc: Do it)');
   assert.deepEqual(proposeFromRun(input), [], 'running again proposes nothing new');
   const rules = Array.from({ length: 10 }, (_, index) => ({ id: `R${index}`, text: `Rule text ${index}` }));
   const many = [reviewerOutput(5, rules.map(rule => finding(`f-${rule.id}`, `Rule ${rule.id}: ${rule.text}`)))] as unknown as typeof events;

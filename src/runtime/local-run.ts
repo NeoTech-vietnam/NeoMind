@@ -37,7 +37,8 @@ import { TranscriptWriter, transcriptDirectory, type TranscriptMeta } from '../c
 import { defaultRunnerRegistry, type RunnerRegistry } from '../runners/registry.js';
 import { LessonProposals } from '../memory/proposals.js';
 import { stepMemory, stepMemoryPolicy } from './memory.js';
-import { proposeFromRun } from './memory-proposals.js';
+import { proposeFromRun, repairedFinding } from './memory-proposals.js';
+import { fallbackRepairLessonBody, repairLessonBody } from '../memory/lesson-body.js';
 import { checkReceiptId, referenceProblems, structureProblems } from '../core/review-evidence.js';
 import { IntegrationDispatch } from '../core/integration-dispatch.js';
 import { branchLayout } from '../domain/branches.js';
@@ -861,10 +862,11 @@ export class LocalRun {
     for (const findingId of findingIds) {
       const proposalId = `lesson-${hashJson({ runId: this.runId, findingId }).slice(0, 24)}`;
       try { store.read(proposalId); continue; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-      const event = events.find(event => event.type === 'reviewer_output' && JSON.stringify(event.payload).includes(JSON.stringify(findingId)));
-      const body = `Review finding corrected in run ${this.runId}: ${findingId}\n\nOriginal review evidence:\n${JSON.stringify(event?.payload ?? {}).slice(0, 5000)}\n\nImplementation response:\n${report.artifacts.filter(item => item.kind === 'agent').at(-1)?.text.slice(0, 3000) ?? ''}\n\nThis is a proposed lesson from a completed repair. Review its applicability before sharing.`;
-      store.create({ proposalId, runId: this.runId, createdAt: new Date().toISOString(), record: { id: proposalId, type: 'lesson', scope: this.snapshot.configuration.projectId,
-        sources: [`run:${this.runId}`, ...(event ? [`run:${this.runId}/event:${event.sequence}`] : [])], tags: ['repair', 'review'], body } });
+      const found = repairedFinding(events, findingId);
+      // A few readable lines; the reviewer's full output and the fix stay in the run, cited by the sources.
+      const body = found ? repairLessonBody({ runId: this.runId, nodeId: found.nodeId, finding: found.finding }) : fallbackRepairLessonBody(this.runId, findingId);
+      store.create({ proposalId, runId: this.runId, createdAt: new Date().toISOString(), origin: 'repair', reason: 'Reviewer yêu cầu sửa và run đã sửa xong; ghi lại để agent sau tránh lặp lại.',
+        record: { id: proposalId, type: 'lesson', scope: 'project', sources: [`run:${this.runId}`, ...(found ? [`run:${this.runId}/event:${found.sequence}`] : [])], tags: ['repair', 'review'], body } });
     }
   }
   /** Memory proposals from plan feedback, violated rules and block reasons; best effort, a failure never fails the run. */

@@ -325,7 +325,7 @@ async function main(args: string[]): Promise<number> {
     return 0;
   }
   // Project memory through the run manager (11/11): the CLI is the user, so approvals act on what `memory pending` shows.
-  const memoryCommands = ['list', 'pending', 'propose', 'approve', 'reject', 'note', 'expire', 'delete', 'feedback', 'remember'];
+  const memoryCommands = ['list', 'pending', 'propose', 'approve', 'reject', 'note', 'expire', 'delete', 'feedback', 'remember', 'compact'];
   if (args[0] === 'memory' && memoryCommands.includes(args[1] ?? '') && args.length >= 3) {
     const { RunManager } = await import('../runtime/run-manager.js');
     const project = await (await import('node:fs/promises')).realpath(args[2]!), rest = args.slice(3);
@@ -352,7 +352,16 @@ async function main(args: string[]): Promise<number> {
       }
       else if (args[1] === 'feedback' && rest.length === 3) print(await manager.memoryFeedback(rest[0]!, { record: rest[1]!, rating: rest[2] as 'helpful', ...(step ? { nodeId: step } : {}) }));
       else if (args[1] === 'remember' && rest.length === 2) print(await manager.rememberFromRun(rest[0]!, { text: rest[1]!, ...(step ? { nodeId: step } : {}) }));
-      else { console.error('Usage: neomind memory list <project> [query] | pending <project> | propose <project> <input.json> | approve|reject <project> <proposalId> [--run <runId>] [--body-file <file>] | note <project> <context|decision|lesson> <text> [--scope s] [--tags a,b] | expire|delete <project> <type> <id> | feedback <project> <runId> <type/id> <helpful|irrelevant|wrong> [--step <nodeId>] | remember <project> <runId> <text> [--step <nodeId>]'); return 2; }
+      else if (args[1] === 'compact' && rest.filter(item => item !== '--dry-run').length === 0) {
+        // Before/after as text: the old bodies are thousands of characters, so only their start is shown.
+        const dryRun = rest.includes('--dry-run'), result = await manager.compactMemory({ dryRun, source: 'cli' });
+        for (const change of result.changes) console.log([`${change.kind === 'record' ? 'Bản ghi' : 'Đề xuất'} ${change.key}`,
+          `  Trước (${change.before.length} ký tự): ${change.before.slice(0, 160).replace(/\s+/g, ' ')}…`, `  Sau (${change.after.length} ký tự):`,
+          ...change.after.split('\n').map(line => `    ${line}`), ''].join('\n'));
+        for (const item of result.skipped) console.log(`Bỏ qua ${item.key}: ${item.reason}`);
+        console.log(result.changes.length ? `${dryRun ? 'Sẽ rút gọn' : 'Đã rút gọn'} ${result.changes.length} mục.${dryRun ? ' Chạy lại không có --dry-run để ghi.' : ''}` : 'Không có bản ghi hay đề xuất nào theo mẫu cũ.');
+      }
+      else { console.error('Usage: neomind memory list <project> [query] | pending <project> | propose <project> <input.json> | approve|reject <project> <proposalId> [--run <runId>] [--body-file <file>] | note <project> <context|decision|lesson> <text> [--scope s] [--tags a,b] | expire|delete <project> <type> <id> | feedback <project> <runId> <type/id> <helpful|irrelevant|wrong> [--step <nodeId>] | remember <project> <runId> <text> [--step <nodeId>] | compact <project> [--dry-run]'); return 2; }
       return 0;
     } finally { await manager.close(); }
   }
@@ -361,7 +370,7 @@ async function main(args: string[]): Promise<number> {
     console.log(JSON.stringify({ simulated: false, executables, auth: 'unknown', inference: 'not_tested', delegationEnforcement: 'unknown' }, null, 2));
     return 0;
   }
-  console.error('Usage: neomind mcp <project> | rules <project> | program create <project> <program.json> | program list <project> | program status|next <project> <programId> | program deliver <project> <programId> <phaseId> <note> | skills <project> | skills status <project> <refs.json> | profile get|skills-status|usage <project> <id> | profile version <project> <id> <n> | profile migrate <project> <id> <n> <selection.json> | profile author-draft <project> <input.json> | profile author-publish <project> <id> <revision> <reason> | assess <project> --task-file <file>|<task> | flow blocks <project> | flow get|diff|author-validate <project> <id> | flow author-draft <project> <input.json> | flow author-publish <project> <id> <revision> <reason> | editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|parallel|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | flow canvas export|import <flows-dir> <flow-id> [file.canvas] | project migrate <project> | memory configure|project-search|search|get ... | memory list|pending|propose|approve|reject|note|expire|delete|feedback|remember <project> ... | doctor capabilities');
+  console.error('Usage: neomind mcp <project> | rules <project> | program create <project> <program.json> | program list <project> | program status|next <project> <programId> | program deliver <project> <programId> <phaseId> <note> | skills <project> | skills status <project> <refs.json> | profile get|skills-status|usage <project> <id> | profile version <project> <id> <n> | profile migrate <project> <id> <n> <selection.json> | profile author-draft <project> <input.json> | profile author-publish <project> <id> <revision> <reason> | assess <project> --task-file <file>|<task> | flow blocks <project> | flow get|diff|author-validate <project> <id> | flow author-draft <project> <input.json> | flow author-publish <project> <id> <revision> <reason> | editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|parallel|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | flow canvas export|import <flows-dir> <flow-id> [file.canvas] | project migrate <project> | memory configure|project-search|search|get ... | memory list|pending|propose|approve|reject|note|expire|delete|feedback|remember|compact <project> ... | doctor capabilities');
   console.error('       neomind skill list <project> | skill get|usage <project> <id> [--source claude] | skill repin <project> <id> | skill create <project> <input.json> | skill update <project> <id> <input.json> | skill delete <project> <id> [--force] | profile templates | profile from-template <project> <id> <name> <template> | profile remove <project> <id>');
   return 2;
 }

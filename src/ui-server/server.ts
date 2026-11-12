@@ -131,6 +131,11 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       if (proposalAction[1] === 'reject') return reply(200, await (await runs()).rejectMemoryProposal(z.strictObject(base).parse(payload)));
       return reply(200, await (await runs()).reviseMemoryProposal(z.strictObject({ ...base, body: z.string().trim().min(1).max(30000) }).parse(payload)));
     }
+    if (url.pathname === '/api/memory/compact' && method === 'POST') {
+      const target = z.union([z.strictObject({ type: memoryType, id: memoryRecordId }), z.strictObject({ runId: z.string().min(1).nullable(), proposalId: memoryRecordId })]).optional();
+      const input = z.strictObject({ dryRun: z.boolean().default(false), target }).parse(payload);
+      return reply(200, await (await runs()).compactMemory({ dryRun: input.dryRun, ...(input.target ? { target: input.target } : {}), source: 'ui' }));
+    }
     const runMemoryMatch = /^\/api\/runs\/([a-z0-9-]+)\/(remember|memory-feedback)$/.exec(url.pathname);
     if (runMemoryMatch && method === 'POST') {
       if (runMemoryMatch[2] === 'remember') { const input = z.strictObject({ text: z.string().trim().min(1).max(30000), type: memoryType.optional(), nodeId: z.string().min(1).optional() }).parse(payload); return reply(200, await (await runs()).rememberFromRun(runMemoryMatch[1]!, input)); }

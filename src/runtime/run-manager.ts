@@ -19,7 +19,8 @@ import { randomUUID } from 'node:crypto';
 import { ProjectMemoryRegistry } from '../memory/registry.js';
 import { resolveDefaultMemoryRoot } from '../memory/project-root.js';
 import { primaryWorktree } from '../workspace/worktree.js';
-import { MemoryConflict, type MemoryInput } from '../memory/store.js';
+import { MemoryConflict, type MemoryInput, type MemoryRecord } from '../memory/store.js';
+import { compactLegacyLessonBody, maxSessionProposalLength } from '../memory/lesson-body.js';
 import { LessonProposals } from '../memory/proposals.js';
 import type { Flow } from '../domain/schema.js';
 import { bindingRunners, selectAvailableBinding } from './model-selection.js';
@@ -111,8 +112,8 @@ export class RunManager {
       catch (error) { throw new Error(`Check của flow chạy qua Codex command/exec nhưng Codex không khả dụng: ${error instanceof Error ? error.message : String(error)}`); }
     }
     for (const runner of selected) await this.runners.get(runner).verifyCapabilities();
-    const selectionPolicy = (await readProject(this.projectRoot)).memorySelection;
-    const memory = memoryForRun(this.projectRoot, path.join(this.stateRoot, 'coordination.sqlite'), task, selectionPolicy);
+    const project = await readProject(this.projectRoot), selectionPolicy = project.memorySelection;
+    const memory = memoryForRun(this.projectRoot, path.join(this.stateRoot, 'coordination.sqlite'), task, selectionPolicy, project.projectId);
     const run = await LocalRun.create({ projectRoot: this.projectRoot, stateRoot: this.stateRoot, task, snapshot, coordinator: this.coordinator, runners: this.runners, expectedSourceHead: sourceHead, ...(importDirty ? { importDirty } : {}), ...(program ? { program } : {}), ...(rules?.rules.length ? { rules: { hash: rules.hash, rules: rules.rules } } : {}),
       ...(memory ? { memory: formatMemorySnapshot(memory, task, selectionPolicy) } : {}) });
     this.runs.set(run.runId, run);
@@ -123,8 +124,8 @@ export class RunManager {
   async get(runId: string) { const report = await this.withHandoff(await this.withDelivery(await this.report(runId))); return { ...report, memoryUse: this.memoryUse(report), nodeData: report.nodeData.map(({ prompt: _prompt, output, ...input }) => ({ ...input, ...(output ? { output: { outputHash: output.outputHash, truncated: output.truncated, messageCount: output.messages.length } } : {}) })) }; }
   async nodeData(runId: string, attemptId: string) { const item = (await this.report(runId)).nodeData.find(item => item.attemptId === attemptId); if (!item) throw new Error('No recorded input/output for this attempt'); return item; }
   async previewMemory(task: string) {
-    const selectionPolicy = (await readProject(this.projectRoot)).memorySelection;
-    const memory = memoryForRun(this.projectRoot, path.join(this.stateRoot, 'coordination.sqlite'), task, selectionPolicy);
+    const project = await readProject(this.projectRoot), selectionPolicy = project.memorySelection;
+    const memory = memoryForRun(this.projectRoot, path.join(this.stateRoot, 'coordination.sqlite'), task, selectionPolicy, project.projectId);
     if (!memory) return { root: null, records: [], ...(selectionPolicy?.inferTaskPaths ? { inferredPaths: [] as string[] } : {}), ...(selectionPolicy ? { selectionPolicy } : {}) };
     const snapshot = formatMemorySnapshot(memory, task, selectionPolicy);
     return { root: snapshot.root, records: snapshot.records, ...(snapshot.excluded ? { excluded: snapshot.excluded } : {}), ...(snapshot.inferredPaths ? { inferredPaths: snapshot.inferredPaths } : {}), ...(snapshot.selectionPolicy ? { selectionPolicy: snapshot.selectionPolicy } : {}) };
@@ -430,6 +431,8 @@ export class RunManager {
    */
   async proposeMemory(input: ProposalInput, origin: 'ai_session' | 'user_note' = 'ai_session', runId?: string) {
     const value = proposalInputSchema.parse(input), memory = openProjectMemory(this.projectRoot, this.memoryDatabase);
+    // Memory is read in a review queue and pasted into later prompts, so an AI's proposal must be a short note, not a log.
+    if (origin === 'ai_session' && value.body.length > maxSessionProposalLength) throw new Error(`Đề xuất memory dài ${value.body.length} ký tự; viết gọn dưới ${maxSessionProposalLength} ký tự (dòng đầu là tiêu đề) và dẫn bằng chứng qua sources`);
     let approved: ReturnType<NonNullable<typeof memory>['store']['search']> = [];
     try { approved = memory?.store.search() ?? []; } finally { memory?.store.close(); }
     const duplicate = duplicateRecord(approved, value);
@@ -487,6 +490,52 @@ export class RunManager {
     if (runId) return this.reviseLesson(runId, input);
     const directory = await this.projectProposalDirectory();
     return withLibraryLock(directory, async () => new LessonProposals(directory).revise(input.proposalId, input.proposalHash, input.body, { confirmedByUser: true }));
+  }
+  /**
+   * Rewrite lessons in the old repair format (raw reviewer JSON plus the agent's whole reply) as the short body new runs
+   * write. An approved record gets a new revision through the audited write path, keeping its sources plus `compacted`
+   * (and `project` instead of the project id as scope); a pending proposal gets a new revision of its text. Bodies not in
+   * the old format are never touched. `target` limits the pass to one record or one proposal; `dryRun` writes nothing.
+   */
+  async compactMemory(options: { dryRun?: boolean; target?: { type: MemoryKind; id: string } | { runId: string | null; proposalId: string }; source?: 'ui' | 'cli' } = {}) {
+    const { projectId } = await readProject(this.projectRoot), target = options.target;
+    type Change = { kind: 'record' | 'proposal'; key: string; runId?: string | null; before: string; after: string; applied: boolean };
+    const changes: Change[] = [], skipped: { kind: 'record' | 'proposal'; key: string; reason: string }[] = [];
+    const legacy = (body: string) => body.startsWith('Review finding corrected in run ');
+    const memory = openProjectMemory(this.projectRoot, this.memoryDatabase);
+    let records: MemoryRecord[] = [];
+    try { records = memory?.store.search() ?? []; } finally { memory?.store.close(); }
+    for (const record of target && !('type' in target) ? [] : records) {
+      const key = `${record.header.type}/${record.header.id}`;
+      if (target && 'type' in target && (target.type !== record.header.type || target.id !== record.header.id)) continue;
+      const compacted = compactLegacyLessonBody(record.body);
+      if (!compacted) { if (legacy(record.body)) skipped.push({ kind: 'record', key, reason: 'Không tìm thấy finding trong bằng chứng cũ' }); continue; }
+      const change: Change = { kind: 'record', key, before: record.body, after: compacted.body, applied: false };
+      if (!options.dryRun) {
+        await this.writeMemory({ id: record.header.id, type: record.header.type, scope: record.header.scope === projectId ? 'project' : record.header.scope,
+          sources: [...record.header.sources.filter(source => source !== 'compacted'), 'compacted'], tags: record.header.tags, body: compacted.body,
+          ...(record.header.expiresAt ? { expiresAt: record.header.expiresAt } : {}), ...(record.header.supersedes ? { supersedes: record.header.supersedes } : {}) }, record.revision, options.source ?? 'cli');
+        change.applied = true;
+      }
+      changes.push(change);
+    }
+    if (target && 'type' in target) return { dryRun: !!options.dryRun, changes, skipped };
+    const directories: { runId: string | null; directory: string }[] = [];
+    if (!target || target.runId === null) directories.push({ runId: null, directory: await this.projectProposalDirectory() });
+    for (const runId of await this.store.list()) if (!target || target.runId === runId) directories.push({ runId, directory: path.dirname(await this.store.journal(runId)) });
+    for (const { runId, directory } of directories) {
+      const opened = openProjectMemory(this.projectRoot, this.memoryDatabase);
+      let states: ProposalState[];
+      try { states = proposalStates(directory, runId, opened?.store); } finally { opened?.store.close(); }
+      for (const state of states.filter(item => !item.promoted && !item.rejected && (!target || target.proposalId === item.proposal.proposalId))) {
+        const key = `${runId ?? 'project'}/${state.proposal.proposalId}`, compacted = compactLegacyLessonBody(state.proposal.record.body);
+        if (!compacted) { if (legacy(state.proposal.record.body)) skipped.push({ kind: 'proposal', key, reason: 'Không tìm thấy finding trong bằng chứng cũ' }); continue; }
+        const change: Change = { kind: 'proposal', key, runId, before: state.proposal.record.body, after: compacted.body, applied: false };
+        if (!options.dryRun) { await this.reviseMemoryProposal({ runId, proposalId: state.proposal.proposalId, proposalHash: state.proposalHash, body: compacted.body }); change.applied = true; }
+        changes.push(change);
+      }
+    }
+    return { dryRun: !!options.dryRun, changes, skipped };
   }
   /** The user decided on one proposal; the same text pending elsewhere was the same decision, so it is closed as rejected (merged). */
   private async settleDuplicates(type: MemoryKind, body: string, decided: { runId: string | null; proposalId: string }) {

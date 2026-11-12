@@ -4,7 +4,8 @@ import { LessonProposals, type LessonProposal } from '../memory/proposals.js';
 import type { MemoryRecord, MemoryStore } from '../memory/store.js';
 import { hashJson } from '../domain/resolve.js';
 import { ruleCriterion } from '../domain/rules.js';
-import { reviewEvidenceSchema } from '../core/review-evidence.js';
+import { reviewEvidenceSchema, type ReviewEvidence } from '../core/review-evidence.js';
+import { clipText, referenceLabels } from '../memory/lesson-body.js';
 import type { RecoveryReport } from '../core/recovery.js';
 import type { RunEvent } from '../storage/journal.js';
 
@@ -42,7 +43,21 @@ export function duplicateRecord(records: MemoryRecord[], record: { type: Kind; b
   return records.find(item => memoryFingerprint({ type: item.header.type, body: item.body }) === key);
 }
 
-const clip = (value: string, max: number) => value.length > max ? `${value.slice(0, max)}…` : value;
+/**
+ * The finding a repair round fixed, from the reviewer output that requested the round: the last `needs_changes` output
+ * listing it before the round started. Undefined when the journal holds no such output with evidence.
+ */
+export function repairedFinding(events: RunEvent[], findingId: string): { nodeId: string; sequence: number; finding: ReviewEvidence['findings'][number] } | undefined {
+  let candidate: { nodeId: string; sequence: number; finding: ReviewEvidence['findings'][number] } | undefined;
+  for (const event of events) {
+    if (event.type === 'repair_round_started' && candidate && (event.payload as { findingIds?: string[] }).findingIds?.includes(findingId)) return candidate;
+    if (event.type !== 'reviewer_output') continue;
+    const payload = event.payload as { nodeId?: unknown; evidence?: unknown; result?: { findingIds?: string[] } };
+    const evidence = reviewEvidenceSchema.safeParse(payload.evidence), finding = evidence.success ? evidence.data.findings.find(item => item.id === findingId) : undefined;
+    if (finding && typeof payload.nodeId === 'string') candidate = { nodeId: payload.nodeId, sequence: event.sequence, finding };
+  }
+  return candidate;
+}
 
 /**
  * Proposals a finished (or cancelled) run suggests besides repaired review findings: the user's plan feedback, project
@@ -53,7 +68,7 @@ export function proposeFromRun(input: { directory: string; runId: string; task: 
   const store = new LessonProposals(input.directory), existing = proposalIds(input.directory).map(id => store.read(id));
   const seen = new Set(existing.map(item => memoryFingerprint(item.record)));
   let budget = maxAutoProposalsPerRun - existing.filter(item => item.origin !== 'user_note').length;
-  const created: string[] = [], task = clip(input.task.split('\n')[0]!.trim(), 200);
+  const created: string[] = [], task = clipText(input.task.split('\n')[0]!, 120);
   const add = (origin: NonNullable<LessonProposal['origin']>, type: Kind, body: string, tags: string[], sources: string[], reason: string) => {
     const key = memoryFingerprint({ type, body });
     if (budget <= 0 || seen.has(key)) return;
@@ -62,8 +77,9 @@ export function proposeFromRun(input: { directory: string; runId: string; task: 
       record: { id: proposalId, type, scope: 'project', sources: [`run:${input.runId}`, ...sources], tags, body } });
     seen.add(key); budget--; created.push(proposalId);
   };
+  // Every body is a title line plus a few short lines (at most `maxLessonBodyLength`); evidence stays in the run, cited by the sources.
   for (const revision of input.report.planRevisions.slice(0, 3)) add('plan_revision', 'decision',
-    `Khi lập kế hoạch, người dùng yêu cầu: ${clip(revision.feedback.trim(), 2000)}\n\n(Task gốc: ${task})`, ['plan-feedback'],
+    `Khi lập kế hoạch, người dùng yêu cầu: ${clipText(revision.feedback, 600)}\n(Task gốc: ${task})`, ['plan-feedback'],
     [`run:${input.runId}/plan:${revision.planId}@${revision.version}`], 'Bạn đã yêu cầu sửa kế hoạch trong run này; ghi lại nếu yêu cầu đúng cho các run sau.');
   const rules = new Map((input.rules ?? []).map(rule => [ruleCriterion(rule), rule]));
   const violated = new Set<string>();
@@ -74,7 +90,8 @@ export function proposeFromRun(input: { directory: string; runId: string; task: 
       const rule = rules.get(finding.criterion);
       if (!rule || violated.has(rule.id)) continue;
       violated.add(rule.id);
-      add('review_rule', 'lesson', `Rule ${rule.id} của project (${clip(rule.text, 400)}) đã bị vi phạm và reviewer yêu cầu sửa: ${clip(finding.explanation, 1500)}`,
+      const { files } = referenceLabels(finding.references);
+      add('review_rule', 'lesson', `Tuân thủ rule ${rule.id}: ${clipText(rule.text, 200)}\nVấn đề reviewer thấy: ${clipText(finding.explanation, 400)}${files.length ? `\nFile: ${files.join(', ')}` : ''}`,
         ['rule', 'review'], [`run:${input.runId}/event:${event.sequence}`], `Reviewer thấy rule ${rule.id} bị vi phạm; ghi lại để agent sau tránh lặp lại.`);
     }
   }
@@ -84,7 +101,7 @@ export function proposeFromRun(input: { directory: string; runId: string; task: 
     const state = event.payload as { phase?: string; reason?: string };
     if (state.phase !== 'blocked' || !state.reason?.trim() || reasons.has(state.reason) || reasons.size >= 2) continue;
     reasons.add(state.reason);
-    add('run_stopped', 'lesson', `Một run bị chặn với lý do: ${clip(state.reason.trim(), 1500)}\n\n(Task gốc: ${task})`, ['blocked'],
+    add('run_stopped', 'lesson', `Run bị chặn: ${clipText(state.reason, 500)}\n(Task gốc: ${task})`, ['blocked'],
       [`run:${input.runId}/event:${event.sequence}`], 'Run bị chặn ở bước này; ghi lại nếu nguyên nhân sẽ lặp lại ở run khác.');
   }
   return created;

@@ -14,6 +14,9 @@ import { WorkspaceCoordinator } from '../src/storage/coordination.js';
 import { RunStore } from '../src/storage/run-store.js';
 import { CodexTurnEvents } from '../src/adapters/codex-turn-events.js';
 import type { WorkerFactory } from '../src/runtime/worker.js';
+import { LessonProposals } from '../src/memory/proposals.js';
+import { proposalIds } from '../src/runtime/memory-proposals.js';
+import { maxLessonBodyLength } from '../src/memory/lesson-body.js';
 
 async function fixture(repair = false, kind: 'dev' | 'research' = 'dev', reviewers = 1, holdCheck = false, activeTimeSeconds?: number, legacyPolicy = false) {
   const root = await mkdtemp(path.join(tmpdir(), 'neomind-local-runtime-')), project = path.join(root, 'repo'), state = path.join(root, 'state');
@@ -126,6 +129,13 @@ test('repair runs through the same services, keeps approval and reuses independe
     const writers = report.attempts.filter(attempt => attempt.nodeId === 'implement'), reviewers = report.attempts.filter(attempt => attempt.nodeId === 'verify');
     assert.equal(writers[0]?.sessionId, writers[1]?.sessionId); assert.equal(reviewers[0]?.sessionId, reviewers[1]?.sessionId);
     assert.notEqual(writers[0]?.sessionId, reviewers[0]?.sessionId);
+    // The repaired finding becomes a short lesson a person can read: criterion, problem, run, step and file; no raw JSON.
+    const directory = path.dirname(f.run.durable.journal.file), [lessonId] = proposalIds(directory), lesson = new LessonProposals(directory).read(lessonId!);
+    assert.equal(lesson.origin, 'repair'); assert.equal(lesson.record.scope, 'project');
+    assert.equal(lesson.record.body, `Giữ đúng tiêu chí review: proof\nVấn đề: Expected ok\nĐã sửa trong run ${f.run.runId} (bước verify). File: proof.txt:1`);
+    assert.ok(lesson.record.body.length <= maxLessonBodyLength && !lesson.record.body.includes('{'));
+    const reviewEvent = (await f.run.durable.journal.read()).find(event => event.type === 'reviewer_output')!;
+    assert.deepEqual(lesson.record.sources, [`run:${f.run.runId}`, `run:${f.run.runId}/event:${reviewEvent.sequence}`]);
   } finally { await f.run.close(); f.coordinator.close(); }
 });
 
