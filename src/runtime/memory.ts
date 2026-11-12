@@ -5,7 +5,8 @@ import { activeMemory, semanticScores } from '../memory/retrieval.js';
 import { ProjectMemoryRegistry } from '../memory/registry.js';
 import { defaultMemoryLocation, resolveDefaultMemoryRoot } from '../memory/project-root.js';
 import { MemoryStore, type MemoryRecord } from '../memory/store.js';
-import { MemoryFeedbackStore } from '../memory/feedback.js';
+import type { MemoryRatingTotals } from '../memory/feedback.js';
+import { openMemoryIndex } from '../memory/index-cache.js';
 import type { Flow, ProjectConfig, StepMemory } from '../domain/schema.js';
 import type { RuntimeContext } from '../core/runtime-state.js';
 
@@ -61,7 +62,6 @@ type Kind = 'context' | 'decision' | 'lesson';
 
 export function memoryForRun(projectRoot: string, database: string, task: string, policy: ProjectConfig['memorySelection'] = {}, projectId?: string): { root: string; records: MemoryRecord[]; inferredPaths?: string[]; reasons?: Record<string, string>; excluded?: { id: string; reason: string }[]; feedback?: Record<string, number> } | undefined {
   const memory = openProjectMemory(projectRoot, database); if (!memory) return undefined;
-  const feedbackStore = new MemoryFeedbackStore(database);
   try {
     const words = [...new Set(task.toLocaleLowerCase().split(/[^\p{L}\p{N}_-]+/u).filter(word => word.length > 2))];
     const paths = policy.inferTaskPaths ? inferProjectPaths(projectRoot, task) : [];
@@ -73,7 +73,7 @@ export function memoryForRun(projectRoot: string, database: string, task: string
       && (!paths.length || scopeOf(record) === 'project' || paths.some(file => withinScope(file, record.header.scope) || withinScope(record.header.scope, file))));
     const semantic = policy.retrievalMode && policy.retrievalMode !== 'lexical' ? semanticScores(eligible, task) : [];
     // Ratings from earlier runs (Hữu ích / Không liên quan / Sai) shift the order; a record nobody rated keeps its task score.
-    const stats = feedbackStore.stats(), feedback: Record<string, number> = {};
+    const stats = memoryRatingTotals(memory.store), feedback: Record<string, number> = {};
     const bonus = (record: MemoryRecord) => Math.max(-maxFeedbackBonus, Math.min(maxFeedbackBonus, stats.get(`${record.header.type}/${record.header.id}`)?.score ?? 0));
     const ranked = eligible.map((record, index) => ({ record, score: words.filter(word => `${record.header.id} ${record.header.tags.join(' ')} ${record.body}`.toLocaleLowerCase().includes(word)).length + (semantic[index] ?? 0) * (policy.retrievalMode === 'semantic' ? 100 : 2) }))
       .filter(item => !policy.requireTaskMatch || item.score > 0).map(item => ({ ...item, score: item.score + bonus(item.record) }));
@@ -89,7 +89,13 @@ export function memoryForRun(projectRoot: string, database: string, task: string
       if (bonus(record)) feedback[`${record.header.type}/${record.header.id}`] = bonus(record);
     }
     return { root: memory.root, records, reasons, ...(excluded.length ? { excluded } : {}), ...(policy.inferTaskPaths ? { inferredPaths: paths } : {}), ...(Object.keys(feedback).length ? { feedback } : {}) };
-  } finally { memory.store.close(); feedbackStore.close(); }
+  } finally { memory.store.close(); }
+}
+
+/** Rating totals per record key, from the memory's rebuildable cache over `feedback/*.jsonl`. */
+export function memoryRatingTotals(store: MemoryStore): Map<string, MemoryRatingTotals> {
+  const index = openMemoryIndex(store);
+  try { return index.ratings(); } finally { index.close(); }
 }
 
 /** One record's block in a prompt; a step that receives only some records gets exactly these blocks. */

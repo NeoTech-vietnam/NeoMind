@@ -8,18 +8,19 @@ import { LocalRun } from './local-run.js';
 import { projectRuntimeRoot, readProject, readProjectRules, snapshotProjectFlow, standaloneDiagnostics } from './project.js';
 import { hashJson, type BindingOverride } from '../domain/resolve.js';
 import { captureBaseline } from '../workspace/baseline.js';
-import { describeStepMemory, formatMemorySnapshot, memoryForRun, memoryLocation, openProjectMemory, stepMemoryPolicy } from './memory.js';
+import { describeStepMemory, formatMemorySnapshot, memoryForRun, memoryLocation, memoryRatingTotals, openProjectMemory, stepMemoryPolicy } from './memory.js';
 import { compactLegacyLesson, duplicateRecord, maxUserNotesPerRun, memoryFingerprint, noteId, proposalIds, proposalInputSchema, proposalStates, type ProposalInput, type ProposalState } from './memory-proposals.js';
 import { memoryFeedbackSchema, type MemoryFeedback, type RecoveryReport } from '../core/recovery.js';
 import { DurableRun } from '../core/durable-run.js';
-import { MemoryFeedbackStore, type MemoryRating } from '../memory/feedback.js';
+import { appendFeedback, combineStats, feedbackEvent, MemoryFeedbackStore, type MemoryRating } from '../memory/feedback.js';
+import { openMemoryIndex } from '../memory/index-cache.js';
 import { activeMemory } from '../memory/retrieval.js';
 import { mkdir, lstat, open, readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { ProjectMemoryRegistry } from '../memory/registry.js';
 import { resolveDefaultMemoryRoot } from '../memory/project-root.js';
 import { primaryWorktree } from '../workspace/worktree.js';
-import { MemoryConflict, type MemoryInput, type MemoryRecord } from '../memory/store.js';
+import { matchesText, MemoryConflict, type MemoryInput, type MemoryRecord } from '../memory/store.js';
 import { compactLegacyLessonBody, englishTemplateBody, legacyLessonHeader, maxSessionProposalLength } from '../memory/lesson-body.js';
 import { LessonProposals } from '../memory/proposals.js';
 import type { Flow } from '../domain/schema.js';
@@ -267,7 +268,8 @@ export class RunManager {
     const database = path.join(this.stateRoot, 'coordination.sqlite'), location = memoryLocation(this.projectRoot, database);
     const memory = openProjectMemory(this.projectRoot, database), feedback = new MemoryFeedbackStore(database);
     try {
-      const stats = Object.fromEntries(feedback.stats());
+      // Uses are this machine's; ratings come from the memory's own feedback files (through its cache).
+      const stats = Object.fromEntries(combineStats(feedback.uses(), memory ? memoryRatingTotals(memory.store) : new Map()));
       if (!memory) return { root: null, records: [], location, stats, inactive: [] as { id: string; reason: string }[] };
       // Expired, superseded and duplicate records stay listed; `inactive` says which ones retrieval skips and why.
       const records = memory.store.search(query ? { query } : {});
@@ -385,11 +387,28 @@ export class RunManager {
   /** Approved records matching a query and filters, as short summaries; `active` is false for expired, superseded or duplicate ones. */
   searchMemory(filters: { query?: string; type?: MemoryKind; scope?: string; tags?: string[]; limit?: number } = {}) {
     const memory = openProjectMemory(this.projectRoot, this.memoryDatabase);
-    if (!memory) return { root: null, total: 0, records: [] };
+    if (!memory) return { root: null, total: 0, searchedBy: 'all' as const, records: [] };
     try {
-      const all = memory.store.search({ ...(filters.query ? { query: filters.query } : {}), ...(filters.scope ? { scope: filters.scope } : {}), ...(filters.tags?.length ? { tags: filters.tags } : {}), ...(filters.type ? { types: [filters.type] } : {}) });
+      const filtered = { ...(filters.scope ? { scope: filters.scope } : {}), ...(filters.tags?.length ? { tags: filters.tags } : {}), ...(filters.type ? { types: [filters.type] } : {}) };
+      const key = (record: MemoryRecord) => `${record.header.type}/${record.header.id}`;
+      let all: MemoryRecord[] | undefined, searchedBy: 'all' | 'fts' | 'text' = filters.query ? 'text' : 'all';
+      if (filters.query) {
+        // Full-text first (stemmed, best match first), then any record only the plain substring search finds, so nothing
+        // the old search returned goes missing. If the cache cannot be used, the substring search alone answers.
+        try {
+          const index = openMemoryIndex(memory.store);
+          let ranked: string[] | undefined;
+          try { ranked = index.search(filters.query); } finally { index.close(); }
+          if (ranked) {
+            const candidates = memory.store.search(filtered), byKey = new Map(candidates.map(record => [key(record), record]));
+            const found = ranked.flatMap(item => byKey.get(item) ?? []), seen = new Set(found.map(key));
+            all = [...found, ...candidates.filter(record => !seen.has(key(record)) && matchesText(record, filters.query!))]; searchedBy = 'fts';
+          }
+        } catch { all = undefined; }
+      }
+      all ??= memory.store.search({ ...(filters.query ? { query: filters.query } : {}), ...filtered });
       const active = new Set(activeMemory(all).active.map(record => `${record.header.type}/${record.header.id}`));
-      return { root: memory.root, total: all.length, records: all.slice(0, Math.min(100, filters.limit ?? 20)).map(record => ({ id: record.header.id, type: record.header.type, scope: record.header.scope, tags: record.header.tags,
+      return { root: memory.root, total: all.length, searchedBy, records: all.slice(0, Math.min(100, filters.limit ?? 20)).map(record => ({ id: record.header.id, type: record.header.type, scope: record.header.scope, tags: record.header.tags,
         summary: record.body.length > 240 ? `${record.body.slice(0, 240)}…` : record.body, revision: record.revision, updatedAt: record.header.updatedAt, active: active.has(`${record.header.type}/${record.header.id}`) })) };
     } finally { memory.store.close(); }
   }
@@ -603,23 +622,29 @@ export class RunManager {
     } finally { memory.store.close(); }
   }
   /**
-   * The user's rating of a record a run used. The run's journal keeps the rating (`memory_feedback`); the coordination
-   * database keeps the totals retrieval ranks by. Rating never changes the run's state.
+   * The user's rating of a record a run used. The run's journal keeps the rating (`memory_feedback`); the memory root's
+   * `feedback/<YYYY-MM>.jsonl` keeps it for retrieval, so it travels with the repository. Rating never changes the run's state.
    */
   async memoryFeedback(runId: string, input: MemoryFeedback) {
     const feedback = memoryFeedbackSchema.parse(input), active = this.runs.get(runId);
     const durable = active?.durable ?? await DurableRun.recover(this.store, this.coordinator, runId);
+    let memory: ReturnType<typeof openProjectMemory> = undefined;
     try {
       const report = await durable.service.report();
       const used = report.runtimeContext?.memory?.records?.find(record => `${record.type}/${record.id}` === feedback.record);
       if (!used) throw new Error('Run này không dùng bản ghi memory đó');
-      const event = await durable.service.recordMemoryFeedback({ ...feedback, ...(feedback.revision ? {} : { revision: used.revision }) });
-      const store = new MemoryFeedbackStore(this.memoryDatabase);
+      memory = openProjectMemory(this.projectRoot, this.memoryDatabase);
+      if (!memory) throw new Error('Không tìm thấy memory root của project để ghi đánh giá');
+      const revision = feedback.revision ?? used.revision;
+      const event = await durable.service.recordMemoryFeedback({ ...feedback, revision });
+      appendFeedback(memory.store, [feedbackEvent({ eventId: event.eventId, record: feedback.record, revision, runId, nodeId: feedback.nodeId ?? null,
+        ...(feedback.attemptId ? { attemptId: feedback.attemptId } : {}), rating: feedback.rating as MemoryRating, createdAt: event.timestamp })]);
+      const usage = new MemoryFeedbackStore(this.memoryDatabase);
       try {
-        store.recordFeedback({ eventId: event.eventId, key: feedback.record, runId, ...(feedback.nodeId ? { nodeId: feedback.nodeId } : {}), rating: feedback.rating as MemoryRating, createdAt: event.timestamp });
-        return { recorded: true, record: feedback.record, rating: feedback.rating, stats: store.stats().get(feedback.record) ?? null };
-      } finally { store.close(); }
-    } finally { if (!active) await durable.close(); }
+        const stats = combineStats(usage.uses(), memoryRatingTotals(memory.store));
+        return { recorded: true, record: feedback.record, rating: feedback.rating, stats: stats.get(feedback.record) ?? null };
+      } finally { usage.close(); }
+    } finally { memory?.store.close(); if (!active) await durable.close(); }
   }
   /** Which pinned records each agent turn received, why, and how the step filters memory; plus the user's ratings. */
   private memoryUse(report: Pick<RecoveryReport, 'nodeData' | 'attempts' | 'runtimeContext' | 'memoryFeedback'> & { snapshot?: unknown }) {

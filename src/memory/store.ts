@@ -17,14 +17,19 @@ export type MemoryInput = z.infer<typeof inputSchema>;
 export interface MemoryRecord { header: z.infer<typeof headerSchema>; body: string; revision: string }
 export class MemoryConflict extends Error { constructor() { super('Memory revision conflict'); this.name = 'MemoryConflict'; } }
 const sha = (content: string) => createHash('sha256').update(content, 'utf8').digest('hex');
-const folders = { context: 'context', decision: 'decisions', lesson: 'lessons' } as const;
+/** Record folders under the memory root; other files there (`feedback/`, `.cache/`) must not reuse these names. */
+export const memoryFolders = { context: 'context', decision: 'decisions', lesson: 'lessons' } as const;
+const folders = memoryFolders;
+/** Plain substring search over a record's id, scope, tags and body, case-insensitive. */
+export const matchesText = (record: MemoryRecord, query: string) =>
+  `${record.header.id} ${record.header.scope} ${record.header.tags.join(' ')} ${record.body}`.toLocaleLowerCase().includes(query.toLocaleLowerCase());
 
 /** Shared Markdown memory. The SQLite database and root must be shared by all cooperating hosts.
  * This is not a sandbox; uncooperative file writers can race it. */
 export class MemoryStore {
-  private readonly root: string;
+  readonly root: string;
   private readonly db: DatabaseSync;
-  constructor(root: string, coordinationDatabase: string) {
+  constructor(root: string, readonly coordinationDatabase: string) {
     // Never silently recreate an unavailable configured root.
     this.root = realpathSync.native(root);
     if (!lstatSync(this.root).isDirectory()) throw new Error('Memory root is not a directory');
@@ -32,6 +37,12 @@ export class MemoryStore {
     this.db.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL');
   }
   close() { this.db.close(); }
+  /** Run a change to files under the root while holding the same cross-process lock record writes take. */
+  locked<T>(operation: () => T): T {
+    this.db.exec('BEGIN IMMEDIATE');
+    try { const result = operation(); this.db.exec('COMMIT'); return result; }
+    catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
   private file(type: z.infer<typeof kindSchema>, id: string, createDirectory = false): string {
     kindSchema.parse(type); idSchema.parse(id);
     const directory = path.join(this.root, folders[type]);
@@ -74,7 +85,7 @@ export class MemoryStore {
         if (!record) continue;
         if (filters.scope && record.header.scope !== filters.scope) continue;
         if (filters.tags && !filters.tags.every(tag => record.header.tags.includes(tag))) continue;
-        if (filters.query && !`${record.header.id} ${record.header.scope} ${record.header.tags.join(' ')} ${record.body}`.toLocaleLowerCase().includes(filters.query.toLocaleLowerCase())) continue;
+        if (filters.query && !matchesText(record, filters.query)) continue;
         records.push(record);
       }
     }

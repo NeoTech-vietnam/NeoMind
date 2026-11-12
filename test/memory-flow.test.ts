@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdtemp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { defaultProject, newFlowFromTemplate, templates } from '../src/domain/templates.js';
@@ -270,6 +270,11 @@ test('plan feedback and "remember this" become proposals; ratings are journaled 
     assert.ok(report.memoryUse.find(item => item.nodeId === 'verify')?.records.some(item => item.rating === 'wrong'));
     const stats = f.manager.readMemory().stats;
     assert.equal(stats[first!]?.wrong, 1); assert.equal(stats[last!]?.uses, 1);
+    // Ratings travel with the repository: one JSON line each under neomind/memory/feedback, keyed by the journal event id.
+    const feedbackDir = path.join(f.repo, 'neomind', 'memory', 'feedback');
+    const lines = (await readdir(feedbackDir)).flatMap(name => readFileSync(path.join(feedbackDir, name), 'utf8').trim().split('\n').map(line => JSON.parse(line) as Record<string, string>));
+    assert.deepEqual(lines.map(line => [line.eventId, line.record, line.runId, line.nodeId, line.rating]), report.memoryFeedback.map(item => [item.eventId, item.record, runId, 'verify', item.rating]));
+    assert.ok(lines.every(line => /^[a-f0-9]{64}$/.test(line.revision!)));
     const unknown = await f.api({ method: 'POST', path: `/api/runs/${runId}/memory-feedback`, body: { record: 'context/not-used', rating: 'helpful' } });
     assert.equal(unknown.status, 400);
   } finally { await f.manager.close(); }
