@@ -20,12 +20,12 @@ import { authoringProject, flowBlocks, draftFlow, getFlow, validateFlow, flowDif
 import { flowAuthorSchema } from '../storage/flow-library.js';
 import { runStats } from '../runtime/run-stats.js';
 import { createProgram, listPrograms, markPhaseDelivered, programNext, programStatus, startPhase } from '../runtime/programs.js';
-import { skillCatalog, skillStatus } from '../storage/skill-catalog.js';
+import { skillCatalog, skillSource, skillStatus } from '../storage/skill-catalog.js';
 import { proposalInputSchema } from '../runtime/memory-proposals.js';
 import { memoryFeedbackSchema } from '../core/recovery.js';
 import { draftProfile, getProfile, getProfileVersion, migrateProfile, profileSkillStatus, profileUsage, publishProfile } from '../runtime/profile-authoring.js';
 import { archiveProfile, createProfileFromTemplate, deleteProfile } from '../runtime/profile-authoring.js';
-import { createSkill, deleteSkill, deleteSkillFile, getSkill, readSkillFile, repinSkill, skillActorSchema, SkillInUse, skillLibrary, skillTemplates, skillUsage, updateSkill, writeSkillFile } from '../storage/skill-library.js';
+import { createSkill, deleteSkill, deleteSkillFile, getSkill, readSkillFile, repinSkill, skillActorSchema, SkillInUse, skillLibrary, skillTemplates, skillUsage, sourceSkillPath, updateSkill, writeSkillFile } from '../storage/skill-library.js';
 import { profileTemplateIds, profileTemplates, type ProfileTemplateId } from '../domain/profile-templates.js';
 import { initProject } from '../runtime/project-init.js';
 
@@ -157,8 +157,8 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
     }
     const skillMatch = /^\/api\/skills\/([^/]+)(?:\/(usage|repin|delete|files)(?:\/(.+))?)?$/.exec(url.pathname);
     if (skillMatch && !(skillMatch[1] === 'status' && !skillMatch[2])) {
-      const id = decodeURIComponent(skillMatch[1]!), action = skillMatch[2], source = url.searchParams.get('source') === 'claude' ? 'claude' : 'neomind';
-      const skillFile = source === 'claude' ? `.claude/skills/${id}/SKILL.md` : `neomind/skills/${id}/SKILL.md`;
+      const id = decodeURIComponent(skillMatch[1]!), action = skillMatch[2], source = skillSource(url.searchParams.get('source'));
+      const skillFile = sourceSkillPath(source, id);
       if (!action && method === 'GET') return reply(200, await getSkill(projectRoot, id, source));
       if (!action && method === 'PUT') {
         const input = z.strictObject({ expectedSha256: z.string().regex(/^[a-f0-9]{64}$/), name: z.string().min(1).optional(), description: z.string().max(2000).optional(), body: z.string().optional(), content: z.string().optional(), author: skillActorSchema.optional() }).parse(payload);

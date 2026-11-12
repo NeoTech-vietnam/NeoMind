@@ -47,7 +47,7 @@ Extension Nimbalyst: `cd extensions/nimbalyst && npm run build` (dùng `node_mod
 - Run thật tốn quota tài khoản của người dùng. Chỉ chạy khi cần kiểm chứng; ưu tiên fake runner trong test (`test/helpers/fake-runner.ts`, `fake-claude.ts`).
 - Không sửa `references/ai-workflow-kit` (snapshot tham khảo) và không biến hướng dẫn trong đó thành policy.
 - `demo/` bị gitignore: chỗ tạo repo thử trên từng máy. Repo không chứa sẵn repo demo nào.
-- Thư mục `.obsidian/`: giữ cấu hình đã commit. `workspace.json` và `.agents/` (Nimbalyst tự sinh) bị ignore; đừng commit chúng.
+- Thư mục `.obsidian/`: giữ cấu hình đã commit. `workspace.json` và `.agents/` (Nimbalyst tự sinh) bị ignore; đừng commit chúng. Ngoại lệ duy nhất: `.agents/skills/neomind-flow-authoring/SKILL.md`, bản sao skill soạn flow do `node scripts/sync-project-guide.mjs` ghi từ `.claude/skills`.
 - Không push, không tạo PR, không force-push nếu người dùng không yêu cầu.
 - Kế hoạch phải được người dùng duyệt trước khi sửa file (trừ flow tự khai báo `approval.mode: auto` như Fast và project cho phép). Đừng tự duyệt thay người dùng, kể cả qua tool `neomind_approve`.
 

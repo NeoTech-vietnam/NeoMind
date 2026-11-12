@@ -3,7 +3,10 @@ dist/
 dist-ui/
 coverage/
 demo/
-# Skills Nimbalyst generates into the workspace for its agent sessions
-.agents/
+# Skills Nimbalyst generates into the workspace for its agent sessions; only NeoMind's flow-authoring skill is tracked
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/neomind-flow-authoring/
 # Obsidian's per-user window and pane layout
 .obsidian/workspace.json

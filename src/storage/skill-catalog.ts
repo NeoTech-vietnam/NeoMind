@@ -5,7 +5,17 @@ import { parse } from 'yaml';
 import { skillReferenceSchema, type Profile } from '../domain/schema.js';
 
 export type SkillReference = Profile['skills'][number];
-export type CatalogSkill = SkillReference & { name: string; description: string; source: 'claude' | 'neomind' };
+/**
+ * Where a project keeps skills: `neomind/skills` (edited in NeoMind), `.agents/skills` (the Agent Skills convention
+ * Codex and OpenCode scan) and `.claude/skills` (Claude Code). The last two are read-only here. Listed in the order a
+ * duplicate ID is resolved: a pin holds a path, so the order only decides which copy the catalog offers.
+ */
+export type SkillSource = 'neomind' | 'agents' | 'claude';
+export const SKILL_FOLDERS: Record<SkillSource, string> = { neomind: 'neomind/skills', agents: '.agents/skills', claude: '.claude/skills' };
+export const skillSource = (value: unknown): SkillSource => value === 'agents' || value === 'claude' ? value : 'neomind';
+/** Copies of the same skill ID in lower-priority sources, which the catalog lists behind the entry it offers. */
+export type ShadowedSkill = { path: string; source: SkillSource; sha256: string };
+export type CatalogSkill = SkillReference & { name: string; description: string; source: SkillSource; shadowed?: ShadowedSkill[] };
 
 /** Frontmatter is descriptive data; it never changes the permissions of a run. */
 export function skillMetadata(content: string, fallback: string): { name: string; description: string } {
@@ -29,10 +39,13 @@ export async function resolveSkill(root: string, reference: SkillReference): Pro
   return { path: target, bytes: await readFile(target) };
 }
 
-/** Discover project-owned skill folders without following directory symlinks. */
+/**
+ * Discover project-owned skill folders without following directory symlinks. One entry per ID: a skill also found in a
+ * lower-priority source is listed once, with the other copies in `shadowed` so the editor can warn about them.
+ */
 export async function skillCatalog(root: string): Promise<CatalogSkill[]> {
   const result: CatalogSkill[] = [];
-  for (const [folder, source] of [['.claude/skills', 'claude'], ['neomind/skills', 'neomind']] as const) {
+  for (const [source, folder] of Object.entries(SKILL_FOLDERS) as [SkillSource, string][]) {
     let entries;
     try { entries = await readdir(path.join(root, folder), { withFileTypes: true }); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
@@ -40,8 +53,11 @@ export async function skillCatalog(root: string): Promise<CatalogSkill[]> {
       const relative = `${folder}/${entry.name}/SKILL.md`, ref = { id: entry.name, path: relative, sha256: '0'.repeat(64) };
       if (!skillReferenceSchema.safeParse(ref).success) continue;
       try {
-        const { bytes } = await resolveSkill(root, ref), content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-        result.push({ ...ref, sha256: createHash('sha256').update(bytes).digest('hex'), ...skillMetadata(content, entry.name), source });
+        const { bytes } = await resolveSkill(root, ref), sha256 = createHash('sha256').update(bytes).digest('hex');
+        const listed = result.find(skill => skill.id === ref.id);
+        if (listed) { (listed.shadowed ??= []).push({ path: relative, source, sha256 }); continue; }
+        const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        result.push({ ...ref, sha256, ...skillMetadata(content, entry.name), source });
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
   }

@@ -12,8 +12,8 @@ import { draftFlow, publishFlow } from '../src/runtime/flow-authoring.js';
 import { sessionToolHandlers } from '../src/runtime/session-tools.js';
 import { createEditorApi } from '../src/ui-server/server.js';
 import { RunnerRegistry } from '../src/runners/registry.js';
-import { skillStatus } from '../src/storage/skill-catalog.js';
-import { createSkill, deleteSkill, getSkill, readSkillFile, repinSkill, skillDocument, skillUsage, updateSkill, writeSkillFile, deleteSkillFile } from '../src/storage/skill-library.js';
+import { skillCatalog, skillStatus } from '../src/storage/skill-catalog.js';
+import { createSkill, deleteSkill, getSkill, readSkillFile, repinSkill, skillDocument, skillLibrary, skillUsage, updateSkill, writeSkillFile, deleteSkillFile } from '../src/storage/skill-library.js';
 import { ProfileLibrary } from '../src/storage/profile-library.js';
 import { FlowLibrary } from '../src/storage/flow-library.js';
 import type { Flow, Profile } from '../src/domain/schema.js';
@@ -206,5 +206,67 @@ test('session profile_delete needs confirmation and refuses an agent in use', as
     assert.equal(refused.deleted, false); assert.equal(refused.flows[0]?.flowId, 'uses-ui');
     assert.deepEqual(await f.tools.profile_archive!({ profileId: 'ui' }), { archived: true, flows: [{ flowId: 'uses-ui', name: 'Uses UI' }] });
     assert.equal((await new ProfileLibrary(path.join(f.repo, 'neomind/profiles')).metadata('ui')).archived, true);
+  } finally { await f.manager.close(); }
+});
+
+async function writeSkill(root: string, folder: string, id: string, body: string) {
+  await mkdir(path.join(root, folder, id), { recursive: true });
+  await writeFile(path.join(root, folder, id, 'SKILL.md'), skillDocument({ name: id, description: `${id} from ${folder}`, body }));
+}
+
+test('.agents/skills are listed read-only; one entry per ID, neomind before .agents before .claude, the others shadowed', async () => {
+  const root = await fixture();
+  await writeSkill(root, '.agents/skills', 'shared', 'Shared body');
+  await writeSkill(root, '.claude/skills', 'shared', 'Claude copy');
+  await writeSkill(root, '.claude/skills', 'claude-only', 'Claude only');
+  await writeSkill(root, 'neomind/skills', 'dup', 'NeoMind copy'); await writeSkill(root, '.agents/skills', 'dup', 'Agents copy');
+  const catalog = await skillCatalog(root), entry = (id: string) => catalog.find(skill => skill.id === id);
+  assert.deepEqual(catalog.map(skill => [skill.id, skill.source, skill.path]), [
+    ['dup', 'neomind', 'neomind/skills/dup/SKILL.md'], ['shared', 'agents', '.agents/skills/shared/SKILL.md'], ['claude-only', 'claude', '.claude/skills/claude-only/SKILL.md']]);
+  assert.deepEqual(entry('shared')?.shadowed?.map(item => [item.source, item.path]), [['claude', '.claude/skills/shared/SKILL.md']]);
+  assert.notEqual(entry('shared')?.shadowed?.[0]?.sha256, entry('shared')?.sha256, 'the editor can tell the copies differ');
+  assert.deepEqual(entry('dup')?.shadowed?.map(item => item.source), ['agents']); assert.equal(entry('claude-only')?.shadowed, undefined);
+  assert.equal((await skillLibrary(root)).find(skill => skill.id === 'shared')?.editable, false);
+
+  const shared = await getSkill(root, 'shared', 'agents');
+  assert.deepEqual([shared.path, shared.source, shared.editable], ['.agents/skills/shared/SKILL.md', 'agents', false]); assert.match(shared.content, /Shared body/);
+  assert.match((await getSkill(root, 'shared', 'claude')).content, /Claude copy/, 'a shadowed copy is still readable by its source');
+  await assert.rejects(updateSkill(root, 'shared', { expectedSha256: shared.sha256, body: 'x' }), { code: 'ENOENT' });
+  await assert.rejects(deleteSkill(root, 'shared'), { code: 'ENOENT' });
+  await assert.rejects(createSkill(root, { id: 'shared', name: 'Shadow' }), /already exists/);
+  assert.equal(await readFile(path.join(root, '.agents/skills/shared/SKILL.md'), 'utf8'), shared.content);
+
+  // Pinned like a .claude skill: by path and hash; a pin on the shadowed .claude copy keeps resolving to that copy.
+  const claudeCopy = entry('shared')!.shadowed![0]!;
+  assert.deepEqual((await skillStatus(root, [{ id: 'shared', path: shared.path, sha256: shared.sha256 }, { id: 'shared', path: claudeCopy.path, sha256: claudeCopy.sha256 }])).map(item => item.status), ['ok', 'ok']);
+  const api = createEditorApi(root, async () => { throw new Error('no runs'); }), tools = sessionToolHandlers(async () => { throw new Error('no runs'); }, api);
+  const read = await api({ method: 'GET', path: '/api/skills/shared?source=agents' });
+  assert.equal(read.status, 200); assert.equal((read.body as { path: string }).path, shared.path);
+  assert.equal((await tools.skill_get!({ skillId: 'shared', source: 'agents' }) as { sha256: string }).sha256, shared.sha256);
+  assert.equal((await tools.skill_usage!({ skillId: 'shared', source: 'agents' }) as { sha256: string }).sha256, shared.sha256);
+
+  // Symlinked skill folders are skipped by the catalog and refused when they leave the project (a junction needs no
+  // privilege on Windows).
+  const outside = await mkdtemp(path.join(tmpdir(), 'nm-out-')); await writeFile(path.join(outside, 'SKILL.md'), 'outside');
+  await symlink(outside, path.join(root, '.agents/skills/linked'), 'junction');
+  assert.ok(!(await skillCatalog(root)).some(skill => skill.id === 'linked'));
+  await assert.rejects(getSkill(root, 'linked', 'agents'), /escapes project root/);
+  await assert.rejects(skillStatus(root, [{ id: 'linked', path: '.agents/skills/linked/SKILL.md', sha256: '0'.repeat(64) }]), /escapes project root/);
+});
+
+test('a .agents/skills skill pinned in an agent reaches the step prompt', async () => {
+  const f = await runProject();
+  try {
+    await writeSkill(f.repo, '.agents/skills', 'shared-run', 'AGENTS-SKILL-TEXT');
+    const skill = await getSkill(f.repo, 'shared-run', 'agents');
+    const profiles = new ProfileLibrary(path.join(f.repo, 'neomind/profiles')), { builtinProfile } = await import('../src/runtime/project.js');
+    await profiles.create('implementer', 'Implementer');
+    await profiles.saveDraft('implementer', { ...builtinProfile('implementer')!, skills: [{ id: skill.id, path: skill.path, sha256: skill.sha256 }] });
+    await profiles.publish('implementer');
+    const started = await f.tools.start!({ flowId: 'dev', task: 'Add proof' }) as { runId: string; started: boolean };
+    assert.equal(started.started, true);
+    await f.tools.wait!({ runId: started.runId, timeoutSeconds: 30 });
+    const prompts = f.agents.started.flatMap(runner => runner.turns.map(turn => turn.request.prompt));
+    assert.ok(prompts.some(prompt => prompt.includes(skill.prompt)), 'the plan step receives the pinned .agents skill');
   } finally { await f.manager.close(); }
 });

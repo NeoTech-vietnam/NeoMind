@@ -1,7 +1,8 @@
-// Regenerate src/storage/project-guide-skill.ts from .claude/skills/neomind-flow-authoring/SKILL.md. NeoMind installs
+// Regenerate src/storage/project-guide-skill.ts from .claude/skills/neomind-flow-authoring/SKILL.md, and copy that file to
+// .agents/skills/neomind-flow-authoring/SKILL.md (the Agent Skills location Codex and OpenCode scan). NeoMind installs
 // that skill into the projects it configures, so the text ships inside the compiled code (dist/ and the Nimbalyst
-// backend bundle) rather than as a file next to it. test/project-guide.test.ts fails while the two differ.
-import { readFileSync, writeFileSync } from 'node:fs';
+// backend bundle) rather than as a file next to it. test/project-guide.test.ts fails while the three differ.
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,3 +15,6 @@ writeFileSync(path.join(root, 'src/storage/project-guide-skill.ts'), [
   `export const FLOW_AUTHORING_SKILL = \`${literal}\`;`,
   '',
 ].join('\n'));
+const shared = path.join(root, '.agents/skills/neomind-flow-authoring');
+mkdirSync(shared, { recursive: true });
+writeFileSync(path.join(shared, 'SKILL.md'), source);

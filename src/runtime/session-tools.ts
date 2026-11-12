@@ -27,8 +27,8 @@ export const SESSION_TOOLS: SessionTool[] = [
   { name: 'profile_archive', description: 'Archive (or restore with archived: false) a project profile. Archived profiles keep their versions for replay but are hidden from new steps.', inputSchema: object({ profileId: { type: 'string' }, archived: { type: 'boolean' } }, ['profileId']) },
   { name: 'profile_delete', description: 'Permanently delete a project profile that no flow uses. Refused with the flows that use it (archive instead). Ask the user first.',
     inputSchema: object({ profileId: { type: 'string' }, ...confirmed }, ['profileId', 'confirmed']) },
-  { name: 'skill_get', description: 'Read a skill: SKILL.md (name, description, Markdown body), its sha256, companion files and the exact text a run adds to the prompt. source "claude" reads .claude/skills (read-only).',
-    inputSchema: object({ skillId: { type: 'string' }, source: { type: 'string', enum: ['neomind', 'claude'] }, file: { type: 'string', description: 'Companion file to read, relative to the skill folder' } }, ['skillId']) },
+  { name: 'skill_get', description: 'Read a skill: SKILL.md (name, description, Markdown body), its sha256, companion files and the exact text a run adds to the prompt. source "agents" reads .agents/skills, "claude" .claude/skills (both read-only).',
+    inputSchema: object({ skillId: { type: 'string' }, source: { type: 'string', enum: ['neomind', 'agents', 'claude'] }, file: { type: 'string', description: 'Companion file to read, relative to the skill folder' } }, ['skillId']) },
   { name: 'skill_create', description: 'Create neomind/skills/<skillId>/SKILL.md (Claude skill format). Pin it in a profile or step afterwards; creating does not change any run.' + readGuide,
     inputSchema: object({ skillId: { type: 'string' }, name: { type: 'string' }, description: { type: 'string', description: 'When the skill applies; shown in the catalog' }, body: { type: 'string', description: 'Markdown instructions' }, template: { type: 'string', enum: ['empty', 'review-checklist'] } }, ['skillId', 'name']) },
   { name: 'skill_update', description: 'Edit a neomind skill if it still has the sha256 you read (skill_get). Give name/description/body or the full content, and/or companion files (content null deletes). repin: true updates the pins in profile and flow drafts (not published versions); show the usage to the user before.' + readGuide,
@@ -37,7 +37,7 @@ export const SESSION_TOOLS: SessionTool[] = [
   { name: 'skill_delete', description: 'Delete a neomind skill. Refused while profiles or flows pin it (the reply lists them); force deletes anyway. Ask the user first, listing where it is used.',
     inputSchema: object({ skillId: { type: 'string' }, force: { type: 'boolean' }, ...confirmed }, ['skillId', 'confirmed']) },
   { name: 'skill_usage', description: 'Profiles and flow steps that pin a skill, and whether each pin is older than the current file.',
-    inputSchema: object({ skillId: { type: 'string' }, source: { type: 'string', enum: ['neomind', 'claude'] } }, ['skillId']) },
+    inputSchema: object({ skillId: { type: 'string' }, source: { type: 'string', enum: ['neomind', 'agents', 'claude'] } }, ['skillId']) },
   { name: 'flow_blocks', description: 'List available node types, templates, profiles, bindings and project policy for authoring a flow.', inputSchema: object() },
   { name: 'flow_get', description: 'Read a flow draft, revision and published versions with their authors.', inputSchema: object({ flowId: { type: 'string' } }, ['flowId']) },
   { name: 'flow_draft', description: 'Create or update an AI flow draft from a template, another flow or a full draft. Updates require the revision previously read. Returns policy diagnostics.' + readGuide, inputSchema: object({ flowId: { type: 'string' }, name: { type: 'string' }, from: { oneOf: [object({ template: { type: 'string', enum: ['fast', 'dev', 'parallel', 'research'] } }, ['template']), object({ flowId: { type: 'string' } }, ['flowId'])] }, draft: { type: 'object', description: 'Full flow draft; compiler returns diagnostics for incomplete drafts' }, expectedRevision: { type: 'string', description: 'Required for updates, from flow_get or flow_draft' } }, ['flowId']) },
@@ -49,7 +49,7 @@ export const SESSION_TOOLS: SessionTool[] = [
   { name: 'assess', description: 'Recommend an existing flow for a task using deterministic rules. available=false means the named flow is unavailable; this does not start a run.', inputSchema: object({ task: { type: 'string' } }, ['task']) },
   { name: 'stats', description: 'Run statistics of this project by flow, profile, runner/model and flow + runners: runs, completion and delivery rate, median tokens and active time, repair rounds, first-pass review rate, cost when neomind/pricing.json exists.',
     inputSchema: object({ flowId: { type: 'string' } }) },
-  { name: 'project_init', description: 'Set this repository up for NeoMind: create neomind/ with a default project.json (policy unchanged when one exists) and install the flow-authoring guide at .claude/skills/neomind-flow-authoring/SKILL.md. Safe to repeat; a guide the user edited is kept unless force, which needs confirmed: true (ask the user first).',
+  { name: 'project_init', description: 'Set this repository up for NeoMind: create neomind/ with a default project.json (policy unchanged when one exists), install the flow-authoring guide in .agents/skills and .claude/skills (neomind-flow-authoring/SKILL.md) and name it in AGENTS.md. Safe to repeat; a copy of the guide the user edited is kept unless force, which needs confirmed: true (ask the user first).',
     inputSchema: object({ force: { type: 'boolean', description: 'Rewrite a guide the user edited' }, ...confirmed }) },
   { name: 'program_create', description: 'Create a multi-phase program in neomind/programs from a spec: { schemaVersion: 1, programId, name, goal, phases: [{ id, title, task, flowId, dependsOn: [] }] }. Every flowId must be published. Show the phases to the user first.',
     inputSchema: object({ program: { type: 'object' } }, ['program']) },
@@ -110,6 +110,8 @@ const text = (args: Record<string, unknown>, key: string): string => {
   return value.trim();
 };
 const optional = (args: Record<string, unknown>, key: string) => typeof args[key] === 'string' && (args[key] as string).trim() ? (args[key] as string).trim() : undefined;
+// Read-only skill sources; anything else reads neomind/skills.
+const sourceQuery = (args: Record<string, unknown>) => { const source = optional(args, 'source'); return source === 'agents' || source === 'claude' ? `?source=${source}` : ''; };
 function requireConfirmed(args: Record<string, unknown>, what: string) {
   if (args.confirmed !== true) throw new Error(`${what} is the user's decision: ask them in this session first, then call again with confirmed: true.`);
 }
@@ -165,7 +167,7 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
       return response.body;
     },
     skill_get: async args => {
-      const file = optional(args, 'file'), query = optional(args, 'source') === 'claude' ? '?source=claude' : '';
+      const file = optional(args, 'file'), query = sourceQuery(args);
       return authoringApi('GET', `${skillPath(args)}${file ? `/files/${file.split(/[\\/]/).map(encodeURIComponent).join('/')}` : ''}${query}`);
     },
     skill_create: async (args, call) => authoringApi('POST', '/api/skills', { id: text(args, 'skillId'), name: text(args, 'name'),
@@ -193,7 +195,7 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
       if (response.status >= 400 && response.status !== 409) throw new Error(String((response.body as { error?: string }).error ?? `HTTP ${response.status}`));
       return response.status === 409 ? { deleted: false, ...response.body as object } : response.body;
     },
-    skill_usage: async args => authoringApi('GET', `${skillPath(args)}/usage${optional(args, 'source') === 'claude' ? '?source=claude' : ''}`),
+    skill_usage: async args => authoringApi('GET', `${skillPath(args)}/usage${sourceQuery(args)}`),
     flow_blocks: async () => authoringApi('GET', '/api/flow-blocks'),
     flow_get: async args => authoringApi('GET', `${flowPath(args)}/authoring`),
     flow_draft: async args => authoringApi('POST', '/api/flow-draft', args),

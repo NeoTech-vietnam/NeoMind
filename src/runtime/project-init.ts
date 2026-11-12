@@ -10,7 +10,8 @@ export interface ProjectInitResult {
   project: string;
   directory: { path: string; status: 'created' | 'existing' };
   projectJson: { path: string; status: 'created' | 'existing' };
-  guide: ProjectGuideResult;
+  /** Each copy of the guide: .agents/skills, then .claude/skills. */
+  guides: ProjectGuideResult[];
   /** The guide's reference in AGENTS.md, which `force` never rewrites. */
   agents: GuideReferenceResult;
   /** Only when AGENTS.md was created next to an existing CLAUDE.md. */
@@ -22,7 +23,7 @@ const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'E
 /**
  * `neomind init`: set a repository up for NeoMind explicitly instead of on its first write. Creates NeoMind's folder and
  * a project.json holding the defaults a missing one reads as (so nothing about the project changes, it only becomes
- * visible and editable), installs the flow-authoring guide and names it in AGENTS.md. Idempotent: an existing folder,
+ * visible and editable), installs the flow-authoring guide (.agents/skills and .claude/skills) and names it in AGENTS.md. Idempotent: an existing folder,
  * project.json, a guide the user edited and a reference already in AGENTS.md are kept; `force` rewrites only the guide.
  */
 export async function initProject(projectRoot: string, options: { force?: boolean | undefined } = {}): Promise<ProjectInitResult> {
@@ -47,7 +48,7 @@ export async function initProject(projectRoot: string, options: { force?: boolea
     await replaceJson(file, await readProject(root));
     return 'created' as const;
   });
-  const guide = installProjectGuide(root, options), [agents, claude] = installGuideReference(root);
+  const guides = installProjectGuide(root, options), [agents, claude] = installGuideReference(root);
   return { project: root, directory: { path: relative(directory), status: created ? 'created' : 'existing' },
-    projectJson: { path: relative(file), status: projectJson }, guide, agents: agents!, ...(claude ? { claude } : {}) };
+    projectJson: { path: relative(file), status: projectJson }, guides, agents: agents!, ...(claude ? { claude } : {}) };
 }

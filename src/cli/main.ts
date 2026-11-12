@@ -13,7 +13,7 @@ import { ProfileLibrary } from '../storage/profile-library.js';
 import { installShutdown } from './shutdown.js';
 import { parseRunCommand, readRunCommandInput, runUsage } from './run-command.js';
 import { flowBlocks, draftFlow, getFlow, validateFlow, flowDiff, publishFlow, pinFlowBindings, assess } from '../runtime/flow-authoring.js';
-import { skillCatalog, skillStatus } from '../storage/skill-catalog.js';
+import { skillCatalog, skillSource, skillStatus } from '../storage/skill-catalog.js';
 import { draftProfile, getProfile, getProfileVersion, migrateProfile, profileSkillStatus, profileUsage, publishProfile } from '../runtime/profile-authoring.js';
 
 async function executableAvailable(name: string): Promise<boolean> {
@@ -31,8 +31,7 @@ async function executableAvailable(name: string): Promise<boolean> {
 /** `neomind skill get|create|update|delete|usage|repin …`: the skill library, as the editor's Skills screen (human author). */
 async function skillCommand(args: string[]): Promise<unknown> {
   const library = await import('../storage/skill-library.js'), root = args[1] ? path.resolve(args[1]) : '', id = args[2];
-  const source = args.includes('--source') && args[args.indexOf('--source') + 1] === 'claude' ? 'claude' as const : 'neomind' as const;
-  const file = (skill: string) => source === 'claude' ? `.claude/skills/${skill}/SKILL.md` : `neomind/skills/${skill}/SKILL.md`;
+  const source = skillSource(args.includes('--source') ? args[args.indexOf('--source') + 1] : undefined), file = (skill: string) => library.sourceSkillPath(source, skill);
   if (args[0] === 'list' && args.length === 2) return { skills: await library.skillLibrary(root) };
   if (args[0] === 'get' && id) return library.getSkill(root, id, source);
   if (args[0] === 'usage' && id) return library.skillUsage(root, file(id));
@@ -252,7 +251,7 @@ async function main(args: string[]): Promise<number> {
     const { initProject } = await import('../runtime/project-init.js'), result = await initProject(path.resolve(args[1]!), { force: args[2] === '--force' });
     const label = { created: 'đã tạo', existing: 'đã có, giữ nguyên', 'up-to-date': 'đã có, đúng bản hiện tại', 'modified-kept': 'đã bị sửa, giữ nguyên (ghi đè: --force)', replaced: 'đã ghi đè bằng bản hiện tại',
       appended: 'đã thêm dòng tham chiếu skill', present: 'đã có tham chiếu skill, giữ nguyên' };
-    for (const item of [result.directory, result.projectJson, result.guide, result.agents, ...(result.claude ? [result.claude] : [])]) console.log(`${item.path}: ${label[item.status]}`);
+    for (const item of [result.directory, result.projectJson, ...result.guides, result.agents, ...(result.claude ? [result.claude] : [])]) console.log(`${item.path}: ${label[item.status]}`);
     return 0;
   }
   if (args[0] === 'flow' && args[1] === 'canvas' && (args[2] === 'export' || args[2] === 'import') && (args.length === 5 || args.length === 6)) {

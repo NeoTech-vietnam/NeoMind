@@ -10,11 +10,11 @@ import { RevisionConflict, withLibraryLock } from './library-lock.js';
 import { ProfileLibrary } from './profile-library.js';
 import { projectDir } from './project-dir.js';
 import { projectDirCreated } from './project-guide.js';
-import { skillCatalog, skillCompanions, skillMetadata, resolveSkill } from './skill-catalog.js';
+import { SKILL_FOLDERS, skillCatalog, skillCompanions, skillMetadata, resolveSkill, type SkillSource } from './skill-catalog.js';
 
 /**
- * Authoring for project-owned skills in `neomind/skills/<id>/`. Skills under `.claude/skills` belong to Claude Code and
- * stay read-only here. A run never reads this module: it pins skill bytes by SHA-256 when the run is created, so editing
+ * Authoring for project-owned skills in `neomind/skills/<id>/`. Skills under `.agents/skills` (shared with Codex and
+ * OpenCode) and `.claude/skills` (Claude Code) belong to those agents and stay read-only here. A run never reads this module: it pins skill bytes by SHA-256 when the run is created, so editing
  * a skill only affects profiles and flows whose pins are refreshed (repinSkill) and published again.
  */
 export const SKILLS_FOLDER = 'neomind/skills';
@@ -32,6 +32,8 @@ export class SkillInUse extends Error {
 
 const sha = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
 const skillPath = (id: string) => `${SKILLS_FOLDER}/${skillIdSchema.parse(id)}/SKILL.md`;
+/** SKILL.md of `id` in a source's folder, as the catalog lists and a pin holds it. */
+export const sourceSkillPath = (source: SkillSource, id: string) => `${SKILL_FOLDERS[source]}/${skillIdSchema.parse(id)}/SKILL.md`;
 const samePath = (a: string, b: string) => a.replaceAll('\\', '/') === b.replaceAll('\\', '/');
 
 async function allowed(root: string, actor: SkillActor) {
@@ -90,8 +92,8 @@ export const skillTemplates = {
 export type SkillTemplate = keyof typeof skillTemplates;
 
 /** One skill with its text, companion files and whether this editor may change it. */
-export async function getSkill(root: string, id: string, source: 'neomind' | 'claude' = 'neomind') {
-  const relative = source === 'neomind' ? skillPath(id) : `.claude/skills/${skillIdSchema.parse(id)}/SKILL.md`;
+export async function getSkill(root: string, id: string, source: SkillSource = 'neomind') {
+  const relative = sourceSkillPath(source, id);
   if (source === 'neomind') await folder(root, id);
   const { bytes } = await resolveSkill(root, { id, path: relative, sha256: '0'.repeat(64) });
   const content = decode(bytes, 'SKILL.md'), { frontmatter, body } = parseSkillDocument(content), meta = skillMetadata(content, id);
@@ -110,8 +112,9 @@ export async function createSkill(root: string, input: CreateSkillInput, actor: 
   checkText(content, 'SKILL.md');
   await withLibraryLock(path.join(root, SKILLS_FOLDER), async () => {
     const { base, directory } = await folder(root, id);
-    // A step pins skills by ID, so an ID taken by a Claude skill would make the two indistinguishable in a profile.
-    for (const existing of [directory, path.join(base, '.claude', 'skills', id)]) {
+    // A step pins skills by ID, so an ID taken by an Agent Skills or Claude skill would make the two indistinguishable
+    // in a profile.
+    for (const existing of [directory, path.join(base, '.agents', 'skills', id), path.join(base, '.claude', 'skills', id)]) {
       try { await lstat(existing); throw new Error(`Skill ${id} already exists`); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
