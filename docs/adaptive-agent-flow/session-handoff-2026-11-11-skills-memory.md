@@ -1,6 +1,6 @@
 # Bàn giao Skills/Agents và Memory — 11/11/2026
 
-Làm theo [plan đã duyệt](plan-skills-agents-memory-2026-11-11.md). Hai mảng làm song song bằng hai session Claude Opus trong worktree riêng (`feat/skills-agents`, `feat/memory`), session điều phối rebase mảng B lên mảng A, giải xung đột (chuỗi Usage của CLI, gallery, tài liệu) và gắn `StepMemoryField` vào inspector. Chi tiết từng mảng: mục "Skills và Agents — 11/11" và "Memory — 11/11" trong [implementation-status](implementation-status.md).
+Làm theo plan đã duyệt. Hai mảng làm song song bằng hai session Claude Opus trong worktree riêng (`feat/skills-agents`, `feat/memory`), session điều phối rebase mảng B lên mảng A, giải xung đột (chuỗi Usage của CLI, gallery, tài liệu) và gắn `StepMemoryField` vào inspector. Chi tiết từng mảng: mục "Skills và Agents — 11/11" và "Memory — 11/11" trong [implementation-status](implementation-status.md).
 
 ## Đã có
 

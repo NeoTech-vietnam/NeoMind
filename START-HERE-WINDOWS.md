@@ -1,6 +1,6 @@
 # NeoMind — chuyển sang Windows
 
-Branch: `hieu/adaptive-agent-flow`. Đọc [AGENTS.md](AGENTS.md) trước; trạng thái mới nhất ở [bàn giao 30/10/2026](docs/adaptive-agent-flow/session-handoff-2026-10-30.md).
+Branch: `hieu/adaptive-agent-flow`. Đọc [AGENTS.md](AGENTS.md) trước; trạng thái mới nhất ở [bàn giao 12/11/2026](docs/adaptive-agent-flow/session-handoff-2026-11-12.md).
 
 Thư mục `NeoMind` chứa source và **Git repository độc lập**, không phụ thuộc submodule hoặc đường dẫn máy Linux cũ. Giữ cả thư mục `.git` (ẩn) khi copy. Remote origin dùng HTTPS; đăng nhập GitHub của bạn khi cần fetch/push. Không kèm credentials, node_modules, build outputs hoặc trạng thái runtime local.
 
@@ -18,7 +18,7 @@ npm run build
 npm run build:ui
 ```
 
-Đọc `docs/adaptive-agent-flow/session-handoff-2026-10-30.md` và `implementation-status.md` trước khi sửa. Những đường dẫn `/home/hieu-tran/...` hoặc `W:projects...` trong tài liệu là bằng chứng của máy cũ; dùng checkout mới của bạn.
+Đọc bàn giao mới nhất (danh sách trong `AGENTS.md`) và `implementation-status.md` trước khi sửa. Những đường dẫn `/home/hieu-tran/...` hoặc `W:projects...` trong tài liệu là bằng chứng của máy cũ; dùng checkout mới của bạn.
 
 `npm test` trên Windows 11 (30/10/2026, Node 24.18.0, Codex CLI 0.166.0): **184 test, 182 pass, 0 fail, 2 skip**. Test skip cần quyền tạo file symlink; bật Developer Mode để chạy đủ. `npm run build:ui` thành công.
 

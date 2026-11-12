@@ -371,7 +371,7 @@
 			"y": 1920,
 			"width": 680,
 			"height": 300,
-			"text": "Định hướng & nghiên cứu\n\n• Repo Plan — docs/Repo Plan.md\n• Nghiên cứu workflow 2026 — docs/research/\n• Antigravity — antigravity-research.md\n• Probe CLI — cli-invocation-probe.md\n• Phân tích ai-workflow-kit — ai-workflow-kit-analysis.md\n• Định hướng sản phẩm — product-direction.md",
+			"text": "Định hướng & nghiên cứu\n\n• Định hướng 11/2026 — direction-2026-11.md\n• NeoMind như một cỗ máy — direction-neomind-as-a-machine.md\n• Nghiên cứu workflow — docs/research/\n\nResearch trước v1 đã gỡ ngày 12/11 (tag archive/docs-2026-11-12).",
 			"x-nimbalyst": {
 				"reference": {
 					"kind": "native",
@@ -386,13 +386,13 @@
 			"y": 2320,
 			"width": 680,
 			"height": 520,
-			"file": "docs/adaptive-agent-flow/product-direction.md",
+			"file": "docs/adaptive-agent-flow/direction-2026-11.md",
 			"x-nimbalyst": {
 				"reference": {
 					"kind": "file",
-					"path": "docs/adaptive-agent-flow/product-direction.md"
+					"path": "docs/adaptive-agent-flow/direction-2026-11.md"
 				},
-				"label": "Định hướng sản phẩm"
+				"label": "Định hướng 11/2026"
 			}
 		},
 		{
@@ -402,7 +402,7 @@
 			"y": 1920,
 			"width": 680,
 			"height": 300,
-			"text": "Thiết kế\n\n• 12 quyết định v1 — v1-design-decisions.md\n• Kiến trúc — architecture.md\n• Cấu hình flow — flow-configuration-design.md\n• Phạm vi chuẩn — design-v1.md\n• Writer song song — parallel-writers.md\n• Transcript session — session-transcripts.md\n• UI: design system + mockup — docs/design/README.md",
+			"text": "Thiết kế\n\n• 12 quyết định v1 — v1-design-decisions.md\n• Phạm vi chuẩn — design-v1.md\n• Writer song song — parallel-writers.md\n• Transcript session — session-transcripts.md\n• UI: design system + mockup v2 — docs/design/README.md",
 			"x-nimbalyst": {
 				"reference": {
 					"kind": "native",
@@ -433,7 +433,7 @@
 			"y": 1920,
 			"width": 680,
 			"height": 300,
-			"text": "Triển khai & bàn giao\n\n• So sánh hướng triển khai — implementation-comparison.md\n• Kế hoạch M0–M6 — implementation-handoff.md\n• Bàn giao 29/10 — session-handoff-2026-10-29.md\n• Trạng thái hiện tại — implementation-status.md\n• Claude Code runner — claude-code-runner.md",
+			"text": "Triển khai & bàn giao\n\n• Bàn giao mới nhất — session-handoff-2026-11-12.md\n• Trạng thái hiện tại — implementation-status.md\n• Claude Code runner — claude-code-runner.md\n• Extension Nimbalyst — nimbalyst-extension.md",
 			"x-nimbalyst": {
 				"reference": {
 					"kind": "native",
@@ -464,7 +464,7 @@
 			"y": 1920,
 			"width": 680,
 			"height": 300,
-			"text": "Nghiệm thu\n\n• Acceptance matrix — acceptance-matrix.md\n• Bằng chứng test ai-workflow-kit — evidence/ai-workflow-kit-tests.txt\n• Roadmap này — neomind-status.canvas",
+			"text": "Nghiệm thu\n\n• Acceptance matrix — acceptance-matrix.md\n• Test chập chờn đã biết — known-test-failures-2026-11-07.md\n• Roadmap này — neomind-status.canvas",
 			"x-nimbalyst": {
 				"reference": {
 					"kind": "native",

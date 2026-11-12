@@ -125,7 +125,7 @@ Kiểm chứng Windows (11/11/2026): `npm test` đầy đủ **294 test, 292 pas
 
 ## Skills và Agents — 11/11/2026
 
-Mảng A của [plan skills/agents/memory](plan-skills-agents-memory-2026-11-11.md), branch `feat/skills-agents`.
+Mảng A của plan skills/agents/memory, branch `feat/skills-agents`.
 
 - **Thư viện skill** (`src/storage/skill-library.ts`): tạo/sửa/xóa `neomind/skills/<id>/SKILL.md` (frontmatter `name`, `description` + thân Markdown; giữ các khóa frontmatter khác như `allowed-tools`), sửa có `expectedSha256`, file phụ dạng text (tạo với `expectedSha256: null`, sửa theo sha, xóa và dọn thư mục rỗng), giới hạn 256 KiB, từ chối symlink/junction trên đường tới skill và đường dẫn ra ngoài thư mục skill. Skill `.claude/skills` chỉ đọc; ID trùng với skill Claude không tạo được (bước ghim skill theo ID). `skillUsage` liệt kê agent (draft + phiên bản mới nhất) và bước flow (draft + phiên bản mới nhất, theo `skillsOverride`) đang ghim, kèm cờ ghim cũ. `repinSkill` chỉ sửa draft agent/flow (compare-and-swap theo revision), không publish. `deleteSkill` từ chối skill đang được ghim (`SkillInUse` kèm usage; API trả 409) trừ khi `force`. `skillPromptText` tạo đúng đoạn `LocalRun.prompt` chèn vào prompt (test so khớp với prompt thật của fake runner).
 - **Quyền**: `ai.skillEdit?: 'allow' | 'deny'` trong `project.json` (mặc định allow), áp cho request có `author: { kind: 'ai' }` (tool session). Editor và CLI là người dùng.
@@ -140,7 +140,7 @@ Kiểm chứng Windows (11/11/2026): `npm test` 281 test: 279 pass, 0 fail, 2 sk
 
 Gộp với mảng A (session điều phối, 11/11): rebase `feat/memory` lên `feat/skills-agents`, giải xung đột chuỗi Usage của CLI, gallery và tài liệu; gắn `StepMemoryField` vào inspector (agent task, từng reviewer, integration) ngay dưới mục Skills. `npm test` đầy đủ trên bản gộp: **289 test, 287 pass, 0 fail, 2 skip**; `tsc` UI đạt; ảnh inspector (agent task tối, reviewer sáng) đã kiểm.
 
-Mảng B của [plan Skills/Agents và Memory](plan-skills-agents-memory-2026-11-11.md), branch `feat/memory` (worktree `../test_workflow_worktrees/memory`), commit `28b810c` (core), `e4d1dd1` (tool/CLI/API), `2297412` (UI) và commit tài liệu.
+Mảng B của plan Skills/Agents và Memory, branch `feat/memory` (worktree `../test_workflow_worktrees/memory`), commit `28b810c` (core), `e4d1dd1` (tool/CLI/API), `2297412` (UI) và commit tài liệu.
 
 - **B1 · Bật sẵn:** chưa cấu hình root thì dùng `neomind/memory` trong repo (`resolveDefaultMemoryRoot(…, create)`, `openProjectMemory(…, create)`); đọc khi chưa có thư mục = rỗng, ghi đầu tiên tạo thư mục. Root đã cấu hình vẫn phải tồn tại như trước. `readMemory` trả thêm `location` (đường dẫn, có trong repo/commit cùng repo, đã tồn tại chưa), `stats`, `inactive`.
 - **B2 · Tool:** `memory_search`, `memory_get`, `memory_propose`, `memory_pending`, `memory_approve`/`memory_reject` (bắt buộc `confirmed: true`). `LessonProposals` mở rộng cho context/decision/lesson, thêm `origin`, `reason`, `supersedes`, `runId` tùy chọn (đề xuất ngoài run nằm ở `<state>/memory-proposals`). Kiểm trùng theo loại + nội dung chuẩn hóa với bản ghi đã duyệt và đề xuất đang chờ. CLI `neomind memory list|pending|propose|approve|reject|note|expire|delete|feedback|remember`; API `/api/memory/search|records|note|expire|delete|proposals…`, `/api/runs/:id/remember|memory-feedback`.
@@ -182,14 +182,14 @@ Kiểm chứng Windows: `tsc` core/UI, build UI và extension đạt; test khôi
 
 ## Chạy lại flow bị chặn — 08/11/2026
 
-Run bị chặn có yêu cầu và flow được ghi nhận có nút **Chạy lại từ đầu**. Nút mở form run mới với yêu cầu và flow cũ; cấu hình được preview lại theo trạng thái hiện tại, không sửa run cũ và không tự duyệt kế hoạch. Các override của run cũ không tự sao chép. Build core, UI và test rerun đạt trên Windows; chi tiết kiểm chứng và khảo sát OpenCode trong [bàn giao 08/11](session-handoff-2026-11-08.md).
-Bàn giao hiện tại: [07/11/2026 đồng bộ bản copy và cài extension](session-handoff-2026-11-07.md); [06/11/2026 nâng cấp Gói 1–5](session-handoff-2026-11-06-upgrade.md); [06/11/2026 thiết kế lại](session-handoff-2026-11-06.md); trước đó [04/11/2026 Windows](session-handoff-2026-11-04-windows.md) và [Linux](session-handoff-2026-11-04.md).
+Run bị chặn có yêu cầu và flow được ghi nhận có nút **Chạy lại từ đầu**. Nút mở form run mới với yêu cầu và flow cũ; cấu hình được preview lại theo trạng thái hiện tại, không sửa run cũ và không tự duyệt kế hoạch. Các override của run cũ không tự sao chép. Build core, UI và test rerun đạt trên Windows; chi tiết kiểm chứng và khảo sát OpenCode trong bàn giao 08/11.
+Bàn giao hiện tại: 07/11/2026 đồng bộ bản copy và cài extension; 06/11/2026 nâng cấp Gói 1–5; 06/11/2026 thiết kế lại; trước đó 04/11/2026 Windows và Linux.
 
 ## MCP standalone — 07/11/2026
 
 Thêm server MCP stdio theo project qua `neomind mcp <project>`, tái dùng session tools, giữ gate xác nhận và ghi nguồn duyệt là phiên MCP. Khi ngắt kết nối, server chờ các tool đang chạy trước khi đóng RunManager. Cấu hình Codex CLI/Claude Code trong README; không thay đổi quyền MCP của worker trong flow.
 
-Windows: TypeScript build và test MCP stdio/lifecycle 2/2 đạt. Không chạy inference thật; chưa kiểm chứng kết nối trực tiếp từ session Codex/Claude hoặc Linux. `npm ci` chưa kiểm chứng: cache thiếu dependency và truy cập npm bị treo. Kết quả suite và chi tiết xem [bàn giao MCP](session-handoff-2026-11-07-mcp.md).
+Windows: TypeScript build và test MCP stdio/lifecycle 2/2 đạt. Không chạy inference thật; chưa kiểm chứng kết nối trực tiếp từ session Codex/Claude hoặc Linux. `npm ci` chưa kiểm chứng: cache thiếu dependency và truy cập npm bị treo. Kết quả suite và chi tiết xem bàn giao MCP.
 
 ## Mặc định tắt sandbox Codex — 07/11/2026
 
@@ -205,7 +205,7 @@ Kiểm chứng Windows: `npm test -- dist/test/fast-flow.test.js` đạt 4/4 (g�
 
 ## Đồng bộ bản copy và cài extension — 07/11/2026
 
-Fast-forward branch hiện tại từ 5404c63 tới 7445ef3, giữ lịch sử 54 commit; có nhánh backup/before-copy-import-2026-11-07. npm ci, build UI và build extension thành công trên Windows. Đã cài lại local.neomind, host báo loaded; backend mới cần mở lại workspace. npm test ngoài sandbox: 254 tests, 247 pass, 3 fail, 1 cancelled do timeout, 3 skip; chưa đạt toàn bộ suite. Chi tiết và chẩn đoán trong [bàn giao](session-handoff-2026-11-07.md).
+Fast-forward branch hiện tại từ 5404c63 tới 7445ef3, giữ lịch sử 54 commit; có nhánh backup/before-copy-import-2026-11-07. npm ci, build UI và build extension thành công trên Windows. Đã cài lại local.neomind, host báo loaded; backend mới cần mở lại workspace. npm test ngoài sandbox: 254 tests, 247 pass, 3 fail, 1 cancelled do timeout, 3 skip; chưa đạt toàn bộ suite. Chi tiết và chẩn đoán trong bàn giao.
 
 ## Nâng cấp NeoMind · Gói 5 — 06/11/2026
 
@@ -307,7 +307,7 @@ Flow Studio trên branch `ui/redesign-p3`: header một hàng, dải thêm bư�
 | `npm run build:ui`, build extension, `npx tsc -p tsconfig.ui.json --noEmit` | Đạt. Build extension có cảnh báo sourcemap của Tailwind và cảnh báo URL `dist-ui` resolve khi chạy. |
 | Edge headless, gallery dữ liệu giả | Đã xem tối/sáng 1440 và panel 900, inspector, thêm bước, diagnostic và sheet so sánh. Chưa kiểm tương tác toàn bộ bằng CDP hoặc trong host Nimbalyst. |
 
-Bàn giao GĐ 3 đã gộp trong [bàn giao chung](session-handoff-2026-11-06.md). Suite đầy đủ GĐ 4 và GĐ 5 đạt; kiểm panel thật với bản GĐ 5 còn dành cho session điều phối.
+Bàn giao GĐ 3 đã gộp trong bàn giao chung. Suite đầy đủ GĐ 4 và GĐ 5 đạt; kiểm panel thật với bản GĐ 5 còn dành cho session điều phối.
 
 ## Thiết kế lại giao diện · GĐ 2 — 05/11/2026
 
@@ -333,7 +333,7 @@ Theo [redesign-plan.md](../design/redesign-plan.md) (GĐ 0 thử kỹ thuật �
 
 ## Sửa sau lần dùng thật — 05/11/2026 (5 session Nimbalyst song song)
 
-Theo [kế hoạch](plan-fixes-2026-11-05.md) người dùng duyệt; mỗi gói một session Opus trong worktree riêng, session điều phối gộp bằng cherry-pick lên `codex/temporary-workflow-memory` (không xung đột). Sau khi gộp, Windows: `npm test` **222 test, 220 pass, 0 fail, 2 skip**; build extension đạt và đã cài lại.
+Theo kế hoạch người dùng duyệt; mỗi gói một session Opus trong worktree riêng, session điều phối gộp bằng cherry-pick lên `codex/temporary-workflow-memory` (không xung đột). Sau khi gộp, Windows: `npm test` **222 test, 220 pass, 0 fail, 2 skip**; build extension đạt và đã cài lại.
 
 | Gói | Kết quả |
 | --- | --- |
@@ -375,7 +375,7 @@ Chưa chạy lại run thật Codex/Claude trên Windows và chưa kiểm chứn
 
 ## Walkthrough Flow Studio trên Linux — 04/11/2026
 
-Đã thao tác giao diện thật: mở canvas và inspector model/reasoning, cấu hình run và memory preview, khởi động run, xem trạng thái và log trực tiếp, mở input/output theo attempt, checks, verdict, commit và cập nhật context có nguồn trong project memory. [Bộ review 10 ảnh](ui-review-2026-11-04/REVIEW.md), [gallery offline](ui-review-2026-11-04/index.html) và [báo cáo kết quả](ui-review-2026-11-04/report.json) được lưu cùng repo.
+Đã thao tác giao diện thật: mở canvas và inspector model/reasoning, cấu hình run và memory preview, khởi động run, xem trạng thái và log trực tiếp, mở input/output theo attempt, checks, verdict, commit và cập nhật context có nguồn trong project memory. Bộ review 10 ảnh, gallery offline và báo cáo kết quả được lưu cùng repo.
 
 Project C11 dùng Luna 6 / low, flow demo tự khai báo auto approval trong project riêng cho phép. Run `run-c2403d71-d305-4feb-af4e-3f0c1945bbda` hoàn tất sau **42,25 giây**: `sh verify.sh` biên dịch với `-std=c11 -Wall -Wextra -Werror`, ba ca cộng/trừ/số âm đạt; reviewer độc lập đạt 8/8 tiêu chí; commit local `9e6fbbd010b06653525cc118f73a3726e2a10400` chỉ sửa `main.c` trong worktree demo. Usage run thành công **62125 tokens**, gồm **24192 cached input**; USD không được cung cấp. Server demo đã dừng.
 
@@ -406,10 +406,10 @@ Kiểm chứng cuối trên Linux: `npm test` **207 tests, 196 pass, 11 skip, 0 
 - Git conflict không có marker văn bản bị chặn để tránh nhận nhầm kết quả. Chưa hỗ trợ giải quyết đầy đủ conflict nhị phân, đổi tên/xóa phức tạp.
 - Còn thiếu writer trước/sau fork, nhiều integration, review từng nhánh, current/shared workspace, race khi dọn worktree, semantic search và xử lý memory trùng/lỗi thời. Giữ các chặn preflight hiện có; chưa browser acceptance hoặc chạy model thật cho thay đổi mới.
 
-- Bổ sung sau cập nhật ban đầu: canvas run từ snapshot; lọc lịch sử theo flow/trạng thái/ngày và báo mất kết nối; so sánh draft/version; palette theo nhóm, copy/paste một bước và keyboard undo/redo. Memory preview trước run và snapshot metadata (revision, nguồn, lý do), hàng đợi lesson cùng thao tác từ chối ghi receipt. Xem [plan](next-plan-workflow-memory-studio.md) để biết phần còn thiếu.
+- Bổ sung sau cập nhật ban đầu: canvas run từ snapshot; lọc lịch sử theo flow/trạng thái/ngày và báo mất kết nối; so sánh draft/version; palette theo nhóm, copy/paste một bước và keyboard undo/redo. Memory preview trước run và snapshot metadata (revision, nguồn, lý do), hàng đợi lesson cùng thao tác từ chối ghi receipt. Xem plan để biết phần còn thiếu.
 - Chưa có browser acceptance cho UI mới; P1–P4 chưa hoàn tất. Chưa bật shared workspace, current checkout, nhiều integration hoặc workflow graph tổng quát.
 
-- Bắt đầu [kế hoạch ưu tiên mới](next-plan-workflow-memory-studio.md). Compiler yêu cầu opt-in tường minh `allowAutoApproval` / `allowHumanReview` khi project có gate tương ứng; Fast vẫn dùng được sau khi project cho phép. Snapshot và journal của run cũ được đọc theo quy tắc đã lưu; validate/publish và run mới dùng quy tắc mới.
+- Bắt đầu kế hoạch ưu tiên mới. Compiler yêu cầu opt-in tường minh `allowAutoApproval` / `allowHumanReview` khi project có gate tương ứng; Fast vẫn dùng được sau khi project cho phép. Snapshot và journal của run cũ được đọc theo quy tắc đã lưu; validate/publish và run mới dùng quy tắc mới.
 - Cleanup kiểm tra branch worktree so với ref đã lưu, ghi baseline và đối chiếu lại trước khi dọn, gồm sau recovery. Intent cũ không có baseline không tự dọn worktree còn tồn tại; giữ lại để kiểm tra. Intent mới còn ghim hash nội dung file ignored để phát hiện thay đổi trước khi tiếp tục dọn bắt buộc. Có regression cho thay đổi sau intent và thay đổi nhánh sau ref. Việc kiểm tra baseline không khóa chỉnh sửa từ công cụ ngoài trong khoảng giữa đối chiếu và lệnh Git.
 - Flow Studio: node thể hiện approval tự động hay người duyệt, binding kế thừa/ghim và reviewer target; có tìm bước. Memory lọc loại/phạm vi/tag trong tập kết quả tìm kiếm hiện tại. Đây là lát UI đầu tiên, P1–P4 chưa hoàn tất; chưa có browser acceptance cho thay đổi mới.
 - Linux: bộ kiểm tra 190 test, 179 pass, 11 skip, 0 fail; UI build thành công. Các skip là test Windows/Claude scope. Chưa chạy inference thật hoặc kiểm thử Windows trong đợt này.

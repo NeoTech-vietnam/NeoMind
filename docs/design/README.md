@@ -30,74 +30,7 @@ Token sáng/tối nằm trong `ui/src/theme.css`; component dùng chung trong `u
 
 ## Thiết kế v1 — lịch sử
 
-Các mục và mockup 00–09 bên dưới là tư liệu v1, không mô tả trạng thái UI hiện hành.
-
-### Design system v1
-
-Giao diện dùng nền tối theo tông Claude Code: nền than ấm `#1f1e1d`/`#262624`, chữ trắng ngà `#f2efe8`, màu nhấn clay `#d97757` (nút chính `#c15f3c`). Đánh dấu ĐỀ XUẤT dùng xanh teal để không lẫn với màu nhấn. Trang này gồm màu, chữ, nhãn trạng thái, nút, ô nhập, callout và quy ước. Khối CSS `NEOMIND SHARED STYLES` trong file này được chép nguyên vào mọi mockup khác.
-
-[Design system](mockups/00-design-system.mockup.html "width=1100 height=900")
-
-## Runs
-
-### 1. Run mới
-
-Đã có: bảng "Agent cho từng bước" (runner gạt Codex/Claude Code, model, mức suy luận), cấu hình tự cập nhật, giới hạn theo phút, cảnh báo thay đổi chưa commit, lý do khi nút Bắt đầu bị khóa.
-Đề xuất: chọn flow bằng thẻ có chuỗi bước; thiết lập nhanh ("Claude viết · Codex review", "Toàn Claude", "Toàn Codex"); ước tính token và thời gian.
-
-[Run mới](mockups/01-run-start.mockup.html "width=1100 height=1450")
-
-### 2. Chờ duyệt kế hoạch
-
-Đã có: thẻ kế hoạch nổi bật (mục tiêu, cách làm, tiêu chí, phạm vi, checks), ô góp ý, nút "Duyệt và thực hiện".
-Đề xuất: callout nói rõ "chưa file nào bị sửa"; danh sách file dự kiến sửa (cần thêm vào schema của plan); chuyển phiên bản kế hoạch và xem khác biệt; góp ý nhanh bằng chip.
-
-[Chờ duyệt kế hoạch](mockups/02-run-approval.mockup.html "width=1100 height=1530")
-
-### 3. Đang chạy
-
-Đã có: badge nhấp nháy, bước đang chạy được tô sáng, nút Tạm dừng và Hủy run.
-Đề xuất: **Hoạt động trực tiếp** cho từng agent đang chạy (ví dụ flow song song: Claude và Codex cạnh nhau) — đọc file, tin nhắn, sửa file kèm diff, chạy lệnh với output chạy dần, tóm tắt suy luận, lọc theo loại, tự cuộn; thời gian và token từng bước; thanh ngân sách thời gian. Nguồn: transcript NeoMind tự ghi trong lúc chạy (xem [session-transcripts.md](../adaptive-agent-flow/session-transcripts.md)).
-
-[Run đang chạy](mockups/03-run-running.mockup.html "width=1100 height=1500")
-
-### 4. Cần xử lý (bị chặn)
-
-Đã có: lý do thô, nút Tiếp tục, các tiêu chí của reviewer và finding, lượt review cũ làm mờ.
-Đề xuất: khung "Vì sao run dừng?" bằng lời thường; 4 lựa chọn xử lý (chạy lại review kèm diff, đổi reviewer sang Codex, tự xem diff và duyệt, hủy run); diff đang được review.
-
-[Run bị chặn](mockups/04-run-blocked.mockup.html "width=1100 height=2700")
-
-### 5. Hoàn tất
-
-Đã có: commit hash, file đã đổi, lệnh `git cherry-pick` có nút chép, kết quả checks và review.
-Đề xuất: xem diff ngay trong trang; nút "Áp dụng vào branch main" (NeoMind tự cherry-pick, gặp conflict thì hủy an toàn); bảng chi phí theo từng bước; thẻ lesson dễ đọc hơn.
-
-[Run hoàn tất](mockups/05-run-completed.mockup.html "width=1100 height=2520")
-
-### 6. Xem session
-
-Mở từ "Xem session" trên một bước agent: ngăn bên với dòng thời gian từng lượt (lượt bị dừng gắn nhãn riêng), prompt thu gọn, đọc/sửa/lỗi công cụ, suy nghĩ thu gọn, output có cấu trúc, token; chuyển giữa bản NeoMind ghi và lịch sử gốc của Claude Code/Codex (cho run cũ); chỉ xem, không tiếp tục session. Có biến thể cho session reviewer Codex (lệnh + output, verdict).
-
-[Xem session](mockups/09-session-viewer.mockup.html "width=1100 height=2850")
-
-## Flow studio
-
-Đã có: cột icon thêm bước, canvas rộng, inspector đưa runner/model lên đầu (kỹ thuật nằm trong "Nâng cao"), menu Quản lý, chip runner trên thẻ.
-Đề xuất: chip "Mặc định → Codex · GPT-6 Luna" cho thấy runner thật khi bước dùng mặc định; ngăn "Vấn đề" liệt kê lỗi kiểm tra và nhảy tới bước; nút "Thử flow" chạy đồ thị với kết quả giả lập.
-
-[Flow studio](mockups/06-flow-studio.mockup.html "width=1100 height=1700")
-
-## Agent profiles và Project memory
-
-Hai trang này mới chỉ đổi cỡ chữ và màu, bố cục vẫn là form đơn giản với JSON; mockup là đề xuất làm lại.
-
-- **Agent profiles:** danh sách chia "Có sẵn" và "Của project"; chip phiên bản (đang dùng bởi flow nào); quyền dạng công tắc có giải thích; skills dạng bảng thay cho JSON, cảnh báo file đổi sau khi ghim hash; "Được dùng ở" các bước nào.
-- **Project memory:** hàng đợi "Lessons chờ duyệt" gom từ mọi run; lọc theo loại và phạm vi; bảng bản ghi; panel chi tiết (nguồn, tags, revision, run đang ghim).
-
-[Agent profiles](mockups/07-profiles.mockup.html "width=1100 height=1400")
-
-[Project memory](mockups/08-memory.mockup.html "width=1100 height=1260")
+Mockup v1 (`00`–`09`) và phần mô tả từng màn đã gỡ khỏi repo ngày 12/11/2026 vì UI hiện hành theo v2; xem lại bằng `git show archive/docs-2026-11-12:docs/design/README.md`. Bảng quyết định bên dưới vẫn giữ.
 
 ## Tổng hợp đề xuất
 

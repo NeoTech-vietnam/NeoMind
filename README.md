@@ -4,7 +4,7 @@ NeoMind cấu hình và chạy agent flows, với kế hoạch cần duyệt, ki
 
 Hiện đã chạy end-to-end trong worktree riêng (khảo sát → duyệt kế hoạch → thực hiện → checks → review → commit local) với **Codex và Claude Code**, trên Windows native (xem [Windows](START-HERE-WINDOWS.md)); trên Linux mới kiểm chứng đường Codex (29/10). Có flow Fast, Research, Dev song song, xem agent làm gì theo thời gian thực, và [extension Nimbalyst](docs/adaptive-agent-flow/nimbalyst-extension.md) để start flow từ mọi session. Đây là bản đang phát triển.
 
-Người (hoặc agent) mới tiếp tục phát triển: đọc [AGENTS.md](AGENTS.md), rồi [bàn giao 30/10/2026](docs/adaptive-agent-flow/session-handoff-2026-10-30.md) và [tiến độ hiện tại](docs/adaptive-agent-flow/implementation-status.md). [Thiết kế v1](docs/adaptive-agent-flow/design-v1.md) vẫn là phạm vi mục tiêu.
+Người (hoặc agent) mới tiếp tục phát triển: đọc [AGENTS.md](AGENTS.md), rồi [bàn giao mới nhất](docs/adaptive-agent-flow/session-handoff-2026-11-12.md) và [tiến độ hiện tại](docs/adaptive-agent-flow/implementation-status.md). [Thiết kế v1](docs/adaptive-agent-flow/design-v1.md) vẫn là phạm vi mục tiêu.
 
 ## Chạy Flow Studio
 
@@ -295,7 +295,7 @@ npm run neomind -- run start /path/to/repo dev "task" --workspace current --impo
 
 Lấy `BASELINE_HASH` từ preview khi checkout có thay đổi. Shared/current tuần tự hóa writer, giữ staging và chỉ commit phần run. Isolated hỗ trợ nhiều giai đoạn fork/join/integration và review/repair từng nhánh; fork lồng nhau vẫn bị chặn. `run clean` chụp worktree thành ref snapshot rồi xóa hẳn (xem *Dọn worktree* ở trên).
 
-Project memory có policy lexical/LSA/hybrid, suy ra path từ task/tên file, dedup và metadata `expiresAt`/`supersedes`. LSA chạy cục bộ theo corpus project; lesson chỉnh sửa tạo version mới và cần duyệt lại. Chi tiết kiểm chứng và giới hạn: [bàn giao 04/11](docs/adaptive-agent-flow/session-handoff-2026-11-04.md).
+Project memory có policy lexical/LSA/hybrid, suy ra path từ task/tên file, dedup và metadata `expiresAt`/`supersedes`. LSA chạy cục bộ theo corpus project; lesson chỉnh sửa tạo version mới và cần duyệt lại. Chi tiết kiểm chứng và giới hạn: bàn giao 04/11.
 
 ### Memory dùng được (11/11/2026)
 

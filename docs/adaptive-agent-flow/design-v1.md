@@ -446,4 +446,4 @@ Người dùng đã yêu cầu Codex tự hoàn thiện thiết kế và tạo c
 
 Hành vi “product flow cần duyệt plan” là yêu cầu của NeoMind khi chạy task cho người dùng, không buộc chat implementation xin duyệt lại toàn bộ thiết kế đã được giao. Chat triển khai vẫn phải tuân theo sandbox/repository rules và hỏi khi có quyết định sản phẩm lớn làm đổi yêu cầu đã chọn. Được tự giải quyết chi tiết routine, test failures và compatibility, ghi design deviation khi thay contract. Không dùng quyền implementation để push/PR/deploy hoặc sửa changes không thuộc task.
 
-Đọc [implementation handoff](implementation-handoff.md) để biết checkout, ownership và thứ tự công việc. Chưa triển khai runtime tại thời điểm viết thiết kế này. Mọi claim tính năng hoạt động phải kèm bằng chứng từ implementation session.
+Đọc implementation handoff để biết checkout, ownership và thứ tự công việc. Chưa triển khai runtime tại thời điểm viết thiết kế này. Mọi claim tính năng hoạt động phải kèm bằng chứng từ implementation session.

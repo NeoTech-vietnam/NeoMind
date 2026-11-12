@@ -6,7 +6,7 @@ Ngày: 28/10/2026. Nhánh: `hieu/adaptive-agent-flow`.
 
 Nguồn: 12 câu trả lời ban đầu và các câu trả lời bổ sung trực tiếp của người dùng trong phiên thiết kế. Đây là các quyết định về hành vi sản phẩm v1, chưa phải bằng chứng runtime hoạt động. Các quyết định này cập nhật những điểm còn mở tương ứng trong `product-direction.md`, `architecture.md` và tài liệu bàn giao. Tiếp tục thiết kế trước khi triển khai.
 
-Xem [sơ đồ kiến trúc và hai môi trường chạy](architecture.md#3-cấu-trúc-logic), [flow, tương tác agent và trạng thái run](architecture.md#10-default-flow-v1-đã-chốt-và-thiết-kế-chuyển-trạng-thái). Các sơ đồ dùng Mermaid để tiếp tục chỉnh sửa cùng đặc tả; cách chia module và tên trạng thái vẫn là đề xuất.
+Xem sơ đồ kiến trúc và hai môi trường chạy, flow, tương tác agent và trạng thái run. Các sơ đồ dùng Mermaid để tiếp tục chỉnh sửa cùng đặc tả; cách chia module và tên trạng thái vẫn là đề xuất.
 
 ## 1. Các lựa chọn đã xác nhận
 
@@ -95,7 +95,7 @@ Các mục dưới đây là vấn đề còn mở, chưa phải lựa chọn đ
 
 Giới hạn thời gian theo D10 đã được chọn về hành vi; F18 chốt tạm dừng bộ đếm khi toàn run chờ người dùng, còn nhánh chạy thì vẫn tính. Giá trị mặc định và thao tác dừng runtime khi hết hạn chưa chốt. Cần xác định phạm vi bộ đếm thử lại checks để tránh thử lại vô hạn. Thay đổi baseline do người dùng hoặc công cụ khác không tự reset bộ đếm sửa code.
 
-Người dùng đã chọn tạm hoãn pilot, tiếp tục thiết kế hệ thống. Yêu cầu mới về tạo/sửa/xóa/đổi tên nhiều flow, chọn model/reasoning và quan hệ review, cùng editor kéo thả được mô tả trong [thiết kế flow linh hoạt](flow-configuration-design.md). Người dùng chọn phạm vi C: thiết kế đầy đủ cả nhánh song song và nhiều reviewer từ phiên bản đầu, chấp nhận phạm vi lớn hơn. Các quyết định cập nhật tương ứng được ghi dưới đây.
+Người dùng đã chọn tạm hoãn pilot, tiếp tục thiết kế hệ thống. Yêu cầu mới về tạo/sửa/xóa/đổi tên nhiều flow, chọn model/reasoning và quan hệ review, cùng editor kéo thả được mô tả trong thiết kế flow linh hoạt. Người dùng chọn phạm vi C: thiết kế đầy đủ cả nhánh song song và nhiều reviewer từ phiên bản đầu, chấp nhận phạm vi lớn hơn. Các quyết định cập nhật tương ứng được ghi dưới đây.
 
 **Cập nhật policy flow:** người dùng đã chốt F1–F4 trong tài liệu flow linh hoạt: workspace theo flow; reviewer bắt buộc/tư vấn, tất cả bắt buộc phải đạt; nhánh độc lập tiếp tục mặc định khi nhánh khác bị chặn; ngân sách sửa ở cấp run và từng vòng sửa trong graph. Các quyết định này cập nhật các điểm tương ứng vừa nêu; isolation, join và cách đếm lượt sửa cụ thể còn cần đặc tả.
 

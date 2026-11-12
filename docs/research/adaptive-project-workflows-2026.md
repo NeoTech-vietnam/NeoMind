@@ -1,6 +1,6 @@
 # Nghiên cứu ý tưởng: workflow thích ứng và memory theo project cho NeoMind
 
-> Bản nghiên cứu lịch sử từ commit `543ef16`, bổ sung vào nhánh này ngày 28/10/2026. Nội dung nghiên cứu được giữ lại; các liên kết tới source/tài liệu không có trên nhánh này được chuyển thành GitHub links tại commit gốc. Quyết định cập nhật xem [bàn giao hiện tại](../adaptive-agent-flow/README.md).
+> Bản nghiên cứu lịch sử từ commit `543ef16`, bổ sung vào nhánh này ngày 28/10/2026. Nội dung nghiên cứu được giữ lại; các liên kết tới source/tài liệu không có trên nhánh này được chuyển thành GitHub links tại commit gốc. Quyết định cập nhật xem bàn giao hiện tại.
 
 - Ngày tổng hợp: **26/10/2026**.
 - Trạng thái: **đề xuất nghiên cứu**, chưa phải đặc tả đã phê duyệt hay kế hoạch triển khai đã chốt.

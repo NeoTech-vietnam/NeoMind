@@ -24,11 +24,11 @@ Ngày: 05/11/2026. Trạng thái: **đã hoàn thành phần code GĐ 0–5**, g
 
 | Màn | Ảnh | Vấn đề thấy được |
 | --- | --- | --- |
-| Màn trống | [current-empty.png](redesign/current-empty.png) | Icon trang trí đè lên tiêu đề và mô tả. Đã có 2 flow vẫn báo "Tạo flow đầu tiên". |
-| Flow Studio | [current-flow-studio.png](redesign/current-flow-studio.png) | Thẻ bước chữ 11px, khó đọc. Inspector mở đầu bằng hai ô "Chọn bước/kết nối bằng bàn phím" (chỗ dành cho a11y lại chiếm vị trí chính), nhãn tràn khỏi padding. Cột thêm bước phải cuộn. Thanh trạng thái dưới canvas bị cắt. Ba tầng tiêu đề (breadcrumb, H1, "So sánh phiên bản", tab canvas) trước khi tới canvas. |
-| Runs | [current-runs.png](redesign/current-runs.png) | Bộ lọc lịch sử là `select` mặc định của trình duyệt, khác hẳn form bên phải. Lỗi API tiếng Anh ("Publish the flow before starting a run") hiện thành khối đỏ to dù chỉ là bước chưa làm. Nút "Run mới" và "Bắt đầu" cùng màu cam, không rõ nút nào chính. |
-| Agent profiles | [current-profiles.png](redesign/current-profiles.png) | Gần như trống: một thẻ giải thích và form 3 ô rộng hết màn. Không thấy profile có sẵn. |
-| Project memory | [current-memory.png](redesign/current-memory.png) | Ba thẻ xếp chồng, mỗi thẻ một kiểu chữ/khoảng cách; trạng thái quan trọng ("chưa chọn memory root") chỉ là một dòng chữ thường. |
+| Màn trống | current-empty.png | Icon trang trí đè lên tiêu đề và mô tả. Đã có 2 flow vẫn báo "Tạo flow đầu tiên". |
+| Flow Studio | current-flow-studio.png | Thẻ bước chữ 11px, khó đọc. Inspector mở đầu bằng hai ô "Chọn bước/kết nối bằng bàn phím" (chỗ dành cho a11y lại chiếm vị trí chính), nhãn tràn khỏi padding. Cột thêm bước phải cuộn. Thanh trạng thái dưới canvas bị cắt. Ba tầng tiêu đề (breadcrumb, H1, "So sánh phiên bản", tab canvas) trước khi tới canvas. |
+| Runs | current-runs.png | Bộ lọc lịch sử là `select` mặc định của trình duyệt, khác hẳn form bên phải. Lỗi API tiếng Anh ("Publish the flow before starting a run") hiện thành khối đỏ to dù chỉ là bước chưa làm. Nút "Run mới" và "Bắt đầu" cùng màu cam, không rõ nút nào chính. |
+| Agent profiles | current-profiles.png | Gần như trống: một thẻ giải thích và form 3 ô rộng hết màn. Không thấy profile có sẵn. |
+| Project memory | current-memory.png | Ba thẻ xếp chồng, mỗi thẻ một kiểu chữ/khoảng cách; trạng thái quan trọng ("chưa chọn memory root") chỉ là một dòng chữ thường. |
 
 Vấn đề chung:
 
@@ -122,7 +122,7 @@ Mockup v2 (mở trong Nimbalyst hoặc trình duyệt; thanh góc dưới phải
 | [19-profiles-v2](mockups/19-profiles-v2.mockup.html) | Agent profiles | GĐ 4 |
 | [20-memory-v2](mockups/20-memory-v2.mockup.html) | Project memory | GĐ 4 |
 
-Mockup v1 (`00`–`09`) giữ lại làm lịch sử; phần ĐỀ XUẤT cần backend trong v1 vẫn theo bảng quyết định của `docs/design/README.md`. Mockup v2 vẽ cả những phần đó để thấy bố cục cuối, nhưng khi code mỗi giai đoạn chỉ làm phần có dữ liệu sẵn; phần cần backend để trống chỗ hoặc ẩn.
+Mockup v1 (`00`–`09`) và ảnh `current-*.png` đã gỡ khỏi repo ngày 12/11/2026 (tag `archive/docs-2026-11-12`); phần ĐỀ XUẤT cần backend trong v1 vẫn theo bảng quyết định của `docs/design/README.md`. Mockup v2 vẽ cả những phần đó để thấy bố cục cuối, nhưng khi code mỗi giai đoạn chỉ làm phần có dữ liệu sẵn; phần cần backend để trống chỗ hoặc ẩn.
 
 Điểm cần người dùng xem khi duyệt mockup (các agent dựng mockup tự quyết hoặc chưa chắc):
 

@@ -51,7 +51,7 @@ Log trên máy hiện tại (không commit, có thể mất khi dọn Temp):
 - `%TEMP%/neomind-sandbox-recheck.log`: chạy lại 2/2 pass.
 - `%TEMP%/neomind-sandbox-targeted.log`: 14/14 ca adapter/check/admission đạt.
 
-Các lỗi transport/crash recovery/timeout ở những lượt trước cùng ngày được giữ trong [bàn giao 07/11](session-handoff-2026-11-07.md); không tự coi chúng có cùng nguyên nhân với hai ca hiện tại.
+Các lỗi transport/crash recovery/timeout ở những lượt trước cùng ngày được giữ trong bàn giao 07/11; không tự coi chúng có cùng nguyên nhân với hai ca hiện tại.
 
 ## Khi tiếp tục
 
