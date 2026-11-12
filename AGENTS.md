@@ -76,4 +76,4 @@ Extension Nimbalyst: `cd extensions/nimbalyst && npm run build` (dùng `node_mod
 
 ## References
 
-- Authoring NeoMind flows: read extensions/nimbalyst/claude-plugin/skills/neomind-flow-authoring/SKILL.md first.
+- Authoring NeoMind flows: read .claude/skills/neomind-flow-authoring/SKILL.md first.
