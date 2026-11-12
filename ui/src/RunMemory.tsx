@@ -11,6 +11,7 @@ import { Tooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { api } from './api';
 import { bindingLabel, type MemoryRating, type MemoryUse, type Run } from './runTypes';
+import { MemoryBody } from './MemoryBody';
 
 const typeLabels: Record<string, string> = { context: 'Context', decision: 'Quyết định', lesson: 'Lesson' };
 const ratings: { value: MemoryRating; label: string; icon: typeof ThumbsUp; tone: string }[] = [
@@ -19,6 +20,9 @@ const ratings: { value: MemoryRating; label: string; icon: typeof ThumbsUp; tone
   { value: 'wrong', label: 'Sai', icon: CircleX, tone: 'text-danger' },
 ];
 type StoredRecord = { revision: string; body: string; header: { id: string; type: 'context' | 'decision' | 'lesson'; scope: string; sources: string[]; tags: string[]; expiresAt?: string; supersedes?: string[] } };
+
+/** A pinned prompt block is `[type:id revision=…]`, a sources line, then the body. */
+const pinnedBody = (text: string) => text.replace(/^\[[^\n]*\]\n/, '').replace(/^Sources: [^\n]*\n/, '');
 
 /** The latest turn of each step: what it received is what the user rates. */
 function latestPerStep(use: MemoryUse[]) {
@@ -35,6 +39,8 @@ export function RunMemoryUsed({ run, setRun }: { run: Run; setRun(run: Run): voi
   const flow = run.snapshot?.configuration.flow, steps = latestPerStep(run.memoryUse ?? []);
   const [busy, setBusy] = useState(''), [error, setError] = useState(''), [fixing, setFixing] = useState<StoredRecord | null>(null), [body, setBody] = useState('');
   const used = new Set(steps.flatMap(step => step.item.records.map(record => record.record)));
+  // The text each record had when the run pinned it, which is what the agents received.
+  const pinned = new Map((run.runtimeContext?.memory?.records ?? []).flatMap(record => record.text ? [[`${record.type}/${record.id}`, pinnedBody(record.text)] as [string, string]] : []));
   async function rate(step: MemoryUse, record: MemoryUse['records'][number], rating: MemoryRating) {
     setBusy(`${step.attemptId}:${record.record}`); setError('');
     try {
@@ -67,6 +73,7 @@ export function RunMemoryUsed({ run, setRun }: { run: Run; setRun(run: Run): voi
       {!item.records.length ? <p className="m-0 px-3 py-2 text-[12.5px] text-muted-foreground">Bước này không nhận bản ghi nào.</p>
         : item.records.map(record => <div key={record.record} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b px-3 py-2 last:border-b-0">
           <div className="min-w-0 flex-1 basis-56"><div className="flex flex-wrap items-center gap-1.5"><code className="font-mono text-[12px] font-semibold">{record.id}</code><Tag>{typeLabels[record.type] ?? record.type}</Tag>{record.scope && <Tag>{record.scope}</Tag>}</div>
+            {pinned.get(record.record) && <MemoryBody className="mt-1" lines={2} body={pinned.get(record.record)!} />}
             <span className="mt-0.5 block text-[11.5px] text-muted-foreground">{record.reason || 'Được ghim khi run bắt đầu'}</span></div>
           <div className="flex items-center gap-1" role="group" aria-label={`Đánh giá ${record.id}`}>{ratings.map(option => { const Icon = option.icon, active = record.rating === option.value;
             return <Tooltip key={option.value} label={option.label}><Button size="sm" variant={active ? 'outline' : 'ghost'} aria-pressed={active} aria-label={option.label} disabled={!!busy}

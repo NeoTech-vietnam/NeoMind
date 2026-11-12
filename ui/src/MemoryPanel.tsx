@@ -11,6 +11,9 @@ import { Select } from './components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Dialog, DialogActions, DialogContent, SheetContent } from './components/ui/dialog';
 import { Callout, EmptyState } from './components/ui/misc';
+import { LegacyNotice, MemoryBody, MemoryBodyFull, MemorySources } from './MemoryBody';
+import { SourceRunSheet } from './SourceRunSheet';
+import { compactLegacyLessonBody, memoryTitle, sourceRunIds } from '../../src/memory/lesson-body';
 
 type Kind = 'context' | 'decision' | 'lesson';
 type MemoryRecord = { revision: string; body: string; header: { id: string; type: Kind; scope: string; sources: string[]; tags: string[]; updatedAt?: string; contentHash?: string; status?: string; expiresAt?: string; supersedes?: string[] } };
@@ -29,8 +32,15 @@ const splitTags = (text: string) => text.split(',').map(value => value.trim()).f
 const scoreText = (stats?: Stats) => !stats || (!stats.helpful && !stats.irrelevant && !stats.wrong) ? '—' : `${stats.score > 0 ? '+' : ''}${stats.score}`;
 const rowGrid = 'grid grid-cols-[minmax(0,1fr)_92px_minmax(0,110px)_48px_48px] items-center gap-3 px-4';
 
-/** One pending proposal: approve, edit then approve, or reject. Approving or rejecting also settles the merged duplicates. */
-function ProposalRow({ item, memoryRoot, onDone }: { item: Proposal; memoryRoot: string; onDone(message: string): void }) {
+const CompactPreview = ({ text }: { text: string }) => <span className="mt-2 block rounded-md border bg-muted px-2.5 py-2 text-fg-2">{text}</span>;
+/** Scopes older repair lessons wrote: the project id, which means the whole project like `project`. */
+const projectWide = (scope: string) => scope === 'project' || /^project-[a-f0-9]{16}$/.test(scope);
+
+/**
+ * One pending proposal as a compact card: title, a few preview lines, then approve, edit then approve, shorten (old
+ * repair format) or reject. Approving or rejecting also settles the merged duplicates.
+ */
+function ProposalRow({ item, memoryRoot, onDone, onOpenRun }: { item: Proposal; memoryRoot: string; onDone(message: string): void; onOpenRun(runId: string): void }) {
   const [editing, setEditing] = useState(false), [body, setBody] = useState(item.proposal.record.body), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const base = { runId: item.runId, proposalId: item.proposal.proposalId, proposalHash: item.proposalHash };
   async function call(action: 'approve' | 'reject', extra: Record<string, unknown> = {}) {
@@ -38,17 +48,23 @@ function ProposalRow({ item, memoryRoot, onDone }: { item: Proposal; memoryRoot:
     try { await api(`/api/memory/proposals/${action}`, 'POST', { ...base, ...extra }); onDone(action === 'approve' ? 'Đã duyệt và lưu vào memory.' : 'Đã từ chối đề xuất.'); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   }
+  async function compact(after: string) {
+    if (!await confirmAction({ title: 'Rút gọn đề xuất?', description: <>Nội dung đề xuất được thay bằng bản ngắn dưới đây (lưu thành bản {item.version + 1}):<CompactPreview text={after} /></>, confirmLabel: 'Rút gọn' })) return;
+    setBusy(true); setError('');
+    try { await api('/api/memory/compact', 'POST', { target: { runId: item.runId, proposalId: item.proposal.proposalId } }); onDone('Đã rút gọn đề xuất; kiểm tra lại rồi duyệt.'); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  }
   const record = item.proposal.record;
   return <div className="flex flex-col gap-2 border-t px-4 py-3 first:border-t-0">
-    <div className="flex flex-wrap items-center gap-1.5"><Tag>{typeLabels[record.type]}</Tag><Tag>{originLabels[item.proposal.origin ?? 'repair']}</Tag>{record.scope !== 'project' && <Tag>{record.scope}</Tag>}
+    <div className="flex flex-wrap items-center gap-1.5"><Tag>{typeLabels[record.type]}</Tag><Tag>{originLabels[item.proposal.origin ?? 'repair']}</Tag>{!projectWide(record.scope) && <Tag>{record.scope}</Tag>}
       {record.tags.map(tag => <Tag key={tag}>{tag}</Tag>)}{item.version > 1 && <span className="text-[11.5px] text-muted-foreground">bản {item.version}</span>}
       {item.merged.length > 0 && <span className="text-[11.5px] text-muted-foreground">· gộp {item.merged.length + 1} đề xuất giống nhau</span>}</div>
     {error && <Callout tone="danger">{error}</Callout>}
     {item.duplicateOf && <Callout tone="attention">Memory đã có bản ghi cùng nội dung: <code className="font-mono">{item.duplicateOf}</code>. Nên từ chối đề xuất này.</Callout>}
-    {editing ? <Textarea aria-label="Nội dung đề xuất" rows={5} value={body} onChange={event => setBody(event.target.value)} />
-      : <p className="m-0 whitespace-pre-wrap text-[13px] leading-relaxed text-fg-2">{record.body}</p>}
-    {item.proposal.reason && <p className="m-0 text-[12px] text-muted-foreground">Lý do: {item.proposal.reason}</p>}
-    <p className="m-0 text-[11.5px] text-muted-foreground">Nguồn: {record.sources.join(', ')}{record.supersedes?.length ? ` · thay thế ${record.supersedes.join(', ')}` : ''}</p>
+    {editing ? <Textarea aria-label="Nội dung đề xuất" rows={6} value={body} onChange={event => setBody(event.target.value)} /> : <MemoryBody body={record.body} />}
+    {!editing && <LegacyNotice body={record.body} busy={busy} onCompact={after => void compact(after)} />}
+    {item.proposal.reason && <p className="m-0 truncate text-[12px] text-muted-foreground" title={item.proposal.reason}>Lý do: {item.proposal.reason}</p>}
+    <MemorySources sources={[...record.sources, ...(record.supersedes?.length ? [`thay thế ${record.supersedes.join(', ')}`] : [])]} onOpenRun={onOpenRun} />
     <div className="flex flex-wrap gap-2">{editing ? <>
       <Button variant="primary" disabled={busy || !body.trim()} onClick={() => void call('approve', { body, memoryRoot })}>Duyệt bản đã sửa</Button>
       <Button variant="ghost" onClick={() => { setEditing(false); setBody(record.body); }}>Hủy sửa</Button></> : <>
@@ -66,7 +82,7 @@ export function MemoryPanel() {
   const [rootOpen, setRootOpen] = useState(false), [externalRoot, setExternalRoot] = useState('');
   const [selected, setSelected] = useState<MemoryRecord | null>(null), [editing, setEditing] = useState(false);
   const [editBody, setEditBody] = useState(''), [editTags, setEditTags] = useState(''), [editScope, setEditScope] = useState('');
-  const [note, setNote] = useState<Note | null>(null);
+  const [note, setNote] = useState<Note | null>(null), [sourceRun, setSourceRun] = useState<string | null>(null);
   const refresh = async () => setMemory(await api('/api/memory'));
   const refreshProposals = async () => { try { setProposals(await api('/api/memory/proposals')); setProposalError(''); } catch (e) { setProposalError(e instanceof Error ? e.message : String(e)); } };
   useEffect(() => { void refresh().catch(e => setError(String(e))); void refreshProposals(); }, []);
@@ -91,6 +107,16 @@ export function MemoryPanel() {
     if (!await confirmAction({ title: `Xóa ${record.header.id}?`, description: 'File bản ghi bị xóa khỏi thư mục memory (vẫn còn trong lịch sử Git nếu đã commit). Không hoàn tác được từ NeoMind.', confirmLabel: 'Xóa bản ghi', danger: true })) return;
     await action(async () => { await api('/api/memory/delete', 'POST', { type: record.header.type, id: record.header.id, expectedRevision: record.revision }); setSelected(null); setMessage('Đã xóa bản ghi.'); });
   };
+  /** Rewrite an old-format repair lesson as a new revision; its sources gain `compacted`, nothing else about it changes. */
+  const compact = async (record: MemoryRecord, after: string) => {
+    if (!await confirmAction({ title: `Rút gọn ${record.header.id}?`, description: <>Bản ghi được lưu revision mới với nội dung ngắn dưới đây; nguồn giữ nguyên và thêm <code>compacted</code>.<CompactPreview text={after} /></>, confirmLabel: 'Rút gọn' })) return;
+    await action(async () => {
+      await api('/api/memory/compact', 'POST', { target: { type: record.header.type, id: record.header.id } });
+      const result = await api<{ record: MemoryRecord }>(`/api/memory/records/${record.header.type}/${record.header.id}`).catch(() => undefined);
+      if (result) open(result.record);
+      setMessage('Đã rút gọn bản ghi.');
+    });
+  };
   const submitNote = (value: Note) => action(async () => {
     await api('/api/memory/note', 'POST', { type: value.type, scope: value.scope.trim() || 'project', tags: splitTags(value.tags), body: value.body, ...(value.supersedes ? { supersedes: [value.supersedes.header.id] } : {}) });
     setNote(null); setSelected(null); setMessage(value.supersedes ? `Đã tạo bản ghi thay thế ${value.supersedes.header.id}.` : 'Đã lưu ghi chú vào memory.');
@@ -107,17 +133,17 @@ export function MemoryPanel() {
     <div className="memory-block"><div className="memory-block-heading"><div><h2>Đề xuất chờ duyệt ({pending.length})</h2><p>Từ các run (vòng sửa, yêu cầu sửa kế hoạch, rule bị vi phạm, run bị chặn), từ AI trong session và từ "Ghi nhớ điều này".</p></div></div>
       {proposalError && <Callout tone="danger">{proposalError}</Callout>}{proposals?.errors.map(item => <Callout key={item.runId} tone="danger">Không đọc được {item.runId}: {item.error}</Callout>)}
       {proposals && !pending.length && <p className="memory-empty-line">Không có đề xuất chờ duyệt.</p>}
-      {pending.map(item => <ProposalRow key={`${item.runId ?? 'project'}/${item.proposal.proposalId}/${item.proposalHash}`} item={item} memoryRoot={proposals!.memoryRoot} onDone={text => { setMessage(text); void refresh().catch(e => setError(String(e))); void refreshProposals(); }} />)}
+      {pending.map(item => <ProposalRow key={`${item.runId ?? 'project'}/${item.proposal.proposalId}/${item.proposalHash}`} item={item} memoryRoot={proposals!.memoryRoot} onOpenRun={setSourceRun} onDone={text => { setMessage(text); void refresh().catch(e => setError(String(e))); void refreshProposals(); }} />)}
     </div>
     <div className="memory-block"><div className="memory-block-heading"><div><h2>Bản ghi memory</h2><p>Dùng: số run đã ghim bản ghi. Điểm: cộng từ "Hữu ích", trừ từ "Không liên quan" và "Sai"; điểm đổi thứ tự chọn memory ở run sau.</p></div></div>
       <Tabs value={typeFilter} onValueChange={setTypeFilter}><TabsList className="px-4 pt-2">{['all', 'context', 'decision', 'lesson'].map(kind => <TabsTrigger key={kind} value={kind} count={count(kind)}>{kind === 'all' ? 'Tất cả' : typeLabels[kind]!}</TabsTrigger>)}</TabsList></Tabs>
       <div className="memory-filters"><div className="min-w-0 flex-1"><Input aria-label="Tìm memory" placeholder="Tìm nội dung, ID hoặc tag…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="w-44"><Select label="Phạm vi" value={scopeFilter} onValueChange={setScopeFilter} options={[{ value: 'all', label: 'Mọi phạm vi' }, ...scopes.map(value => ({ value: `scope:${value}`, label: value }))]} /></div><Search className="size-4 text-muted-foreground" /></div>
       {!memory.records.length ? <EmptyState title="Chưa có bản ghi">Bấm "Ghi chú" để thêm điều agent nên biết, hoặc duyệt một đề xuất ở trên.</EmptyState> : !filtered.length ? <EmptyState title="Không có bản ghi phù hợp" /> : <div className="memory-records">
-        <div className={`${rowGrid} bg-muted py-2.5 text-[10px] font-semibold text-muted-foreground`}><span>ID / NỘI DUNG</span><span>LOẠI</span><span>PHẠM VI</span><span className="text-right">DÙNG</span><span className="text-right">ĐIỂM</span></div>
-        {filtered.map(record => { const recordStats = stats(record), score = recordStats?.score ?? 0, state = inactive.get(record.header.id);
+        <div className={`${rowGrid} bg-muted py-2.5 text-[10px] font-semibold text-muted-foreground`}><span>NỘI DUNG / ID</span><span>LOẠI</span><span>PHẠM VI</span><span className="text-right">DÙNG</span><span className="text-right">ĐIỂM</span></div>
+        {filtered.map(record => { const recordStats = stats(record), score = recordStats?.score ?? 0, state = inactive.get(record.header.id), legacy = !!compactLegacyLessonBody(record.body);
           return <button className={`memory-record-row ${rowGrid} w-full cursor-pointer border-0 border-t border-solid border-border bg-background py-2.5 text-left text-fg-2 hover:bg-accent`} key={key(record)} onClick={() => open(record)}>
-            <span className="min-w-0"><span className="flex items-center gap-1.5"><strong className="truncate text-[13px]">{record.header.id}</strong>{state && <Badge status="idle" dot={false}>{inactiveLabels[state] ?? state}</Badge>}</span><small className="block truncate text-[12px] text-muted-foreground">{record.body}</small></span>
-            <Tag>{typeLabels[record.header.type]}</Tag><span className="truncate text-[12.5px]">{record.header.scope}</span><span className="text-right text-[12.5px] tabular-nums">{recordStats?.uses ?? 0}</span>
+            <span className="min-w-0"><span className="flex items-center gap-1.5"><strong className="truncate text-[13px] font-medium">{memoryTitle(record.body).title}</strong>{state && <Badge status="idle" dot={false}>{inactiveLabels[state] ?? state}</Badge>}{legacy && <Badge status="attention" dot={false}>Mẫu cũ · {record.body.length.toLocaleString('vi-VN')} ký tự</Badge>}</span><small className="block truncate font-mono text-[11px] text-muted-foreground">{record.header.id}</small></span>
+            <Tag>{typeLabels[record.header.type]}</Tag><span className="truncate text-[12.5px]" title={record.header.scope}>{projectWide(record.header.scope) ? 'project' : record.header.scope}</span><span className="text-right text-[12.5px] tabular-nums">{recordStats?.uses ?? 0}</span>
             <span className={`text-right text-[12.5px] tabular-nums ${score < 0 ? 'text-danger' : score > 0 ? 'text-success' : 'text-muted-foreground'}`}>{scoreText(recordStats)}</span></button>; })}</div>}
     </div><MemorySelection />
     <Dialog open={rootOpen} onOpenChange={setRootOpen}><DialogContent title="Dùng thư mục memory khác" description="Mặc định memory nằm trong neomind/memory của repo. Nhập đường dẫn tuyệt đối tới một thư mục memory đã có nếu muốn dùng chung giữa nhiều repo hoặc giữ ngoài Git."><form onSubmit={event => { event.preventDefault(); void action(async () => { await api('/api/memory/configure', 'POST', { root: externalRoot.trim(), initializeDefault: false, expectedPrevious: location?.configured ? location.root : null }); setRootOpen(false); }); }}><div className="mt-4"><Field label="Đường dẫn tuyệt đối"><Input autoFocus required value={externalRoot} onChange={e => setExternalRoot(e.target.value)} /></Field></div><DialogActions><Button variant="ghost" onClick={() => setRootOpen(false)}>Hủy</Button><Button type="submit" variant="primary" disabled={busy || !externalRoot.trim()}>Dùng thư mục này</Button></DialogActions></form></DialogContent></Dialog>
@@ -128,13 +154,13 @@ export function MemoryPanel() {
         <Field label="Phạm vi" help="project, hoặc thư mục trong repo (vd. src/ui)."><Input value={editScope} onChange={e => setEditScope(e.target.value)} /></Field>
         <Field label="Tags (ngăn bằng dấu phẩy)"><Input value={editTags} onChange={e => setEditTags(e.target.value)} /></Field>
         <div className="flex gap-2"><Button type="submit" variant="primary" disabled={busy || !editBody.trim()}>Lưu revision mới</Button><Button variant="ghost" onClick={() => open(selected)}>Hủy</Button></div></form>
-        : <p className="m-0 whitespace-pre-wrap">{selected.body}</p>}
+        : <><LegacyNotice body={selected.body} busy={busy} onCompact={after => void compact(selected, after)} /><MemoryBodyFull body={selected.body} /></>}
       {!editing && <div className="flex flex-wrap gap-2"><Button variant="primary" disabled={busy} onClick={() => setEditing(true)}>Sửa</Button>
         <Button disabled={busy} onClick={() => setNote({ type: selected.header.type, scope: selected.header.scope, tags: selected.header.tags.join(', '), body: selected.body, supersedes: selected })}>Thay thế bằng…</Button>
         {!selected.header.expiresAt && <Button disabled={busy} onClick={() => void expire(selected)}>Hết hạn</Button>}
         <Button variant="ghost" className="text-danger hover:text-danger" disabled={busy} onClick={() => void remove(selected)}>Xóa</Button></div>}
       <div><strong>Dùng và đánh giá</strong><p>{stats(selected) ? `Dùng trong ${stats(selected)!.uses} run · Hữu ích ${stats(selected)!.helpful} · Không liên quan ${stats(selected)!.irrelevant} · Sai ${stats(selected)!.wrong} · điểm ${scoreText(stats(selected))}` : 'Chưa run nào dùng bản ghi này.'}</p></div>
-      <div><strong>Nguồn</strong><p className="break-all">{selected.header.sources.join(', ') || 'Không có'}</p></div>
+      <div><strong>Nguồn</strong><p className="break-all">{selected.header.sources.join(', ') || 'Không có'}</p>{sourceRunIds(selected.header.sources).length > 0 && <MemorySources className="mt-1" list={false} sources={selected.header.sources} onOpenRun={setSourceRun} />}</div>
       {selected.header.tags.length > 0 && <div><strong>Tags</strong><p>{selected.header.tags.map(tag => <Tag key={tag} className="mr-1">{tag}</Tag>)}</p></div>}
       <div><strong>Revision</strong><p className="break-all font-mono text-[11px]">{selected.revision}</p></div>{selected.header.updatedAt && <p>Cập nhật: {selected.header.updatedAt}</p>}
       {selected.header.expiresAt && <p>Hết hạn: {selected.header.expiresAt}</p>}{selected.header.supersedes?.length ? <p>Thay thế: {selected.header.supersedes.join(', ')}</p> : null}</div>}</SheetContent></Dialog>
@@ -144,5 +170,6 @@ export function MemoryPanel() {
       <div className="grid grid-cols-2 gap-3"><Field label="Phạm vi" help="project hoặc thư mục trong repo."><Input value={note.scope} onChange={e => setNote({ ...note, scope: e.target.value })} /></Field>
         <Field label="Tags" help="Ngăn bằng dấu phẩy."><Input value={note.tags} onChange={e => setNote({ ...note, tags: e.target.value })} /></Field></div>
       <DialogActions><Button variant="ghost" onClick={() => setNote(null)}>Hủy</Button><Button type="submit" variant="primary" disabled={busy || !note.body.trim()}>{note.supersedes ? 'Lưu bản thay thế' : 'Lưu ghi chú'}</Button></DialogActions></form>}</DialogContent></Dialog>
+    <SourceRunSheet runId={sourceRun} onClose={() => setSourceRun(null)} />
   </section>;
 }

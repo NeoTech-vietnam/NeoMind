@@ -6,6 +6,8 @@ import App from '../App';
 import { setApiTransport } from '../api';
 import { templates } from '../../../src/domain/templates';
 import type { Profile } from '../../../src/domain/schema';
+import { compactLegacyLessonBody } from '../../../src/memory/lesson-body';
+import { legacyLessonBody, shortLessonBody } from './memory-fixtures';
 
 const hash = location.hash.slice(1).split(','), isMemory = location.pathname.includes('memory'), isSkills = location.pathname.includes('skills');
 localStorage.setItem('neomind.theme', hash.includes('light') ? 'light' : 'dark');
@@ -26,10 +28,18 @@ const records: { revision: string; body: string; header: { id: string; type: str
   { revision: 'c'.repeat(64), body: 'Project dùng TypeScript strict.', header: { id: 'typescript', type: 'context', scope: 'project', sources: ['tsconfig.json'], tags: ['typescript'] } },
 ];
 records.push({ revision: 'd'.repeat(64), body: 'Chạy npm test và npm run build:ui trước khi giao thay đổi giao diện.', header: { id: 'checks-ui', type: 'decision', scope: 'ui', sources: ['user-note'], tags: ['tests', 'ui'], supersedes: ['checks'] } });
+// An approved repair lesson in the old format (scoped to the project id) and one in the short format runs write now.
+records.unshift({ revision: '1'.repeat(64), body: legacyLessonBody('run-9ed3c3cb-3006-4079-9d7d-f4fe4782df4b', 'F2'), header: { id: 'lesson-50801f40ebe11824d36dca70', type: 'lesson', scope: 'project-08bfdf94e4e74fcf', sources: ['run:run-9ed3c3cb-3006-4079-9d7d-f4fe4782df4b', 'run:run-9ed3c3cb-3006-4079-9d7d-f4fe4782df4b/event:191', 'proposal:lesson-50801f40ebe11824d36dca70', 'approval:approval-272e6837'], tags: ['repair', 'review'] } },
+  { revision: '2'.repeat(64), body: shortLessonBody, header: { id: 'lesson-c26d880d43a970c64d6e3673', type: 'lesson', scope: 'project', sources: ['run:run-b00f9a41-afff-419e-aebe-7c790c4ebaa8', 'run:run-b00f9a41-afff-419e-aebe-7c790c4ebaa8/event:212'], tags: ['repair', 'review'] } });
 const stats: Record<string, { uses: number; helpful: number; irrelevant: number; wrong: number; score: number }> = {
   'lesson/guard-input': { uses: 7, helpful: 3, irrelevant: 0, wrong: 0, score: 3 }, 'context/typescript': { uses: 12, helpful: 1, irrelevant: 2, wrong: 0, score: -1 }, 'decision/checks-ui': { uses: 2, helpful: 0, irrelevant: 0, wrong: 1, score: -3 } };
-/** Pending proposals of every origin: plan feedback, a "remember this" merged with a run's duplicate, an AI proposal that repeats a record. */
-let pending = [
+/**
+ * Pending proposals of every origin: a repair lesson in the old long format and one in the short format, plan feedback,
+ * a "remember this" merged with a run's duplicate, an AI proposal that repeats a record.
+ */
+let pending: { proposal: { proposalId: string; createdAt: string; origin?: string; reason?: string; record: { id: string; type: string; scope: string; tags: string[]; body: string; sources: string[] } }; version: number; proposalHash: string; runId: string | null; merged: { runId: string | null; proposalId: string }[]; duplicateOf?: string }[] = [
+  { proposal: { proposalId: 'lesson-c553ecc0ed554f8956729229', createdAt: '2026-11-11T07:50:00.000Z', record: { id: 'lesson-c553ecc0ed554f8956729229', type: 'lesson', scope: 'project-08bfdf94e4e74fcf', tags: ['repair', 'review'], body: legacyLessonBody('run-9ed3c3cb-3006-4079-9d7d-f4fe4782df4b', 'F1'), sources: ['run:run-9ed3c3cb-3006-4079-9d7d-f4fe4782df4b', 'run:run-9ed3c3cb-3006-4079-9d7d-f4fe4782df4b/event:191'] } }, version: 1, proposalHash: 'e'.repeat(64), runId: 'run-9ed3c3cb-3006-4079-9d7d-f4fe4782df4b', merged: [] },
+  { proposal: { proposalId: 'lesson-7e0a51c2b9d84f61a3c05e2d', createdAt: '2026-11-12T03:10:00.000Z', origin: 'repair', reason: 'Reviewer yêu cầu sửa và run đã sửa xong; ghi lại để agent sau tránh lặp lại.', record: { id: 'lesson-7e0a51c2b9d84f61a3c05e2d', type: 'lesson', scope: 'project', tags: ['repair', 'review'], body: shortLessonBody, sources: ['run:run-b00f9a41-afff-419e-aebe-7c790c4ebaa8', 'run:run-b00f9a41-afff-419e-aebe-7c790c4ebaa8/event:212'] } }, version: 1, proposalHash: 'f'.repeat(64), runId: 'run-b00f9a41-afff-419e-aebe-7c790c4ebaa8', merged: [] },
   { proposal: { proposalId: 'decision-1', createdAt: '2026-11-11T08:00:00.000Z', origin: 'plan_revision', reason: 'Bạn đã yêu cầu sửa kế hoạch trong run này; ghi lại nếu yêu cầu đúng cho các run sau.', record: { id: 'decision-1', type: 'decision', scope: 'project', tags: ['plan-feedback'], body: 'Khi lập kế hoạch, người dùng yêu cầu: chỉ sửa một file mỗi lần và giữ test cũ.\n\n(Task gốc: Sửa parser)', sources: ['run:run-1'] } }, version: 1, proposalHash: 'b'.repeat(64), runId: 'run-1', merged: [] },
   { proposal: { proposalId: 'memory-2', createdAt: '2026-11-11T08:05:00.000Z', origin: 'user_note', reason: 'Bạn chọn "Ghi nhớ điều này" trên run này', record: { id: 'parser-tabs', type: 'lesson', scope: 'project', tags: [], body: 'Parser phải giữ nguyên tab trong chuỗi.', sources: ['run:run-2'] } }, version: 2, proposalHash: 'c'.repeat(64), runId: 'run-2', merged: [{ runId: 'run-3', proposalId: 'memory-3' }] },
   { proposal: { proposalId: 'memory-4', createdAt: '2026-11-11T08:09:00.000Z', origin: 'ai_session', reason: 'Người dùng nói vậy trong session.', record: { id: 'typescript-2', type: 'context', scope: 'project', tags: ['typescript'], body: 'Project dùng TypeScript strict.', sources: ['session:abc'] } }, version: 1, proposalHash: 'd'.repeat(64), runId: null, merged: [], duplicateOf: 'context/typescript' },
@@ -120,6 +130,15 @@ setApiTransport(async (endpoint, method, body) => {
   if (path === '/api/memory/expire') { const record = records.find(item => item.header.id === input?.id)!; record.header.expiresAt = new Date().toISOString(); return ok({ record }); }
   if (path === '/api/memory/delete') { records.splice(records.findIndex(item => item.header.id === input?.id), 1); return ok({ deleted: true }); }
   if (path === '/api/memory' && method === 'POST') { const record = input?.record as { id: string; type: string; scope: string; sources: string[]; tags: string[]; body: string }; const saved = { revision: 'e'.repeat(64), body: record.body, header: { id: record.id, type: record.type, scope: record.scope, sources: record.sources, tags: record.tags } }; const index = records.findIndex(item => item.header.id === record.id && item.header.type === record.type); if (index >= 0) records[index] = saved; else records.push(saved); return ok({ record: saved }); }
+  if (path === '/api/memory/compact') {
+    // One record or proposal at a time, as the page asks; the server does the same through the audited write path.
+    const target = input?.target as { type?: string; id?: string; runId?: string | null; proposalId?: string } | undefined, changes: { kind: string; key: string; before: string; after: string; applied: boolean }[] = [];
+    for (const record of records) { const after = compactLegacyLessonBody(record.body)?.body; if (!after || (target && (target.type !== record.header.type || target.id !== record.header.id))) continue;
+      changes.push({ kind: 'record', key: `${record.header.type}/${record.header.id}`, before: record.body, after, applied: true }); record.body = after; record.header.scope = 'project'; record.header.sources = [...record.header.sources, 'compacted']; }
+    for (const item of pending) { const after = compactLegacyLessonBody(item.proposal.record.body)?.body; if (!after || (target && target.proposalId !== item.proposal.proposalId)) continue;
+      changes.push({ kind: 'proposal', key: `${item.runId ?? 'project'}/${item.proposal.proposalId}`, before: item.proposal.record.body, after, applied: true }); item.proposal.record.body = after; item.version++; item.proposalHash = '9'.repeat(64); }
+    return ok({ dryRun: false, changes, skipped: [] });
+  }
   if (path === '/api/memory/configure') { root = String(input?.root ?? 'W:\\projects\\neomind-demo\\neomind\\memory'); return ok({ root, records }); }
   if (path === '/api/memory/selection') return ok({ selection, revision: 'f'.repeat(64) });
   if (path === '/api/memory/preview') return ok({ root, records: root ? [{ id: 'guard-input', type: 'lesson', scope: 'src/', selectionReason: 'khớp yêu cầu' }] : [] });
@@ -152,6 +171,11 @@ else click(byText('nav button, aside button', isMemory ? 'Memory' : 'Agents'), (
 
   if (hash.includes('detail') || hash.includes('edit')) click(() => document.querySelector('.memory-record-row'), () => { if (hash.includes('edit')) click(byText('[role="dialog"] button', 'Sửa')); });
   if (hash.includes('note')) click(byText('button', 'Ghi chú'));
+  // `#full` expands the old long proposal (JSON folded); `#compact` asks to shorten it; `#records` scrolls to the table.
+  if (hash.includes('full')) click(byText('button.memory-more', 'Xem đầy đủ'));
+  if (hash.includes('compact')) click(byText('button', 'Rút gọn'));
+  if (hash.includes('shortened')) click(byText('button', 'Rút gọn'), () => click(byText('[role="alertdialog"] button', 'Rút gọn')));
+  if (hash.includes('records')) click(() => document.querySelector('.memory-records'), () => document.querySelector('.memory-records')?.scrollIntoView({ block: 'start' }));
   if (hash.includes('review')) click(byText('button', 'Sửa rồi duyệt'));
   if (hash.includes('policy')) click(byText('button', 'Chọn memory cho run'));
   if (hash.includes('skills')) click(tab('Skills'));

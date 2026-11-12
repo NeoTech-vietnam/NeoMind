@@ -39,5 +39,14 @@
   .memory-record { border: 0; border-top: 1px solid var(--border); background: var(--background); color: var(--fg-2); cursor: pointer; }
   .memory-record:hover { background: var(--accent); }
   .memory-record small { display: block; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
+  /* Memory bodies: folded JSON, "Xem đầy đủ" and links to the source run. */
+  .memory-json { border: 1px solid var(--border); border-radius: 6px; background: var(--muted); }
+  .memory-json summary { padding: 5px 10px; color: var(--muted-foreground); font-size: 11.5px; cursor: pointer; }
+  .memory-json pre { max-height: 320px; margin: 0; padding: 8px 10px; overflow: auto; border-top: 1px solid var(--border); font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .memory-more, .memory-run-link { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: var(--fg-2); font: inherit; font-size: 12px; text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: 3px; cursor: pointer; }
+  .memory-more { align-self: flex-start; }
+  .memory-run-link { font-size: 11.5px; white-space: nowrap; }
+  .memory-more:hover, .memory-run-link:hover { color: var(--foreground); text-decoration-color: currentColor; }
+  .memory-more:focus-visible, .memory-run-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 3px; }
   @media (max-width: 1000px) { .profiles-layout { grid-template-columns: 210px minmax(0,1fr); } .profiles-detail-header { flex-wrap: wrap; } .profiles-skill { grid-template-columns: 1fr 1fr; } .agent-templates { grid-template-columns: 1fr; } }
 }

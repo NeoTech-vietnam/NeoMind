@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/input';
 import { Callout } from '@/components/ui/misc';
 import { api } from './api';
+import { MemoryBody, MemorySources } from './MemoryBody';
 
 type Lesson = { proposal: { proposalId: string; origin?: string; reason?: string; record: { type?: string; body: string; sources: string[]; scope?: string; tags?: string[] } }; version: number; proposalHash: string; expectedRevision: string | null; promoted: boolean; rejected?: boolean };
 
@@ -34,12 +35,12 @@ export function RunLessons({ runId, onPromoted, pendingOnly = false }: { runId: 
     {!data.memoryRoot && <p className="m-0 px-4 pt-3 text-[12.5px] text-muted-foreground">Mở mục Memory để chọn thư mục lưu trước khi duyệt.</p>}
     {data.proposals.filter(lesson => !pendingOnly || (!lesson.promoted && !lesson.rejected)).map(lesson => { const id = lesson.proposal.proposalId, open = !lesson.promoted && !lesson.rejected;
       return <div key={id} className="flex flex-col gap-2.5 border-b px-4 py-3 last:border-b-0">
-        <div className="flex flex-wrap items-center gap-2"><code className="font-mono text-[12.5px] font-semibold">{id}</code><span className="text-[11.5px] text-muted-foreground">v{lesson.version}</span><Tag>{typeLabels[lesson.proposal.record.type ?? 'lesson']}</Tag><Tag>{originLabels[lesson.proposal.origin ?? 'repair']}</Tag>{lesson.proposal.record.scope && <Tag>{lesson.proposal.record.scope}</Tag>}{lesson.proposal.record.tags?.map(tag => <Tag key={tag}>{tag}</Tag>)}
+        <div className="flex flex-wrap items-center gap-2"><code className="font-mono text-[12.5px] font-semibold">{id}</code><span className="text-[11.5px] text-muted-foreground">v{lesson.version}</span><Tag>{typeLabels[lesson.proposal.record.type ?? 'lesson']}</Tag><Tag>{originLabels[lesson.proposal.origin ?? 'repair']}</Tag>{lesson.proposal.record.scope && lesson.proposal.record.scope !== 'project' && !/^project-[a-f0-9]{16}$/.test(lesson.proposal.record.scope) && <Tag>{lesson.proposal.record.scope}</Tag>}{lesson.proposal.record.tags?.map(tag => <Tag key={tag}>{tag}</Tag>)}
           {lesson.promoted && <Badge status="success">Đã lưu vào memory</Badge>}{lesson.rejected && <Badge status="idle">Đã từ chối</Badge>}</div>
         {editing === id ? <Textarea aria-label="Nội dung đề xuất" rows={6} value={editedBody} onChange={e => setEditedBody(e.target.value)} />
-          : <p className="m-0 whitespace-pre-wrap text-[13px] leading-relaxed text-fg-2">{lesson.proposal.record.body}</p>}
-        {lesson.proposal.reason && <p className="m-0 text-[12px] text-muted-foreground">{lesson.proposal.reason}</p>}
-        {lesson.proposal.record.sources.length > 0 && <p className="m-0 text-[11.5px] text-muted-foreground">Nguồn: {lesson.proposal.record.sources.join(', ')}</p>}
+          : <MemoryBody body={lesson.proposal.record.body} />}
+        {lesson.proposal.reason && <p className="m-0 truncate text-[12px] text-muted-foreground" title={lesson.proposal.reason}>{lesson.proposal.reason}</p>}
+        {lesson.proposal.record.sources.length > 0 && <MemorySources sources={lesson.proposal.record.sources} />}
         {open && <div className="flex flex-wrap gap-2">{editing === id ? <>
           <Button disabled={busy || !editedBody.trim()} onClick={() => call('revise', { proposalId: id, proposalHash: lesson.proposalHash, body: editedBody }, () => setEditing(null))}>Lưu phiên bản mới</Button>
           <Button variant="ghost" onClick={() => setEditing(null)}>Hủy chỉnh sửa</Button></> : <>
