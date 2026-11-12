@@ -21,6 +21,15 @@ Mở URL localhost được in ra. Editor hỗ trợ canvas kéo thả, flow/pro
 
 Mặc định standalone dùng `gpt-6-luna` reasoning `low`; có thể chọn `gpt-6.1-sol` hoặc `gpt-6.1-terra` khi runner cung cấp. Không tự chuyển model ngoài danh sách fallback đã cấu hình. Chạy thật sử dụng quota tài khoản Codex.
 
+## Cấu hình project lần đầu (`neomind init`)
+
+```bash
+npm run neomind -- init /absolute/path/to/project            # neomind/, neomind/project.json, skill hướng dẫn soạn flow
+npm run neomind -- init /absolute/path/to/project --force    # ghi đè skill hướng dẫn nếu đã bị sửa
+```
+
+`init` tạo `neomind/` (project cũ dùng `.neomind/` thì giữ chỗ đó), ghi `neomind/project.json` với đúng các giá trị mặc định mà NeoMind vẫn dùng khi chưa có file (nên hành vi project không đổi, chỉ hiện ra để sửa), và cài skill [`neomind-flow-authoring`](.claude/skills/neomind-flow-authoring/SKILL.md) vào `.claude/skills/neomind-flow-authoring/SKILL.md` của project để agent (Claude Code và các agent đọc `.claude/skills`) biết các ràng buộc runtime trước khi soạn flow. Chạy lại không đổi gì: thư mục và `project.json` đã có được giữ nguyên, skill đã bị sửa được giữ (in `đã bị sửa, giữ nguyên`), chỉ `--force` ghi đè skill. Không chạy `init` cũng được: lần ghi đầu tiên tạo `neomind/` (flow, agent, skill, chương trình, memory hoặc cấu hình đầu tiên) tự cài skill một lần; repo chỉ được đọc hoặc preview thì không có gì được ghi. Xóa skill sau đó thì NeoMind không cài lại. Cùng hàm core có ở API `POST /api/project/init` (`{ "force": true }` tùy chọn) và tool session `neomind_project_init` (`force` cần `confirmed: true`). Bản skill NeoMind mang theo được sinh từ file trong repo này bằng `node scripts/sync-project-guide.mjs`; test báo lỗi khi hai bản lệch nhau.
+
 ## AI tạo và chọn flow
 
 NeoMind có thể đề xuất flow bằng quy tắc tĩnh, tạo bản nháp, kiểm policy và so sánh trước khi lưu phiên bản. Các lệnh sau nhận **thư mục project**; `draft.json` là input authoring, ví dụ `{"flowId":"my-dev","name":"My Dev","from":{"template":"dev"}}`.

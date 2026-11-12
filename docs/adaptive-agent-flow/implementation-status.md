@@ -2,6 +2,17 @@
 
 Cập nhật: **11/11/2026**. Branch: `hieu/adaptive-agent-flow`. Bàn giao: [11/11 khôi phục MCP, chạy lại flow, OpenCode](session-handoff-2026-11-11.md).
 
+## Tự cài skill soạn flow, `neomind init` — 12/11/2026
+
+Branch `feat/project-init` (worktree `../test_workflow_worktrees/project-init`).
+
+- **Skill đóng gói:** nội dung `.claude/skills/neomind-flow-authoring/SKILL.md` được sinh thành hằng số `src/storage/project-guide-skill.ts` (`node scripts/sync-project-guide.mjs`), nên có trong `dist/` và bundle backend của extension mà không cần file ngoài. Test so khớp hai bản.
+- **`installProjectGuide(root, { force })`** (`src/storage/project-guide.ts`): ghi `.claude/skills/neomind-flow-authoring/SKILL.md`, trả `created | up-to-date | modified-kept | replaced`. Không đi qua symlink; tạo mới bằng file tạm + hard link (không bao giờ đè file vừa xuất hiện), `force` thay bằng rename. Bản CRLF của cùng nội dung tính là `up-to-date`. Viết đồng bộ để dùng được cả ở đường memory đồng bộ.
+- **Tự cài một lần:** `projectDirCreated` được gọi ở mọi chỗ ghi tạo `neomind/` (hoặc `.neomind/`): tạo flow, agent, skill, chương trình, cấu hình memory selection, `configureMemory` và memory mặc định (`resolveDefaultMemoryRoot(…, true)`). Chỉ cài khi chính lần ghi đó tạo thư mục metadata; đọc/preview không ghi gì; lỗi cài chỉ `console.warn`.
+- **`neomind init <project> [--force]`** (`src/runtime/project-init.ts`): tạo thư mục metadata, `project.json` = giá trị `readProject` trả khi thiếu file (dưới cùng lock với `writeMemorySelection`), cài skill; in từng mục đã tạo/giữ nguyên. API `POST /api/project/init`, tool session `project_init` (`force` cần `confirmed: true`). Chưa thêm nút trong UI.
+
+Kiểm chứng Windows (12/11/2026): `npm test` 295 test: 293 pass, 0 fail, 2 skip; `test/project-guide.test.ts` 6 test mới (bản đóng gói = bản trong repo; ghi flow đầu tiên cài một lần, đọc không cài, xóa rồi không cài lại; file đã có được giữ, CRLF; đường memory; `init` idempotent, `--force`, giữ `project.json` và `.neomind/` cũ; API, tool session, CLI). `tsc` UI, `npm run build:ui`, build extension đạt (bundle backend chứa skill và `project_init`). Chưa kiểm chứng: Linux, cài extension vào Nimbalyst.
+
 ## Skills và Agents — 11/11/2026
 
 Mảng A của [plan skills/agents/memory](plan-skills-agents-memory-2026-11-11.md), branch `feat/skills-agents`.

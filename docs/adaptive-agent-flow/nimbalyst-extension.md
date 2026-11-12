@@ -62,6 +62,8 @@ flowchart LR
 
 **Chi phí và quota (Gói 5, 06/11/2026):** tool `neomind_stats` (thống kê theo flow/profile/runner, không trả danh sách run chi tiết); `neomind_extend_time` nhận `seconds`, `tokens` hoặc cả hai (gia hạn ngân sách token `maxTokens`); `neomind_status` không đổi, `run list` có `tokens`. `neomind_assess` kèm `statistics` khi project có ≥ 3 run đã xong của flow.
 
+**Cấu hình project (12/11/2026):** `neomind_project_init` gọi cùng hàm với `neomind init`: tạo `neomind/` và `project.json` mặc định nếu chưa có (không đổi policy đã có), cài skill `.claude/skills/neomind-flow-authoring/SKILL.md`. Trả trạng thái từng mục (`created`/`existing`; skill: `created`/`up-to-date`/`modified-kept`/`replaced`). `force: true` ghi đè skill đã bị sửa và bắt buộc `confirmed: true`. Skill nằm trong bundle backend (sinh vào `src/storage/project-guide-skill.ts`), không cần file ngoài.
+
 **Panel = editor đầy đủ.**
 - Phần định tuyến `/api/*` của server được tách thành `createEditorApi(projectRoot, runs)`. Server HTTP và backend extension dùng chung hàm này, và chung một `RunManager` trong process.
 - Panel render `App` của `ui/src` trong shadow root. CSS (`:root` → `:host`) không lẫn với Nimbalyst. `api()` có transport thay được: HTTP trong trình duyệt, `callBackendTool('neomind.api')` trong panel.
