@@ -2,6 +2,18 @@
 
 Cập nhật: **11/11/2026**. Branch: `hieu/adaptive-agent-flow`. Bàn giao: [11/11 khôi phục MCP, chạy lại flow, OpenCode](session-handoff-2026-11-11.md).
 
+## Memory lưu bằng tiếng Anh — 12/11/2026
+
+Branch `feat/memory-english` (worktree `../test_workflow_worktrees/memory-english`). Người dùng quyết định: dữ liệu NeoMind lưu trữ viết bằng tiếng Anh khi có thể; nhãn UI, chat, tài liệu cho người đọc vẫn tiếng Việt.
+
+- `src/memory/lesson-body.ts`: lesson vòng sửa thành `Keep review criterion: … / Problem: … / Fixed in run <id> (step <node>). Files: path:line` (hoặc `References: output of step <node>, check \`cmd\``); bản dự phòng `Review asked to fix finding … / Fixed in run …; check the evidence in the source run before approving.` Giới hạn 800 ký tự, scope, sources như cũ. Hàm hiển thị (`memoryTitle`, `splitBodyParts`) giữ nhãn tiếng Việt.
+- `src/runtime/memory-proposals.ts`: đề xuất từ sửa kế hoạch (`When planning, the user asked: … / (Original task: …)`), rule bị vi phạm (`Follow rule …`), run bị chặn (`Run blocked: …`) và `reason` của chúng tiếng Anh; `reason` của lesson vòng sửa (`local-run.ts`), "Ghi nhớ điều này" và ghi chú trang Memory (`run-manager.ts`) cũng vậy. Câu người dùng gõ giữ nguyên.
+- `englishTemplateBody` nhận các mẫu tiếng Việt do NeoMind sinh (từ 933f5f1: vòng sửa, dự phòng, sửa kế hoạch, rule, run bị chặn) và chỉ đổi chữ của mẫu; body chỉ khớp khi mọi dòng khớp đúng một mẫu, nên ghi chú người dùng tự viết không bị đụng. `RunManager.compactMemory` thử nó trước mẫu JSON cũ; ghi như cũ (revision mới qua `writeMemory` có audit, đề xuất chờ duyệt thành bản mới). Chỉ `body` được viết lại; `reason` của đề xuất cũ giữ nguyên.
+- Mô tả tool `memory_propose`, `skill_create`, `skill_update`, `profile_draft`, `flow_draft` thêm "Write stored content in English."; skill soạn flow thêm một dòng quy ước (đã chạy `sync-project-guide`); `AGENTS.md` thêm ràng buộc.
+- UI: chỉ fixture gallery đổi theo mẫu mới; nút **Rút gọn** trên trang Memory vẫn chỉ hiện cho lesson JSON cũ, mẫu tiếng Việt đổi qua `memory compact` (CLI/API).
+
+Kiểm chứng Windows (12/11/2026): `memory-compact`, `memory-flow`, `session-tools` 22 test đạt (mới: chuyển mẫu Việt → Anh cho từng mẫu, compact Việt → Anh ở RunManager có dry-run không ghi và lần hai không đổi, đề xuất tiếng Anh với câu người dùng giữ nguyên, mô tả tool có câu "English"). `npm test` đầy đủ: 326 test, 324 đạt, 0 lỗi, 2 skip; `tsc -p tsconfig.ui.json`, `build:ui`, build extension đạt. Không chạy run thật.
+
 ## Skill ở `.agents/skills` (chuẩn Agent Skills) — 12/11/2026
 
 Cùng branch `feat/init-agents-ref`. Chuẩn mở Agent Skills (agentskills.io) khuyên client quét `<project>/.agents/skills/`; Codex CLI 0.166 và OpenCode 1.19.5 có quét, Claude Code chưa chắc nên vẫn giữ `.claude/skills`.
