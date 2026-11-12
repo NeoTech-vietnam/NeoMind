@@ -16,6 +16,28 @@ Kiểm chứng Windows (12/11/2026): `memory-compact`, `memory-flow`, `session-t
 
 ## Skill ở `.agents/skills` (chuẩn Agent Skills) — 12/11/2026
 
+## Đánh giá memory trong Git, SQLite là bộ đệm — 12/11/2026
+
+Branch `feat/memory-cache` (từ `580b6c6`). Học cách của `emed_knowledge/tools/kb`: dữ liệu gốc là file text trong Git, SQLite dựng lại được; khác kb ở chỗ mở bộ đệm chỉ so `schema` + `store_hash`, không đọc cả bảng ra so.
+
+| Dữ liệu | Nằm ở đâu | Vào Git? | Ghi chú |
+| --- | --- | --- | --- |
+| Bản ghi memory (`context/`, `decisions/`, `lessons/*.md`) | memory root (mặc định `neomind/memory` của worktree chính) | Có | Như trước |
+| Đánh giá Hữu ích / Không liên quan / Sai | `<memory root>/feedback/<YYYY-MM>.jsonl` | Có | Mới; chỉ nối thêm; không chứa nội dung bản ghi |
+| Bộ đệm điểm + FTS5 | `<memory root>/.cache/index.sqlite` | Không (`.cache/.gitignore` = `*`) | Xóa lúc nào cũng được |
+| Số lần memory được dùng (`memory_usage`) | `coordination.sqlite` trong thư mục state | Không | Mỗi run tự ghi; đưa vào Git làm bẩn `git status` sau mỗi run |
+| Bảng `memory_feedback` cũ | `coordination.sqlite` | Không | Chỉ đọc để chuyển ra JSONL một lần mỗi memory root (`memory_feedback_export`) |
+| Chủ run, writer, counter, memory root đã cấu hình | `coordination.sqlite` | Không | Giữ nguyên: dùng chung mọi worktree, OS nhả khóa khi process chết |
+| Khóa thư viện flow/profile | `<state base>/neomind/locks/*.sqlite` | Không | Giữ nguyên |
+| Journal, worktree của run | `<state>/runs`, `<state>/workspaces` | Không | Giữ nguyên |
+
+- `src/memory/feedback.ts`: định dạng dòng JSONL (`eventId`, `record`, `type`, `id`, `revision`, `runId`, `nodeId`, `attemptId?`, `rating`, `createdAt`), ghi dưới khóa `BEGIN IMMEDIATE` của `MemoryStore` (`store.locked`), bỏ qua event id đã có trong file của tháng đó, từ chối thư mục/file symlink. Tên `feedback` không trùng thư mục loại bản ghi (`context`, `decisions`, `lessons`). Dòng hỏng (sửa tay, marker conflict) bị bỏ qua và đếm.
+- `src/memory/index-cache.ts`: `MemoryIndex.open(store)`; `store_hash` = SHA-256 trên (đường dẫn tương đối, SHA-256 nội dung) của mọi `.md` và `feedback/*.jsonl`. Chọn băm nội dung thay vì size/mtime: đúng cả khi checkout Git/`cp -p`/FS thô giữ size và mtime; chi phí nhỏ vì mỗi lần đọc memory vốn đã đọc hết bản ghi. Dựng lại: file tạm cùng thư mục → `integrity_check` → băm lại (đổi thì làm lại, tối đa 3 lần) → rename; Windows bận thì thử lại 5 lần rồi dùng file tạm cho lần đọc đó; memory root chỉ đọc thì dựng trong RAM. Bản ghi hỏng bị bỏ khỏi bộ đệm thay vì làm hỏng cả điểm.
+- Xếp hạng (`memoryForRun`) và `readMemory().stats`, `memoryFeedback` dùng điểm từ bộ đệm; `searchMemory` có query dùng FTS5 rồi nối thêm kết quả chuỗi con cũ, trả `searchedBy: 'fts' | 'text' | 'all'`.
+- `doctor paths`: `src/runtime/doctor-paths.ts`, CLI `doctor paths <project>` (không mở `RunManager` vì nó tạo thư mục state), tool `doctor_paths`, `GET /api/doctor/paths`. Đọc SQLite điều phối bằng `immutable=1` khi không có file `-wal`, vì kết nối chỉ đọc vẫn để lại `-wal`/`-shm`.
+
+Kiểm chứng Windows (12/11/2026): `test/memory-cache.test.ts` 9 test và `test/doctor-paths.test.ts` 1 test, đạt (JSONL không chứa nội dung bản ghi, event id trùng bị bỏ, file thiếu newline cuối; 4 process × 25 đánh giá đồng thời đủ 100 dòng; chuyển dữ liệu cũ một lần, idempotent cả khi mất marker, đánh giá đã gỡ không bị chép lại; dựng lại khi thêm/sửa/xóa `.md` hoặc JSONL kể cả sửa cùng size + giữ mtime, không dựng lại khi không đổi, không để lại file tạm; xóa `.cache/` cho cùng điểm và kết quả tìm; schema đổi thì dựng lại; FTS "alarms" ra "alarm", cú pháp FTS trong query là chữ thường; `git status` không thấy `.cache/`; symlink/junction của `feedback/` và `.cache/` bị từ chối, không ghi gì ra ngoài; xếp hạng bằng bộ đệm giống điểm tính theo bảng SQLite cũ; copy memory root sang máy khác giữ điểm; `doctor paths` qua CLI, `RunManager` và tool session, project chưa từng mở không bị tạo thư mục state, sau khi có dữ liệu không ghi file nào). `test/memory-flow.test.ts` thêm kiểm tra đánh giá qua API ghi đúng dòng JSONL theo event id journal. `npm test` đầy đủ: 333 test, 330 pass, 1 fail (`after scheduler crash…`, chập chờn đã biết; chạy riêng `crash-recovery.test.js` đạt), 2 skip. `tsc -p tsconfig.ui.json --noEmit`, build extension đạt; không đụng UI. Chưa kiểm chứng: Linux, memory root chỉ đọc (fallback dựng bộ đệm trong RAM chưa có test vì khó tạo thư mục chỉ đọc trên Windows), Windows thay file đang mở ở process khác (nhánh dùng file tạm), extension trong Nimbalyst.
+
 Cùng branch `feat/init-agents-ref`. Chuẩn mở Agent Skills (agentskills.io) khuyên client quét `<project>/.agents/skills/`; Codex CLI 0.166 và OpenCode 1.19.5 có quét, Claude Code chưa chắc nên vẫn giữ `.claude/skills`.
 
 - Cài skill soạn flow vào hai chỗ: `installProjectGuide` trả mảng `[.agents/skills/…, .claude/skills/…]`, mỗi bản trạng thái riêng (`created | up-to-date | modified-kept | replaced`), `--force` áp từng bản; tự cài khi tạo `neomind/` cảnh báo riêng từng bản. `init` trả `guides` (thay cho `guide`), CLI in hai dòng. Repo đã có bản `.claude/skills` thì `init` thêm bản `.agents/skills` không cần `--force`.
