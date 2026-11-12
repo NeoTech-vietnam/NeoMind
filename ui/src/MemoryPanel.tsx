@@ -11,9 +11,9 @@ import { Select } from './components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Dialog, DialogActions, DialogContent, SheetContent } from './components/ui/dialog';
 import { Callout, EmptyState } from './components/ui/misc';
-import { LegacyNotice, MemoryBody, MemoryBodyFull, MemorySources } from './MemoryBody';
+import { LegacyNotice, MemoryBody, MemoryBodyFull, MemorySources, type CompactResult } from './MemoryBody';
 import { SourceRunSheet } from './SourceRunSheet';
-import { compactLegacyLessonBody, memoryTitle, sourceRunIds } from '../../src/memory/lesson-body';
+import { legacyLessonHeader, memoryTitle, sourceRunIds } from '../../src/memory/lesson-body';
 
 type Kind = 'context' | 'decision' | 'lesson';
 type MemoryRecord = { revision: string; body: string; header: { id: string; type: Kind; scope: string; sources: string[]; tags: string[]; updatedAt?: string; contentHash?: string; status?: string; expiresAt?: string; supersedes?: string[] } };
@@ -32,6 +32,12 @@ const splitTags = (text: string) => text.split(',').map(value => value.trim()).f
 const scoreText = (stats?: Stats) => !stats || (!stats.helpful && !stats.irrelevant && !stats.wrong) ? '—' : `${stats.score > 0 ? '+' : ''}${stats.score}`;
 const rowGrid = 'grid grid-cols-[minmax(0,1fr)_92px_minmax(0,110px)_48px_48px] items-center gap-3 px-4';
 
+/** The short body the server would write for one old-format record or proposal (a dry run); an error says why there is none. */
+async function compactPreview(target: Record<string, unknown>) {
+  const result = await api<CompactResult>('/api/memory/compact', 'POST', { dryRun: true, target }), after = result.changes[0]?.after;
+  if (!after) throw new Error(result.skipped[0]?.reason ?? 'Không dựng được bản ngắn cho mục này');
+  return after;
+}
 const CompactPreview = ({ text }: { text: string }) => <span className="mt-2 block rounded-md border bg-muted px-2.5 py-2 text-fg-2">{text}</span>;
 /** Scopes older repair lessons wrote: the project id, which means the whole project like `project`. */
 const projectWide = (scope: string) => scope === 'project' || /^project-[a-f0-9]{16}$/.test(scope);
@@ -48,11 +54,13 @@ function ProposalRow({ item, memoryRoot, onDone, onOpenRun }: { item: Proposal; 
     try { await api(`/api/memory/proposals/${action}`, 'POST', { ...base, ...extra }); onDone(action === 'approve' ? 'Đã duyệt và lưu vào memory.' : 'Đã từ chối đề xuất.'); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   }
-  async function compact(after: string) {
-    if (!await confirmAction({ title: 'Rút gọn đề xuất?', description: <>Nội dung đề xuất được thay bằng bản ngắn dưới đây (lưu thành bản {item.version + 1}):<CompactPreview text={after} /></>, confirmLabel: 'Rút gọn' })) return;
+  async function compact() {
     setBusy(true); setError('');
-    try { await api('/api/memory/compact', 'POST', { target: { runId: item.runId, proposalId: item.proposal.proposalId } }); onDone('Đã rút gọn đề xuất; kiểm tra lại rồi duyệt.'); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+    try {
+      const target = { runId: item.runId, proposalId: item.proposal.proposalId }, after = await compactPreview(target);
+      if (!await confirmAction({ title: 'Rút gọn đề xuất?', description: <>Nội dung đề xuất được thay bằng bản ngắn dưới đây (lưu thành bản {item.version + 1}):<CompactPreview text={after} /></>, confirmLabel: 'Rút gọn' })) return;
+      await api('/api/memory/compact', 'POST', { target }); onDone('Đã rút gọn đề xuất; kiểm tra lại rồi duyệt.');
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   }
   const record = item.proposal.record;
   return <div className="flex flex-col gap-2 border-t px-4 py-3 first:border-t-0">
@@ -62,7 +70,7 @@ function ProposalRow({ item, memoryRoot, onDone, onOpenRun }: { item: Proposal; 
     {error && <Callout tone="danger">{error}</Callout>}
     {item.duplicateOf && <Callout tone="attention">Memory đã có bản ghi cùng nội dung: <code className="font-mono">{item.duplicateOf}</code>. Nên từ chối đề xuất này.</Callout>}
     {editing ? <Textarea aria-label="Nội dung đề xuất" rows={6} value={body} onChange={event => setBody(event.target.value)} /> : <MemoryBody body={record.body} />}
-    {!editing && <LegacyNotice body={record.body} busy={busy} onCompact={after => void compact(after)} />}
+    {!editing && <LegacyNotice body={record.body} busy={busy} onCompact={() => void compact()} />}
     {item.proposal.reason && <p className="m-0 truncate text-[12px] text-muted-foreground" title={item.proposal.reason}>Lý do: {item.proposal.reason}</p>}
     <MemorySources sources={[...record.sources, ...(record.supersedes?.length ? [`thay thế ${record.supersedes.join(', ')}`] : [])]} onOpenRun={onOpenRun} />
     <div className="flex flex-wrap gap-2">{editing ? <>
@@ -108,15 +116,14 @@ export function MemoryPanel() {
     await action(async () => { await api('/api/memory/delete', 'POST', { type: record.header.type, id: record.header.id, expectedRevision: record.revision }); setSelected(null); setMessage('Đã xóa bản ghi.'); });
   };
   /** Rewrite an old-format repair lesson as a new revision; its sources gain `compacted`, nothing else about it changes. */
-  const compact = async (record: MemoryRecord, after: string) => {
+  const compact = (record: MemoryRecord) => action(async () => {
+    const target = { type: record.header.type, id: record.header.id }, after = await compactPreview(target);
     if (!await confirmAction({ title: `Rút gọn ${record.header.id}?`, description: <>Bản ghi được lưu revision mới với nội dung ngắn dưới đây; nguồn giữ nguyên và thêm <code>compacted</code>.<CompactPreview text={after} /></>, confirmLabel: 'Rút gọn' })) return;
-    await action(async () => {
-      await api('/api/memory/compact', 'POST', { target: { type: record.header.type, id: record.header.id } });
-      const result = await api<{ record: MemoryRecord }>(`/api/memory/records/${record.header.type}/${record.header.id}`).catch(() => undefined);
-      if (result) open(result.record);
-      setMessage('Đã rút gọn bản ghi.');
-    });
-  };
+    await api('/api/memory/compact', 'POST', { target });
+    const result = await api<{ record: MemoryRecord }>(`/api/memory/records/${record.header.type}/${record.header.id}`).catch(() => undefined);
+    if (result) open(result.record);
+    setMessage('Đã rút gọn bản ghi.');
+  });
   const submitNote = (value: Note) => action(async () => {
     await api('/api/memory/note', 'POST', { type: value.type, scope: value.scope.trim() || 'project', tags: splitTags(value.tags), body: value.body, ...(value.supersedes ? { supersedes: [value.supersedes.header.id] } : {}) });
     setNote(null); setSelected(null); setMessage(value.supersedes ? `Đã tạo bản ghi thay thế ${value.supersedes.header.id}.` : 'Đã lưu ghi chú vào memory.');
@@ -140,7 +147,7 @@ export function MemoryPanel() {
       <div className="memory-filters"><div className="min-w-0 flex-1"><Input aria-label="Tìm memory" placeholder="Tìm nội dung, ID hoặc tag…" value={query} onChange={e => setQuery(e.target.value)} /></div><div className="w-44"><Select label="Phạm vi" value={scopeFilter} onValueChange={setScopeFilter} options={[{ value: 'all', label: 'Mọi phạm vi' }, ...scopes.map(value => ({ value: `scope:${value}`, label: value }))]} /></div><Search className="size-4 text-muted-foreground" /></div>
       {!memory.records.length ? <EmptyState title="Chưa có bản ghi">Bấm "Ghi chú" để thêm điều agent nên biết, hoặc duyệt một đề xuất ở trên.</EmptyState> : !filtered.length ? <EmptyState title="Không có bản ghi phù hợp" /> : <div className="memory-records">
         <div className={`${rowGrid} bg-muted py-2.5 text-[10px] font-semibold text-muted-foreground`}><span>NỘI DUNG / ID</span><span>LOẠI</span><span>PHẠM VI</span><span className="text-right">DÙNG</span><span className="text-right">ĐIỂM</span></div>
-        {filtered.map(record => { const recordStats = stats(record), score = recordStats?.score ?? 0, state = inactive.get(record.header.id), legacy = !!compactLegacyLessonBody(record.body);
+        {filtered.map(record => { const recordStats = stats(record), score = recordStats?.score ?? 0, state = inactive.get(record.header.id), legacy = !!legacyLessonHeader(record.body);
           return <button className={`memory-record-row ${rowGrid} w-full cursor-pointer border-0 border-t border-solid border-border bg-background py-2.5 text-left text-fg-2 hover:bg-accent`} key={key(record)} onClick={() => open(record)}>
             <span className="min-w-0"><span className="flex items-center gap-1.5"><strong className="truncate text-[13px] font-medium">{memoryTitle(record.body).title}</strong>{state && <Badge status="idle" dot={false}>{inactiveLabels[state] ?? state}</Badge>}{legacy && <Badge status="attention" dot={false}>Mẫu cũ · {record.body.length.toLocaleString('vi-VN')} ký tự</Badge>}</span><small className="block truncate font-mono text-[11px] text-muted-foreground">{record.header.id}</small></span>
             <Tag>{typeLabels[record.header.type]}</Tag><span className="truncate text-[12.5px]" title={record.header.scope}>{projectWide(record.header.scope) ? 'project' : record.header.scope}</span><span className="text-right text-[12.5px] tabular-nums">{recordStats?.uses ?? 0}</span>
@@ -154,7 +161,7 @@ export function MemoryPanel() {
         <Field label="Phạm vi" help="project, hoặc thư mục trong repo (vd. src/ui)."><Input value={editScope} onChange={e => setEditScope(e.target.value)} /></Field>
         <Field label="Tags (ngăn bằng dấu phẩy)"><Input value={editTags} onChange={e => setEditTags(e.target.value)} /></Field>
         <div className="flex gap-2"><Button type="submit" variant="primary" disabled={busy || !editBody.trim()}>Lưu revision mới</Button><Button variant="ghost" onClick={() => open(selected)}>Hủy</Button></div></form>
-        : <><LegacyNotice body={selected.body} busy={busy} onCompact={after => void compact(selected, after)} /><MemoryBodyFull body={selected.body} /></>}
+        : <><LegacyNotice body={selected.body} busy={busy} onCompact={() => void compact(selected)} /><MemoryBodyFull body={selected.body} /></>}
       {!editing && <div className="flex flex-wrap gap-2"><Button variant="primary" disabled={busy} onClick={() => setEditing(true)}>Sửa</Button>
         <Button disabled={busy} onClick={() => setNote({ type: selected.header.type, scope: selected.header.scope, tags: selected.header.tags.join(', '), body: selected.body, supersedes: selected })}>Thay thế bằng…</Button>
         {!selected.header.expiresAt && <Button disabled={busy} onClick={() => void expire(selected)}>Hết hạn</Button>}

@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ExternalLink, FoldVertical } from 'lucide-react';
-import { compactLegacyLessonBody, memoryTitle, sourceRunIds, splitBodyParts } from '../../src/memory/lesson-body';
+import { legacyLessonHeader, memoryTitle, sourceRunIds, splitBodyParts } from '../../src/memory/lesson-body';
 import { Button } from '@/components/ui/button';
 import { Callout } from '@/components/ui/misc';
 import { cn } from '@/lib/utils';
@@ -39,13 +39,17 @@ export function MemoryBody({ body, lines = 3, className }: { body: string; lines
   </div>;
 }
 
-/** Old repair lessons (raw reviewer JSON plus the agent's reply) can be rewritten as the short body new runs write. */
-export function LegacyNotice({ body, busy, onCompact }: { body: string; busy?: boolean; onCompact(after: string): void }) {
-  const compacted = compactLegacyLessonBody(body);
-  if (!compacted) return null;
-  return <Callout tone="attention"><div className="flex flex-wrap items-center gap-x-3 gap-y-1.5"><span className="min-w-0 flex-1 basis-64">Lesson theo mẫu cũ: {count(body.length)} ký tự, có JSON thô của reviewer. Bản rút gọn còn {count(compacted.body.length)} ký tự (tiêu chí, vấn đề, file); bằng chứng đầy đủ vẫn ở run nguồn.</span>
-    <Button size="sm" disabled={busy} onClick={() => onCompact(compacted.body)}><FoldVertical />Rút gọn</Button></div></Callout>;
+/**
+ * Old repair lessons (raw reviewer JSON plus the agent's reply) can be rewritten as the short body new runs write. The
+ * server builds it, from the embedded evidence or the source run's journal, and the page shows it before saving.
+ */
+export function LegacyNotice({ body, busy, onCompact }: { body: string; busy?: boolean; onCompact(): void }) {
+  if (!legacyLessonHeader(body)) return null;
+  return <Callout tone="attention"><div className="flex flex-wrap items-center gap-x-3 gap-y-1.5"><span className="min-w-0 flex-1 basis-64">Lesson theo mẫu cũ: {count(body.length)} ký tự, có JSON thô của reviewer. Rút gọn chỉ giữ tiêu chí, vấn đề và file; bằng chứng đầy đủ vẫn ở run nguồn.</span>
+    <Button size="sm" disabled={busy} onClick={onCompact}><FoldVertical />Rút gọn</Button></div></Callout>;
 }
+
+export type CompactResult = { changes: { key: string; after: string; applied: boolean }[]; skipped: { key: string; reason: string }[] };
 
 /** Sources in one line; runs the record came from open in place ("Mở run nguồn"). */
 export function MemorySources({ sources, onOpenRun, list = true, className }: { sources: string[]; onOpenRun?(runId: string): void; list?: boolean; className?: string }) {

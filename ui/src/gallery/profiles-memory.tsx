@@ -132,12 +132,12 @@ setApiTransport(async (endpoint, method, body) => {
   if (path === '/api/memory' && method === 'POST') { const record = input?.record as { id: string; type: string; scope: string; sources: string[]; tags: string[]; body: string }; const saved = { revision: 'e'.repeat(64), body: record.body, header: { id: record.id, type: record.type, scope: record.scope, sources: record.sources, tags: record.tags } }; const index = records.findIndex(item => item.header.id === record.id && item.header.type === record.type); if (index >= 0) records[index] = saved; else records.push(saved); return ok({ record: saved }); }
   if (path === '/api/memory/compact') {
     // One record or proposal at a time, as the page asks; the server does the same through the audited write path.
-    const target = input?.target as { type?: string; id?: string; runId?: string | null; proposalId?: string } | undefined, changes: { kind: string; key: string; before: string; after: string; applied: boolean }[] = [];
+    const target = input?.target as { type?: string; id?: string; runId?: string | null; proposalId?: string } | undefined, dryRun = input?.dryRun === true, changes: { kind: string; key: string; before: string; after: string; applied: boolean }[] = [];
     for (const record of records) { const after = compactLegacyLessonBody(record.body)?.body; if (!after || (target && (target.type !== record.header.type || target.id !== record.header.id))) continue;
-      changes.push({ kind: 'record', key: `${record.header.type}/${record.header.id}`, before: record.body, after, applied: true }); record.body = after; record.header.scope = 'project'; record.header.sources = [...record.header.sources, 'compacted']; }
+      changes.push({ kind: 'record', key: `${record.header.type}/${record.header.id}`, before: record.body, after, applied: !dryRun }); if (!dryRun) { record.body = after; record.header.scope = 'project'; record.header.sources = [...record.header.sources, 'compacted']; } }
     for (const item of pending) { const after = compactLegacyLessonBody(item.proposal.record.body)?.body; if (!after || (target && target.proposalId !== item.proposal.proposalId)) continue;
-      changes.push({ kind: 'proposal', key: `${item.runId ?? 'project'}/${item.proposal.proposalId}`, before: item.proposal.record.body, after, applied: true }); item.proposal.record.body = after; item.version++; item.proposalHash = '9'.repeat(64); }
-    return ok({ dryRun: false, changes, skipped: [] });
+      changes.push({ kind: 'proposal', key: `${item.runId ?? 'project'}/${item.proposal.proposalId}`, before: item.proposal.record.body, after, applied: !dryRun }); if (!dryRun) { item.proposal.record.body = after; item.version++; item.proposalHash = '9'.repeat(64); } }
+    return ok({ dryRun, changes, skipped: [] });
   }
   if (path === '/api/memory/configure') { root = String(input?.root ?? 'W:\\projects\\neomind-demo\\neomind\\memory'); return ok({ root, records }); }
   if (path === '/api/memory/selection') return ok({ selection, revision: 'f'.repeat(64) });

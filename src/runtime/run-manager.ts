@@ -2,14 +2,14 @@ import path from 'node:path';
 import { z } from 'zod';
 import { WorkspaceCoordinator } from '../storage/coordination.js';
 import { RunStore } from '../storage/run-store.js';
-import { SingleOwnerJournal } from '../storage/journal.js';
+import { SingleOwnerJournal, type RunEvent } from '../storage/journal.js';
 import { replayRun } from '../core/recovery.js';
 import { LocalRun } from './local-run.js';
 import { projectRuntimeRoot, readProject, readProjectRules, snapshotProjectFlow, standaloneDiagnostics } from './project.js';
 import { hashJson, type BindingOverride } from '../domain/resolve.js';
 import { captureBaseline } from '../workspace/baseline.js';
 import { describeStepMemory, formatMemorySnapshot, memoryForRun, memoryLocation, openProjectMemory, stepMemoryPolicy } from './memory.js';
-import { duplicateRecord, maxUserNotesPerRun, memoryFingerprint, noteId, proposalIds, proposalInputSchema, proposalStates, type ProposalInput, type ProposalState } from './memory-proposals.js';
+import { compactLegacyLesson, duplicateRecord, maxUserNotesPerRun, memoryFingerprint, noteId, proposalIds, proposalInputSchema, proposalStates, type ProposalInput, type ProposalState } from './memory-proposals.js';
 import { memoryFeedbackSchema, type MemoryFeedback, type RecoveryReport } from '../core/recovery.js';
 import { DurableRun } from '../core/durable-run.js';
 import { MemoryFeedbackStore, type MemoryRating } from '../memory/feedback.js';
@@ -20,7 +20,7 @@ import { ProjectMemoryRegistry } from '../memory/registry.js';
 import { resolveDefaultMemoryRoot } from '../memory/project-root.js';
 import { primaryWorktree } from '../workspace/worktree.js';
 import { MemoryConflict, type MemoryInput, type MemoryRecord } from '../memory/store.js';
-import { compactLegacyLessonBody, maxSessionProposalLength } from '../memory/lesson-body.js';
+import { compactLegacyLessonBody, legacyLessonHeader, maxSessionProposalLength } from '../memory/lesson-body.js';
 import { LessonProposals } from '../memory/proposals.js';
 import type { Flow } from '../domain/schema.js';
 import { bindingRunners, selectAvailableBinding } from './model-selection.js';
@@ -501,19 +501,27 @@ export class RunManager {
     const { projectId } = await readProject(this.projectRoot), target = options.target;
     type Change = { kind: 'record' | 'proposal'; key: string; runId?: string | null; before: string; after: string; applied: boolean };
     const changes: Change[] = [], skipped: { kind: 'record' | 'proposal'; key: string; reason: string }[] = [];
-    const legacy = (body: string) => body.startsWith('Review finding corrected in run ');
+    const reason = 'Không tìm thấy finding trong bằng chứng cũ hay journal của run nguồn';
+    /** The short body, from the embedded evidence or, when that was cut before the finding, from the source run's journal. */
+    const shorten = async (body: string) => {
+      const header = legacyLessonHeader(body);
+      if (!header) return undefined;
+      let events: RunEvent[] | undefined;
+      if (!compactLegacyLessonBody(body)) { try { events = await new SingleOwnerJournal(await this.store.journal(header.runId), header.runId).read(); } catch { events = undefined; } }
+      return compactLegacyLesson(body, events) ?? null;
+    };
     const memory = openProjectMemory(this.projectRoot, this.memoryDatabase);
     let records: MemoryRecord[] = [];
     try { records = memory?.store.search() ?? []; } finally { memory?.store.close(); }
     for (const record of target && !('type' in target) ? [] : records) {
       const key = `${record.header.type}/${record.header.id}`;
       if (target && 'type' in target && (target.type !== record.header.type || target.id !== record.header.id)) continue;
-      const compacted = compactLegacyLessonBody(record.body);
-      if (!compacted) { if (legacy(record.body)) skipped.push({ kind: 'record', key, reason: 'Không tìm thấy finding trong bằng chứng cũ' }); continue; }
-      const change: Change = { kind: 'record', key, before: record.body, after: compacted.body, applied: false };
+      const after = await shorten(record.body);
+      if (!after) { if (after === null) skipped.push({ kind: 'record', key, reason }); continue; }
+      const change: Change = { kind: 'record', key, before: record.body, after, applied: false };
       if (!options.dryRun) {
         await this.writeMemory({ id: record.header.id, type: record.header.type, scope: record.header.scope === projectId ? 'project' : record.header.scope,
-          sources: [...record.header.sources.filter(source => source !== 'compacted'), 'compacted'], tags: record.header.tags, body: compacted.body,
+          sources: [...record.header.sources.filter(source => source !== 'compacted'), 'compacted'], tags: record.header.tags, body: after,
           ...(record.header.expiresAt ? { expiresAt: record.header.expiresAt } : {}), ...(record.header.supersedes ? { supersedes: record.header.supersedes } : {}) }, record.revision, options.source ?? 'cli');
         change.applied = true;
       }
@@ -528,10 +536,10 @@ export class RunManager {
       let states: ProposalState[];
       try { states = proposalStates(directory, runId, opened?.store); } finally { opened?.store.close(); }
       for (const state of states.filter(item => !item.promoted && !item.rejected && (!target || target.proposalId === item.proposal.proposalId))) {
-        const key = `${runId ?? 'project'}/${state.proposal.proposalId}`, compacted = compactLegacyLessonBody(state.proposal.record.body);
-        if (!compacted) { if (legacy(state.proposal.record.body)) skipped.push({ kind: 'proposal', key, reason: 'Không tìm thấy finding trong bằng chứng cũ' }); continue; }
-        const change: Change = { kind: 'proposal', key, runId, before: state.proposal.record.body, after: compacted.body, applied: false };
-        if (!options.dryRun) { await this.reviseMemoryProposal({ runId, proposalId: state.proposal.proposalId, proposalHash: state.proposalHash, body: compacted.body }); change.applied = true; }
+        const key = `${runId ?? 'project'}/${state.proposal.proposalId}`, after = await shorten(state.proposal.record.body);
+        if (!after) { if (after === null) skipped.push({ kind: 'proposal', key, reason }); continue; }
+        const change: Change = { kind: 'proposal', key, runId, before: state.proposal.record.body, after, applied: false };
+        if (!options.dryRun) { await this.reviseMemoryProposal({ runId, proposalId: state.proposal.proposalId, proposalHash: state.proposalHash, body: after }); change.applied = true; }
         changes.push(change);
       }
     }

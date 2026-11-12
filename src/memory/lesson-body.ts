@@ -93,6 +93,12 @@ export function compactLegacyLessonBody(body: string): { body: string; runId: st
   return { body: repairLessonBody({ runId, nodeId: found.nodeId, finding: found.finding }), runId, findingId };
 }
 
+/** The run and finding an old-format repair lesson names, even when its embedded evidence was cut before the finding. */
+export function legacyLessonHeader(body: string): { runId: string; findingId: string } | undefined {
+  const match = legacyPattern.exec(body);
+  return match ? { runId: match[1]!, findingId: match[2]! } : undefined;
+}
+
 /** First line as a title and the rest as a preview, for cards that must stay short however long the body is. */
 export function memoryTitle(body: string): { title: string; rest: string } {
   const text = body.trim(), newline = text.indexOf('\n'), first = (newline < 0 ? text : text.slice(0, newline)).trim();

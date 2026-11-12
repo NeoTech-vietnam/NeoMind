@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { defaultProject } from '../src/domain/templates.js';
 import { RunManager } from '../src/runtime/run-manager.js';
 import { RunnerRegistry } from '../src/runners/registry.js';
+import { compactLegacyLesson } from '../src/runtime/memory-proposals.js';
 import { createEditorApi } from '../src/ui-server/server.js';
 import { readProject } from '../src/runtime/project.js';
 import { compactLegacyLessonBody, maxLessonBodyLength, memoryTitle, repairLessonBody, sourceRunIds, splitBodyParts } from '../src/memory/lesson-body.js';
@@ -40,6 +41,14 @@ test('old repair lessons compact to the criterion, explanation and file of their
   assert.equal(compactLegacyLessonBody(legacyBody('run-lost', 'F2', reviewerOutput(40))), undefined);
   assert.equal(compactLegacyLessonBody('Chạy npm test trước khi giao thay đổi.'), undefined);
   assert.equal(compactLegacyLessonBody(expected('run-whole')), undefined, 'compacting twice changes nothing');
+  // A finding cut away from the text is recovered from the source run's journal: the output that requested the repair.
+  const lost = legacyBody('run-lost', 'F2', reviewerOutput(40)), full = reviewerOutput(40);
+  const events = [{ sequence: 7, type: 'reviewer_output', payload: full }, { sequence: 8, type: 'repair_round_started', payload: { findingIds: ['F1', 'F2'] } },
+    { sequence: 12, type: 'reviewer_output', payload: { ...full, evidence: { criteria: [], findings: [{ id: 'F2', criterion: 'later review', explanation: 'not this one', references: [] }] } } }] as unknown as Parameters<typeof compactLegacyLesson>[1];
+  assert.equal(compactLegacyLesson(lost, undefined), undefined, 'without the journal the lesson stays as it is');
+  assert.equal(compactLegacyLesson(lost, events), expected('run-lost'));
+  assert.equal(compactLegacyLesson(legacyBody('run-whole', 'F2', reviewerOutput(2)), []), expected('run-whole'), 'the text wins when it has the finding');
+  assert.equal(compactLegacyLesson('Chạy npm test.', events), undefined);
 });
 
 test('lesson text helpers keep bodies short and give the UI a title, folded JSON and source runs', () => {

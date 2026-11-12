@@ -293,6 +293,9 @@ npm run neomind -- memory expire|delete /path/to/repo <context|decision|lesson> 
 npm run neomind -- memory remember /path/to/repo <runId> "Điều cần nhớ" [--step implement]
 npm run neomind -- memory feedback /path/to/repo <runId> lesson/<id> helpful|irrelevant|wrong [--step verify]
 npm run neomind -- memory propose /path/to/repo proposal.json
+npm run neomind -- memory compact /path/to/repo --dry-run   # xem trước; bỏ --dry-run để ghi
 ```
 
-API editor: `GET /api/memory` (kèm `location`, `stats`, `inactive`), `GET /api/memory/search`, `GET /api/memory/records/:type/:id`, `POST /api/memory/note|expire|delete`, `GET|POST /api/memory/proposals`, `POST /api/memory/proposals/approve|reject|revise`, `POST /api/runs/:id/remember`, `POST /api/runs/:id/memory-feedback`.
+**Memory ngắn, đọc được.** Lesson từ vòng sửa chỉ gồm vài dòng: tiêu chí review, vấn đề (tối đa ~400 ký tự), run/bước đã sửa và file (`path:line`); toàn bộ bằng chứng nằm trong run, dẫn qua `sources` (`run:<id>/event:<seq>`). Body tối đa 800 ký tự, scope `project`. Đề xuất của AI trong session tối đa 1500 ký tự. Lesson theo mẫu cũ (trước 12/11: JSON thô của reviewer + cả câu trả lời của agent) rút gọn được bằng nút **Rút gọn** trên trang Memory hoặc `memory compact`: bản ghi đã duyệt được ghi revision mới (giữ nguồn, thêm `compacted`, scope project-id thành `project`), đề xuất chờ duyệt được lưu bản mới; nội dung khác mẫu cũ không bị đụng.
+
+API editor: `GET /api/memory` (kèm `location`, `stats`, `inactive`), `GET /api/memory/search`, `GET /api/memory/records/:type/:id`, `POST /api/memory/note|expire|delete`, `POST /api/memory/compact` (`{ dryRun?, target?: { type, id } | { runId, proposalId } }`), `GET|POST /api/memory/proposals`, `POST /api/memory/proposals/approve|reject|revise`, `POST /api/runs/:id/remember`, `POST /api/runs/:id/memory-feedback`.

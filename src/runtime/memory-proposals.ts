@@ -5,7 +5,7 @@ import type { MemoryRecord, MemoryStore } from '../memory/store.js';
 import { hashJson } from '../domain/resolve.js';
 import { ruleCriterion } from '../domain/rules.js';
 import { reviewEvidenceSchema, type ReviewEvidence } from '../core/review-evidence.js';
-import { clipText, referenceLabels } from '../memory/lesson-body.js';
+import { clipText, compactLegacyLessonBody, legacyLessonHeader, referenceLabels, repairLessonBody } from '../memory/lesson-body.js';
 import type { RecoveryReport } from '../core/recovery.js';
 import type { RunEvent } from '../storage/journal.js';
 
@@ -57,6 +57,17 @@ export function repairedFinding(events: RunEvent[], findingId: string): { nodeId
     if (finding && typeof payload.nodeId === 'string') candidate = { nodeId: payload.nodeId, sequence: event.sequence, finding };
   }
   return candidate;
+}
+
+/**
+ * The short body for an old-format repair lesson. The embedded evidence was cut at 5000 characters, so a finding listed
+ * late is often missing from it; `events` (the source run's journal, when it still exists) hold the reviewer's full output.
+ */
+export function compactLegacyLesson(body: string, events: RunEvent[] | undefined): string | undefined {
+  const fromText = compactLegacyLessonBody(body);
+  if (fromText) return fromText.body;
+  const header = legacyLessonHeader(body), found = header && events ? repairedFinding(events, header.findingId) : undefined;
+  return header && found ? repairLessonBody({ runId: header.runId, nodeId: found.nodeId, finding: found.finding }) : undefined;
 }
 
 /**
