@@ -1,5 +1,5 @@
 import { CLAUDE_EFFORTS, CLAUDE_MODELS, CLAUDE_PROVIDER } from '../adapters/claude-policy.js';
-import { bomInstruction, runsCommands, type Diagnostic } from '../domain/compiler.js';
+import { bomInstruction, planCheckAdvice, planCheckProblem, runsCommands, type Diagnostic } from '../domain/compiler.js';
 import { agentSteps, resolveBinding, type BindingField, type BindingValues } from '../domain/resolve.js';
 import type { Flow, Profile, ProjectConfig } from '../domain/schema.js';
 import { codexModelAllowlist } from '../runners/codex-runner.js';
@@ -103,6 +103,9 @@ export async function flowPreflight(projectRoot: string, flow: Flow, project: Pr
 
     const instructions = (node?.type === 'agent_task' || node?.type === 'integration' ? node.instructionsOverride : reviewer?.instructionsOverride) ?? profile.instructions;
     if (bomInstruction.test(profile.instructions) && instructions === profile.instructions) add('warning', 'bom_instruction', `Profile "${step.profileId}" asks for "UTF-8 without BOM", which made an agent write the system code page on Windows. Say "keep non-ASCII characters intact (UTF-8)" instead.`, step.nodeId);
+    // The step's own goal and override are checked by the compiler; a profile's instructions only reach plan steps here.
+    const profileCheck = node?.type === 'agent_task' && node.outputContract === 'plan' && instructions === profile.instructions ? planCheckProblem(profile.instructions) : undefined;
+    if (profileCheck) add('warning', 'plan_check_placeholder', `Profile "${step.profileId}" gives plan step ${step.nodeId} ${profileCheck}, which the plan may copy into its checks. ${planCheckAdvice}`, step.nodeId);
     const noShell = runner !== undefined && !shellRunners.has(runner);
     if (node?.type === 'review_group' && reviewer && runsCommands.test(`${node.criteria.join('\n')}\n${instructions}`) && (noShell || !granted.checks)) {
       add('warning', 'review_needs_commands', `Review asks reviewers to run commands, but ${who} ${noShell ? `runs on ${runner}, which has no shell` : `uses profile "${step.profileId}" without checks permission`}. Let reviewers verify by reading the code and quoted check output instead of making "run the tests" a pass condition.`, step.nodeId);

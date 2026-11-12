@@ -9,7 +9,7 @@ import { flowHashes } from '../src/domain/resolve.js';
 import type { Flow } from '../src/domain/schema.js';
 import { defaultProject, newFlowFromTemplate, templates } from '../src/domain/templates.js';
 import { checkFlow, draftFlow, publishFlow, validateFlow } from '../src/runtime/flow-authoring.js';
-import { draftProfile, publishProfile } from '../src/runtime/profile-authoring.js';
+import { draftProfile, getProfile, publishProfile } from '../src/runtime/profile-authoring.js';
 import { defaultRoles, newProjectPolicy, snapshotProjectFlow } from '../src/runtime/project.js';
 import { FlowLibrary } from '../src/storage/flow-library.js';
 
@@ -75,6 +75,75 @@ test('text warnings: BOM instructions and file requests in a flow that cannot wr
   assert.equal((compileFlow(writes, newProjectPolicy, { authoring: true }) as { warnings?: Diagnostic[] }).warnings, undefined);
   // Without authoring (a run start) there are no warnings.
   assert.equal((compileFlow(bom, newProjectPolicy) as { warnings?: Diagnostic[] }).warnings, undefined);
+});
+
+// Goals of the lc-new-problem flow whose runs stopped after a clean validation: v1 copied the placeholder check, v1 and
+// v2 planned scope "." for a writer limited to `c`; v4 runs.
+const lcPlanV1 = 'Plan only (no edits): resolve the task to ONE LeetCode problem per skill lc-new-problem section 1 (topic only -> first README starter for that topic not yet in c/ or cpp/). State id, title, slug, topic and the target directory c/<topic>/<id4>_<slug>/, and confirm it does not exist. Scope: only that new directory. Checks: list ONLY `gcc -std=c11 -fsyntax-only -I tools c/<topic>/<id4>_<slug>/test.c` and `git diff --check`. Never list tools/build_test.py: the empty stub reports TODO by design.';
+const lcPlanV2 = "Plan only (no edits). First DO the resolution now: read README section 3 and list the directories under c/ and cpp/, then pick ONE concrete LeetCode problem per skill lc-new-problem section 1 (topic only -> first README starter for that topic not yet in the repo). The plan must name the concrete id, title, slug, topic and directory (e.g. c/two-pointers/0125_valid-palindrome/) and confirm it does not exist. Scope: only that directory. Checks: list ONLY these two literal commands with the concrete directory filled in, no placeholders and no angle-bracket characters anywhere: the gcc syntax check of that directory's test.c, e.g. `gcc -std=c11 -fsyntax-only -I tools c/two-pointers/0125_valid-palindrome/test.c`, and `git diff --check`. Never list tools/build_test.py: the empty stub reports TODO by design.";
+const lcPlanV4 = lcPlanV2.replace('Scope: only that directory.', "Scope: exactly one entry, the literal string `c` (plan scope must be a directory that already exists; the new problem directory does not exist yet), never '.' and never the new directory itself.");
+/** lc-new-problem: plan → automatic approval → a scaffolder that may write only `c`. */
+function lcNewProblem(goal: string): Flow {
+  const flow = { ...structuredClone(templates.fast), flowId: 'lc-new-problem' };
+  agent(flow, 'plan').goal = goal;
+  flow.definition.nodes = flow.definition.nodes.map(node => node.type === 'approval' ? { ...node, purpose: 'Approved automatically: the scaffolder may create only the new c/<topic>/<id4>_<slug>/ directory' } : node);
+  Object.assign(agent(flow, 'implement'), { writeScopes: ['c'], goal: 'Create the planned problem directory with `python tools/new_problem.py <topic> <id> <slug> --fetch`, then run the two planned checks.' });
+  return flow;
+}
+const warned = (flow: Flow) => { const compiled = compileFlow(flow, newProjectPolicy, { authoring: true }); assert.ok(compiled.ok); return (compiled.warnings ?? []).map(item => [item.code, item.nodeId]); };
+
+test('plan warnings: placeholder checks and a plan scope outside the writer scopes, from the failed lc-new-problem runs', async () => {
+  assert.deepEqual(warned(lcNewProblem(lcPlanV1)), [['plan_check_placeholder', 'plan'], ['plan_scope_outside_write_scope', 'plan']]);
+  const v1 = compileFlow(lcNewProblem(lcPlanV1), newProjectPolicy, { authoring: true }) as { warnings: Diagnostic[] };
+  assert.match(v1.warnings[0]!.message, /"c\/<topic>\/<id4>_<slug>\/".*argv without a shell/);
+  assert.match(v1.warnings[1]!.message, /writer implement's writeScopes \(c\).*"Writer implement lacks a valid declared scope".*Scope: exactly `c`/);
+  assert.deepEqual(warned(lcNewProblem(lcPlanV2)), [['plan_scope_outside_write_scope', 'plan']]);
+  // The goal that ran: concrete example paths, scope pinned to the existing `c`. Steps other than the plan may keep placeholders.
+  assert.deepEqual(warned(lcNewProblem(lcPlanV4)), []);
+  // Warnings never block: the draft publishes, and a run start compiles without them.
+  const root = await project(), created = await draftFlow(root, { flowId: 'lc-new-problem', draft: { ...lcNewProblem(lcPlanV1), name: 'LC new problem' } });
+  assert.deepEqual(created.diagnostics.map(item => [item.code, item.severity]), [['plan_check_placeholder', 'warning'], ['plan_scope_outside_write_scope', 'warning']]);
+  assert.equal((await validateFlow(root, 'lc-new-problem')).valid, true);
+  assert.equal((await publishFlow(root, 'lc-new-problem', { author: { kind: 'human' }, expectedRevision: created.revision })).version, 1);
+  assert.equal((compileFlow(lcNewProblem(lcPlanV1), newProjectPolicy) as { warnings?: Diagnostic[] }).warnings, undefined);
+});
+
+test('plan check placeholder heuristic: paths and commands only, not tags, types or prose', () => {
+  const plan = (goal: string, instructionsOverride?: string) => { const flow = structuredClone(templates.fast); Object.assign(agent(flow, 'plan'), { goal, ...(instructionsOverride ? { instructionsOverride } : {}) }); return warned(flow).map(([code]) => code); };
+  for (const goal of ['Checks: `npm test && npm run lint`.', 'Checks: `npm test | tee log.txt`.', 'Checks: npm test && npm run lint.', 'Kiểm tra: `pytest "tests/a b.py"`.',
+    'Name the file src/<module>.ts and test it.', 'Run `python tools/new_problem.py <topic> <id>` first.', 'Write tests/<name>_test.py.'])
+    assert.deepEqual(plan(goal), ['plan_check_placeholder'], goal);
+  assert.deepEqual(plan('Propose a plan.', 'Checks: list `make test-<target>`.'), ['plan_check_placeholder']);
+  for (const goal of ['Propose a plan. Use <details> and <br> in the summary.', 'Pick a problem <id> from the list, then plan it.', 'Change the return type to `Array<string>`.',
+    "Checks: list the directory's own test, e.g. `npm test -- test/parser.test.js`, and `git diff --check`; nothing else.", 'Keep the plan short -> work starts right after.'])
+    assert.deepEqual(plan(goal), [], goal);
+});
+
+test('plan scope heuristic: a writer narrower than "." needs a scope inside its writeScopes named where the plan talks about scope', () => {
+  const plan = (goal: string, writeScopes = ['src']) => { const flow = structuredClone(templates.fast); agent(flow, 'plan').goal = goal; agent(flow, 'implement').writeScopes = writeScopes; return warned(flow).map(([code]) => code); };
+  for (const goal of ['Propose a plan.', 'Scope: only the files you change.', "Scope: `.` (the repo root).", 'Scope: the new module directory. Keep changes inside src/.', 'Phạm vi: thư mục mới.'])
+    assert.deepEqual(plan(goal), ['plan_scope_outside_write_scope'], goal);
+  for (const goal of ['Scope: exactly `src`.', 'Scope: src/api, which already exists.', 'Keep every change inside src/.', 'Phạm vi: `src`.'])
+    assert.deepEqual(plan(goal), [], goal);
+  assert.deepEqual(plan('Scope: `srcx`.'), ['plan_scope_outside_write_scope']);
+  assert.deepEqual(plan('Scope: `docs`.', ['src', 'docs']), []);
+  assert.deepEqual(plan('Propose a plan.', ['.']), []);
+});
+
+test('a plan profile whose instructions list a placeholder check warns at the plan step unless the step overrides them', async () => {
+  const root = await project({ ...defaultRoles, scaffolder: defaultRoles.implementer! });
+  const base = (await getProfile(root, 'implementer')).draft as object;
+  await draftProfile(root, { profileId: 'scaffolder', name: 'Scaffolder', draft: { ...base, instructions: 'Plan step: name the directory and list exactly `gcc -fsyntax-only c/<topic>/<id4>_<slug>/test.c` as a check.' } });
+  await publishProfile(root, 'scaffolder', { author: { kind: 'human' } });
+  const flow = dev(); agent(flow, 'plan').profileId = 'scaffolder';
+  const result = await checkFlow(root, flow);
+  assert.equal(result.valid, true); assert.deepEqual(result.diagnostics.map(item => [item.code, item.nodeId, item.severity]), [['plan_check_placeholder', 'plan', 'warning']]);
+  assert.match(result.diagnostics[0]!.message, /Profile "scaffolder" gives plan step plan the placeholder/);
+  // A writer using the same profile is not a plan; an override replaces the profile text.
+  agent(flow, 'plan').profileId = 'implementer'; agent(flow, 'implement').profileId = 'scaffolder';
+  assert.deepEqual((await checkFlow(root, flow)).diagnostics, []);
+  agent(flow, 'plan').profileId = 'scaffolder'; agent(flow, 'plan').instructionsOverride = 'Plan with concrete paths.';
+  assert.deepEqual((await checkFlow(root, flow)).diagnostics, []);
 });
 
 test('a custom profile with inherited bindings reports each step that cannot resolve, and pinning fixes it', async () => {

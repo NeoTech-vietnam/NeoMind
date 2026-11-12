@@ -18,6 +18,7 @@ import type { RecoveryReport } from '../core/recovery.js';
 import type { FlowNode } from '../domain/schema.js';
 import type { MaterializedRun } from '../domain/materialize.js';
 import { hashJson } from '../domain/resolve.js';
+import { simpleCheckArg } from '../domain/compiler.js';
 import { WorkspaceCoordinator, type WorkspaceLease } from '../storage/coordination.js';
 import { RunStore } from '../storage/run-store.js';
 import { captureBaseline } from '../workspace/baseline.js';
@@ -53,7 +54,7 @@ type Stop = 'pause' | 'cancel' | 'deadline';
 const minRepairRoundMs = 5 * 60 * 1000;
 export function parseCheck(command: string): string[] {
   const argv = command.trim().split(/\s+/);
-  if (!argv.length || argv.some(arg => !/^[A-Za-z0-9_./:=+,%@-]+$/.test(arg))) throw new Error(`Check cần dùng argv đơn giản, không có shell: ${command}`);
+  if (!argv.length || argv.some(arg => !simpleCheckArg.test(arg))) throw new Error(`Check cần dùng argv đơn giản, không có shell: ${command}`);
   return argv;
 }
 

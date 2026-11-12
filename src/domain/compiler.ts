@@ -12,6 +12,66 @@ export type Compilation =
 export const runsCommands = /\bre-?run\b|\b(?:run|execute)\s+(?:(?:all|the|these|those|your|own|it|them|every)\s+)*(?:unit\s+)?(?:tests?|test\s+suite|checks?|commands?|builds?|programs?|scripts?|code|pytest|npm|python|node)\b|\bchạy\s+(?:lại\s+)?(?:các\s+|những\s+)?(?:test|lệnh|kiểm thử|chương trình)/i;
 export const bomInstruction = /\b(?:without|no)\s+(?:a\s+)?BOM\b|\bBOM-?less\b|không\s+(?:có\s+)?BOM\b/i;
 const writesFile = /\b(?:write|save|store|export)\b[^.;\n]{0,40}?\b(?:to|into|in|as)\s+(?:a\s+|an\s+|the\s+)?(?:[\w./-]+\.(?:md|json|txt|csv|html|ya?ml)\b|(?:markdown\s+|report\s+|output\s+)?file\b)|(?:^|\s)(?:ghi|lưu|xuất)\s[^.;\n]{0,30}?(?:ra|vào)\s+(?:một\s+)?(?:file|tệp)/i;
+/** One argument of a plan or review check: checks run as argv without a shell. */
+export const simpleCheckArg = /^[A-Za-z0-9_./:=+,%@-]+$/;
+
+// `<word>` placeholders; tags an instruction may quote as HTML or markdown are not placeholders.
+const placeholder = /<([A-Za-z][\w-]*)>/g;
+const htmlTags = new Set(['a', 'b', 'i', 'u', 'p', 'br', 'hr', 'em', 'strong', 'code', 'pre', 'kbd', 'div', 'span', 'img', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'td', 'th',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'sup', 'sub', 'details', 'summary', 'blockquote', 'html', 'head', 'body', 'script', 'style']);
+/** The sentence that starts at `index`: up to a line end, or a period or semicolon followed by a capitalised word. */
+function sentenceAt(text: string, index: number): string {
+  const rest = text.slice(index, index + 400), end = rest.search(/\n|[.;!?](?=\s+[A-Z])/);
+  return end < 0 ? rest : rest.slice(0, end);
+}
+/** Inline code blanked out, so words inside a command (`git diff --check`) do not start a sentence. */
+const withoutCode = (text: string) => text.replace(/`[^`\n]*`/g, code => ' '.repeat(code.length));
+/** The whitespace-, quote- or bracket-delimited token around `index`. */
+function tokenAt(text: string, index: number): string {
+  const stop = /[\s`'"()[\]]/;
+  let start = index, end = index;
+  while (start > 0 && !stop.test(text[start - 1]!)) start--;
+  while (end < text.length && !stop.test(text[end]!)) end++;
+  return text.slice(start, end).replace(/[,;:.]+$/, '');
+}
+/**
+ * A check a plan step may copy that cannot run as argv: a `<word>` placeholder inside a path (`c/<topic>/…`,
+ * `<id>_<slug>`) or inline code anywhere in the text, or an inline-code command that is not plain argv (pipe, redirect,
+ * quote, `&&`) or an unquoted `&&`/`||` in a sentence about checks. Heuristic: placeholders standing alone in prose
+ * and commands outside backticks in other sentences are not seen.
+ */
+export function planCheckProblem(text: string): string | undefined {
+  for (const match of text.matchAll(placeholder)) {
+    if (htmlTags.has(match[1]!.toLowerCase())) continue;
+    const before = text[match.index - 1] ?? '', after = text.slice(match.index + match[0].length, match.index + match[0].length + 2);
+    if (/[/\\_.-]/.test(before) || /^[/\\_-]|^\.[A-Za-z0-9]/.test(after)) return `the placeholder path "${tokenAt(text, match.index)}"`;
+  }
+  for (const code of text.matchAll(/`([^`\n]+)`/g)) {
+    // Only code that looks like a command or path: `Array<string>` is a type, not a placeholder.
+    if (/[\s/]/.test(code[1]!) && [...code[1]!.matchAll(placeholder)].some(item => !htmlTags.has(item[1]!.toLowerCase()))) return `the placeholder in \`${code[1]}\``;
+  }
+  for (const word of withoutCode(text).matchAll(/(?<![\p{L}\p{N}_-])(?:checks?|kiểm tra)(?![\p{L}\p{N}_])/giu)) {
+    const sentence = sentenceAt(text, word.index);
+    for (const code of sentence.matchAll(/`([^`\n]+)`/g)) if (code[1]!.trim().split(/\s+/).some(arg => !simpleCheckArg.test(arg))) return `the check \`${code[1]}\``;
+    const shell = sentence.replace(/`[^`\n]*`/g, '').match(/\S*(?:&&|\|\|)\S*/);
+    if (shell) return `"${shell[0]}" in "${sentence.slice(0, 80)}"`;
+  }
+  return undefined;
+}
+export const planCheckAdvice = 'Plan checks run as argv without a shell (each argument only letters, digits and _ . / : = + , % @ -), so a placeholder, pipe, redirect, quote or && cannot run and automatic approval leaves the run waiting. Ask the plan to list checks with the concrete paths filled in, and give a concrete example in the goal (e.g. `gcc -std=c11 -fsyntax-only c/two-pointers/0125_valid-palindrome/test.c`).';
+
+const isRootScope = (scope: string) => ['.', './', ''].includes(scope.trim());
+const scopeWords = /(?<![\p{L}\p{N}_])(?:scopes?|phạm vi)(?![\p{L}\p{N}_])/giu;
+/**
+ * Whether the text names a directory inside one of `scopes` (the scope itself or a path below it) where it talks about
+ * scope: in a sentence starting with "scope" when it has one, anywhere otherwise. A path counts only as a whole token,
+ * so `c` matches `c`, `c/` and `c/two-pointers` but not `cpp/` or `c/<topic>/`.
+ */
+export function namesScopeWithin(text: string, scopes: readonly string[]): boolean {
+  const patterns = scopes.map(scope => new RegExp(`(?<![\\w./<>\\\\-])${scope.replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/+$/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:/[\\w.-]+)*/?(?![\\w./<>\\\\-])`));
+  const sentences = [...withoutCode(text).matchAll(scopeWords)].map(match => sentenceAt(text, match.index));
+  return (sentences.length ? sentences : [text]).some(sentence => patterns.some(pattern => pattern.test(sentence)));
+}
 
 /** Text an author wrote for the flow or one step: the places agents take instructions from. */
 function authoredText(flow: Flow): { nodeId?: string; text: string }[] {
@@ -44,6 +104,25 @@ function authoringRules(flow: Flow, incoming: Map<string, string[]>, issue: (cod
   const writes = flow.definition.nodes.some(node => node.type === 'integration' || (node.type === 'agent_task' && node.permissions.write));
   const fileAsk = writes ? undefined : texts.find(item => writesFile.test(item.text));
   if (fileAsk) warn('read_only_output_file', 'The flow asks for a file but no step may write one: the result only exists in the run transcript. Add a write step with a narrow writeScopes, or drop the file request.', fileAsk.nodeId);
+
+  const outgoing = new Map<string, string[]>();
+  for (const edge of flow.definition.edges) outgoing.set(edge.from, [...(outgoing.get(edge.from) ?? []), edge.to]);
+  for (const plan of flow.definition.nodes) {
+    if (plan.type !== 'agent_task' || plan.outputContract !== 'plan') continue;
+    const text = `${plan.goal}\n${plan.instructionsOverride ?? ''}`, problem = planCheckProblem(text);
+    // A plan check is parsed as argv before approval; one that is not plain argv blocks automatic approval.
+    if (problem) warn('plan_check_placeholder', `Plan step ${plan.id} may copy ${problem} into its checks. ${planCheckAdvice}`, plan.id);
+    // Writers claim the approved plan scope, which must lie inside their writeScopes (else "Writer … lacks a valid declared scope").
+    const narrow: { id: string; scopes: string[] }[] = [], seen = new Set<string>(), queue = [...(outgoing.get(plan.id) ?? [])];
+    while (queue.length) {
+      const id = queue.shift()!, node = byId.get(id);
+      if (seen.has(id) || !node) continue;
+      seen.add(id); queue.push(...(outgoing.get(id) ?? []));
+      const scopes = node.type === 'integration' || (node.type === 'agent_task' && node.permissions.write) ? node.writeScopes : [];
+      if (scopes.length && !scopes.some(isRootScope) && !namesScopeWithin(text, scopes)) narrow.push({ id, scopes });
+    }
+    if (narrow.length) warn('plan_scope_outside_write_scope', `Plan step ${plan.id} does not name a scope inside ${narrow.map(item => `writer ${item.id}'s writeScopes (${item.scopes.join(', ')})`).join(' or ')}. A plan scope outside them stops the writer ("Writer ${narrow[0]!.id} lacks a valid declared scope"), and one that is not an existing directory blocks approval. Pin the plan scope in the goal to an existing directory inside writeScopes, e.g. "Scope: exactly \`${narrow[0]!.scopes[0]}\`".`, plan.id);
+  }
 }
 
 /** Validate a persisted graph before it can be published or dispatched. `authoring` adds the rules for flows being edited. */
