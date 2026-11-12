@@ -240,6 +240,14 @@ async function main(args: string[]): Promise<number> {
     // Move a legacy .neomind/ to neomind/, which Obsidian and other tools that hide dot-folders can see.
     console.log(JSON.stringify(await migrateProjectDir(path.resolve(args[2]!)), null, 2)); return 0;
   }
+  if (args[0] === 'init') {
+    // Set a repository up for NeoMind: its folder, a default project.json and the flow-authoring guide for agents.
+    if (!(args.length === 2 || (args.length === 3 && args[2] === '--force'))) { console.error('Usage: neomind init <project> [--force]'); return 2; }
+    const { initProject } = await import('../runtime/project-init.js'), result = await initProject(path.resolve(args[1]!), { force: args[2] === '--force' });
+    const label = { created: 'đã tạo', existing: 'đã có, giữ nguyên', 'up-to-date': 'đã có, đúng bản hiện tại', 'modified-kept': 'đã bị sửa, giữ nguyên (ghi đè: --force)', replaced: 'đã ghi đè bằng bản hiện tại' };
+    for (const item of [result.directory, result.projectJson, result.guide]) console.log(`${item.path}: ${label[item.status]}`);
+    return 0;
+  }
   if (args[0] === 'flow' && args[1] === 'canvas' && (args[2] === 'export' || args[2] === 'import') && (args.length === 5 || args.length === 6)) {
     // Default board: <library>/<flow>/flow.canvas, opened by Nimbalyst and Obsidian.
     const library = new FlowLibrary(args[3]!), file = args[5] ? path.resolve(args[5]) : undefined;

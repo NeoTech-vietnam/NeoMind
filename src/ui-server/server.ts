@@ -28,6 +28,7 @@ import { draftProfile, getProfile, getProfileVersion, migrateProfile, profileSki
 import { archiveProfile, createProfileFromTemplate, deleteProfile } from '../runtime/profile-authoring.js';
 import { createSkill, deleteSkill, deleteSkillFile, getSkill, readSkillFile, repinSkill, skillActorSchema, SkillInUse, skillLibrary, skillTemplates, skillUsage, updateSkill, writeSkillFile } from '../storage/skill-library.js';
 import { profileTemplateIds, profileTemplates, type ProfileTemplateId } from '../domain/profile-templates.js';
+import { initProject } from '../runtime/project-init.js';
 
 /** Static model allowlist per runner, first model is the default. Host availability is checked by the runtime, not here. */
 export const runnerModels: { runner: RunnerId; provider: string; models: string[]; reasoning: string[] }[] = [
@@ -136,6 +137,11 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       return reply(200, await (await runs()).memoryFeedback(runMemoryMatch[1]!, memoryFeedbackSchema.parse(payload)));
     }
     if (url.pathname === '/api/rules' && method === 'GET') return reply(200, await readProjectRules(projectRoot) ?? { rules: [], warnings: [] });
+    if (url.pathname === '/api/project/init' && method === 'POST') {
+      // `neomind init`: NeoMind's folder, a default project.json and the flow-authoring guide; the guide is rewritten only with force.
+      const input = z.strictObject({ force: z.boolean().optional() }).parse(payload ?? {});
+      return reply(200, await initProject(projectRoot, { force: input.force }));
+    }
     if (url.pathname === '/api/skills' && method === 'GET') return reply(200, { skills: await skillCatalog(projectRoot) });
     if (url.pathname === '/api/skills/status' && method === 'POST') { const input = z.strictObject({ refs: z.array(skillReferenceSchema) }).parse(payload); return reply(200, { skills: await skillStatus(projectRoot, input.refs) }); }
     // Skill library: create/edit/delete neomind/skills; `author` marks AI session requests so ai.skillEdit applies.
