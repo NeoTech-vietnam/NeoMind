@@ -132,6 +132,12 @@ export async function publishFlow(root: string, flowId: string, input: { author:
   return store.publish(flowId, project.policy, input.expectedRevision, author);
 }
 
+/** Pinned values reach a publish without Flow Studio, so they get the same check as `publishFlow` (a misspelled runner, a model the runner does not allow). */
+async function assertPublishable(root: string, document: Flow, author: FlowAuthor, project: ProjectConfig) {
+  const checked = await checkFlow(root, document, { aiAuthored: author.kind === 'ai', project });
+  if (!checked.valid) throw new Error(`Invalid flow: ${[...new Set(checked.diagnostics.filter(item => item.severity !== 'warning').map(item => item.code))].join(', ')}`);
+}
+
 /** A flow id from a display name: ASCII slug, never a template id or an existing flow. */
 function newFlowId(name: string, taken: Set<string>) {
   const base = name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'flow';
@@ -160,8 +166,7 @@ export async function pinFlowBindings(root: string, flowId: string, input: PinBi
     const flows = await store.list(), targetId = input.saveAs.flowId ?? newFlowId(name, new Set(flows.map(item => item.flowId)));
     if (flows.some(item => item.flowId === targetId)) throw new Error(`Flow ${targetId} already exists`);
     const { flow, pinned } = pinBindings(source, input.values), document: Flow = { ...flow, flowId: targetId, name, version: 1 };
-    const compiled = compileFlow(document, project.policy, { aiAuthored: author.kind === 'ai' });
-    if (!compiled.ok) throw new Error(`Invalid flow: ${compiled.diagnostics.map(item => item.code).join(', ')}`);
+    await assertPublishable(root, document, author, project);
     await store.create(targetId, name);
     const revision = await store.saveDraft(targetId, document, null);
     const version = await store.publish(targetId, project.policy, revision, author);
@@ -178,6 +183,7 @@ export async function pinFlowBindings(root: string, flowId: string, input: PinBi
     throw new Error('Bản nháp của flow có thay đổi chưa publish; publish hoặc bỏ chúng trong Flow Studio trước khi lưu mặc định');
   const { flow, pinned } = pinBindings(published, input.values);
   if (flowHashes(flow).semanticHash === flowHashes(published).semanticHash) return { flowId, name: metadata.name, version: published.version, created: false, changed: false, pinned };
+  await assertPublishable(root, flow, author, project);
   const saved = await store.saveDraft(flowId, { ...flow, version: current.data.version, name: current.data.name }, revision);
   const version = await store.publish(flowId, project.policy, saved, author);
   return { flowId, name: metadata.name, version: version.version, created: false, changed: true, pinned };
