@@ -222,7 +222,7 @@ test('.agents/skills are listed read-only; one entry per ID, neomind before .age
   await writeSkill(root, 'neomind/skills', 'dup', 'NeoMind copy'); await writeSkill(root, '.agents/skills', 'dup', 'Agents copy');
   const catalog = await skillCatalog(root), entry = (id: string) => catalog.find(skill => skill.id === id);
   assert.deepEqual(catalog.map(skill => [skill.id, skill.source, skill.path]), [
-    ['dup', 'neomind', 'neomind/skills/dup/SKILL.md'], ['shared', 'agents', '.agents/skills/shared/SKILL.md'], ['claude-only', 'claude', '.claude/skills/claude-only/SKILL.md']]);
+    ['claude-only', 'claude', '.claude/skills/claude-only/SKILL.md'], ['shared', 'agents', '.agents/skills/shared/SKILL.md'], ['dup', 'neomind', 'neomind/skills/dup/SKILL.md']]);
   assert.deepEqual(entry('shared')?.shadowed?.map(item => [item.source, item.path]), [['claude', '.claude/skills/shared/SKILL.md']]);
   assert.notEqual(entry('shared')?.shadowed?.[0]?.sha256, entry('shared')?.sha256, 'the editor can tell the copies differ');
   assert.deepEqual(entry('dup')?.shadowed?.map(item => item.source), ['agents']); assert.equal(entry('claude-only')?.shadowed, undefined);

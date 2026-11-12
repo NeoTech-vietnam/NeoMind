@@ -61,7 +61,9 @@ export async function skillCatalog(root: string): Promise<CatalogSkill[]> {
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
   }
-  return result;
+  // Listed as before .agents/skills existed: Claude Code's skills first, the project's own last (sort is stable).
+  const listing: SkillSource[] = ['claude', 'agents', 'neomind'];
+  return result.sort((a, b) => listing.indexOf(a.source) - listing.indexOf(b.source));
 }
 
 export async function skillStatus(root: string, refs: SkillReference[]) {
