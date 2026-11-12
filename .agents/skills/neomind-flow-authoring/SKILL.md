@@ -58,3 +58,4 @@ Since 2026-11-12, validation also runs what a preview would refuse (bindings, ru
 - Show the validation diff before every publish; never publish silently.
 - Ask before applying a run's changes to their checkout. Cancel stale runs only when asked.
 - Report the token and time cost of each test run.
+- Write what NeoMind stores in English: flow and profile instructions, skills, and memory proposals. Deliverables people read follow the language the repository asks for.
