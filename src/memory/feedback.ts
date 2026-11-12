@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, writeSync } from 'node:fs';
+import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
@@ -86,8 +86,10 @@ function appendUnlocked(root: string, events: FeedbackEvent[]): number {
   for (const [month, monthEvents] of byMonth) {
     const file = path.join(directory, `${month}.jsonl`);
     let existing = '';
-    if (existsSync(file)) {
-      const info = lstatSync(file);
+    let info;
+    try { info = lstatSync(file); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    if (info) {
       if (info.isSymbolicLink() || !info.isFile()) throw new Error(`Memory feedback file must be a regular file: ${month}.jsonl`);
       existing = readFileSync(file, 'utf8');
     }
