@@ -55,13 +55,116 @@ export function installProjectGuide(projectRoot: string, options: { force?: bool
 }
 
 /**
+ * Codex reads AGENTS.md but never `.claude/skills`, and Claude Code only sees a skill's description, so the guide is
+ * also named in the project's agent instructions. The line is the one NeoMind's own AGENTS.md uses.
+ */
+export const AGENTS_FILE = 'AGENTS.md';
+export const CLAUDE_FILE = 'CLAUDE.md';
+export const GUIDE_REFERENCE = `- Authoring NeoMind flows: read ${PROJECT_GUIDE_PATH} first.`;
+export type GuideReferenceStatus = 'created' | 'appended' | 'present';
+export interface GuideReferenceResult { path: string; status: GuideReferenceStatus }
+
+// UTF-16 files keep their encoding; anything else is handled as latin1, which round-trips every byte, so a UTF-8 file
+// (with or without BOM) or any other ASCII-compatible one is only ever extended by the ASCII text added here.
+type Codec = 'latin1' | 'utf16le' | 'utf16be';
+function decode(bytes: Buffer): { text: string; codec: Codec } {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return { text: bytes.toString('utf16le'), codec: 'utf16le' };
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return { text: Buffer.from(bytes).swap16().toString('utf16le'), codec: 'utf16be' };
+  return { text: bytes.toString('latin1'), codec: 'latin1' };
+}
+function encode(text: string, codec: Codec): Buffer {
+  if (codec === 'latin1') return Buffer.from(text, 'latin1');
+  const bytes = Buffer.from(text, 'utf16le');
+  return codec === 'utf16be' ? bytes.swap16() : bytes;
+}
+
+/** `text` with the reference added: as the last item of an existing `## References` section, else as a new section. */
+function withReference(text: string): string {
+  const newline = text.indexOf('\n'), eol = newline > 0 && text[newline - 1] === '\r' ? '\r\n' : '\n';
+  if (text && !text.endsWith('\n')) text += eol;
+  const cr = eol === '\r\n' ? '\r' : '', lines = text.split('\n');
+  let fence = false, heading = -1, end = lines.length - 1;
+  for (const [index, raw] of lines.entries()) {
+    const line = raw.replace(/\r$/, '');
+    if (/^\s*(```|~~~)/.test(line)) { fence = !fence; continue; }
+    if (fence) continue;
+    if (heading < 0 && /^##[ \t]+References[ \t]*$/i.test(line)) heading = index;
+    else if (heading >= 0 && /^#{1,2}[ \t]/.test(line)) { end = index; break; }
+  }
+  if (heading < 0) {
+    const gap = !text || text === eol || text.endsWith(`${eol}${eol}`) ? '' : eol;
+    return `${text}${gap}## References${eol}${eol}${GUIDE_REFERENCE}${eol}`;
+  }
+  let last = heading;
+  for (let index = heading + 1; index < end; index++) if (lines[index]!.trim()) last = index;
+  lines.splice(last + 1, 0, ...(last === heading ? [cr] : []), `${GUIDE_REFERENCE}${cr}`);
+  return lines.join('\n');
+}
+
+const mentionsGuide = (text: string) => text.includes(PROJECT_GUIDE_PATH);
+// Claude Code reads CLAUDE.md; one that imports AGENTS.md already shows the reference.
+const importsAgents = (text: string) => /(^|\s)@(\.\/)?AGENTS\.md(\s|$)/m.test(text);
+
+function fileBytes(projectRoot: string, name: string): { bytes: Buffer; mode: number } | undefined {
+  const file = path.join(projectRoot, name);
+  let info;
+  try { info = lstatSync(file); } catch (error) { if (errorCode(error) === 'ENOENT') return undefined; throw error; }
+  if (info.isSymbolicLink()) throw new Error(`Không ghi ${name} qua symlink`);
+  if (!info.isFile()) throw new Error(`${name} không phải file`);
+  return { bytes: readFileSync(file), mode: info.mode & 0o777 };
+}
+
+/**
+ * Add the reference to `name` unless it already names the guide; `create` writes a file holding only the reference
+ * section when there is none. Same write rules as the guide: no symlinks, a new file never replaces one another writer
+ * created meanwhile, and an existing file is swapped in by rename only if it still has the bytes that were read.
+ */
+function addReference(projectRoot: string, name: string, create: boolean, present = mentionsGuide): GuideReferenceResult | undefined {
+  const target = path.join(projectRoot, name);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const existing = fileBytes(projectRoot, name);
+    if (!existing && !create) return undefined;
+    const decoded = existing ? decode(existing.bytes) : { text: '', codec: 'latin1' as const };
+    if (existing && present(decoded.text)) return { path: name, status: 'present' };
+    const temporary = `${target}.${randomUUID()}.tmp`;
+    try {
+      writeFileSync(temporary, encode(withReference(decoded.text), decoded.codec), { flag: 'wx', ...(existing ? { mode: existing.mode } : {}) });
+      if (!existing) {
+        try { linkSync(temporary, target); return { path: name, status: 'created' }; }
+        catch (error) { if (errorCode(error) !== 'EEXIST') throw error; continue; }
+      }
+      if (!fileBytes(projectRoot, name)?.bytes.equals(existing.bytes)) continue;
+      renameSync(temporary, target);
+      return { path: name, status: 'appended' };
+    } finally {
+      try { unlinkSync(temporary); } catch (error) { if (errorCode(error) !== 'ENOENT') throw error; }
+    }
+  }
+  throw new Error(`${name} đổi liên tục trong lúc thêm tham chiếu tới ${PROJECT_GUIDE_PATH}`);
+}
+
+/**
+ * Make sure the project's agent instructions point at the guide: AGENTS.md gets the reference (created when missing).
+ * When AGENTS.md is created next to an existing CLAUDE.md, that CLAUDE.md gets the reference too unless it already
+ * imports AGENTS.md, since Claude Code does not read the AGENTS.md created for Codex. User content is only appended to.
+ */
+export function installGuideReference(projectRoot: string): GuideReferenceResult[] {
+  const agents = addReference(projectRoot, AGENTS_FILE, true)!;
+  if (agents.status !== 'created') return [agents];
+  const claude = addReference(projectRoot, CLAUDE_FILE, false, text => mentionsGuide(text) || importsAgents(text));
+  return claude ? [agents, claude] : [agents];
+}
+
+/**
  * Call after a write created NeoMind's folder in a project, with what `mkdir(…, { recursive: true })` returned (the
  * first folder it created) or the folder itself. Creating that folder is the project being configured for the first
- * time, so the guide is installed then and only then: later writes, and projects whose folder already exists, leave
- * `.claude/` alone. A failure only warns, because the write that created the folder must not fail over the guide.
+ * time, so the guide and its reference in AGENTS.md are installed then and only then: later writes, and projects whose
+ * folder already exists, leave `.claude/` and AGENTS.md alone. A failure only warns, because the write that created the
+ * folder must not fail over the guide.
  */
 export function projectDirCreated(created: string | undefined): void {
   if (!created || ![PROJECT_DIR, LEGACY_PROJECT_DIR].includes(path.basename(created))) return;
-  try { installProjectGuide(path.dirname(created)); }
-  catch (error) { console.warn(`NeoMind: không cài được ${PROJECT_GUIDE_PATH} (${error instanceof Error ? error.message : String(error)})`); }
+  const warn = (what: string, error: unknown) => console.warn(`NeoMind: không cài được ${what} (${error instanceof Error ? error.message : String(error)})`);
+  try { installProjectGuide(path.dirname(created)); } catch (error) { warn(PROJECT_GUIDE_PATH, error); }
+  try { installGuideReference(path.dirname(created)); } catch (error) { warn(`tham chiếu skill trong ${AGENTS_FILE}`, error); }
 }
