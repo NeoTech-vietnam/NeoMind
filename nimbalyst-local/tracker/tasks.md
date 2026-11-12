@@ -44,6 +44,14 @@ Cập nhật 11/11/2026. Mục cũ ghi nhận 07/11; mục mới thêm 11/11 sau
 
   12/11/2026 trên `8a1372b` (sau khi gộp project-init, memory-readable, flow-validate, run-duplicate): 315 test, 312 pass, 1 fail, 2 skip. Ca lỗi là scope Claude chập chờn đã biết; chạy riêng `claude-cli.test.js` đạt 10/10.
 
+- Lý do trạng thái run trong journal lưu bằng mã/tiếng Anh, UI dịch #task[id:tsk_01M76ENGJOURNALREASON00001 status:to-do priority:low created:2026-11-12]
+
+  Theo quy ước 12/11 (dữ liệu lưu trữ bằng tiếng Anh): `local-run.ts` và các chỗ khác ghi chuỗi tiếng Việt vào journal ("Sẵn sàng bắt đầu", "Đã đối chiếu worker; cần bấm Tiếp tục"…) và UI hiện thẳng. Cần mã lý do + tham số, UI dịch; run cũ có chuỗi Việt vẫn hiển thị được.
+
+- Dịch 4 skill `lc-*` của `leetcode-practice` sang tiếng Anh #task[id:tsk_01M76ENGLCSKILLS000000001 status:to-do priority:low created:2026-11-12]
+
+  `lc-hint-ladder`, `lc-repo-rules`, `lc-review-checklist`, `lc-trace-verify` có nội dung tiếng Việt. Chờ người dùng chốt: `review.md` do flow `lc-review` viết giữ tiếng Việt (sản phẩm cho người đọc) hay theo luật "write files in English" trong `AGENTS.md` của leetcode. Sau khi sửa skill phải ghim lại (`skill repin`) và publish agent.
+
 - Quyết định còn mở #task[id:tsk_01M74TQVRBYX41ZTED66BS7SVY status:to-do priority:low created:2026-11-11]
 
   (1) Có tắt việc Codex tự đọc `AGENTS.md` để hai runner chỉ nhận `rules.md` không. (2) `assess` có tự đổi sang flow giao kết quả tốt hơn khi đủ thống kê, hay chỉ gợi ý như hiện tại.
