@@ -1,5 +1,9 @@
 # NeoMind v1 — trạng thái implementation
 
+## Worktree chính của submodule — 12/11/2026
+
+Khi Git liệt kê thư mục Git chung làm worktree chính, NeoMind giải quyết `core.worktree` và xác minh checkout thuộc cùng repository; repository thông thường vẫn dùng kết quả danh sách worktree. Kiểm chứng Linux: `npm test` 348 test, 336 đạt, 0 lỗi, 12 skip; build extension đạt. Chưa kiểm chứng Windows hay run thật; xem [bàn giao](session-handoff-2026-11-12-submodule.md).
+
 Cập nhật: **11/11/2026**. Branch: `hieu/adaptive-agent-flow`. Bàn giao: [11/11 khôi phục MCP, chạy lại flow, OpenCode](session-handoff-2026-11-11.md).
 
 ## Cảnh báo check và scope của kế hoạch — 12/11/2026

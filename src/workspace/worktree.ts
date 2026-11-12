@@ -11,10 +11,24 @@ function git(root: string, args: string[]): string {
 
 /** Primary worktree is the first worktree in Git's porcelain listing. */
 export function primaryWorktree(workspace: string): string {
-  const listing = git(realpathSync.native(workspace), ['worktree', 'list', '--porcelain', '-z']);
+  const root = realpathSync.native(workspace);
+  const listing = git(root, ['worktree', 'list', '--porcelain', '-z']);
   const first = listing.split('\0')[0];
   if (!first?.startsWith('worktree ')) throw new Error('Cannot determine primary worktree');
-  return realpathSync.native(first.slice('worktree '.length));
+  const listed = realpathSync.native(first.slice('worktree '.length));
+  const common = realpathSync.native(git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir']).trim());
+  if (listed !== common) return listed;
+  // For absorbed submodules Git may list the common Git directory as the primary worktree.
+  // Resolve core.worktree relative to that directory, then verify it belongs to the same repository.
+  let configured: string;
+  try { configured = git(root, ['config', '--local', '--path', '--get', 'core.worktree']).trim(); }
+  catch (error) { if ((error as { status?: number }).status === 1) return listed; throw error; }
+  if (!configured) throw new Error('Cannot determine primary worktree');
+  const primary = realpathSync.native(path.resolve(common, configured));
+  const actualRoot = realpathSync.native(git(primary, ['rev-parse', '--show-toplevel']).trim());
+  const actualCommon = realpathSync.native(git(primary, ['rev-parse', '--path-format=absolute', '--git-common-dir']).trim());
+  if (actualRoot !== primary || actualCommon !== common) throw new Error('Configured primary worktree does not match repository');
+  return primary;
 }
 
 /** Creates a detached worktree at a caller-selected, currently nonexistent path.

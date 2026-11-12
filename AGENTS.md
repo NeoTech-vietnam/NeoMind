@@ -12,6 +12,8 @@ Công cụ cấu hình và chạy *agent flow* trên một Git repo: lập kế 
 
 ## Đọc theo thứ tự
 
+0. [Bàn giao sửa worktree submodule 12/11](docs/adaptive-agent-flow/session-handoff-2026-11-12-submodule.md).
+
 1. [Bàn giao 12/11](docs/adaptive-agent-flow/session-handoff-2026-11-12.md) (skill soạn flow, memory tiếng Anh + bộ đệm SQLite, plan tự sửa); [bàn giao Skills/Agents và Memory 11/11](docs/adaptive-agent-flow/session-handoff-2026-11-11-skills-memory.md); [bàn giao khôi phục MCP, chạy lại flow, OpenCode 11/11](docs/adaptive-agent-flow/session-handoff-2026-11-11.md): trạng thái, việc đang dở, bài học. Bàn giao, plan và research cũ hơn đã gỡ khỏi repo ngày 12/11; xem lại bằng `git show archive/docs-2026-11-12:<đường dẫn>`.
 2. [Định hướng từ 11/2026](docs/adaptive-agent-flow/direction-2026-11.md): rule của project, đo kết quả run, AI điều phối, flow tự thích ứng (đang chờ duyệt).
 3. [Trạng thái triển khai](docs/adaptive-agent-flow/implementation-status.md) và [acceptance matrix](docs/adaptive-agent-flow/acceptance-matrix.md).
