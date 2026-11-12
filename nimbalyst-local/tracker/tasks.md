@@ -40,9 +40,9 @@ Cập nhật 11/11/2026. Mục cũ ghi nhận 07/11; mục mới thêm 11/11 sau
 
   `extensions/nimbalyst/claude-plugin/commands/run.md` chưa hướng dẫn dùng `program_*` và `stats`.
 
-- Chạy lại `npm test` đầy đủ sau các sửa OpenCode và xóa run #task[id:tsk_01M74TQVRB2TYXEZ31A170W7C7 status:to-do priority:medium created:2026-11-11]
+- Chạy lại `npm test` đầy đủ sau các sửa OpenCode và xóa run #task[id:tsk_01M74TQVRB2TYXEZ31A170W7C7 status:done priority:medium created:2026-11-11]
 
-  Sau commit `df1249d` và `8e636fc` mới chạy test liên quan (OpenCode, xóa/chạy lại run, editor API); lượt đầy đủ gần nhất (274 test) có 1 ca OpenCode lỗi đã sửa sau đó.
+  12/11/2026 trên `8a1372b` (sau khi gộp project-init, memory-readable, flow-validate, run-duplicate): 315 test, 312 pass, 1 fail, 2 skip. Ca lỗi là scope Claude chập chờn đã biết; chạy riêng `claude-cli.test.js` đạt 10/10.
 
 - Quyết định còn mở #task[id:tsk_01M74TQVRBYX41ZTED66BS7SVY status:to-do priority:low created:2026-11-11]
 
