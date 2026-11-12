@@ -15,8 +15,11 @@ Flow validation (\`neomind_flow_validate\`) only checks the schema. A flow can v
 
 Since 2026-11-12, validation also runs what a preview would refuse (bindings, runners, models, profile versions, skills) and the authoring rules marked below. Errors block publishing; diagnostics with \`severity: "warning"\` do not. Rows without a marker are still not checked: keep following them.
 
+Updated 2026-11-12 (later): two plan rules learned from blocked \`lc-new-problem\` runs (literal check commands, plan scope inside the writer's \`writeScopes\`), a step to read the project's flow lessons first, and how to record new constraints as NeoMind lessons.
+
 ## 1. Start from something that already runs
 
+0. Search the project's approved NeoMind memory for lessons about flows (\`neomind_memory_search\`, type \`lesson\`, e.g. tag \`flow-authoring\`) and apply them. They record runtime constraints found after this skill was written.
 1. List flows (\`neomind_flows\`). If the project has a working custom flow close to the need, start the new draft from it (\`neomind_flow_draft\` with \`from: {flowId: "<working flow>"}\`).
 2. Otherwise read the built-in flows (\`neomind_flow_get\` for \`fast\`, \`dev\`, \`research\`, \`parallel\`) and copy the shape of the closest one. Do not invent a node graph from scratch.
 3. Read \`neomind_flow_blocks\` for node types, project policy (for example \`requireApprovalBeforeWrite\`, \`maxRepairRounds\`) and role defaults.
@@ -32,6 +35,8 @@ Since 2026-11-12, validation also runs what a preview would refuse (bindings, ru
 | An \`approval\` node with \`mode: "auto"\` needs an earlier agent node whose \`outputContract\` is \`plan\` (the \`fast\` shape: plan, then auto approval, then implement). (NeoMind ≥ 2026-11-12 reports error \`auto_approval_without_plan\`: the plan step must be the direct predecessor of the approval) | Run stuck in \`waiting_approval\`: no plan to auto-approve. |
 | Reviewers inside a \`review_group\` may be unable to run commands. Never make "re-run the tests yourself" a pass condition. Let them verify by reading the code and accept quoted output that is consistent with it. (NeoMind ≥ 2026-11-12 warns \`review_needs_commands\` when criteria ask to run commands and the reviewer runs on a runner without a shell or its profile lacks checks) | Repair loop until the repair budget is exhausted. |
 | The plan step chooses the checks that gate the run. If a check is expected to fail (for example tests of a deliberately wrong program that is being reviewed), the plan step's goal must say exactly which checks to list. | Run blocked on a failing check. |
+| Plan checks run as plain argv without a shell: only letters, digits and \`_ . / : = + , % @ -\` are allowed in each argument. A check with a placeholder (e.g. \`c/<topic>/<id>_<slug>/test.c\`), any \`<\` / \`>\`, quotes, pipes or redirections cannot run. When the target path is only known at run time, make the plan goal require the plan step to resolve it first and list the filled-in command, with a concrete example in the goal. | Run stays in \`waiting_approval\`: auto approval refused because the check needs simple argv without a shell (journal text today: \`Check cần dùng argv đơn giản, không có shell: <command>\`). |
+| A plan's \`scope\` must be existing directories (not a file, not a directory the run will create), and each must lie inside the writer step's \`writeScopes\`. For flows that create new directories, tell the plan step to use an existing parent (e.g. \`c\`) as its only scope entry and give the writer the same \`writeScopes\`. | Scope \`.\` with \`writeScopes: ["c"]\`: run blocked, \`Writer <step> lacks a valid declared scope\`. Scope = a directory not created yet: auto approval refused, the plan scope must be an existing directory (journal text today: \`Phạm vi kế hoạch phải là thư mục có sẵn trong repo …\`). |
 | Review evidence (artifact hash, source line number, quote) is validated character by character. Tell reviewers: one reference per criterion, prefer quotes from the artifact, copy hashes and quotes exactly, re-check before returning. Give reviewers a careful, higher-reasoning model; sloppy models fail here repeatedly. | Run blocked: evidence or criteria not verified / receipts must be copied exactly. |
 | A read-only flow writes no file; its result exists only in the run transcript. If people need a file, add a write step with a narrow \`writeScopes\` and name the single file it may change. (NeoMind ≥ 2026-11-12 warns \`read_only_output_file\` when a flow without a write step asks for a file) | "Where is the output?" |
 | Some runners may give a read-only step no shell, so it cannot run tests. Either give that step check permission and confirm it really runs commands, or accept trace-based evidence clearly marked UNVERIFIED. (NeoMind ≥ 2026-11-12 warns \`step_cannot_run_commands\`. Verified: only \`codex\` sessions have a shell; \`claude-code\` and \`opencode\` sessions get file tools only, read-only or not) | Report says tests could not be run. |
@@ -43,6 +48,8 @@ Since 2026-11-12, validation also runs what a preview would refuse (bindings, ru
 - [ ] Every binding pinned with a supported runner id. Higher reasoning for reviewers and auditors.
 - [ ] Every \`review_group\` targets a node that writes files. No review criterion requires running commands.
 - [ ] Every auto approval has a plan node before it, and the plan goal names the checks to use.
+- [ ] The plan goal makes the plan list literal check commands with concrete paths (no placeholders, no \`<\` or \`>\`).
+- [ ] The plan goal fixes the plan scope to an existing directory inside the writer's \`writeScopes\` (an existing parent when the run creates new directories).
 - [ ] Write steps have minimal \`writeScopes\` and name exactly which files they may change.
 - [ ] Profiles referenced at their exact published version. Skills pinned at their current hash (after editing a skill, re-pin and re-publish the profiles that use it). Validation reports \`missing_profile_version\`, and warns \`skill_changed\` (a run still refuses a changed skill).
 - [ ] Validate is clean, the diff was shown to the person you work for, the flow is published, and preview shows no blockers.
@@ -54,6 +61,8 @@ Since 2026-11-12, validation also runs what a preview would refuse (bindings, ru
 2. Agent transcripts are in \`runs/<runId>/transcripts/\`. Files a run wrote are in \`workspaces/<runId>/\`.
 3. List all the risks you can see, fix them together, redo the preflight, then run once. Never fix one symptom and re-run the whole flow each time.
 4. Before switching models, decide whether the failure is a design problem (section 2) or model sloppiness (evidence receipts, encoding, wrong claims). A better model does not fix a design problem.
+5. Record each new runtime constraint you discover as a NeoMind lesson with \`neomind_memory_propose\` (cause, symptom, fix; cite the run ids), not in an agent's private memory, so every session and agent can find it after the person you work for approves it.
+6. NeoMind auto-proposes lessons from blocked runs that only repeat the block reason ("Run blocked: ..."). Propose a lesson with the cause and fix instead, and tell the person you work for which auto-proposal it replaces.
 
 ## 5. Working with the person you work for
 
