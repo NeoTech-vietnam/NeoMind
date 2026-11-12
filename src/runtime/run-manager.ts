@@ -14,6 +14,7 @@ import { memoryFeedbackSchema, type MemoryFeedback, type RecoveryReport } from '
 import { DurableRun } from '../core/durable-run.js';
 import { appendFeedback, combineStats, feedbackEvent, MemoryFeedbackStore, type MemoryRating } from '../memory/feedback.js';
 import { openMemoryIndex } from '../memory/index-cache.js';
+import { doctorPaths } from './doctor-paths.js';
 import { activeMemory } from '../memory/retrieval.js';
 import { mkdir, lstat, open, readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -646,6 +647,8 @@ export class RunManager {
       } finally { usage.close(); }
     } finally { memory?.store.close(); if (!active) await durable.close(); }
   }
+  /** Where this project's state, journals, worktrees, memory, ratings and memory cache are. Reads only. */
+  doctorPaths() { return doctorPaths(this.projectRoot, this.stateRoot); }
   /** Which pinned records each agent turn received, why, and how the step filters memory; plus the user's ratings. */
   private memoryUse(report: Pick<RecoveryReport, 'nodeData' | 'attempts' | 'runtimeContext' | 'memoryFeedback'> & { snapshot?: unknown }) {
     const pinned = new Map((report.runtimeContext?.memory?.records ?? []).map(record => [`${record.type}/${record.id}`, record]));

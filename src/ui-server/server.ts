@@ -228,6 +228,7 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
     }
     if (url.pathname === '/api/runs' && method === 'GET') { return reply(200, { runs: await (await runs()).list() }); }
     if (url.pathname === '/api/stats' && method === 'GET') { const flowId = url.searchParams.get('flow'); return reply(200, await runStats(projectRoot, await runs(), flowId ? { flowId } : {})); }
+    if (url.pathname === '/api/doctor/paths' && method === 'GET') return reply(200, await (await runs()).doctorPaths());
     if (url.pathname === '/api/programs' && method === 'GET') return reply(200, await listPrograms(projectRoot, await runs()));
     if (url.pathname === '/api/programs' && method === 'POST') return reply(201, { program: await createProgram(projectRoot, z.strictObject({ program: z.json() }).parse(payload).program) });
     const programMatch = /^\/api\/programs\/([^/]+)(?:\/(next|phases\/([^/]+)\/(start|deliver)))?$/.exec(url.pathname);

@@ -51,6 +51,8 @@ export const SESSION_TOOLS: SessionTool[] = [
   { name: 'assess', description: 'Recommend an existing flow for a task using deterministic rules. available=false means the named flow is unavailable; this does not start a run.', inputSchema: object({ task: { type: 'string' } }, ['task']) },
   { name: 'stats', description: 'Run statistics of this project by flow, profile, runner/model and flow + runners: runs, completion and delivery rate, median tokens and active time, repair rounds, first-pass review rate, cost when neomind/pricing.json exists.',
     inputSchema: object({ flowId: { type: 'string' } }) },
+  { name: 'doctor_paths', description: 'Where this project\'s NeoMind data lives and whether it is in Git: state folder, coordination database, run journals, run worktrees, memory root, its feedback/ ratings and its rebuildable .cache/index.sqlite (exists, schema, record count, up to date). Reads only.',
+    inputSchema: object() },
   { name: 'project_init', description: 'Set this repository up for NeoMind: create neomind/ with a default project.json (policy unchanged when one exists), install the flow-authoring guide in .agents/skills and .claude/skills (neomind-flow-authoring/SKILL.md) and name it in AGENTS.md. Safe to repeat; a copy of the guide the user edited is kept unless force, which needs confirmed: true (ask the user first).',
     inputSchema: object({ force: { type: 'boolean', description: 'Rewrite a guide the user edited' }, ...confirmed }) },
   { name: 'program_create', description: 'Create a multi-phase program in neomind/programs from a spec: { schemaVersion: 1, programId, name, goal, phases: [{ id, title, task, flowId, dependsOn: [] }] }. Every flowId must be published. Show the phases to the user first.',
@@ -207,6 +209,7 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
       ...(args.saveAs ? { saveAs: args.saveAs } : {}), author: { ...aiAuthor(call), reason: text(args, 'reason') } }),
     assess: async args => authoringApi('POST', '/api/assess', { task: text(args, 'task') }),
     stats: async args => { const stats = await authoringApi('GET', `/api/stats${optional(args, 'flowId') ? `?flow=${encodeURIComponent(optional(args, 'flowId')!)}` : ''}`) as { runs: unknown[] }; const { runs: _runs, ...rest } = stats; return rest; },
+    doctor_paths: async () => authoringApi('GET', '/api/doctor/paths'),
     project_init: async args => {
       if (args.force === true) requireConfirmed(args, 'Overwriting the flow-authoring guide');
       return authoringApi('POST', '/api/project/init', { force: args.force === true });
