@@ -69,7 +69,9 @@ const reviewEvidence = { criteria: [{ criterion: 'divide(a, 0) ném RangeError',
 
 const scenarios: Record<string, Scenario> = {
   waiting: { flow: flowOf('dev'), bindings: devBindings, task: 'Thêm hàm power(a, b) vào calc.js và viết test', phase: 'waiting_approval', reason: 'Chờ bạn duyệt kế hoạch',
-    graph: { start: 'succeeded', plan: 'succeeded', approval: 'waiting' }, activeMs: 112_000, attempts: attemptsFor('dev', true).slice(0, 1) },
+    graph: { start: 'succeeded', plan: 'succeeded', approval: 'waiting' }, activeMs: 112_000, attempts: attemptsFor('dev', true).slice(0, 1),
+    // The planner's first plan listed a check with a placeholder; NeoMind sent it back once before asking the user.
+    extra: { planRevisions: [{ planningNodeId: 'plan', version: 2, author: 'neomind', feedback: 'NeoMind rejected plan version 1 before approval because it breaks the plan rules: Check "node --test test/<name>.test.js" is not a plain argv command: checks run without a shell, so every argument may only contain the characters A-Za-z0-9_./:=+,%@- (no quotes, pipes, redirects or placeholders such as <id>). Write the concrete command with real paths. Return a corrected plan that follows every plan rule.' }] } },
   running: { flow: flowOf('parallel', 1), bindings: parallelBindings, task: 'Viết lại phần cài đặt trong README', phase: 'running', reason: '',
     graph: { start: 'succeeded', plan: 'succeeded', approval: 'succeeded', fork: 'succeeded', 'implement-a': 'running', 'implement-b': 'running' }, activeMs: 12 * minute + 8000, attempts: attemptsFor('parallel', true) },
   blocked: { flow: flowOf('dev'), bindings: devBindings, task: 'Sửa lỗi chia cho 0 trong divide()', phase: 'blocked', reason: 'Code đã sửa xong và npm test đạt, nhưng reviewer bắt buộc vẫn chưa xác nhận được 1 tiêu chí sau 2 vòng sửa: nó không chạy được git diff trong sandbox nên không so được với bản trước khi sửa. NeoMind dừng trước khi commit để bạn quyết định.',

@@ -153,7 +153,7 @@ export function RunMonitor({ run, setRun, duplicate, remove }: { run: Run; setRu
 
     {phase === 'waiting_approval' && plan && <section className="overflow-hidden rounded-lg border border-attention/50 bg-card">
       <div className="flex items-center gap-3 border-b px-4 py-3"><h3 className="m-0 text-[14px] font-semibold">Kế hoạch</h3>{run.plans.length > 1 && <span className="ml-auto text-[12px] text-muted-foreground">Phiên bản {run.plans.length}</span>}</div>
-      <PlanBody plan={plan} />
+      <PlanBody plan={plan} revisions={run.planRevisions} />
       <div className="flex flex-col gap-3 border-t px-4 py-3.5">
         <Textarea aria-label="Yêu cầu điều chỉnh" rows={3} value={feedback} onChange={e => setFeedback(e.target.value)} placeholder="Muốn đổi gì trong kế hoạch? Để trống nếu duyệt luôn." />
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2"><span className="min-w-0 flex-1 text-[12px] text-muted-foreground">{uniqueAgents.map(item => <span key={item.label} className="mr-3">{item.label} <strong className="font-semibold text-foreground">{agentLine(item.values)}</strong></span>)}</span>
@@ -175,7 +175,7 @@ export function RunMonitor({ run, setRun, duplicate, remove }: { run: Run; setRu
 
     <section className="divide-y overflow-hidden rounded-lg border bg-card">
       {phase !== 'waiting_approval' && plan && <Disclosure title={run.approvals?.at(-1)?.approval.source === 'flow' ? 'Kế hoạch (NeoMind tự duyệt)' : 'Kế hoạch đã duyệt'}
-        hint={`${run.plans.length > 1 ? `bản ${run.plans.length} · ` : ''}${plan.scope.map(item => item === '.' ? 'toàn bộ project' : item).slice(0, 3).join(', ')}`} className="-mb-px"><div className="-mx-4 -mb-3.5 border-t"><PlanBody plan={plan} /></div></Disclosure>}
+        hint={`${run.plans.length > 1 ? `bản ${run.plans.length} · ` : ''}${plan.scope.map(item => item === '.' ? 'toàn bộ project' : item).slice(0, 3).join(', ')}`} className="-mb-px"><div className="-mx-4 -mb-3.5 border-t"><PlanBody plan={plan} revisions={run.planRevisions} /></div></Disclosure>}
       <AgentSessions flow={flow} listing={listing} active={running} open={setSession} />
       {run.runtimeContext?.memory && <Disclosure title="Memory đã ghim cho run" hint={`${run.runtimeContext.memory.records?.length ?? 0} bản ghi`}>
         <p className="m-0 mb-2 text-[12.5px] text-muted-foreground">Nội dung và revision dưới đây là snapshot khi run bắt đầu, được đưa vào context agent.</p>

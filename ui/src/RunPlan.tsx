@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Square } from 'lucide-react';
-import type { Plan } from './runTypes';
+import type { Plan, Run } from './runTypes';
 
 /** The agent often writes the approach as numbered lines; show those as a list, anything else as a paragraph. */
 function Approach({ text }: { text: string }) {
@@ -15,8 +15,15 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   return <div className="grid grid-cols-1 gap-1 border-b px-4 py-3 last:border-b-0 sm:grid-cols-[132px_minmax(0,1fr)] sm:gap-4"><dt className="text-[12px] text-muted-foreground">{label}</dt><dd className="m-0 min-w-0 text-[13px] leading-relaxed">{children}</dd></div>;
 }
 
-/** The plan as a definition list: goal, approach, files, criteria, checks and risks. */
-export function PlanBody({ plan }: { plan: Plan }) {
+/** Why each earlier plan version was sent back: by the user, or by NeoMind because it broke a plan rule. */
+function PlanRevisions({ revisions }: { revisions: NonNullable<Run['planRevisions']> }) {
+  return <Row label="Các lần sửa"><ol className="m-0 flex list-none flex-col gap-2 p-0">{revisions.map(item => <li key={`${item.planningNodeId}-${item.version}`} className="flex flex-col gap-0.5">
+    <span className="text-[12px] text-muted-foreground">{item.author === 'neomind' ? 'NeoMind tự yêu cầu sửa vì kế hoạch vi phạm luật' : 'Bạn yêu cầu sửa'} · thành bản {item.version}</span>
+    <span className="whitespace-pre-line break-words">{item.feedback}</span></li>)}</ol></Row>;
+}
+
+/** The plan as a definition list: goal, approach, files, criteria, checks, risks and why earlier versions were sent back. */
+export function PlanBody({ plan, revisions = [] }: { plan: Plan; revisions?: Run['planRevisions'] }) {
   return <dl className="m-0">
     <Row label="Mục tiêu">{plan.goal}</Row>
     <Row label="Cách làm"><Approach text={plan.approach} /></Row>
@@ -24,5 +31,6 @@ export function PlanBody({ plan }: { plan: Plan }) {
     <Row label="Tiêu chí hoàn thành"><ul className="m-0 flex list-none flex-col gap-1.5 p-0">{plan.acceptanceCriteria.map(item => <li key={item} className="flex gap-2"><Square className="mt-1 size-3.5 shrink-0 text-faint" />{item}</li>)}</ul></Row>
     <Row label="Checks">{plan.checks.length ? <div className="flex flex-wrap items-center gap-1.5">{plan.checks.map(item => <Chip key={item}>{item}</Chip>)}<span className="text-[12px] text-muted-foreground">chạy qua Codex sau khi thực hiện</span></div> : <span className="text-muted-foreground">Không có check</span>}</Row>
     {plan.riskChanges.length > 0 && <Row label="Rủi ro"><ul className="m-0 list-disc pl-4">{plan.riskChanges.map(item => <li key={item}>{item}</li>)}</ul></Row>}
+    {revisions.length > 0 && <PlanRevisions revisions={revisions} />}
   </dl>;
 }

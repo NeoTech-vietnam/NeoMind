@@ -22,6 +22,8 @@ export type Run = {
   usage: { totalTokens: number | null; partial: boolean };
   graph: { nodes: Record<string, { status: string }> };
   plans: { nodeId: string; plan: Plan }[];
+  /** Requests to redo a plan; `author: 'neomind'` when NeoMind sent back a plan that broke a plan rule. */
+  planRevisions?: { planningNodeId: string; version: number; feedback: string; author?: 'neomind' }[];
   approvals?: { nodeId: string; approval: { source: string } }[];
   checks: { checkId: string; command: string; status: string }[];
   reviewerOutputs: { attemptId: string; nodeId: string; summary: string; result: { reviewerId: string; verdict: string; findingIds: string[] }; evidence?: Evidence }[];
