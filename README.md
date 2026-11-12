@@ -24,9 +24,19 @@ Mặc định standalone dùng `gpt-6-luna` reasoning `low`; có thể chọn `g
 ## Cấu hình project lần đầu (`neomind init`)
 
 ```bash
-npm run neomind -- init /absolute/path/to/project            # neomind/, neomind/project.json, skill hướng dẫn soạn flow
-npm run neomind -- init /absolute/path/to/project --force    # ghi đè skill hướng dẫn nếu đã bị sửa
+npm run neomind -- init /absolute/path/to/project            # neomind/, neomind/project.json, skill hướng dẫn soạn flow, tham chiếu trong AGENTS.md
+npm run neomind -- init /absolute/path/to/project --force    # ghi đè skill hướng dẫn nếu đã bị sửa (không đụng AGENTS.md)
 ```
+
+Codex không đọc `.claude/skills/`, còn Claude Code chỉ thấy mô tả của skill, nên `init` (và lần tự cài skill đầu tiên nói bên dưới) còn đảm bảo `AGENTS.md` ở gốc project có đúng mục:
+
+```markdown
+## References
+
+- Authoring NeoMind flows: read .claude/skills/neomind-flow-authoring/SKILL.md first.
+```
+
+File đã có dòng nào nhắc `.claude/skills/neomind-flow-authoring/SKILL.md` thì giữ nguyên từng byte (in `đã có tham chiếu skill, giữ nguyên`). Chưa có thì nối vào cuối (thêm gạch đầu dòng vào cuối mục `## References` nếu đã có mục đó), giữ kiểu xuống dòng CRLF/LF và encoding của file; chưa có `AGENTS.md` thì tạo file chỉ gồm mục trên. Nếu lúc đó project chỉ có `CLAUDE.md` thì dòng tham chiếu cũng được nối vào `CLAUDE.md`, trừ khi nó đã import `@AGENTS.md` hoặc đã nhắc tới skill. NeoMind chỉ nối thêm, không bao giờ ghi đè nội dung của người dùng, kể cả với `--force`; `AGENTS.md`/`CLAUDE.md` là symlink thì từ chối. Các tool session soạn flow, agent và skill (`flow_draft`, `flow_validate`, `flow_publish`, `flow_pin_bindings`, `profile_draft`, `profile_publish`, `skill_create`, `skill_update`) cũng nhắc agent đọc skill trước.
 
 `init` tạo `neomind/` (project cũ dùng `.neomind/` thì giữ chỗ đó), ghi `neomind/project.json` với đúng các giá trị mặc định mà NeoMind vẫn dùng khi chưa có file (nên hành vi project không đổi, chỉ hiện ra để sửa), và cài skill [`neomind-flow-authoring`](.claude/skills/neomind-flow-authoring/SKILL.md) vào `.claude/skills/neomind-flow-authoring/SKILL.md` của project để agent (Claude Code và các agent đọc `.claude/skills`) biết các ràng buộc runtime trước khi soạn flow. Chạy lại không đổi gì: thư mục và `project.json` đã có được giữ nguyên, skill đã bị sửa được giữ (in `đã bị sửa, giữ nguyên`), chỉ `--force` ghi đè skill. Không chạy `init` cũng được: lần ghi đầu tiên tạo `neomind/` (flow, agent, skill, chương trình, memory hoặc cấu hình đầu tiên) tự cài skill một lần; repo chỉ được đọc hoặc preview thì không có gì được ghi. Xóa skill sau đó thì NeoMind không cài lại. Cùng hàm core có ở API `POST /api/project/init` (`{ "force": true }` tùy chọn) và tool session `neomind_project_init` (`force` cần `confirmed: true`). Bản skill NeoMind mang theo được sinh từ file trong repo này bằng `node scripts/sync-project-guide.mjs`; test báo lỗi khi hai bản lệch nhau.
 

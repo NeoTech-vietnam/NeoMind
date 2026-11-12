@@ -2,6 +2,16 @@
 
 Cập nhật: **11/11/2026**. Branch: `hieu/adaptive-agent-flow`. Bàn giao: [11/11 khôi phục MCP, chạy lại flow, OpenCode](session-handoff-2026-11-11.md).
 
+## Tham chiếu skill soạn flow trong `AGENTS.md` — 12/11/2026
+
+Branch `feat/init-agents-ref` (worktree `../test_workflow_worktrees/init-agents-ref`). Codex không đọc `.claude/skills/`, nên session mới được giao soạn flow có thể bỏ qua skill.
+
+- `installGuideReference` (`src/storage/project-guide.ts`), gọi cùng chỗ với `installProjectGuide` (`projectDirCreated` khi tạo `neomind/` lần đầu, chỉ `console.warn` khi lỗi; `initProject`): `AGENTS.md` có dòng nhắc `.claude/skills/neomind-flow-authoring/SKILL.md` → giữ nguyên; chưa có → nối `- Authoring NeoMind flows: read … first.` vào cuối mục `## References` (hoặc thêm mục), giữ CRLF/LF, BOM/UTF-16; chưa có file → tạo file chỉ gồm mục đó. Khi tạo `AGENTS.md` cạnh một `CLAUDE.md` có sẵn: nối dòng vào `CLAUDE.md` nếu nó chưa import `@AGENTS.md` và chưa nhắc skill. Không đi qua symlink; file mới tạo bằng hard link (không thay file người khác vừa tạo), file cũ thay bằng rename sau khi kiểm lại byte chưa đổi.
+- `init` trả thêm `agents` (`created | appended | present`) và `claude` (chỉ khi xét `CLAUDE.md`); CLI in thêm dòng `AGENTS.md: …`. `--force` không ảnh hưởng.
+- Mô tả 8 tool soạn flow/agent/skill trong `SESSION_TOOLS` thêm câu "Before authoring, read … (run project_init if it is missing)."; extension Nimbalyst và MCP standalone dùng chung mảng này.
+
+Kiểm chứng Windows (12/11/2026): `test/project-guide.test.ts` 11 test, đạt (5 test mới: nối LF/CRLF không newline cuối/mục References có sẵn + BOM + code fence/mục References rỗng/UTF-16LE, chạy lại và `--force` không đổi byte; file đã nhắc skill giữ nguyên từng byte và không đụng `CLAUDE.md`; chỉ có `CLAUDE.md`, có `@AGENTS.md`; symlink, trên máy không có quyền file symlink thì dùng junction; mô tả tool). `npm test` đầy đủ: 320 test, 318 pass, 0 fail, 2 skip. `tsc -p tsconfig.ui.json --noEmit` và build extension đạt (bundle backend chứa câu mới). Chưa kiểm chứng: Linux (symlink file thật), cài extension vào Nimbalyst.
+
 ## Tự cài skill soạn flow, `neomind init` — 12/11/2026
 
 Branch `feat/project-init` (worktree `../test_workflow_worktrees/project-init`).
