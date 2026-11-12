@@ -46,14 +46,16 @@ let pending: { proposal: { proposalId: string; createdAt: string; origin?: strin
 ];
 const selection = { retrievalMode: 'lexical', scopes: [], tags: [], requireTaskMatch: false, inferTaskPaths: false, maxRecords: 30, maxBodyBytes: 16000 };
 const proposal = { proposalId: 'lesson-1', record: { id: 'guard-input', type: 'lesson', scope: 'src/', tags: ['validation'], body: 'Kiểm tra dữ liệu đầu vào trước khi tính toán.', sources: ['src/parser.ts'] } };
-type GallerySkill = { id: string; source: 'neomind' | 'claude'; name: string; description: string; body: string; files: Record<string, string>; sha256: string };
+type GallerySkill = { id: string; source: 'neomind' | 'agents' | 'claude'; name: string; description: string; body: string; files: Record<string, string>; sha256: string; shadowed?: { path: string; source: 'claude'; sha256: string }[] };
 const skillLibrary: GallerySkill[] = [
   { id: 'review', source: 'neomind', name: 'Review', description: 'Review độc lập có bằng chứng', body: '# Checklist review\n\n- Thay đổi đúng yêu cầu và kế hoạch đã duyệt\n- Có test cho hành vi mới\n- Trích dẫn file và dòng làm bằng chứng\n', files: { 'reference.md': '# Tham khảo\n\nCác lỗi thường gặp khi review.\n' }, sha256: 'c'.repeat(64) },
   { id: 'release-notes', source: 'neomind', name: 'Release notes', description: 'Viết ghi chú phát hành ngắn', body: '# Ghi chú phát hành\n\nMỗi thay đổi một dòng, bắt đầu bằng động từ.\n', files: {}, sha256: 'e'.repeat(64) },
+  { id: 'neomind-flow-authoring', source: 'agents', name: 'neomind-flow-authoring', description: 'Đọc trước khi tạo hoặc sửa flow, agent, skill của NeoMind', body: '# NeoMind flow authoring\n\nRàng buộc runtime mà kiểm tra flow chưa bắt được.\n', files: {}, sha256: '7'.repeat(64),
+    shadowed: [{ path: '.claude/skills/neomind-flow-authoring/SKILL.md', source: 'claude', sha256: '8'.repeat(64) }] },
   { id: 'style-guide', source: 'claude', name: 'Style guide', description: 'Quy tắc code', body: 'Dùng TypeScript strict.\n', files: {}, sha256: 'b'.repeat(64) },
 ];
 const skillContent = (skill: GallerySkill) => `---\nname: ${skill.name}\ndescription: ${skill.description}\n---\n\n${skill.body}`;
-const skillPathOf = (skill: GallerySkill) => `${skill.source === 'claude' ? '.claude' : 'neomind'}/skills/${skill.id}/SKILL.md`;
+const skillPathOf = (skill: GallerySkill) => `${skill.source === 'neomind' ? 'neomind' : `.${skill.source}`}/skills/${skill.id}/SKILL.md`;
 const skillUsageOf = (skill: GallerySkill) => skill.id === 'review' ? { sha256: skill.sha256,
   profiles: [{ profileId: 'ts-strict', name: 'Implementer · TypeScript strict', revision: 'd'.repeat(64), draft: { sha256: hash.includes('stale') ? 'a'.repeat(64) : skill.sha256, stale: hash.includes('stale') }, latest: { version: 2, sha256: 'a'.repeat(64), stale: true } }],
   flows: [{ flowId: 'dev', name: 'Dev', revision: 'd'.repeat(64), draft: [{ nodeId: 'verify/independent-reviewer', label: 'Review · independent-reviewer', sha256: 'a'.repeat(64), stale: hash.includes('stale') }], published: [{ nodeId: 'verify/independent-reviewer', label: 'Review · independent-reviewer', sha256: 'a'.repeat(64), stale: true }], publishedVersion: 3 }] }
@@ -81,11 +83,11 @@ setApiTransport(async (endpoint, method, body) => {
   if (path === '/api/skills' && method === 'GET') return ok({ skills: catalog });
   if (path === '/api/skills/status' && method === 'POST') return ok({ skills: (input?.refs as { id: string; path: string; sha256: string }[] ?? []).map(ref => { const found = catalog.find(item => item.path === ref.path); return found ? { ...ref, status: found.sha256 === ref.sha256 ? 'ok' : 'changed', currentSha256: found.sha256 } : { ...ref, status: 'missing' }; }) });
   if (path === '/api/flows/dev/draft') return ok({ draft: galleryFlow, revision: 'd'.repeat(64) });
-  if (path === '/api/skill-library') return ok({ skills: skillLibrary.map(skill => { const usage = skillUsageOf(skill); return { id: skill.id, path: skillPathOf(skill), sha256: skill.sha256, name: skill.name, description: skill.description, source: skill.source, editable: skill.source === 'neomind', used: usage.profiles.length + usage.flows.length, stale: hash.includes('stale') && skill.id === 'review' ? 2 : 0 }; }), templates: ['empty', 'review-checklist'] });
+  if (path === '/api/skill-library') return ok({ skills: skillLibrary.map(skill => { const usage = skillUsageOf(skill); return { id: skill.id, path: skillPathOf(skill), sha256: skill.sha256, name: skill.name, description: skill.description, source: skill.source, shadowed: skill.shadowed, editable: skill.source === 'neomind', used: usage.profiles.length + usage.flows.length, stale: hash.includes('stale') && skill.id === 'review' ? 2 : 0 }; }), templates: ['empty', 'review-checklist'] });
   if (path === '/api/skills' && method === 'POST') { const skill: GallerySkill = { id: String(input?.id), source: 'neomind', name: String(input?.name), description: String(input?.description ?? ''), body: '# Khi nào dùng\n\n# Cách làm\n', files: {}, sha256: 'f'.repeat(64) }; skillLibrary.push(skill); return ok({ skill: skillDetail(skill) }); }
   const skillRoute = /^\/api\/skills\/([^/]+)(?:\/(usage|repin|delete|files)(?:\/(.+))?)?$/.exec(path);
   if (skillRoute && skillRoute[1] !== 'status') {
-    const skill = skillLibrary.find(item => item.id === decodeURIComponent(skillRoute[1]!) && item.source === (url.searchParams.get('source') === 'claude' ? 'claude' : 'neomind'));
+    const skill = skillLibrary.find(item => item.id === decodeURIComponent(skillRoute[1]!) && item.source === (url.searchParams.get('source') ?? 'neomind'));
     if (!skill) return { status: 404, body: { error: 'Không có skill' } };
     if (!skillRoute[2] && method === 'PUT') { Object.assign(skill, { name: input?.name ?? skill.name, description: input?.description ?? skill.description, body: input?.body ?? skill.body }); return ok({ skill: skillDetail(skill), usage: skillUsageOf(skill) }); }
     if (!skillRoute[2]) return ok(skillDetail(skill));

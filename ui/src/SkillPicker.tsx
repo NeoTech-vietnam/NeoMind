@@ -7,7 +7,7 @@ import { Badge } from './components/ui/badge';
 import { Select } from './components/ui/select';
 
 type Ref = Profile['skills'][number];
-type Catalog = Ref & { name: string; description: string; source: string };
+type Catalog = Ref & { name: string; description: string; source: string; shadowed?: { path: string }[] };
 type Status = Ref & { status: 'ok' | 'changed' | 'missing'; currentSha256?: string };
 
 /** Edit pinned references using only the current project catalog. */
@@ -23,7 +23,7 @@ export function SkillPicker({ refs, onChange, readOnly = false }: { refs: Ref[];
   return <div className="flex flex-col gap-3">
     {error && <p role="alert" className="text-danger">{error}</p>}
     {!refs.length && <p className="text-[12px] text-muted-foreground">Chưa chọn skill.</p>}
-    {refs.map((ref, index) => { const item = catalog.find(skill => skill.path === ref.path), status = statuses.find(value => value.path === ref.path && value.id === ref.id);
+    {refs.map((ref, index) => { const item = catalog.find(skill => skill.path === ref.path || skill.shadowed?.some(copy => copy.path === ref.path)), status = statuses.find(value => value.path === ref.path && value.id === ref.id);
       return <div key={`${ref.path}-${index}`} className="flex flex-wrap items-center gap-2 rounded-md border p-2">
         <div className="min-w-0 flex-1"><strong className="block truncate">{item?.name ?? ref.id}</strong><code className="block truncate text-[11px] text-muted-foreground">{ref.path} · {ref.sha256.slice(0, 12)}</code></div>
         {status && <Badge status={status.status === 'ok' ? 'success' : status.status === 'changed' ? 'attention' : 'danger'}>{status.status === 'ok' ? 'Khớp' : status.status === 'changed' ? 'Đã đổi' : 'Thiếu'}</Badge>}

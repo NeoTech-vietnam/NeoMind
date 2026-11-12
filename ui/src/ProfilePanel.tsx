@@ -12,6 +12,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Callout, EmptyState } from './components/ui/misc';
 import { cn } from './lib/utils';
 import { SkillPicker } from './SkillPicker';
+import type { SkillSource } from './SkillsPanel';
 
 type Metadata = { profileId: string; name: string; archived: boolean };
 type Use = { flowId: string; flowName: string; nodeId: string; nodeName: string; profileId: string; version: number };
@@ -26,7 +27,7 @@ const permissions: { key: keyof Profile['requestedPermissions']; label: string; 
 const listClass = 'flex w-full cursor-pointer items-center gap-2 rounded-md border-0 bg-transparent px-2.5 py-2 text-left text-[12.5px] text-fg-2 hover:bg-accent';
 
 /** Agents screen (profiles in code and API): instructions, permissions and pinned skills reused by flow steps. */
-export function ProfilePanel({ onOpenSkill }: { onOpenSkill?: ((id?: string, source?: 'neomind' | 'claude') => void) | undefined } = {}) {
+export function ProfilePanel({ onOpenSkill }: { onOpenSkill?: ((id?: string, source?: SkillSource) => void) | undefined } = {}) {
   const revision = useRef<string | undefined>(undefined);
   const [profiles, setProfiles] = useState<Metadata[]>([]), [builtins, setBuiltins] = useState<Profile[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null), [original, setOriginal] = useState(''), [builtin, setBuiltin] = useState(false);

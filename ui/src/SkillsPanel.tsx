@@ -11,8 +11,10 @@ import { Dialog, DialogActions, DialogContent, SheetContent } from './components
 import { Callout, EmptyState } from './components/ui/misc';
 import { cn } from './lib/utils';
 
-export type SkillSource = 'neomind' | 'claude';
-type LibraryItem = { id: string; path: string; sha256: string; name: string; description: string; source: SkillSource; editable: boolean; used: number; stale: number };
+export type SkillSource = 'neomind' | 'agents' | 'claude';
+// Same-ID copies in lower-priority folders (neomind > .agents > .claude); the catalog offers only the listed one.
+type Shadowed = { path: string; source: SkillSource; sha256: string };
+type LibraryItem = { id: string; path: string; sha256: string; name: string; description: string; source: SkillSource; editable: boolean; used: number; stale: number; shadowed?: Shadowed[] };
 type Skill = { id: string; path: string; source: SkillSource; editable: boolean; sha256: string; content: string; name: string; description: string; body: string; files: string[]; prompt: string };
 type Pin = { sha256: string; stale: boolean };
 export type SkillUsage = { sha256: string | null;
@@ -23,7 +25,7 @@ type CompanionFile = { path: string; content: string; sha256: string | null; ori
 
 const listClass = 'flex w-full cursor-pointer items-center gap-2 rounded-md border-0 bg-transparent px-2.5 py-2 text-left text-[12.5px] text-fg-2 hover:bg-accent';
 const templateOptions = [{ value: 'empty', label: 'Trống' }, { value: 'review-checklist', label: 'Checklist review' }];
-const skillUrl = (id: string, source: SkillSource = 'neomind', suffix = '') => `/api/skills/${encodeURIComponent(id)}${suffix}${source === 'claude' ? '?source=claude' : ''}`;
+const skillUrl = (id: string, source: SkillSource = 'neomind', suffix = '') => `/api/skills/${encodeURIComponent(id)}${suffix}${source === 'neomind' ? '' : `?source=${source}`}`;
 const fileUrl = (id: string, file: string) => `/api/skills/${encodeURIComponent(id)}/files/${file.split('/').map(encodeURIComponent).join('/')}`;
 const staleUses = (usage: SkillUsage | null) => !usage ? 0 : usage.profiles.filter(item => item.draft?.stale).length + usage.flows.reduce((sum, item) => sum + item.draft.filter(ref => ref.stale).length, 0);
 
@@ -43,7 +45,7 @@ export function SkillUsageList({ usage }: { usage: SkillUsage }) {
   </div>;
 }
 
-/** Skills screen: project skills in neomind/skills are edited here; .claude/skills are shown read-only. */
+/** Skills screen: project skills in neomind/skills are edited here; .agents/skills and .claude/skills are shown read-only. */
 export function SkillsPanel({ focus }: { focus?: { id: string; source: SkillSource; nonce: number } | undefined }) {
   const [items, setItems] = useState<LibraryItem[]>([]), [query, setQuery] = useState('');
   const [skill, setSkill] = useState<Skill | null>(null), [usage, setUsage] = useState<SkillUsage | null>(null);
@@ -112,6 +114,7 @@ export function SkillsPanel({ focus }: { focus?: { id: string; source: SkillSour
     if (!skill || !await confirmAction({ title: `Xóa file ${file}?`, description: 'File bị xóa khỏi thư mục skill. Các run đã tạo không bị ảnh hưởng.', confirmLabel: 'Xóa file', danger: true })) return;
     await action(async () => { await api(fileUrl(skill.id, file), 'DELETE', {}); if (files?.path === file) setFiles(null); await open(skill.id, skill.source); setTab('files'); });
   }
+  const shadowed = skill ? items.find(item => item.id === skill.id && item.source === skill.source)?.shadowed ?? [] : [];
   const needle = query.toLocaleLowerCase(), visible = items.filter(item => `${item.name} ${item.id} ${item.description}`.toLocaleLowerCase().includes(needle));
   const stale = staleUses(usage), used = usage ? usage.profiles.length + usage.flows.reduce((sum, flow) => sum + new Set([...flow.draft, ...flow.published].map(ref => ref.nodeId)).size, 0) : 0;
   const listItem = (item: LibraryItem) => <button key={`${item.source}-${item.id}`} className={cn(listClass, skill?.id === item.id && skill.source === item.source && 'bg-accent')} onClick={() => void canLeave().then(ok => { if (ok) void action(() => open(item.id, item.source)); })}>
@@ -125,14 +128,16 @@ export function SkillsPanel({ focus }: { focus?: { id: string; source: SkillSour
       <p className="profiles-caption">CỦA PROJECT · neomind/skills</p>
       {visible.filter(item => item.source === 'neomind').map(listItem)}
       {!items.some(item => item.source === 'neomind') && <p className="m-0 px-2.5 text-[12px] text-muted-foreground">Chưa có skill. Tạo skill đầu tiên bằng nút Skill mới.</p>}
-      {items.some(item => item.source === 'claude') && <><p className="profiles-caption">CLAUDE CODE · chỉ đọc</p>{visible.filter(item => item.source === 'claude').map(listItem)}</>}
+      {items.some(item => item.source === 'agents') && <><p className="profiles-caption">AGENT SKILLS · chỉ đọc · sửa trong .agents/skills</p>{visible.filter(item => item.source === 'agents').map(listItem)}</>}
+      {items.some(item => item.source === 'claude') && <><p className="profiles-caption">CLAUDE CODE · chỉ đọc · sửa trong .claude/skills</p>{visible.filter(item => item.source === 'claude').map(listItem)}</>}
     </aside><div className="profiles-detail">{!skill ? <EmptyState title="Chọn hoặc tạo skill">Skill là một file SKILL.md (tên, mô tả, hướng dẫn Markdown) cùng các file phụ.</EmptyState> : <>
       <div className="profiles-detail-header"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h2 className="m-0 truncate text-[16px] font-semibold">{skill.name}</h2>{!skill.editable && <Tag>chỉ đọc</Tag>}</div>
         <p className="m-0 mt-1 truncate text-[11px] text-muted-foreground"><code>{skill.path}</code> · {skill.sha256.slice(0, 12)}{dirty ? ' · Đã sửa, chưa lưu' : ''}</p></div>
         <Button disabled={busy} onClick={() => setPromptOpen(true)}><Eye />Xem đoạn chèn vào prompt</Button>
         {skill.editable && <Button variant="ghost" size="icon" aria-label="Xóa skill" disabled={busy} onClick={() => setDeleteOpen(true)}><Trash2 /></Button>}
         {skill.editable && <Button variant="primary" disabled={busy || !dirty || !name.trim()} onClick={() => void save()}>Lưu</Button>}</div>
-      {!skill.editable && <Callout tone="hint" className="mx-5 mt-4">Skill của Claude Code. Sửa trực tiếp trong <code>{skill.path}</code>; agent đang ghim sẽ báo “Đã đổi” để bạn ghim lại.</Callout>}
+      {!skill.editable && <Callout tone="hint" className="mx-5 mt-4">{skill.source === 'agents' ? 'Skill dùng chung theo chuẩn Agent Skills (Codex, OpenCode đọc thư mục này).' : 'Skill của Claude Code.'} Sửa trực tiếp trong <code>{skill.path}</code>; agent đang ghim sẽ báo “Đã đổi” để bạn ghim lại.</Callout>}
+      {shadowed.length > 0 && <Callout tone="attention" className="mx-5 mt-4">Cùng ID còn có ở {shadowed.map(item => <span key={item.path}><code>{item.path}</code> ({item.sha256 === skill.sha256 ? 'cùng nội dung' : 'khác nội dung'}) </span>)}. Danh mục chọn skill chỉ đưa ra bản này; agent/bước đã ghim bản kia vẫn dùng bản đó.</Callout>}
       {stale > 0 && <Callout tone="attention" className="mx-5 mt-4"><div className="flex flex-wrap items-center gap-3"><span className="flex-1">{savedStale ? 'Đã lưu. ' : ''}{stale} agent/bước đang ghim bản cũ của skill này; run mới vẫn dùng bản cũ cho tới khi ghim lại và lưu agent/flow.</span>
         <Button size="sm" disabled={busy} onClick={() => void repin()}><RefreshCw />Ghim lại tất cả</Button></div></Callout>}
       <Tabs value={tab} onValueChange={setTab}><TabsList className="px-5 pt-2"><TabsTrigger value="content">Nội dung</TabsTrigger><TabsTrigger value="files" count={skill.files.length}>File phụ</TabsTrigger><TabsTrigger value="usage" count={used}>Nơi dùng</TabsTrigger></TabsList>
