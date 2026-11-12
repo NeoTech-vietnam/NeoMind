@@ -8,6 +8,7 @@ import { flowSchema, type Flow, type ProjectConfig, type ProjectPolicy } from '.
 import { canvasToFlow, flowToCanvas, type CanvasImportReport } from '../domain/flow-canvas.js';
 import { RevisionConflict, revisionOf, withLibraryLock } from './library-lock.js';
 import { replaceJson } from './atomic-json.js';
+import { projectDirCreated } from './project-guide.js';
 
 const idSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).refine(v => v !== '.' && v !== '..');
 const metadataSchema = z.strictObject({ schemaVersion: z.literal(1), flowId: idSchema, name: z.string().min(1), archived: z.boolean() });
@@ -40,7 +41,7 @@ export class FlowLibrary {
   create(flowId: string, name: string): Promise<FlowMetadata> { return withLibraryLock(this.root, () => this.createUnlocked(flowId, name)); }
   private async createUnlocked(flowId: string, name: string): Promise<FlowMetadata> {
     const metadata = metadataSchema.parse({ schemaVersion: 1, flowId, name, archived: false });
-    await mkdir(this.root, { recursive: true });
+    projectDirCreated(await mkdir(this.root, { recursive: true }));
     await mkdir(this.directory(flowId));
     await mkdir(path.join(this.directory(flowId), 'versions'));
     await replaceJson(this.metadataFile(flowId), metadata);

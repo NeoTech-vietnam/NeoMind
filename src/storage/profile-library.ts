@@ -6,6 +6,7 @@ import { hashJson } from '../domain/resolve.js';
 import { profileSchema, type Profile } from '../domain/schema.js';
 import { RevisionConflict, revisionOf, withLibraryLock } from './library-lock.js';
 import { replaceJson } from './atomic-json.js';
+import { projectDirCreated } from './project-guide.js';
 import { flowAuthorSchema, type FlowAuthor } from './flow-library.js';
 
 const identifier = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
@@ -30,7 +31,7 @@ export class ProfileLibrary {
   create(profileId: string, name: string) { return withLibraryLock(this.root, () => this.createUnlocked(profileId, name)); }
   private async createUnlocked(profileId: string, name: string) {
     const metadata = metadataSchema.parse({ schemaVersion: 1, profileId, name, archived: false });
-    await mkdir(this.root, { recursive: true }); await mkdir(this.directory(profileId));
+    projectDirCreated(await mkdir(this.root, { recursive: true })); await mkdir(this.directory(profileId));
     await mkdir(path.join(this.directory(profileId), 'versions')); await replaceJson(this.metaFile(profileId), metadata);
     return metadata;
   }

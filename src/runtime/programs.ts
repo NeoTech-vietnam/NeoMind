@@ -8,6 +8,7 @@ import { templates } from '../domain/templates.js';
 import type { BindingOverride } from '../domain/resolve.js';
 import { FlowLibrary } from '../storage/flow-library.js';
 import { projectDir } from '../storage/project-dir.js';
+import { projectDirCreated } from '../storage/project-guide.js';
 import { withLibraryLock } from '../storage/library-lock.js';
 import { gitConfigEnv } from '../workspace/git-env.js';
 import type { RunManager } from './run-manager.js';
@@ -59,7 +60,7 @@ export async function createProgram(root: string, input: unknown) {
   const program = programSchema.parse(input);
   validateGraph(program);
   for (const flowId of new Set(program.phases.map(phase => phase.flowId))) await requirePublished(root, flowId);
-  await mkdir(folder(root), { recursive: true });
+  projectDirCreated(await mkdir(folder(root), { recursive: true }));
   return withLibraryLock(folder(root), async () => {
     const target = file(root, program.programId);
     try { await writeFile(target, `${JSON.stringify(program, null, 2)}\n`, { flag: 'wx' }); }

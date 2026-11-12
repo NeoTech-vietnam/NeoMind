@@ -32,6 +32,7 @@ import { changedPaths, planDirtyImport } from '../workspace/dirty-import.js';
 import { runChanges } from '../workspace/checkout-apply.js';
 import { branchLayout } from '../domain/branches.js';
 import { projectDir } from '../storage/project-dir.js';
+import { projectDirCreated } from '../storage/project-guide.js';
 import { listTranscripts, readTranscript, transcriptDirectory } from '../core/transcript.js';
 import { runnerHistory, sessionTurnIndex } from './session-history.js';
 import { withLibraryLock } from '../storage/library-lock.js';
@@ -277,7 +278,7 @@ export class RunManager {
     if (input.initializeDefault) {
       const metadata = projectDir(primaryWorktree(this.projectRoot));
       try { const info = await lstat(metadata); if (info.isSymbolicLink() || !info.isDirectory()) throw new Error('Project metadata directory must be a real directory'); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; await mkdir(metadata); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; await mkdir(metadata); projectDirCreated(metadata); }
       const target = path.join(metadata, 'memory'); await mkdir(target, { recursive: true }); root = resolveDefaultMemoryRoot(this.projectRoot);
     }
     if (!root) throw new Error('Memory root is required');

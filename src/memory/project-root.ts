@@ -2,6 +2,7 @@ import { lstatSync, mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { primaryWorktree } from '../workspace/worktree.js';
 import { projectDir } from '../storage/project-dir.js';
+import { projectDirCreated } from '../storage/project-guide.js';
 
 /** Where the default memory lives (`neomind/memory` of the primary worktree), whether or not it exists yet. */
 export function defaultMemoryLocation(workspace: string): string {
@@ -17,7 +18,10 @@ export function resolveDefaultMemoryRoot(workspace: string, create = false): str
   if (create) {
     for (const target of [metadata, directory]) {
       try { lstatSync(target); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; mkdirSync(target); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        mkdirSync(target); if (target === metadata) projectDirCreated(metadata);
+      }
     }
   }
   const metadataInfo = lstatSync(metadata);

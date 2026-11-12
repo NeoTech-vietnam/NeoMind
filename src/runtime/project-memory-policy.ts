@@ -5,6 +5,7 @@ import { memorySelectionSchema, projectSchema, type ProjectConfig } from '../dom
 import { replaceJson } from '../storage/atomic-json.js';
 import { RevisionConflict, withLibraryLock } from '../storage/library-lock.js';
 import { projectDir } from '../storage/project-dir.js';
+import { projectDirCreated } from '../storage/project-guide.js';
 import { readProject } from './project.js';
 
 /** Read the whole project's revision so changing any other field prevents a stale editor from overwriting it. */
@@ -20,7 +21,7 @@ export async function writeMemorySelection(projectRoot: string, selection: unkno
     if (hashJson(config) !== expectedRevision) throw new RevisionConflict('Project config revision conflict; tải lại cấu hình trước khi lưu');
     const safeSelection = memorySelectionSchema.parse(selection);
     const next: ProjectConfig = projectSchema.parse({ ...config, memorySelection: safeSelection });
-    await mkdir(directory, { recursive: true });
+    projectDirCreated(await mkdir(directory, { recursive: true }));
     for (const target of [directory, file]) {
       try { if ((await lstat(target)).isSymbolicLink()) throw new Error(`Không ghi cấu hình qua symlink: ${target}`); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }

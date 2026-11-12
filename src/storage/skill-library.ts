@@ -9,6 +9,7 @@ import { FlowLibrary } from './flow-library.js';
 import { RevisionConflict, withLibraryLock } from './library-lock.js';
 import { ProfileLibrary } from './profile-library.js';
 import { projectDir } from './project-dir.js';
+import { projectDirCreated } from './project-guide.js';
 import { skillCatalog, skillCompanions, skillMetadata, resolveSkill } from './skill-catalog.js';
 
 /**
@@ -114,7 +115,7 @@ export async function createSkill(root: string, input: CreateSkillInput, actor: 
       try { await lstat(existing); throw new Error(`Skill ${id} already exists`); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
-    await mkdir(path.dirname(directory), { recursive: true }); await mkdir(directory);
+    projectDirCreated(await mkdir(path.dirname(directory), { recursive: true })); await mkdir(directory);
     await replaceText(path.join(directory, 'SKILL.md'), content);
   });
   return getSkill(root, id);
