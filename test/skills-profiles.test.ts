@@ -46,7 +46,11 @@ test('migration changes selected drafts only and rejects stale revisions', async
   await publishProfile(root, 'custom', { author: { kind: 'human' }, expectedRevision: p.revision });
   await publishProfile(root, 'custom', { author: { kind: 'human' }, expectedRevision: p.revision });
   const draft = structuredClone(templates.dev); const node = draft.definition.nodes.find(item => item.id === 'implement'); assert.ok(node?.type === 'agent_task'); node.profileId = 'custom'; node.profileVersion = 1;
+  // The project has no role defaults, so a runnable flow pins every binding field.
+  const pinned = (value: string) => ({ mode: 'pinned' as const, value });
+  for (const binding of Object.values(draft.definition.bindings)) Object.assign(binding, { runner: pinned('codex'), provider: pinned('openai'), model: pinned('gpt-6-luna'), reasoning: pinned('low') });
   const created = await draftFlow(root, { flowId: 'mine', draft });
+  assert.deepEqual(created.diagnostics, []);
   await publishFlow(root, 'mine', { author: { kind: 'human' }, expectedRevision: created.revision });
   const before = await profileUsage(root, 'custom'); assert.equal(before[0]?.draft[0]?.version, 1); assert.equal(before[0]?.published[0]?.version, 1);
   const stale = await migrateProfile(root, 'custom', 2, [{ flowId: 'mine', expectedRevision: 'f'.repeat(64) }]); assert.ok(stale.results[0]?.error);

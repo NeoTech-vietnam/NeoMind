@@ -64,27 +64,25 @@ export interface RunConfiguration {
   contentHash: string;
 }
 
+/** One step that runs an agent, keyed as in a run snapshot: the node id, or `<review>/<reviewer>` for a reviewer. */
+export interface AgentStep { key: string; nodeId: string; bindingId: string | undefined; profileId: string; profileVersion: number; reviewerId?: string }
+export function agentSteps(flow: Flow): AgentStep[] {
+  return flow.definition.nodes.flatMap((node): AgentStep[] => {
+    if (node.type === 'agent_task') return [{ key: node.id, nodeId: node.id, bindingId: node.bindingId, profileId: node.profileId, profileVersion: node.profileVersion }];
+    if (node.type === 'integration' && node.bindingId && node.profileId && node.profileVersion) return [{ key: node.id, nodeId: node.id, bindingId: node.bindingId, profileId: node.profileId, profileVersion: node.profileVersion }];
+    if (node.type === 'review_group') return node.reviewers.map(reviewer => ({ key: `${node.id}/${reviewer.id}`, nodeId: node.id, reviewerId: reviewer.id,
+      bindingId: flow.definition.sessionGroups.find(g => g.id === reviewer.sessionGroup)?.bindingId, profileId: reviewer.profileId, profileVersion: reviewer.profileVersion }));
+    return [];
+  });
+}
+
 /** Detaches the snapshot from editable objects. Runtime state is deliberately not included. */
 export function snapshotConfiguration(flow: Flow, project: ProjectConfig, overrides: Record<string, BindingOverride> = {}): RunConfiguration {
   const bindings: Record<string, ResolvedBinding> = {};
-  for (const node of flow.definition.nodes) {
-    if (node.type === 'agent_task') {
-      const binding = flow.definition.bindings[node.bindingId];
-      if (!binding) throw new Error(`Unknown binding ${node.bindingId}`);
-      bindings[node.id] = resolveBinding(binding, flow.definition.bindingDefaults[node.bindingId], project.roleDefaults[node.profileId], overrides[node.id]);
-    } else if (node.type === 'integration' && node.bindingId && node.profileId) {
-      const binding = flow.definition.bindings[node.bindingId];
-      if (!binding) throw new Error(`Unknown binding ${node.bindingId}`);
-      bindings[node.id] = resolveBinding(binding, flow.definition.bindingDefaults[node.bindingId], project.roleDefaults[node.profileId], overrides[node.id]);
-    } else if (node.type === 'review_group') {
-      for (const reviewer of node.reviewers) {
-        const group = flow.definition.sessionGroups.find(g => g.id === reviewer.sessionGroup);
-        const binding = group && flow.definition.bindings[group.bindingId];
-        if (!binding) throw new Error(`Unknown binding for reviewer ${reviewer.id}`);
-        const key = `${node.id}/${reviewer.id}`;
-        bindings[key] = resolveBinding(binding, flow.definition.bindingDefaults[group.bindingId], project.roleDefaults[reviewer.profileId], overrides[key]);
-      }
-    }
+  for (const step of agentSteps(flow)) {
+    const binding = step.bindingId === undefined ? undefined : flow.definition.bindings[step.bindingId];
+    if (!binding) throw new Error(step.reviewerId ? `Unknown binding for reviewer ${step.reviewerId}` : `Unknown binding ${step.bindingId}`);
+    bindings[step.key] = resolveBinding(binding, flow.definition.bindingDefaults[step.bindingId!], project.roleDefaults[step.profileId], overrides[step.key]);
   }
   const snapshot = structuredClone(flow);
   return { flow: snapshot, projectId: project.projectId, policyVersion: project.policyVersion, bindings,

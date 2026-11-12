@@ -5,7 +5,6 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { compileFlow } from '../domain/compiler.js';
 import { skillReferenceSchema } from '../domain/schema.js';
 import { newFlowFromTemplate, templates } from '../domain/templates.js';
 import { FlowLibrary } from '../storage/flow-library.js';
@@ -17,7 +16,7 @@ import { workerScopeSupported } from '../adapters/worker-scope.js';
 import { RevisionConflict } from '../storage/library-lock.js';
 import type { RunnerId } from '../runners/agent-runner.js';
 import { projectDir } from '../storage/project-dir.js';
-import { authoringProject, flowBlocks, draftFlow, getFlow, validateFlow, flowDiff, publishFlow, assess } from '../runtime/flow-authoring.js';
+import { authoringProject, flowBlocks, draftFlow, getFlow, validateFlow, flowDiff, publishFlow, assess, checkFlow } from '../runtime/flow-authoring.js';
 import { flowAuthorSchema } from '../storage/flow-library.js';
 import { runStats } from '../runtime/run-stats.js';
 import { createProgram, listPrograms, markPhaseDelivered, programNext, programStatus, startPhase } from '../runtime/programs.js';
@@ -349,13 +348,13 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       }
       if (action === 'canvas-export' && method === 'POST') { const { file } = await library.exportCanvas(id, undefined, await readProject(projectRoot)); return reply(200, { file: path.relative(projectRoot, file) }); }
       if (action === 'canvas-import' && method === 'POST') {
-        const result = await library.importCanvas(id), compiled = compileFlow(result.draft, await policyFor(projectRoot));
-        return reply(200, { ...result, file: path.relative(projectRoot, library.canvasFile(id)), diagnostics: compiled.ok ? [] : compiled.diagnostics });
+        const result = await library.importCanvas(id), { diagnostics } = await checkFlow(projectRoot, result.draft);
+        return reply(200, { ...result, file: path.relative(projectRoot, library.canvasFile(id)), diagnostics });
       }
       if (action === 'validate' && method === 'POST') {
         const input = z.strictObject({ draft: z.json() }).parse(payload);
-        const result = compileFlow(input.draft, await policyFor(projectRoot));
-        return reply(200, result.ok ? { valid: true, order: result.order } : { valid: false, diagnostics: result.diagnostics });
+        // Includes what a run preview would refuse; warnings come back with a valid result.
+        return reply(200, await checkFlow(projectRoot, input.draft));
       }
       if (action === 'publish' && method === 'POST') { const input = z.strictObject({ expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(), author: flowAuthorSchema.optional() }).parse(payload); return reply(200, { version: await publishFlow(projectRoot, id, { author: input.author ?? { kind: 'human' }, ...(input.expectedRevision ? { expectedRevision: input.expectedRevision } : {}) }) }); }
       if ((action === 'archive' || action === 'restore') && method === 'POST') {

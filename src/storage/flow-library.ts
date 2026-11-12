@@ -126,7 +126,7 @@ export class FlowLibrary {
     if (metadata.archived) throw new Error('Archived flow cannot be published');
     const { draft, revision } = await this.readDraftWithRevision(flowId);
     if (expectedRevision !== undefined && revision !== expectedRevision) throw new RevisionConflict('Draft đã bị sửa ở nơi khác; tải lại trước khi publish');
-    const compiled = compileFlow(draft, policy, { aiAuthored: author?.kind === 'ai' });
+    const compiled = compileFlow(draft, policy, { aiAuthored: author?.kind === 'ai', authoring: true });
     if (!compiled.ok) throw new Error(`Invalid draft: ${compiled.diagnostics.map(d => d.code).join(', ')}`);
     if (compiled.flow.flowId !== flowId) throw new Error('Draft flow ID mismatch');
     const versions = await this.versions(flowId);

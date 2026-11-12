@@ -203,8 +203,9 @@ async function main(args: string[]): Promise<number> {
   if (args[0] === 'flow' && args[1] === 'validate' && (args.length === 3 || args.length === 4)) {
     const document: unknown = JSON.parse(await readFile(args[2]!, 'utf8'));
     const policy: unknown = args[3] ? JSON.parse(await readFile(args[3], 'utf8')) : defaultProject.policy;
-    const result = compileFlow(document, policy);
-    console.log(JSON.stringify(result.ok ? { valid: true, order: result.order } : { valid: false, diagnostics: result.diagnostics }, null, 2));
+    // No project here, so only graph, policy and authoring rules; `flow author-validate` also checks what a preview would refuse.
+    const result = compileFlow(document, policy, { authoring: true }), warnings = result.warnings ?? [];
+    console.log(JSON.stringify(result.ok ? { valid: true, order: result.order, ...(warnings.length ? { diagnostics: warnings } : {}) } : { valid: false, diagnostics: [...result.diagnostics, ...warnings] }, null, 2));
     return result.ok ? 0 : 1;
   }
   if (args[0] === 'flow' && args[1] === 'list' && args.length === 3) {

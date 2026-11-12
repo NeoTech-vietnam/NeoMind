@@ -85,22 +85,28 @@ export async function snapshotProjectFlow(projectRoot: string, flowId: string, v
     if (version !== undefined && version !== flow.version) throw new Error('Unknown template version');
   }
   if (workspaceMode) flow.definition.workspacePolicy = workspaceMode;
-  const profiles = new ProfileLibrary(path.join(projectDir(projectRoot), 'profiles'));
   if ((limits.maxConcurrency ?? 0) > flow.definition.limits.maxConcurrency || (limits.maxRepairRounds ?? 0) > flow.definition.limits.maxRepairRounds) throw new Error('Run limits cannot exceed the saved flow concurrency or repair limits');
   flow.definition.limits = { ...flow.definition.limits, ...limits };
-  const metadataProfiles = await profiles.list(), versions: Record<string, Profile> = {};
+  const lookup = await profileVersions(projectRoot), versions: Record<string, Profile> = {};
   const refs = flow.definition.nodes.flatMap(node => node.type === 'agent_task' ? [{ profileId: node.profileId, version: node.profileVersion }]
     : node.type === 'integration' && node.profileId && node.profileVersion ? [{ profileId: node.profileId, version: node.profileVersion }] : node.type === 'review_group' ? node.reviewers.map(reviewer => ({ profileId: reviewer.profileId, version: reviewer.profileVersion })) : []);
   for (const ref of refs) {
     const key = `${ref.profileId}@${ref.version}`;
     if (versions[key]) continue;
-    if (metadataProfiles.some(item => item.profileId === ref.profileId)) {
-      const { contentHash: _h, createdAt: _c, author: _a, ...profile } = await profiles.readVersion(ref.profileId, ref.version); versions[key] = profile;
-    } else {
-      const profile = builtinProfile(ref.profileId);
-      if (!profile || ref.version !== 1) throw new Error(`Missing profile version ${key}`);
-      versions[key] = profile;
-    }
+    versions[key] = await lookup.read(ref.profileId, ref.version);
   }
   return materializeRun(flow, await readProject(projectRoot), versions, projectRoot, overrides);
+}
+/** Published versions of the project's profiles, else a built-in profile at version 1: the lookup a run snapshot uses. */
+export async function profileVersions(projectRoot: string) {
+  const profiles = new ProfileLibrary(path.join(projectDir(projectRoot), 'profiles')), library = new Set((await profiles.list()).map(item => item.profileId));
+  return {
+    published: async (profileId: string): Promise<number[]> => library.has(profileId) ? await profiles.versions(profileId).catch(() => []) : builtinProfile(profileId) ? [1] : [],
+    read: async (profileId: string, version: number): Promise<Profile> => {
+      if (library.has(profileId)) { const { contentHash: _h, createdAt: _c, author: _a, ...profile } = await profiles.readVersion(profileId, version); return profile; }
+      const profile = builtinProfile(profileId);
+      if (!profile || version !== 1) throw new Error(`Missing profile version ${profileId}@${version}`);
+      return profile;
+    },
+  };
 }

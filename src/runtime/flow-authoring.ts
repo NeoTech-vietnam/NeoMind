@@ -2,13 +2,14 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { compileFlow, type Diagnostic } from '../domain/compiler.js';
 import { diffFlows, type FlowDiff } from '../domain/flow-diff.js';
-import { flowSchema, nodeSchema, profileSchema, projectSchema, type Flow } from '../domain/schema.js';
+import { flowSchema, nodeSchema, profileSchema, projectSchema, type Flow, type ProjectConfig } from '../domain/schema.js';
 import { defaultProject, newFlowFromTemplate, templates } from '../domain/templates.js';
 import { FlowLibrary, flowAuthorSchema, type FlowAuthor, type StoredFlowVersion } from '../storage/flow-library.js';
 import { ProfileLibrary } from '../storage/profile-library.js';
 import { projectDir } from '../storage/project-dir.js';
 import { builtinProfile, defaultRoles, newProjectPolicy, readProjectRules } from './project.js';
 import { ESTIMATE_MIN_RUNS, type StatsGroup } from './run-stats.js';
+import { flowPreflight } from './flow-preflight.js';
 
 export { diffFlows } from '../domain/flow-diff.js';
 
@@ -89,15 +90,26 @@ export async function draftFlow(root: string, input: DraftFlowInput) {
   }
   const revision = exists && input.name ? await store.saveDraftWithName(input.flowId, document, input.expectedRevision!, input.name)
     : await store.saveDraft(input.flowId, document, exists ? input.expectedRevision : null);
-  const compiled = compileFlow(document, project.policy, { aiAuthored: true });
-  return { revision, diagnostics: compiled.ok ? [] : compiled.diagnostics };
+  return { revision, diagnostics: (await checkFlow(root, document, { aiAuthored: true, project })).diagnostics };
+}
+
+/**
+ * Graph and policy rules, the rules for flows being authored, and what a run preview would refuse, without creating a
+ * run. Errors come first; only errors make the flow invalid, warnings (`severity: 'warning'`) never block publishing.
+ */
+export async function checkFlow(root: string, document: unknown, options: { aiAuthored?: boolean; project?: ProjectConfig } = {}): Promise<{ valid: boolean; diagnostics: Diagnostic[]; order?: string[] }> {
+  const project = options.project ?? await authoringProject(root), parsed = flowSchema.safeParse(document);
+  const compiled = compileFlow(document, project.policy, { aiAuthored: options.aiAuthored ?? false, authoring: true });
+  const runtime = parsed.success ? await flowPreflight(root, parsed.data, project) : [], warning = (item: Diagnostic) => item.severity === 'warning';
+  const diagnostics = [...(compiled.ok ? [] : compiled.diagnostics), ...runtime.filter(item => !warning(item)), ...(compiled.warnings ?? []), ...runtime.filter(warning)];
+  return { valid: !diagnostics.some(item => !warning(item)), diagnostics, ...(compiled.ok ? { order: compiled.order } : {}) };
 }
 
 export async function validateFlow(root: string, flowId: string, draft?: unknown): Promise<{ valid: boolean; diagnostics: Diagnostic[]; diff: FlowDiff | null }> {
   const project = await authoringProject(root), store = library(root), builtin = await builtinFlow(store, flowId), current = draft ?? builtin ?? (await store.readDraftWithRevision(flowId)).draft;
-  const compiled = compileFlow(current, project.policy, { aiAuthored: true }), parsed = flowSchema.safeParse(current);
+  const { valid, diagnostics } = await checkFlow(root, current, { aiAuthored: true, project }), parsed = flowSchema.safeParse(current);
   const previous = builtin ?? await latest(store, flowId);
-  return { valid: compiled.ok, diagnostics: compiled.ok ? [] : compiled.diagnostics, diff: parsed.success ? diffFlows(previous, parsed.data) : null };
+  return { valid, diagnostics, diff: parsed.success ? diffFlows(previous, parsed.data) : null };
 }
 
 export async function flowDiff(root: string, flowId: string, draft?: unknown): Promise<FlowDiff> {
@@ -109,7 +121,12 @@ export async function publishFlow(root: string, flowId: string, input: { author:
   const author = flowAuthorSchema.parse(input.author), project = await authoringProject(root);
   if (author.kind === 'ai' && (project.ai?.flowPublish === 'deny' || project.ai?.flowPublish === 'draft-only')) throw new Error('AI flow publishing is disabled by project policy');
   if (author.kind === 'ai' && !input.expectedRevision) throw new Error('expectedRevision is required for AI publishing');
-  return library(root).publish(flowId, project.policy, input.expectedRevision, author);
+  // The library re-checks the graph under its lock; what a preview would refuse is checked here, where the project is known.
+  const store = library(root), { draft, revision } = await store.readDraftWithRevision(flowId);
+  // A stale revision is left to the library, which reports it as a conflict.
+  const checked = input.expectedRevision === undefined || input.expectedRevision === revision ? await checkFlow(root, draft, { aiAuthored: author.kind === 'ai', project }) : { valid: true, diagnostics: [] };
+  if (!checked.valid) throw new Error(`Invalid draft: ${[...new Set(checked.diagnostics.filter(item => item.severity !== 'warning').map(item => item.code))].join(', ')}`);
+  return store.publish(flowId, project.policy, input.expectedRevision, author);
 }
 
 /** Deterministic initial recommendation; it does not start a run. */

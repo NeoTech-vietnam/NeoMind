@@ -2,13 +2,52 @@ import { flowSchema, projectPolicySchema, type Flow, type ProjectPolicy } from '
 import path from 'node:path';
 import { templates } from './templates.js';
 
-export interface Diagnostic { code: string; message: string; nodeId?: string }
+/** Omitted `severity` means `error`: only errors make a flow invalid; warnings never block publish or start. */
+export interface Diagnostic { code: string; message: string; nodeId?: string; severity?: 'error' | 'warning' }
 export type Compilation =
-  | { ok: true; flow: Flow; order: string[] }
-  | { ok: false; diagnostics: Diagnostic[] };
+  | { ok: true; flow: Flow; order: string[]; warnings?: Diagnostic[] }
+  | { ok: false; diagnostics: Diagnostic[]; warnings?: Diagnostic[] };
 
-/** Validate a persisted graph before it can be published or dispatched. */
-export function compileFlow(input: unknown, policyInput: unknown, options: { legacyExceptions?: boolean; aiAuthored?: boolean } = {}): Compilation {
+// Phrases that ask an agent to run something; only Codex sessions have a shell.
+export const runsCommands = /\bre-?run\b|\b(?:run|execute)\s+(?:(?:all|the|these|those|your|own|it|them|every)\s+)*(?:unit\s+)?(?:tests?|test\s+suite|checks?|commands?|builds?|programs?|scripts?|code|pytest|npm|python|node)\b|\bchạy\s+(?:lại\s+)?(?:các\s+|những\s+)?(?:test|lệnh|kiểm thử|chương trình)/i;
+export const bomInstruction = /\b(?:without|no)\s+(?:a\s+)?BOM\b|\bBOM-?less\b|không\s+(?:có\s+)?BOM\b/i;
+const writesFile = /\b(?:write|save|store|export)\b[^.;\n]{0,40}?\b(?:to|into|in|as)\s+(?:a\s+|an\s+|the\s+)?(?:[\w./-]+\.(?:md|json|txt|csv|html|ya?ml)\b|(?:markdown\s+|report\s+|output\s+)?file\b)|(?:^|\s)(?:ghi|lưu|xuất)\s[^.;\n]{0,30}?(?:ra|vào)\s+(?:một\s+)?(?:file|tệp)/i;
+
+/** Text an author wrote for the flow or one step: the places agents take instructions from. */
+function authoredText(flow: Flow): { nodeId?: string; text: string }[] {
+  const texts: { nodeId?: string; text: string }[] = [{ text: `${flow.name}\n${flow.description}\n${flow.definition.outputContract}` }];
+  for (const node of flow.definition.nodes) {
+    const parts = node.type === 'agent_task' ? [node.goal, node.instructionsOverride ?? ''] : node.type === 'integration' ? [node.instructionsOverride ?? '']
+      : node.type === 'approval' ? [node.purpose] : node.type === 'review_group' ? [...node.criteria, ...node.reviewers.map(reviewer => reviewer.instructionsOverride ?? '')] : [];
+    if (parts.some(Boolean)) texts.push({ nodeId: node.id, text: parts.join('\n') });
+  }
+  return texts;
+}
+
+/**
+ * Rules learned from runs that failed after a clean validation. They apply only while a flow is authored (validate,
+ * draft, publish) so versions published before them still start; warnings point at likely mistakes without blocking.
+ */
+function authoringRules(flow: Flow, incoming: Map<string, string[]>, issue: (code: string, message: string, nodeId?: string) => void, warn: (code: string, message: string, nodeId?: string) => void) {
+  const byId = new Map(flow.definition.nodes.map(node => [node.id, node]));
+  const isPlan = (id: string) => { const node = byId.get(id); return node?.type === 'agent_task' && node.outputContract === 'plan'; };
+  for (const node of flow.definition.nodes) {
+    // A plan is recorded without a file baseline, so its review blocks with "no execution baseline to review".
+    if (node.type === 'review_group' && isPlan(node.targetNodeId)) issue('review_target_plan', `Review target ${node.targetNodeId} is a plan step, which leaves nothing to review. Target the step that writes files or produces the report.`, node.id);
+    // Automatic approval approves the plan of its direct predecessor; anything else waits for the user forever.
+    if (node.type === 'approval' && node.mode === 'auto' && !(incoming.get(node.id) ?? []).some(isPlan)) issue('auto_approval_without_plan', 'Automatic approval needs an agent step with outputContract "plan" directly before it (plan → approval → implement, as in Fast).', node.id);
+  }
+  const texts = authoredText(flow);
+  for (const { nodeId, text } of texts) {
+    if (bomInstruction.test(text)) warn('bom_instruction', 'Asking for "UTF-8 without BOM" made an agent write the system code page on Windows. Say "keep non-ASCII characters intact (UTF-8)" instead.', nodeId);
+  }
+  const writes = flow.definition.nodes.some(node => node.type === 'integration' || (node.type === 'agent_task' && node.permissions.write));
+  const fileAsk = writes ? undefined : texts.find(item => writesFile.test(item.text));
+  if (fileAsk) warn('read_only_output_file', 'The flow asks for a file but no step may write one: the result only exists in the run transcript. Add a write step with a narrow writeScopes, or drop the file request.', fileAsk.nodeId);
+}
+
+/** Validate a persisted graph before it can be published or dispatched. `authoring` adds the rules for flows being edited. */
+export function compileFlow(input: unknown, policyInput: unknown, options: { legacyExceptions?: boolean; aiAuthored?: boolean; authoring?: boolean } = {}): Compilation {
   const parsed = flowSchema.safeParse(input);
   const parsedPolicy = projectPolicySchema.safeParse(policyInput);
   if (!parsed.success || !parsedPolicy.success) {
@@ -191,6 +230,8 @@ export function compileFlow(input: unknown, policyInput: unknown, options: { leg
       }
     }
   }
-  if (diagnostics.length) return { ok: false, diagnostics };
-  return { ok: true, flow, order };
+  const warnings: Diagnostic[] = [];
+  if (options.authoring) authoringRules(flow, incoming, issue, (code, message, nodeId) => { warnings.push({ code, message, ...(nodeId === undefined ? {} : { nodeId }), severity: 'warning' }); });
+  if (diagnostics.length) return { ok: false, diagnostics, ...(warnings.length ? { warnings } : {}) };
+  return { ok: true, flow, order, ...(warnings.length ? { warnings } : {}) };
 }
