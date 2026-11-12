@@ -28,12 +28,15 @@ test('run plan prints a pending plan as Markdown, or writes it with --out', asyn
   git('add', '.'); git('commit', '-qm', 'baseline');
   // The run's state sits where the CLI looks for it under XDG_STATE_HOME.
   const state = await projectRuntimeRoot(repo, base), coordinator = new WorkspaceCoordinator(path.join(state, 'coordination.sqlite'));
-  const snapshot = await materializeRun(structuredClone(templates.fast), config, { 'implementer@1': builtinProfile('implementer')! }, repo);
+  // The user approves the plan, so the run waits with it pending.
+  const flow = structuredClone(templates.fast);
+  for (const node of flow.definition.nodes) if (node.type === 'approval') node.mode = 'user';
+  const snapshot = await materializeRun(flow, config, { 'implementer@1': builtinProfile('implementer')! }, repo);
   const codex: WorkerFactory = async () => ({ events: new CodexTurnEvents(), fault: () => undefined, scope: { ...fakeScope(), transport: { request: async () => ({}) } } });
   const agents = new FakeRunnerFactory('codex', {
     respond: async (session, request) => {
       if ((request.outputSchema as { properties?: Record<string, unknown> } | undefined)?.properties?.planId)
-        return JSON.stringify({ planId: 'p', version: 1, goal: 'Add proof', scope: ['proof.txt'], approach: 'Create proof.txt\nwith one line', acceptanceCriteria: ['proof exists'], checks: ['test -f proof.txt'], riskChanges: ['none expected'] });
+        return JSON.stringify({ planId: 'p', version: 1, goal: 'Add proof', scope: ['.'], approach: 'Create proof.txt\nwith one line', acceptanceCriteria: ['proof exists'], checks: ['test -f proof.txt'], riskChanges: ['none expected'] });
       await writeFile(path.join(session.workspace, 'proof.txt'), 'ok\n'); return 'Implemented';
     },
   }, codexModels);
@@ -47,7 +50,7 @@ test('run plan prints a pending plan as Markdown, or writes it with --out', asyn
   const printed = spawnSync(process.execPath, [cli, 'run', 'plan', repo, run.runId], { encoding: 'utf8', env });
   assert.equal(printed.status, 0, printed.stderr);
   for (const text of ['# Plan p (v1)', `- Run: \`${run.runId}\``, '- Phase: waiting_approval', '- Status: awaiting approval', `- Plan hash: \`${planHash}\``,
-    '## Goal\n\nAdd proof', '## Approach\n\nCreate proof.txt\nwith one line', '## Acceptance criteria\n\n- proof exists', '## Checks\n\n- test -f proof.txt', '## Risks\n\n- none expected', '## Scope\n\n- proof.txt'])
+    '## Goal\n\nAdd proof', '## Approach\n\nCreate proof.txt\nwith one line', '## Acceptance criteria\n\n- proof exists', '## Checks\n\n- test -f proof.txt', '## Risks\n\n- none expected', '## Scope\n\n- .'])
     assert.ok(printed.stdout.includes(text), text);
 
   const out = path.join(root, 'plan.md');
