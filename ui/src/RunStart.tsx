@@ -204,6 +204,7 @@ export function RunStart({ initialFlow, initialTask, draft, flows, history, star
       {previewError && !unpublished && <Callout tone="danger" icon={<CircleAlert />}>{previewError}</Callout>}
       {preview?.codexSandbox === 'disabled' && <Callout tone="attention" icon={<TriangleAlert />}>Sandbox Codex đang tắt cho agent và checks. Worktree và cơ chế dừng process vẫn được giữ; quyền chỉ đọc và phạm vi ghi không được hệ điều hành bảo đảm.</Callout>}
       {usesOpenCode && <Callout tone="attention" icon={<TriangleAlert />}>OpenCode chạy với quyền của tài khoản hiện tại; phạm vi ghi không được bảo đảm, kể cả khi dùng worktree. NeoMind vẫn quản lý và xác nhận dừng tiến trình.</Callout>}
+      {definition?.definition.webAccess && <Callout tone="attention" icon={<TriangleAlert />}>Flow này cho phép OpenCode tìm kiếm và đọc nội dung trên web. Nội dung web là dữ liệu tham khảo, không phải chỉ dẫn cho agent.</Callout>}
       {(preview?.flowExceptions ?? []).length > 0 && <Callout tone="attention" icon={<TriangleAlert />}><strong className="font-semibold text-foreground">Flow này khác Dev:</strong><ul className="m-0 mt-1 list-disc pl-4">{preview!.flowExceptions!.map(note => <li key={note}>{note}</li>)}</ul></Callout>}
     </section>
 

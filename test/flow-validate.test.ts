@@ -6,6 +6,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { compileFlow, type Diagnostic } from '../src/domain/compiler.js';
 import { flowHashes } from '../src/domain/resolve.js';
+import { diffFlows } from '../src/domain/flow-diff.js';
 import type { Flow } from '../src/domain/schema.js';
 import { defaultProject, newFlowFromTemplate, templates } from '../src/domain/templates.js';
 import { checkFlow, draftFlow, publishFlow, validateFlow } from '../src/runtime/flow-authoring.js';
@@ -34,6 +35,20 @@ test('built-in flows validate without errors or warnings, by the compiler and by
     assert.deepEqual(await checkFlow(root, flow), { valid: true, diagnostics: [], order: compiled.order }, id);
     assert.deepEqual((await checkFlow(root, newFlowFromTemplate(id as keyof typeof templates))).diagnostics, [], id);
   }
+});
+
+test('web access is explicit, visible in the diff, and restricted to OpenCode including fallbacks', async () => {
+  const root = await project(), original = dev(), flow = structuredClone(original);
+  flow.definition.webAccess = true;
+  assert.deepEqual(diffFlows(original, flow).webAccess, { before: false, after: true });
+  assert.notEqual(flowHashes(original).semanticHash, flowHashes(flow).semanticHash);
+  assert.ok(codes((await checkFlow(root, flow)).diagnostics).includes('web_access_unsupported'));
+  for (const binding of Object.values(flow.definition.bindings)) {
+    binding.runner = pinned('opencode'); binding.provider = pinned('opencode'); binding.model = pinned('free-model'); binding.reasoning = pinned('high');
+  }
+  assert.equal(codes((await checkFlow(root, flow)).diagnostics).includes('web_access_unsupported'), false);
+  flow.definition.bindings.implementer!.fallback = [{ runner: 'codex', provider: 'openai', model: 'gpt-6-luna', reasoning: 'high' }];
+  assert.ok(codes((await checkFlow(root, flow)).diagnostics).includes('web_access_unsupported'));
 });
 
 /** Research whose reviewed step returns a plan: a plan is recorded without a baseline, so its review blocks the run. */

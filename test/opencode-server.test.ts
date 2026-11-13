@@ -39,6 +39,8 @@ test('OpenCode transport launches only in its scope, authenticates and closes', 
     await assert.rejects(server.request('GET', '//example.invalid/'), /path|origin/i);
     await assert.rejects(server.request('GET', '/redirect'));
     await assert.rejects(server.request('GET', '/error'), /HTTP 500/);
+    assert.deepEqual(await server.request('GET', '/delayed', undefined, 1000), { ok: true });
+    await assert.rejects(server.request('GET', '/delayed', undefined, 30), /abort/i);
   } finally { assert.equal(await server.close(), true); }
   assert.equal(scope.stops, 1);
 });

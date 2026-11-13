@@ -8,6 +8,7 @@ if (process.env.FAKE_MODE !== 'hang') {
     if (request.headers.authorization !== expected) { response.writeHead(401).end(); return; }
     if (request.url === '/redirect') { response.writeHead(302, { location: 'http://example.invalid/' }).end(); return; }
     if (request.url === '/error') { response.writeHead(500).end(); return; }
+    if (request.url === '/delayed') { setTimeout(() => response.end(JSON.stringify({ ok: true })), 150); return; }
     let body = '';
     request.on('data', chunk => { body += chunk; });
     request.on('end', () => { response.setHeader('content-type', 'application/json'); response.end(JSON.stringify({ method: request.method, body: body ? JSON.parse(body) as unknown : null })); });

@@ -89,6 +89,8 @@ export const flowDefinitionSchema = z.strictObject({
     maxTokens: z.number().int().min(1).optional() }),
   workspacePolicy: z.enum(['isolated', 'current', 'shared']),
   outputContract: z.string().min(1),
+  // Explicit opt-in for OpenCode's web search and fetch tools; omitted leaves web access disabled.
+  webAccess: z.boolean().optional(),
   // `human`: the user reviews the changes outside the flow, so the flow has no review gate and never commits.
   review: z.enum(['independent', 'human']).optional(),
   // `role`: a step without its own `memory` gets its role's default (plan/write: everything, review: decisions and lessons).

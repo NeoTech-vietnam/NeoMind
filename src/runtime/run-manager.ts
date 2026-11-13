@@ -66,6 +66,7 @@ export class RunManager {
       bindings: Object.entries(bindings).filter(([, binding]) => binding.values.runner === runner || binding.fallback.some(item => item.runner === runner)).map(([key]) => key) }));
     const codexUsed = runners.some(item => item.runner === 'codex'), missing = checks || codexUsed ? codexUnavailableReason() : undefined;
     const blockers = [...runners.filter(item => !item.supported).map(item => `Runner "${item.runner}" chưa được hỗ trợ (dùng bởi ${item.bindings.join(', ')})`),
+      ...(snapshot.configuration.flow.definition.webAccess && runners.some(item => item.runner !== 'opencode') ? ['Quyền truy cập web hiện chỉ hỗ trợ runner OpenCode, bao gồm cả cấu hình dự phòng.'] : []),
       ...(missing && checks ? [`Check của flow chạy qua Codex command/exec nhưng Codex không khả dụng: ${missing}`] : []),
       ...(missing && codexUsed ? [`Runner codex không khả dụng: ${missing}`] : [])];
     return { runners, checks: { executor: 'codex' as const, required: checks, available: !missing, ...(missing ? { reason: missing } : {}) }, blockers };
@@ -95,6 +96,7 @@ export class RunManager {
   }
   async create(flowId: string, task: string, version?: number, overrides: Record<string, BindingOverride> = {}, configurationHash?: string, limits: Partial<Flow['definition']['limits']> = {}, importDirty?: string, workspaceMode?: Flow['definition']['workspacePolicy'], program?: { programId: string; phaseId: string }) {
     const snapshot = await snapshotProjectFlow(this.projectRoot, flowId, version, overrides, limits, workspaceMode);
+    if (snapshot.configuration.flow.definition.webAccess && bindingRunners(snapshot.configuration.bindings).some(runner => runner !== 'opencode')) throw new Error('Web access is only supported by the OpenCode runner, including fallbacks');
     const diagnostics = standaloneDiagnostics(snapshot.configuration.flow);
     if (diagnostics.length) throw new Error(diagnostics.join(' '));
     if (Object.values(snapshot.profilesByStep).some(profile => !profile.requestedPermissions.read)) throw new Error('Executor hiện cần quyền đọc trong mọi agent profile');

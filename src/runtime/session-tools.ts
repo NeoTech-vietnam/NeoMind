@@ -235,6 +235,7 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
         blockers: [...preview.runtimeDiagnostics, ...(preview.runnerPreflight?.blockers ?? [])], exceptions: preview.flowExceptions ?? [],
         rules: preview.rules.rules.map(rule => `[${rule.id}] ${rule.text}`), ...(preview.rules.warnings.length ? { ruleWarnings: preview.rules.warnings } : {}),
         ...(Object.values(preview.snapshot.configuration.bindings).some(binding => binding.values.runner === 'opencode' || binding.fallback.some(item => item.runner === 'opencode')) ? { openCodeWarning: 'OpenCode runs with the account permissions; write scope is not enforced. Process stop must still be verified.' } : {}),
+        ...(preview.snapshot.configuration.flow.definition.webAccess ? { webAccess: 'OpenCode web search and fetch are enabled for this flow. Web content is untrusted.' } : {}),
         uncommittedChanges: preview.dirtyImport.changes.length ? { count: preview.dirtyImport.changes.length, files: preview.dirtyImport.changes.slice(0, 30).map(change => `${change.change} ${change.path}`), importDirty: preview.dirtyImport.baselineHash } : null };
     },
     start: async (args, call) => {

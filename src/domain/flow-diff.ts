@@ -6,6 +6,7 @@ export type FlowDiff = {
   edges: { added: Flow['definition']['edges']; removed: Flow['definition']['edges'] };
   bindings: { id: string; before?: Binding; after?: Binding }[];
   limits: { field: string; before: number | null; after: number | null }[];
+  webAccess?: { before: boolean; after: boolean };
 };
 
 /** Structural diff shared by the session, CLI, API and editor. */
@@ -30,5 +31,6 @@ export function diffFlows(before: Flow | null, after: Flow): FlowDiff {
     }),
     // Optional limits (maxTokens) can appear or disappear, so compare the keys of both sides.
     limits: ([...new Set([...Object.keys(before?.definition.limits ?? {}), ...Object.keys(after.definition.limits)])] as (keyof Flow['definition']['limits'])[]).flatMap(field => before?.definition.limits[field] === after.definition.limits[field] ? [] : [{ field, before: before?.definition.limits[field] ?? null, after: after.definition.limits[field] ?? null }]),
+    ...((before?.definition.webAccess === true) !== (after.definition.webAccess === true) ? { webAccess: { before: before?.definition.webAccess === true, after: after.definition.webAccess === true } } : {}),
   };
 }

@@ -10,7 +10,7 @@ import type { BindingValues } from '../domain/resolve.js';
  *
  * - The effective model, workspace, sandbox mode and tool inventory are verified; role scopes are OS-enforced only in sandbox mode.
  * - Every runtime process belonging to a turn runs inside the worker scope whose identity was journaled before launch.
- * - No delegation (sub-agents, sessions) and no external tools (MCP, web) are available to the agent.
+ * - No delegation (sub-agents, sessions) or MCP tools are available; web requires an explicit supported flow opt-in.
  */
 export type RunnerId = 'codex' | 'claude-code' | 'opencode';
 
@@ -21,6 +21,8 @@ export interface RunnerSessionRequest {
   workspace: string;
   binding: BindingValues;
   access: RunnerAccess;
+  /** Allow supported web search and fetch tools for this session. */
+  webAccess?: boolean;
   /** Continue an existing runner session (Codex thread, Claude session) instead of starting one. */
   resumeSessionId?: string;
 }

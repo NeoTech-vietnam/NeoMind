@@ -90,6 +90,45 @@ test('OpenCode is found through a Windows-style Path key in a copied environment
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test('OpenCode permits web tools only for explicitly opted-in sessions', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'neo-oc-web-'));
+  const scope = (): ProcessScope => ({ identity: { unit: 'test', controlGroup: 'test' }, start: async () => { throw new Error('mock'); }, isActive: async () => true, stop: async () => true });
+  const policies: Array<{ permission: string; action: string }[]> = [];
+  const server = (async (options: { config: { permission: unknown } }) => {
+    let session: Session;
+    return { close: async () => true, subscribe: () => () => {}, request: async (method: string, url: string, body?: unknown) => {
+      if (url === '/global/health') return { healthy: true, version: '1.19.5' };
+      if (url === '/mcp') return {};
+      if (url === '/config') return { permission: options.config.permission };
+      if (url === '/agent') return [{ name: 'build', mode: 'primary', permission: [] }];
+      if (url === '/provider') return { connected: ['fake'], all: [{ id: 'fake', models: { model: {} } }] };
+      if (url === '/session') { const value = body as { metadata: unknown; permission: { permission: string; action: string }[] }; policies.push(value.permission); return session = { id: 'ses_WEB1', directory: dir, parentID: null, ...value }; }
+      if (method === 'GET' && url === '/session/ses_WEB1') return session;
+      if (url === '/session/ses_WEB1/message') {
+        const value = body as { noReply?: boolean };
+        if (value.noReply) return { info: { sessionID: 'ses_WEB1', agent: 'build', model: { providerID: 'fake', modelID: 'model' } } };
+        return { info: { role: 'assistant', sessionID: 'ses_WEB1', providerID: 'fake', modelID: 'model' }, parts: [{ type: 'text', text: 'done' }] };
+      }
+      throw new Error(`Unexpected ${method} ${url}`);
+    } } as unknown as OpenCodeServer;
+  }) as unknown as typeof OpenCodeServer.start;
+  try {
+    for (const webAccess of [false, true]) {
+      const runner = new OpenCodeRunner(scope(), { stateDir: dir, dataHome: dir, config: {}, command: process.execPath, server });
+      const session = await runner.openSession({ workspace: dir, binding: { runner: 'opencode', provider: 'fake', model: 'model', reasoning: 'medium' }, access: { kind: 'read' }, webAccess });
+      const turn = await runner.startTurn(session, { prompt: 'test', effort: 'medium' });
+      assert.equal((await runner.waitForTurn(session, turn, () => false)).status, 'completed');
+      await runner.close();
+    }
+    for (const name of ['webfetch', 'websearch']) {
+      assert.equal(policies[0]!.some(rule => rule.permission === name), false);
+      assert.ok(policies[1]!.some(rule => rule.permission === name && rule.action === 'allow'));
+    }
+    assert.ok(policies.every(policy => policy[0]?.permission === '*' && policy[0]?.action === 'deny'));
+    assert.ok(policies.every(policy => !policy.some(rule => rule.permission === 'edit')));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test('OpenCode allows StructuredOutput and stops a turn that keeps calling tools without answering', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'neo-ocl-'));
   let created: { permission: { permission: string; action: string }[] } | undefined, aborted = false;

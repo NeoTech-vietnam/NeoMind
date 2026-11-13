@@ -31,8 +31,8 @@ const openCodeMessages = z.array(z.object({ info: z.object({ id: z.string(), rol
 // The no-reply message NeoMind sends to make the server resolve the agent and model; it is not part of any step's turn.
 const verificationText = 'NeoMind session verification.';
 
-function rules(write: boolean): NativeRule[] {
-  return ['*', 'read', 'glob', 'grep', ...(write ? ['edit'] : []), 'StructuredOutput'].map((permission, index) => ({ permission, pattern: '*', action: index === 0 ? 'deny' : 'allow' }));
+function rules(write: boolean, webAccess: boolean): NativeRule[] {
+  return ['*', 'read', 'glob', 'grep', ...(write ? ['edit'] : []), ...(webAccess ? ['webfetch', 'websearch'] : []), 'StructuredOutput'].map((permission, index) => ({ permission, pattern: '*', action: index === 0 ? 'deny' : 'allow' }));
 }
 function samePath(a: string, b: string) { const x = path.resolve(a), y = path.resolve(b); return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y; }
 function executable(env: NodeJS.ProcessEnv): string {
@@ -71,9 +71,10 @@ function stateDirectory(options: Options) { return options.stateDir ?? path.join
 function dataDirectory(options: Options) { return options.dataHome ?? options.env?.XDG_DATA_HOME ?? process.env.XDG_DATA_HOME ?? path.join(homedir(), '.local', 'share'); }
 
 /** Start a server and refuse it unless its effective configuration matches what NeoMind requested. */
-async function serverFor(scope: Pick<ProcessScope, 'identity' | 'start' | 'isActive' | 'stop'>, workspace: string, options: Options): Promise<OpenCodeServer> {
+async function serverFor(scope: Pick<ProcessScope, 'identity' | 'start' | 'isActive' | 'stop'>, workspace: string, options: Options, webAccess = false): Promise<OpenCodeServer> {
   const base = stateDirectory(options), env = options.env ?? workerEnvironment();
   const provider = options.config ?? await readOpenCodeProviderConfig(env);
+  const expectedPermission = { ...expectedConfigPermission, ...(webAccess ? { webfetch: 'allow', websearch: 'allow' } : {}) };
   const command = options.command ?? executable(env);
   await mkdir(base, { recursive: true });
   // A fresh config home per server keeps the user's agents, MCP servers and plugins out of the run.
@@ -84,7 +85,7 @@ async function serverFor(scope: Pick<ProcessScope, 'identity' | 'start' | 'isAct
   try {
     server = await (options.server ?? OpenCodeServer.start)({ scope: managed, command, workspace,
       configHome: path.join(instance, 'config'), cacheHome: path.join(instance, 'cache'), dataHome: dataDirectory(options), env,
-      config: { ...provider, permission: expectedConfigPermission } });
+      config: { ...provider, permission: expectedPermission } });
   } catch (error) {
     if (!await managed.stop()) throw new Error('OpenCode worker stop unconfirmed');
     throw error;
@@ -96,7 +97,7 @@ async function serverFor(scope: Pick<ProcessScope, 'identity' | 'start' | 'isAct
     const config = object.parse(await server.request('GET', '/config'));
     if (config.plugin !== undefined && (!Array.isArray(config.plugin) || config.plugin.length)) throw new Error('OpenCode exposes plugins');
     const permissions = z.record(z.string(), z.string()).parse(config.permission);
-    if (Object.keys(permissions).length !== Object.keys(expectedConfigPermission).length || Object.entries(expectedConfigPermission).some(([key, value]) => permissions[key] !== value)) throw new Error('OpenCode configuration permission mismatch');
+    if (Object.keys(permissions).length !== Object.keys(expectedPermission).length || Object.entries(expectedPermission).some(([key, value]) => permissions[key] !== value)) throw new Error('OpenCode configuration permission mismatch');
     const agents = z.array(z.object({ name: z.string(), mode: z.string(), permission: z.array(z.object({ permission: z.string(), pattern: z.string(), action: z.enum(['allow', 'ask', 'deny']) })) })).parse(await server.request('GET', '/agent'));
     if (agents.filter(agent => agent.name === 'build' && agent.mode === 'primary').length !== 1) throw new Error('OpenCode primary agent is unavailable');
     return server;
@@ -114,6 +115,7 @@ export class OpenCodeRunner implements AgentRunner {
   readonly runner = 'opencode' as const;
   readonly scope: OpenCodeScope;
   private session?: VerifiedRunnerSession;
+  private webAccess = false;
   private resume = false;
   private server?: OpenCodeServer;
   private turn?: { id: string; result: Promise<TurnResult> };
@@ -127,6 +129,7 @@ export class OpenCodeRunner implements AgentRunner {
     if (request.binding.runner !== 'opencode') throw new Error('Binding does not use OpenCode');
     if (!request.binding.provider || !request.binding.model) throw new Error('OpenCode provider and model are required');
     if (this.session) throw new Error('OpenCode runner already owns a session');
+    this.webAccess = request.webAccess === true;
     // NeoMind keeps its own logical id; the native ses_ id is only known once the server created the session.
     const sessionId = request.resumeSessionId ?? randomUUID();
     z.string().uuid().parse(sessionId);
@@ -143,13 +146,13 @@ export class OpenCodeRunner implements AgentRunner {
     if (this.scope.started || !await this.scope.isActive()) throw new Error('OpenCode scope is unavailable');
     this.scope.started = true;
     try {
-      this.server = await serverFor(this.scope, session.workspace, this.options);
+      this.server = await serverFor(this.scope, session.workspace, this.options, this.webAccess);
       const providers = await this.server.request('GET', '/provider');
       const models = openCodeModels(providers);
       if (!models.some(item => item.provider === session.provider && item.model === session.model && item.reasoning.includes(request.effort))) throw new Error('OpenCode model or reasoning is unavailable');
       const catalog = z.object({ all: z.array(z.object({ id: z.string(), models: z.record(z.string(), z.object({ variants: z.record(z.string(), z.unknown()).optional() })) })) }).parse(providers);
       const variants = catalog.all.find(item => item.id === session.provider)?.models[session.model]?.variants;
-      const wanted = rules(session.access.kind === 'write'), map = new OpenCodeSessionMap(path.join(stateDirectory(this.options), 'sessions'));
+      const wanted = rules(session.access.kind === 'write', this.webAccess), map = new OpenCodeSessionMap(path.join(stateDirectory(this.options), 'sessions'));
       const saved = await map.get(session.sessionId);
       if (this.resume && !saved) throw new Error('OpenCode session mapping is missing');
       if (!this.resume && saved) throw new Error('OpenCode session mapping already exists');

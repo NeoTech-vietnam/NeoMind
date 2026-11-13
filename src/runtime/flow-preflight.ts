@@ -73,6 +73,8 @@ export async function flowPreflight(projectRoot: string, flow: Flow, project: Pr
         runner = resolved.values.runner;
         checkValues(resolved.values, who, step.nodeId, false);
         for (const item of resolved.fallback) checkValues(item, who, step.nodeId, true);
+        if (flow.definition.webAccess && [resolved.values, ...resolved.fallback].some(item => item.runner !== 'opencode'))
+          add('error', 'web_access_unsupported', `${who} enables web access but uses a runner other than OpenCode.`, step.nodeId);
       }
     }
 

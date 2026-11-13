@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { request as httpRequest } from 'node:http';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import path from 'node:path';
 import type { ProcessScope } from './worker-scope.js';
@@ -58,10 +59,23 @@ export class OpenCodeServer {
     if (!endpoint.startsWith('/') || endpoint.startsWith('//')) throw new Error('Invalid OpenCode API path');
     const url = new URL(endpoint, this.origin);
     if (url.origin !== this.origin) throw new Error('Invalid OpenCode API origin');
-    const response = await fetch(url, { method, redirect: 'error', headers: { authorization: this.authorization, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(timeoutMs) });
-    if (!response.ok) throw new Error(`OpenCode API returned HTTP ${response.status}`);
-    return response.json();
+    // The synchronous OpenCode message endpoint sends headers only after the model finishes. Node's fetch has an
+    // independent five-minute headers timeout, even when the requested turn timeout is longer.
+    return new Promise((resolve, reject) => {
+      const request = httpRequest(url, { method, headers: { authorization: this.authorization, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+        signal: AbortSignal.timeout(timeoutMs) }, response => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.on('error', reject);
+        response.on('end', () => {
+          const status = response.statusCode ?? 0;
+          if (status < 200 || status >= 300) { reject(new Error(`OpenCode API returned HTTP ${status}`)); return; }
+          try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch (error) { reject(error); }
+        });
+      });
+      request.on('error', reject);
+      request.end(body === undefined ? undefined : JSON.stringify(body));
+    });
   }
 
   /**

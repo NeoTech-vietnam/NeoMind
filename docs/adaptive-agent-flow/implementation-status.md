@@ -1,5 +1,13 @@
 # NeoMind v1 — trạng thái implementation
 
+## Quyền tìm kiếm và đọc web của OpenCode — 12/11/2026
+
+Flow có thể bật `definition.webAccess` cho OpenCode; mặc định tắt và snapshot giữ quyền của từng run. Diff, preview và màn bắt đầu hiển thị quyền này; runner khác bị từ chối. Kiểm thử Linux: `npm test` 350 test, 338 đạt, 0 lỗi, 12 skip; build UI và extension đạt. Run thật NeoKnowledge với GLM/DeepSeek Free tìm web thành công ở bước plan và chờ người dùng duyệt; xem [bàn giao](session-handoff-2026-11-12-opencode-web.md).
+
+## Chờ phản hồi OpenCode dài — 13/11/2026
+
+Hai lượt review thực tế bị `fetch failed` sau khoảng 301 giây. Client `fetch` của Node có timeout header mặc định 300 giây dù timeout của turn được đặt dài hơn; chuyển request JSON loopback sang `node:http` và giữ timeout tường minh. Test Linux: `npm test` 350 test, 338 đạt, 0 lỗi, 12 skip; build extension đạt. Run thật đang review lại, chưa chứng minh nguyên nhân là timeout header cho tới khi kiểm chứng lượt dài; xem [bàn giao](session-handoff-2026-11-12-opencode-web.md).
+
 ## Worktree chính của submodule — 12/11/2026
 
 Khi Git liệt kê thư mục Git chung làm worktree chính, NeoMind giải quyết `core.worktree` và xác minh checkout thuộc cùng repository; repository thông thường vẫn dùng kết quả danh sách worktree. Kiểm chứng Linux: `npm test` 348 test, 336 đạt, 0 lỗi, 12 skip; build extension đạt. Chưa kiểm chứng Windows hay run thật; xem [bàn giao](session-handoff-2026-11-12-submodule.md).
