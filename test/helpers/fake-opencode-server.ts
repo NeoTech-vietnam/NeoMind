@@ -2,10 +2,13 @@ import http from 'node:http';
 
 // Stand-in for `opencode serve`: prints the listening line, checks Basic auth and echoes requests.
 if (process.env.FAKE_MODE === 'exit') process.exit(1);
+if (process.env.FAKE_MODE === 'unsupported') { process.stderr.write('ERROR\nUnrecognized flag: --pure\nprivate-token-value\n'); process.exit(1); }
 if (process.env.FAKE_MODE !== 'hang') {
   const server = http.createServer((request, response) => {
     const expected = `Basic ${Buffer.from(`${process.env.OPENCODE_SERVER_USERNAME}:${process.env.OPENCODE_SERVER_PASSWORD}`).toString('base64')}`;
     if (request.headers.authorization !== expected) { response.writeHead(401).end(); return; }
+    if (request.url === '/api/info' && process.env.FAKE_MODE === 'v2') { response.end(JSON.stringify({ version: process.env.FAKE_VERSION ?? '2.2.7', pid: process.pid })); return; }
+    if (request.url === '/empty') { response.writeHead(204).end(); return; }
     if (request.url === '/redirect') { response.writeHead(302, { location: 'http://example.invalid/' }).end(); return; }
     if (request.url === '/error') { response.writeHead(500).end(); return; }
     if (request.url === '/delayed') { setTimeout(() => response.end(JSON.stringify({ ok: true })), 150); return; }

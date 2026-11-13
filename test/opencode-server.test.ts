@@ -54,3 +54,25 @@ test('OpenCode transport stops the scope on startup failure and reports unconfir
   assert.equal(unconfirmed.stops, 1);
   await assert.rejects(OpenCodeServer.start({ ...options(new FakeScope()), command: 'opencode' }), /absolute/i);
 });
+
+test('OpenCode reports an unsupported pure flag without exposing stderr', async () => {
+  const scope = new FakeScope();
+  await assert.rejects(OpenCodeServer.start(options(scope, { ...process.env, FAKE_MODE: 'unsupported' })), error => {
+    assert.match((error as Error).message, /rejected --pure.*not supported/);
+    assert.doesNotMatch((error as Error).message, /private-token-value/);
+    return true;
+  });
+  assert.equal(scope.stops, 1);
+});
+
+test('OpenCode V2 transport starts without --pure and rejects other server versions', async () => {
+  const scope = new FakeScope();
+  const server = await OpenCodeServer.start({ ...options(scope, { ...process.env, FAKE_MODE: 'v2' }), protocol: 'v2' });
+  try {
+    assert.deepEqual(scope.launch?.args, ['serve', '--hostname', '127.0.0.1', '--port', '0']);
+    assert.equal(await server.request('GET', '/empty'), undefined);
+  } finally { assert.equal(await server.close(), true); }
+  const other = new FakeScope();
+  await assert.rejects(OpenCodeServer.start({ ...options(other, { ...process.env, FAKE_MODE: 'v2', FAKE_VERSION: '2.2.8' }), protocol: 'v2' }), /Unsupported OpenCode V2/);
+  assert.equal(other.stops, 1);
+});
