@@ -224,7 +224,9 @@ args = ["/duong/dan/neomind/dist/src/cli/main.js", "mcp", "/duong/dan/project"]
 
 ## Runner OpenCode (thử nghiệm)
 
-Runner `opencode` đã được đăng ký, model lấy từ provider OpenCode đang kết nối trên máy (`GET /api/runners/opencode`). Chỉ nhận OpenCode 1.18.25 (đã probe 08/11) và 1.19.5 (người dùng cho phép 11/11, chưa probe đối kháng). Mỗi lượt chạy một `opencode serve` riêng trong worker scope, với cấu hình cô lập (không MCP, plugin, agent của project) và quyền `read/glob/grep` (+ `edit` cho bước sửa).
+Runner `opencode` thử nghiệm chỉ nhận OpenCode **2.2.7**, hiện chỉ hỗ trợ Linux khi không có cấu hình hệ thống `/etc/opencode`. Model lấy từ provider OpenCode khả dụng trên máy (`GET /api/runners/opencode`). Mỗi lượt chạy một `opencode serve` riêng trong worker scope, từ chối MCP, plugin ngoài và cấu hình có thể thay đổi quyền; quyền mặc định chỉ cho `read/glob/grep`, thêm `edit` cho bước sửa và web khi flow bật `webAccess`. Session OpenCode V1 cũ không được hỗ trợ tiếp tục bằng runner này; journal NeoMind vẫn được giữ.
+
+OpenCode V2 không cung cấp chế độ JSON schema native qua API prompt được dùng ở đây. NeoMind gửi schema trong prompt và kiểm tra kết quả bằng JSON Schema cục bộ; JSON không hợp lệ hoặc sai schema bị từ chối. Cách này không bảo đảm model luôn trả đúng định dạng như structured output native.
 
 **Giới hạn quan trọng:** quyền của OpenCode không phải ranh giới của hệ điều hành. Probe 08/11 cho thấy OpenCode ghi được file ra ngoài repo qua junction. NeoMind cho bước sửa của OpenCode chạy chỉ với bằng chứng dừng được process (`sandboxVerified: false`), và `preview` báo `openCodeWarning`. Chỉ dùng trên repo và máy bạn chấp nhận rủi ro này.
 

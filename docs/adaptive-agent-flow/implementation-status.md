@@ -1,5 +1,21 @@
 # NeoMind v1 — trạng thái implementation
 
+## OpenCode V2 — 13/11/2026
+
+Chưa hỗ trợ V2: OpenCode 2.2.7 không nhận `serve --pure`, ngoài ra API và cấu hình đã thay đổi. Transport nhận diện lỗi cờ này mà không tiết lộ stderr. Chưa kiểm chứng cô lập plugin/MCP và quyền V2; giữ nguyên cơ chế từ chối an toàn. Kiểm chứng Linux: `npm test` 354 test, 342 đạt, 0 lỗi, 12 skip. Xem [bàn giao](session-handoff-2026-11-13-opencode-v2.md).
+
+Tiếp tục: đã thêm contract V2.2.7 chưa nối vào runner và thử policy plugin/MCP với fixture đối chứng trên Linux. `npm test` 357 test, 345 đạt, 0 lỗi, 12 skip; chưa kiểm chứng runner V2 hoặc chạy model thật.
+
+Tiếp tục: transport V2, xác minh session và phân tích kết quả đã có test tập trung; transport và xác minh session được probe với OpenCode 2.2.7 thật trong systemd scope trên Linux, không gọi model, xác nhận scope dừng. Chưa nối vào runner, chưa chạy được workflow; xem [bàn giao](session-handoff-2026-11-13-opencode-v2.md).
+
+Tiếp tục: một lượt model thật độc lập đã trả `OK` và scope dừng; không phải workflow. Suite trước thay đổi phân trang/config mới nhất: 364 test, 352 đạt, 0 lỗi, 12 skip. Test tập trung sau thay đổi: 7/7 đạt. Structured output và runner V2 chưa hoàn thành.
+
+Tiếp tục: runner V2 đã đăng ký; JSON schema được kiểm tra cục bộ theo lựa chọn của người dùng, không phải structured output native. Kiểm chứng Linux: `npm test` 368 test, 356 đạt, 0 lỗi, 12 skip. Một lượt JSON thật qua runner thành công; workflow BLE Mesh đang chạy, chưa có kết quả cuối. Xem [bàn giao](session-handoff-2026-11-13-opencode-v2.md).
+
+## Run thật OpenCode V2 hoàn tất — 13/11/2026
+
+Run thật đầu tiên qua runner OpenCode 2.2.7 trên Linux: `knowledge-research` (run `run-177fe6d0-d02a-4b0e-bd33-b11a235d8fc0`, project NeoKnowledge, task BLE Mesh) hoàn tất đủ graph: plan → user approval → implement → check `git diff --check` đạt → review vòng 0 cần sửa (2 findings: mô tả routing Zigbee theo cây không khớp nguồn CSA; 2 câu Zephyr dẫn [2] sai thay vì [3]) → repair vòng 1 → review vòng 1 pass không findings → finish. 8 attempts, mỗi attempt một systemd scope riêng được dừng xác nhận; reviewer fetch độc lập các nguồn đã trích. Ghi chú ở worktree riêng của run (`notes/protocols/bluetooth-mesh-va-so-sanh-zigbee-thread.md`), chưa áp vào checkout. Suite: `npm test` 369 test, 357 đạt, 0 lỗi, 12 skip; thêm test runner từ chối policy bên ngoài. Windows và extension chưa kiểm chứng cho V2.
+
 ## Phục hồi OpenCode và vòng sửa — 13/11/2026
 
 Lượt agent lỗi không được ghi là thành công; reviewer OpenCode thiếu output hoặc hết context/output được thử lại một lần trong session mới sau khi xác nhận worker dừng. Có thể thêm vòng sửa có xác nhận khi policy đã ghim còn cho phép, giữ findings và journal replay. Run Free cũ đã chạm policy nên không thể thêm vòng vào run đó. Test Linux: `npm test` 353 test, 341 đạt, 0 lỗi, 12 skip; build UI và extension đạt. Đã replay journal run Free và Terra thật; chưa chạy lại model Free thật hoặc kiểm tra Windows. Xem [bàn giao](session-handoff-2026-11-13-opencode-recovery.md).
