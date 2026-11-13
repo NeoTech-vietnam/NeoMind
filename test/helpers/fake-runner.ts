@@ -18,6 +18,8 @@ export interface FakeRunnerBehaviour {
   startTurn?(session: VerifiedRunnerSession, request: RunnerTurnRequest): Promise<string>;
   /** The turn's final agent message. Defaults to "done". */
   respond?(session: VerifiedRunnerSession, request: RunnerTurnRequest): Promise<string> | string;
+  /** Return a terminal failure without pretending that partial output was completed. */
+  failure?(session: VerifiedRunnerSession, request: RunnerTurnRequest): string | undefined;
   /** Tokens each turn adds to its session's cumulative usage (a quarter of them output); omitted reports no usage. */
   tokensPerTurn?: number;
 }
@@ -45,7 +47,11 @@ export class FakeRunner implements AgentRunner {
     const turnId = this.behaviour.startTurn ? await this.behaviour.startTurn(session, request) : randomUUID();
     this.turns.push({ session, request, turnId });
     const respond = this.behaviour.respond ?? (() => 'done');
-    const result = Promise.resolve().then(() => respond(session, request)).then(text => ({ threadId: session.sessionId, turnId, status: 'completed' as const, messages: [text], ...this.usage(session) }));
+    const result = Promise.resolve().then(async () => {
+      const error = this.behaviour.failure?.(session, request);
+      return error ? { threadId: session.sessionId, turnId, status: 'failed' as const, messages: [], error, ...this.usage(session) }
+        : { threadId: session.sessionId, turnId, status: 'completed' as const, messages: [await respond(session, request)], ...this.usage(session) };
+    });
     result.catch(() => {}); this.results.set(turnId, result);
     return turnId;
   }

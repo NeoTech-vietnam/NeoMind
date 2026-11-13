@@ -188,7 +188,14 @@ export class OpenCodeRunner implements AgentRunner {
   private result(value: unknown, session: VerifiedRunnerSession, nativeId: string, turnId: string, structured: boolean): TurnResult {
     const parsed = z.object({ info: z.object({ role: z.literal('assistant'), sessionID: z.string(), providerID: z.string(), modelID: z.string(), error: z.unknown().optional(), structured: z.unknown().optional() }), parts: z.array(z.object({ type: z.string(), text: z.string().optional() })) }).parse(value);
     if (parsed.info.sessionID !== nativeId || parsed.info.providerID !== session.provider || parsed.info.modelID !== session.model) throw new Error('OpenCode response identity mismatch');
-    if (parsed.info.error) return { threadId: session.sessionId, turnId, status: 'failed', messages: [], error: 'OpenCode returned an error' };
+    if (parsed.info.error) {
+      // Do not expose provider messages: they can contain prompts, credentials or private data.
+      const detail = z.object({ name: z.string().optional() }).safeParse(parsed.info.error);
+      const name = detail.success ? detail.data.name : undefined;
+      const reason = name === 'ContextOverflowError' ? 'OpenCode context limit exceeded' :
+        name === 'MessageOutputLengthError' ? 'OpenCode output limit exceeded' : 'OpenCode returned a provider or model error';
+      return { threadId: session.sessionId, turnId, status: 'failed', messages: [], error: reason };
+    }
     const messages = structured ? parsed.info.structured === undefined ? [] : [JSON.stringify(parsed.info.structured)] : parsed.parts.filter(part => part.type === 'text' && part.text).map(part => part.text!);
     if (!messages.length) return { threadId: session.sessionId, turnId, status: 'failed', messages: [], error: 'OpenCode returned no output' };
     return { threadId: session.sessionId, turnId, status: 'completed', messages };

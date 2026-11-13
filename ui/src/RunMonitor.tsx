@@ -84,6 +84,10 @@ export function RunMonitor({ run, setRun, duplicate, remove }: { run: Run; setRu
   const cancel = () => void confirmAction({ title: 'Hủy run?', description: 'Thay đổi trong worktree của run được giữ lại; bạn có thể xem diff hoặc dọn worktree sau.', confirmLabel: 'Hủy run', cancelLabel: 'Giữ run chạy', danger: true }).then(ok => { if (ok) void act('cancel'); });
   const lastSession = listing.transcripts.at(-1), canWorktreeClean = finished && !sharedWorkspace && !cleaned;
   const reason = run.runtimeState?.reason ?? '', commitFailed = run.unresolvedCommitNodeIds.length > 0;
+  const repairExhausted = phase === 'blocked' && /repair budget exhausted/i.test(reason);
+  const repairScope = flow?.definition.nodes.find(node => node.type === 'repair_scope' && run.reviewerOutputs.some(output => output.nodeId === node.targetReviewId && output.result.verdict === 'needs_changes'));
+  const canExtendRepair = !!flow && repairScope?.type === 'repair_scope' && run.snapshot?.policy?.maxRepairRounds !== undefined &&
+    (run.repairRounds?.length ?? 0) < run.snapshot.policy.maxRepairRounds && repairScope.maxRounds + (run.repairExtensions?.[repairScope.id] ?? 0) < run.snapshot.policy.maxRepairRounds;
   const imported = phase === 'blocked' && reason.startsWith('Chồng lên thay đổi có sẵn');
   const stopped = !finished && !running && phase !== 'waiting_approval' && phase !== 'stopping';
   const canResume = ['paused', 'blocked', 'recovering'].includes(phase) && !commitFailed && !timeExhausted;
@@ -143,6 +147,8 @@ export function RunMonitor({ run, setRun, duplicate, remove }: { run: Run; setRu
         <Field label="Thêm token" className="w-40"><Input type="number" min="1000" step="1000" value={extraTokens} onChange={e => setExtraTokens(Number(e.target.value))} /></Field>
         <Button variant="primary" disabled={locked || extraTokens < 1} onClick={() => void act('extend_time', { tokens: extraTokens })}>Thêm token và tiếp tục</Button></div>
         : <div className="flex flex-wrap items-center gap-2">
+          {repairExhausted && canExtendRepair && repairScope && <Button variant="primary" disabled={locked} onClick={() => void confirmAction({ title: 'Thêm một vòng sửa?', description: 'Agent sẽ sửa tiếp theo nhận xét review; giới hạn policy của run vẫn được giữ.', confirmLabel: 'Thêm và tiếp tục' }).then(ok => { if (ok) void act('extend_repairs', { scopeId: repairScope.id, rounds: 1, confirmed: true }); })}>Thêm một vòng sửa</Button>}
+          {repairExhausted && !canExtendRepair && <span className="text-[12px] text-muted-foreground">Run đã chạm giới hạn policy đã ghim; cần tạo run mới với policy phù hợp.</span>}
           {commitFailed && <Button variant="primary" disabled={locked} onClick={() => void act('retry_git')}>Thử commit lại</Button>}
           {imported && <Button variant="primary" disabled={locked} onClick={() => void act('include_imported')}>Commit kèm thay đổi có sẵn</Button>}
           {canResume && <Button variant={imported ? 'outline' : 'primary'} disabled={locked} onClick={() => void act('resume')}>Tiếp tục</Button>}

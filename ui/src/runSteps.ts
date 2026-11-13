@@ -60,6 +60,7 @@ export function repairRounds(run: Run, flow: Flow | undefined): { used: number; 
   if (!flow || repair?.type !== 'repair_scope') return null;
   const perReviewer = new Map<string, number>();
   for (const output of run.reviewerOutputs) if (output.nodeId === repair.targetReviewId) perReviewer.set(output.result.reviewerId, (perReviewer.get(output.result.reviewerId) ?? 0) + 1);
-  const max = Math.min(repair.maxRounds, flow.definition.limits.maxRepairRounds);
-  return { used: Math.min(max, Math.max(0, ...[...perReviewer.values()].map(count => count - 1))), max, nodeId: repair.id };
+  const extensions = run.repairExtensions ?? {};
+  const max = Math.min(repair.maxRounds + (extensions[repair.id] ?? 0), flow.definition.limits.maxRepairRounds + (run.repairRunExtensions ?? 0));
+  return { used: run.repairRounds ? run.repairRounds.filter(round => round.scopeId === repair.id).length : Math.min(max, Math.max(0, ...[...perReviewer.values()].map(count => count - 1))), max, nodeId: repair.id };
 }

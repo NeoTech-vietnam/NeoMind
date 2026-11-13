@@ -46,6 +46,10 @@ File đã có dòng nào nhắc `neomind-flow-authoring/SKILL.md` (ở `.claude/
 
 Flow có thể bật `definition.webAccess: true` để các bước dùng OpenCode tìm kiếm và đọc trang web (`websearch`, `webfetch`). Nếu bỏ trống, quyền này tắt; các run cũ giữ cấu hình đã ghim. Bản diff và preview hiển thị khi quyền web được bật. Hiện chỉ OpenCode hỗ trợ tùy chọn này, kể cả runner dự phòng; NeoMind từ chối chạy nếu binding dùng runner khác. Nội dung web là dữ liệu tham khảo không đáng tin cậy, không phải chỉ dẫn hay quyền hành động; agent phải xác minh nguồn. Cấu hình này không biến giới hạn công cụ OpenCode thành sandbox hệ điều hành.
 
+Nếu reviewer OpenCode không trả output có cấu trúc hoặc báo hết ngữ cảnh/giới hạn output, NeoMind xác nhận worker đã dừng rồi thử lại tối đa một lần trong session mới, không tính thành vòng sửa. Không chấp nhận output dở dang; lỗi provider khác dừng run để kiểm tra. Khi review yêu cầu sửa nhưng đã hết vòng của flow, người dùng có thể thêm vòng qua màn run hoặc tool `neomind_extend_repairs` (`runId`, `scopeId`, `rounds`, `confirmed: true`). Vòng thêm không vượt `maxRepairRounds` trong policy đã ghim; nếu đã chạm policy, cần tạo run mới với policy phù hợp. Lượt thêm giữ kết quả review và nhận xét cũ, không cần review lại trước khi sửa.
+
+Khi flow bật web, prompt review khuyến khích đối chiếu các mệnh đề quan trọng với nguồn được dẫn khi có thể và nêu rõ nguồn chưa kiểm tra. Đây là hướng dẫn cho reviewer, không phải bảo đảm mọi nguồn đã được kiểm chứng.
+
 NeoMind có thể đề xuất flow bằng quy tắc tĩnh, tạo bản nháp, kiểm policy và so sánh trước khi lưu phiên bản. Các lệnh sau nhận **thư mục project**; `draft.json` là input authoring, ví dụ `{"flowId":"my-dev","name":"My Dev","from":{"template":"dev"}}`.
 
 ```bash

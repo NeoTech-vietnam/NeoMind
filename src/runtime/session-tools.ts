@@ -83,6 +83,8 @@ export const SESSION_TOOLS: SessionTool[] = [
   { name: 'cancel', description: 'Cancel the run (only when the user asks). Its worktree and history are kept.', inputSchema: object(runId, ['runId']) },
   { name: 'extend_time', description: 'Give a run that used up its active-time limit more time, or its token budget (maxTokens) more tokens, then continue it.',
     inputSchema: object({ ...runId, seconds: { type: 'number', description: '1-86400' }, tokens: { type: 'number', description: 'Tokens to add to the budget' } }, ['runId']) },
+  { name: 'extend_repairs', description: 'With explicit user confirmation, add repair rounds to a blocked run and continue it. The pinned project policy remains a hard cap.',
+    inputSchema: object({ ...runId, scopeId: { type: 'string' }, rounds: { type: 'number', description: 'Positive number of additional rounds' }, ...confirmed }, ['runId', 'scopeId', 'rounds', 'confirmed']) },
   { name: 'apply', description: 'Copy a finished Fast run\'s changes into the user\'s checkout (not staged, not committed). Ask the user first, listing the changed files from status; call only after they agree.',
     inputSchema: object({ ...runId, ...confirmed }, ['runId', 'confirmed']) },
   { name: 'retry_commit', description: 'Retry the local commit of a run blocked at its commit step.', inputSchema: object(runId, ['runId']) },
@@ -285,6 +287,12 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
       if (!Number.isInteger(tokens) || tokens < 0 || tokens > 1_000_000_000) throw new Error('tokens must be a positive integer');
       if (!seconds && !tokens) throw new Error('Give seconds, tokens or both');
       await (await runs()).extendTime(text(args, 'runId'), seconds, tokens); return summary(text(args, 'runId'));
+    },
+    extend_repairs: async args => {
+      requireConfirmed(args, 'Adding repair rounds');
+      const rounds = Number(args.rounds);
+      if (!Number.isInteger(rounds) || rounds < 1 || rounds > 20) throw new Error('rounds must be an integer from 1 to 20');
+      await (await runs()).extendRepairs(text(args, 'runId'), text(args, 'scopeId'), rounds); return summary(text(args, 'runId'));
     },
     apply: async args => { requireConfirmed(args, 'Applying changes to the checkout'); return act(args, 'apply'); },
     retry_commit: args => act(args, 'retry_git'),

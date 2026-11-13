@@ -39,6 +39,7 @@ test('OpenCode preserves logical session identity across turns and rejects a cha
         }
         // A model without variants must not receive a reasoning variant.
         assert.equal(value.variant, undefined);
+        if (starts === 3 || starts === 4) return { info: { role: 'assistant', sessionID: 'ses_ABC123', providerID: 'fake', modelID: 'model', error: { name: starts === 3 ? 'ContextOverflowError' : 'APIError', data: { message: 'private-token-value' } } }, parts: [{ type: 'text', text: 'untrusted partial output' }] };
         return { info: { role: 'assistant', sessionID: 'ses_ABC123', providerID: 'fake', modelID: 'model', structured: { ok: true } }, parts: [] };
       }
       throw new Error(`Unexpected ${method} ${url}`);
@@ -48,7 +49,7 @@ test('OpenCode preserves logical session identity across turns and rejects a cha
   const binding = { runner: 'opencode', provider: 'fake', model: 'model', reasoning: 'medium' };
   try {
     let sessionId = '';
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 4; i++) {
       const runner = new OpenCodeRunner(scope(), options);
       const session = await runner.openSession({ workspace: dir, binding, access: i === 0 ? { kind: 'read' } : { kind: 'write', writableRoots: [dir] }, ...(sessionId ? { resumeSessionId: sessionId } : {}) });
       sessionId = session.sessionId;
@@ -56,13 +57,14 @@ test('OpenCode preserves logical session identity across turns and rejects a cha
       const turn = await runner.startTurn(session, { prompt: 'test', effort: 'medium', outputSchema: { type: 'object' } });
       const result = await runner.waitForTurn(session, turn, () => false);
       assert.equal(result.threadId, sessionId);
-      assert.deepEqual(result.messages, ['{"ok":true}']);
+      if (i < 2) assert.deepEqual(result.messages, ['{"ok":true}']);
+      else { assert.equal(result.status, 'failed'); assert.deepEqual(result.messages, []); assert.equal(result.error, i === 2 ? 'OpenCode context limit exceeded' : 'OpenCode returned a provider or model error'); }
     }
     const changed = new OpenCodeRunner(scope(), options);
     const session = await changed.openSession({ workspace: dir, binding: { ...binding, model: 'other' }, access: { kind: 'read' }, resumeSessionId: sessionId });
     await assert.rejects(changed.startTurn(session, { prompt: 'test', effort: 'medium' }), /unavailable|binding changed/);
-    assert.equal(starts, 3);
-    assert.equal(stops, 3);
+    assert.equal(starts, 5);
+    assert.equal(stops, 5);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

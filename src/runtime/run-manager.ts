@@ -265,6 +265,7 @@ export class RunManager {
   }
   async revisePlan(id: string, feedback: string, planHash: string) { const run = await this.owned(id); await run.revisePlan(feedback, planHash); return run.report(); }
   async extendTime(id: string, seconds: number, tokens = 0) { const run = await this.owned(id); await run.extendTime(seconds, tokens); return run.report(); }
+  async extendRepairs(id: string, scopeId: string, rounds: number) { const run = await this.owned(id); await run.extendRepairs(scopeId, rounds); return run.report(); }
   async settle(id: string) { await this.runs.get(id)?.settled(); return this.get(id); }
   /** Approved records with where memory lives (a configured folder or `neomind/memory` in the repo) and each record's use and rating totals. */
   readMemory(query?: string) {

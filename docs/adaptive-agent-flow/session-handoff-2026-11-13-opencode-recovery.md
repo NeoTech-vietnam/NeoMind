@@ -1,0 +1,10 @@
+# Phục hồi OpenCode và bổ sung vòng sửa — 13/11/2026
+
+Commit `9bc444d` lưu quyền web theo flow và sửa thời hạn chờ OpenCode trước đợt này. Run NeoKnowledge dùng GLM/DeepSeek Free bị lỗi kết nối, sau đó có lượt OpenCode kết thúc lỗi dù transcript có output, rồi hết ngân sách sửa với hai phát hiện review còn tồn tại. Run Terra 6.1 hoàn thành nhưng reviewer không kiểm tra lại các link; không coi `pass` là xác minh nguồn độc lập.
+
+- Core từ chối kết quả writer, planner và reviewer có trạng thái lỗi; xác nhận đúng worker đã dừng và ghi attempt `stopped`, giữ lỗi gốc. Không chấp nhận text hoặc structured output dở dang. Trước đây `writeTurn` có thể ghi `completed` dù turn thất bại.
+- Reviewer OpenCode thử lại tối đa một lần trong session mới nếu thiếu output hoặc báo hết ngữ cảnh/output. Chỉ thực hiện sau khi dừng worker và journal xác nhận, vẫn kiểm baseline và bằng chứng; không dùng vòng sửa. Lỗi provider khác không tự thử lại; không đưa thông tin lỗi provider tùy ý vào trạng thái công khai.
+- Với flow bật web, prompt review khuyến khích kiểm tra nguồn cho mệnh đề quan trọng khi có thể, và khai báo nguồn chưa kiểm tra. Đây là hướng dẫn, không xác nhận kỹ thuật rằng reviewer đã thực sự kiểm từng trang.
+- `neomind_extend_repairs` và API/màn run thêm vòng sửa có xác nhận, giữ các phát hiện review, có journal replay và không vượt `maxRepairRounds` trong policy đã ghim. Khi riêng repair scope hết nhưng ngân sách flow còn, dùng phần còn lại trước. Policy và snapshot không bị sửa ngầm. Run Free cũ đã chạm policy bằng 2, nên không thể gia hạn run đó bằng cơ chế này; phải tạo run mới với policy và flow phù hợp.
+- Test dùng fake runner bao gồm lỗi writer/reviewer, thử lại reviewer thành công và thất bại lần hai, giới hạn policy, giữ findings và phục hồi sau khi mở lại. Không chạy thêm model thật; chưa kiểm chứng Windows, UI tương tác hoặc extension đã cài lại trong Nimbalyst.
+- Kiểm chứng Linux: `npm test` 353 test, 341 đạt, 0 lỗi, 12 skip; `npm run build:ui` và build extension đạt. Sau thay đổi prompt review chạy lại 18 test tập trung, tất cả đạt. Replay journal run Free (`blocked`, 2 vòng) và Terra (`completed`) thành công.

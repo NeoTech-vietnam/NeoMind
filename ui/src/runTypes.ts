@@ -3,6 +3,7 @@ import { stepName } from './format';
 
 export type BindingValues = { runner: string; provider: string; model: string; reasoning: string };
 export type MaterializedRun = { configuration: { flow: Flow; bindings: Record<string, { values: BindingValues }> };
+  policy?: { maxRepairRounds: number };
   // Optional: older snapshots in tests and galleries leave it out.
   profilesByStep?: Record<string, { profileId: string; version: number; skills: { id: string; path: string; name?: string | undefined }[] }> };
 export type Plan = { goal: string; approach: string; scope: string[]; acceptanceCriteria: string[]; checks: string[]; riskChanges: string[] };
@@ -15,6 +16,7 @@ export type MemoryUse = { nodeId: string; attemptId: string; key: string; filter
 export type Run = {
   nodeData?: { nodeId: string; attemptId: string; workspace: string; promptHash: string; truncated: boolean; sources: { kind: string; id: string; fromNodeId?: string; hash: string }[]; output?: { outputHash: string; truncated: boolean; messageCount: number } }[];
   runId: string; busy: boolean; proposedPlanHash?: string; timeLimitMs?: number; timeExtensionsMs: number; tokenLimit?: number | null; tokenExtensions?: number;
+  repairRounds?: { scopeId: string }[]; repairExtensions?: Record<string, number>; repairRunExtensions?: number;
   runtimeState?: { phase: string; reason: string; activeMs: number };
   runtimeContext?: { codexSandbox?: 'enabled' | 'disabled'; workspaceMode?: 'isolated' | 'current' | 'shared'; task: string; workspace: string; sourceHead?: string; memory?: { root: string; text: string; selectionPolicy?: unknown; inferredPaths?: string[]; records?: { id: string; type: string; scope: string; revision: string; sources: string[]; selectionReason: string; text?: string }[] }; programId?: string; phaseId?: string; rules?: { hash: string; rules: { id: string; text: string }[] } };
   snapshot?: MaterializedRun;

@@ -17,18 +17,26 @@ import type { WorkerFactory } from '../src/runtime/worker.js';
 import { LessonProposals } from '../src/memory/proposals.js';
 import { proposalIds } from '../src/runtime/memory-proposals.js';
 import { maxLessonBodyLength } from '../src/memory/lesson-body.js';
+import { FakeRunnerFactory } from './helpers/fake-runner.js';
+import { RunnerRegistry } from '../src/runners/registry.js';
+import { CodexRunnerFactory } from '../src/runners/codex-runner.js';
 
-async function fixture(repair = false, kind: 'dev' | 'research' = 'dev', reviewers = 1, holdCheck = false, activeTimeSeconds?: number, legacyPolicy = false) {
+async function fixture(repair = false, kind: 'dev' | 'research' = 'dev', reviewers = 1, holdCheck = false, activeTimeSeconds?: number, legacyPolicy = false, failTurn?: 'write' | 'review', openCodeFailures = 0, repairLimit?: number, badWrites = 1, runRepairLimit?: number) {
   const root = await mkdtemp(path.join(tmpdir(), 'neomind-local-runtime-')), project = path.join(root, 'repo'), state = path.join(root, 'state');
   await mkdir(project); await mkdir(path.join(state, 'runs'), { recursive: true }); await mkdir(path.join(state, 'workspaces'));
   const git = (...args: string[]) => execFileSync('git', ['-C', project, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   git('init', '-q'); git('config', 'core.autocrlf', 'false'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.test');
   await writeFile(path.join(project, 'README.md'), 'Fixture\n'); git('add', '.'); git('commit', '-qm', 'baseline');
   const role = { runner: 'codex', provider: 'openai', model: 'gpt-6-luna', reasoning: 'low' };
-  const config = { ...structuredClone(defaultProject), policy: { ...defaultProject.policy, ...(legacyPolicy ? {} : { codexSandbox: 'enabled' as const }) }, roleDefaults: { implementer: role, verifier: role } };
+  const config = { ...structuredClone(defaultProject), policy: { ...defaultProject.policy, ...(legacyPolicy ? {} : { codexSandbox: 'enabled' as const }) }, roleDefaults: { implementer: role, verifier: openCodeFailures ? { runner: 'opencode', provider: 'fake', model: 'free', reasoning: 'high' } : role } };
   await mkdir(path.join(project, '.neomind')); await writeFile(path.join(project, '.neomind/project.json'), JSON.stringify(config));
   const profiles = { 'implementer@1': builtinProfile('implementer'), 'verifier@1': builtinProfile('verifier') };
   const flow = structuredClone(templates[kind]);
+  if (repairLimit !== undefined) {
+    flow.definition.limits.maxRepairRounds = runRepairLimit ?? repairLimit;
+    const scope = flow.definition.nodes.find(node => node.type === 'repair_scope');
+    if (scope?.type === 'repair_scope') scope.maxRounds = repairLimit;
+  }
   if (activeTimeSeconds) flow.definition.limits.activeTimeSeconds = activeTimeSeconds;
   if (reviewers > 1) {
     flow.definition.limits.maxConcurrency = 2;
@@ -65,12 +73,13 @@ async function fixture(repair = false, kind: 'dev' | 'research' = 'dev', reviewe
           evidence: { criteria: (kind === 'research' ? ['answers the task', 'sources', 'claims'] : ['approved plan', 'checks', 'regressions', 'proof']).map(criterion => ({ criterion, status: failed && criterion === 'proof' ? 'fail' : 'pass', references: [reference] })),
             findings: failed ? [{ id: 'wrong-proof', criterion: 'proof', explanation: 'Expected ok', references: [reference] }] : [] } };
       } else if (thread.sandbox === 'read-only') { output = 'README.md line 1 contains Fixture. This report is based on that local source.'; }
-      else { writes++; await writeFile(path.join(thread.cwd, 'proof.txt'), repair && writes === 1 ? 'wrong\n' : 'ok\n'); output = 'Implemented'; }
+      else { writes++; await writeFile(path.join(thread.cwd, 'proof.txt'), repair && writes <= badWrites ? 'wrong\n' : 'ok\n'); output = 'Implemented'; }
       const emit = () => {
       events.accept('item/completed', { threadId, turnId, item: { id: randomUUID(), type: 'agentMessage', text: typeof output === 'string' ? output : JSON.stringify(output) } });
       const total = (tokenTotals.get(threadId) ?? 0) + 100; tokenTotals.set(threadId, total);
       events.accept('thread/tokenUsage/updated', { threadId, turnId, tokenUsage: { total: { inputTokens: total - 10, outputTokens: 10, cachedInputTokens: 0, reasoningOutputTokens: 0, totalTokens: total } } });
-      events.accept('turn/completed', { threadId, turn: { id: turnId, status: 'completed' } });
+      const failedTurn = failTurn === 'review' ? !!schema?.properties?.evidence : failTurn === 'write' && !schema && thread.sandbox !== 'read-only';
+      events.accept('turn/completed', { threadId, turn: { id: turnId, status: failedTurn ? 'failed' : 'completed', ...(failedTurn ? { error: { message: 'fixture failure' } } : {}) } });
         if (schema?.properties?.evidence) activeReviews--;
       };
       if (schema?.properties?.evidence && reviewers > 1) setTimeout(emit, 1000); else emit();
@@ -78,9 +87,71 @@ async function fixture(repair = false, kind: 'dev' | 'research' = 'dev', reviewe
     } };
     return { events, fault: () => undefined, scope: { transport, identity: { unit: `neomind-run-${randomUUID()}.scope`, controlGroup: `/user.slice/user-${process.getuid?.() ?? 0}.slice/fixture.scope` }, isActive: async () => active, stop: async () => { active = false; if (rejectCheck) { const reject = rejectCheck; rejectCheck = undefined; reject(new Error('Check interrupted')); } return true; } } };
   };
-  const run = await LocalRun.create({ projectRoot: project, stateRoot: state, task: kind === 'research' ? 'Summarize README.md and cite the source' : 'Add proof', snapshot, coordinator, workerFactory: factory, capabilityCheck: async () => ({ sandboxVerified: true, stopVerified: true }) });
+  let reviewAttempts = 0;
+  const fake = new FakeRunnerFactory('opencode', {
+    failure: () => ++reviewAttempts <= openCodeFailures ? 'OpenCode returned no output' : undefined,
+    respond: () => JSON.stringify({ verdict: 'pass', findingIds: [], summary: 'Proof matches', evidence: { criteria: ['approved plan', 'checks', 'regressions', 'proof'].map(criterion => ({ criterion, status: 'pass', references: [{ kind: 'source', path: 'proof.txt', line: 1, quote: 'ok' }] })), findings: [] } }),
+  }, [{ runner: 'opencode', provider: 'fake', model: 'free', reasoning: ['high'] }]);
+  const runners = openCodeFailures ? new RunnerRegistry([new CodexRunnerFactory(factory), fake]) : undefined;
+  const run = await LocalRun.create({ projectRoot: project, stateRoot: state, task: kind === 'research' ? 'Summarize README.md and cite the source' : 'Add proof', snapshot, coordinator, workerFactory: factory, capabilityCheck: async () => ({ sandboxVerified: true, stopVerified: true }), ...(runners ? { runners } : {}) });
   return { run, coordinator, state, factory, writes: () => writes, peakReviews: () => peakReviews, checkStarted };
 }
+
+test('repair extension preserves findings and respects the pinned project policy and available flow budget', async () => {
+  for (const runLimit of [1, 2]) {
+  const f = await fixture(true, 'dev', 1, false, undefined, false, undefined, 0, 1, 2, runLimit);
+  let run = f.run;
+  try {
+    run.launch(); await run.settled(); await run.approve('fixture-user-simulated-approval', 'cli'); await run.settled();
+    let report = await run.report();
+    assert.equal(report.runtimeState.phase, 'blocked'); assert.match(report.runtimeState.reason, /repair budget exhausted/i);
+    assert.equal(report.reviewerOutputs.length, 1); assert.equal(report.reviewerOutputs[0]?.result.verdict, 'needs_changes');
+    await assert.rejects(run.extendRepairs('repair', 3), /pinned project policy/);
+    if (runLimit === 1) await run.extendRepairs('repair', 1);
+    else {
+      await run.durable.service.extendRuntimeRepairs('repair', 1);
+      await run.close();
+      run = await LocalRun.recover(await RunStore.open(path.join(f.state, 'runs')), f.coordinator, run.runId, f.factory, async () => ({ sandboxVerified: true, stopVerified: true }));
+      await run.resume();
+    }
+    await run.settled(); report = await run.report();
+    assert.equal(report.runtimeState.phase, 'completed', report.runtimeState.reason);
+    assert.equal(report.repairRounds.length, 2); assert.equal(report.repairExtensions.repair, 1);
+    assert.equal(report.repairRunExtensions, 2 - runLimit);
+    assert.equal(report.attempts.filter(attempt => attempt.nodeId === 'verify').length, 3);
+    assert.equal(f.writes(), 3);
+  } finally { await run.close(); f.coordinator.close(); }
+  }
+});
+
+test('OpenCode review retries one missing result in a fresh session without consuming a repair round', async () => {
+  for (const failures of [1, 2]) {
+    const f = await fixture(false, 'dev', 1, false, undefined, false, undefined, failures);
+    try {
+      f.run.launch(); await f.run.settled(); await f.run.approve('fixture-user-simulated-approval', 'cli'); await f.run.settled();
+      const report = await f.run.report(), reviews = report.attempts.filter(attempt => attempt.nodeId === 'verify');
+      assert.equal(report.runtimeState.phase, failures === 1 ? 'completed' : 'blocked', report.runtimeState.reason);
+      assert.equal(reviews.length, 2); assert.notEqual(reviews[0]?.sessionId, reviews[1]?.sessionId);
+      assert.equal(reviews[0]?.status, 'stopped'); assert.equal(report.repairRounds.length, 0);
+      if (failures === 2) { assert.match(report.runtimeState.reason, /OpenCode returned no output/); assert.equal(report.commits.length, 0); }
+    } finally { await f.run.close(); f.coordinator.close(); }
+  }
+});
+
+test('failed writer and reviewer turns block without accepting their output or committing', async () => {
+  for (const role of ['write', 'review'] as const) {
+    const f = await fixture(false, 'dev', 1, false, undefined, false, role);
+    try {
+      f.run.launch(); await f.run.settled(); await f.run.approve('fixture-user-simulated-approval', 'cli'); await f.run.settled();
+      const report = await f.run.report();
+      assert.equal(report.runtimeState.phase, 'blocked');
+      assert.match(report.runtimeState.reason, new RegExp(`${role} turn failed: fixture failure`));
+      assert.equal(report.commits.length, 0);
+      if (role === 'write') assert.equal(report.attempts.some(attempt => attempt.nodeId === 'implement' && attempt.status === 'completed'), false);
+      else assert.equal(report.reviewerOutputs.length, 0);
+    } finally { await f.run.close(); f.coordinator.close(); }
+  }
+});
 
 test('real orchestration services wait for approval, resume after reopen and commit reviewed output', async () => {
   const f = await fixture(); let run = f.run;

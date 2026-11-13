@@ -45,10 +45,7 @@ export async function waitForTurn(worker: RuntimeWorker, threadId: string, turnI
     if (stopped()) throw new Error('Run was interrupted');
     const fault = worker.fault(); if (fault) throw fault;
     const result = worker.events.result(threadId, turnId);
-    if (result) {
-      if (result.status !== 'completed') throw new Error(`Runner turn ${result.status}${result.error ? `: ${result.error}` : ''}`);
-      return result;
-    }
+    if (result) return result;
     await new Promise(resolve => setTimeout(resolve, 50));
   }
 }

@@ -290,10 +290,14 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
       }
       return reply(405, { error: 'Method not allowed' });
     }
-    const runMatch = /^\/api\/runs\/([a-z0-9-]+)(?:\/(approve|resume|pause|cancel|changes|retry_git|extend_time|include_imported|apply))?$/.exec(url.pathname);
+    const runMatch = /^\/api\/runs\/([a-z0-9-]+)(?:\/(approve|resume|pause|cancel|changes|retry_git|extend_time|extend_repairs|include_imported|apply))?$/.exec(url.pathname);
     if (runMatch) {
       if (!runMatch[2] && method === 'GET') { return reply(200, await (await runs()).get(runMatch[1]!)); }
       if (runMatch[2] && method === 'POST') {
+        if (runMatch[2] === 'extend_repairs') {
+          const input = z.strictObject({ scopeId: z.string().min(1), rounds: z.number().int().positive().max(20), confirmed: z.literal(true) }).parse(payload);
+          return reply(200, await (await runs()).extendRepairs(runMatch[1]!, input.scopeId, input.rounds));
+        }
         if (runMatch[2] === 'extend_time') {
           const input = z.strictObject({ seconds: z.number().int().positive().max(86400).optional(), tokens: z.number().int().positive().max(1_000_000_000).optional() })
             .refine(value => value.seconds !== undefined || value.tokens !== undefined, 'seconds or tokens is required').parse(payload);

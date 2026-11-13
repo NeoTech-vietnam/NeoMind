@@ -70,6 +70,9 @@ export interface RecoveryReport {
   timeExtensionsMs: number;
   /** Tokens the user added to the flow's `maxTokens` budget. */
   tokenExtensions: number;
+  /** Extra repair rounds authorized for each scope, within the pinned project policy. */
+  repairExtensions: Record<string, number>;
+  repairRunExtensions: number;
   usage: { totalTokens: number | null; partial: boolean; reportedAttemptIds: string[]; bySession: Record<string, TokenUsage>; costUSD: null };
   reviewValidationRetries: { nodeId: string; round: number; reviewerIds: string[] }[];
   /** `author: 'neomind'` marks a revision NeoMind requested itself because the plan broke a plan rule; absent means the user. */
@@ -141,6 +144,8 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
   const reviewValidationRetries: RecoveryReport['reviewValidationRetries'] = [];
   const usageBySession: Record<string, TokenUsage> = {}, usageAttempts = new Set<string>(); let usageReset = false;
   let timeExtensionsMs = 0, tokenExtensions = 0;
+  const repairExtensions: Record<string, number> = {};
+  let repairRunExtensions = 0;
   const bindingSelections: RecoveryReport['bindingSelections'] = [];
   let runtimeContext: RuntimeContext | undefined, runtimeState: RuntimeState | undefined;
   let budget: BudgetState = { runRoundsUsed: 0, scopesUsed: {}, allocations: {} };
@@ -193,6 +198,17 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
         const { tokens } = z.strictObject({ tokens: z.number().int().positive().max(1_000_000_000) }).parse(event.payload);
         if (!runtimeContext || !runtimeState || !['paused', 'blocked', 'recovering'].includes(runtimeState.phase) || [...attempts.values()].some(item => item.status === 'unresolved')) throw new Error('Token extension requires a stopped run');
         tokenExtensions += tokens; break;
+      }
+      case 'runtime_repairs_extended': {
+        const { scopeId, rounds } = z.strictObject({ scopeId: z.string().min(1), rounds: z.number().int().positive().max(20) }).parse(event.payload);
+        const scope = flow.definition.nodes.find(node => node.id === scopeId);
+        const extra = Math.max(0, budget.runRoundsUsed + rounds - flow.definition.limits.maxRepairRounds - repairRunExtensions);
+        if (!runtimeContext || !runtimeState || !['paused', 'blocked', 'recovering'].includes(runtimeState.phase) ||
+            [...attempts.values()].some(item => item.status === 'unresolved') || scope?.type !== 'repair_scope' ||
+            acceptedReviews.has(scope.targetReviewId) || !reviewerOutputs.some(item => item.nodeId === scope.targetReviewId && item.result.verdict === 'needs_changes') ||
+            flow.definition.limits.maxRepairRounds + repairRunExtensions + extra > initial.policy.maxRepairRounds ||
+            scope.maxRounds + (repairExtensions[scopeId] ?? 0) + rounds > initial.policy.maxRepairRounds) throw new Error('Repair extension requires stopped reviewed work and must stay within the pinned project policy');
+        repairExtensions[scopeId] = (repairExtensions[scopeId] ?? 0) + rounds; repairRunExtensions += extra; break;
       }
       case 'condition_evaluated': {
         const payload = z.strictObject({ nodeId: z.string().min(1), value: z.boolean() }).parse(event.payload), node = flow.definition.nodes.find(item => item.id === payload.nodeId);
@@ -283,7 +299,7 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
         if (scope?.type !== 'repair_scope' || repairRounds.some(round => round.roundId === payload.roundId)) throw new Error('Invalid repair round');
         const outputs = reviewerOutputs.filter(item => item.nodeId === scope.targetReviewId);
         if (!payload.findingIds.every(id => outputs.some(item => item.result.baselineHash === payload.baselineHash && item.result.verdict === 'needs_changes' && item.result.findingIds.includes(id)))) throw new Error('Repair findings do not match current review');
-        budget = allocateRepairRound(budget, payload.roundId, [scope.id], Math.min(flow.definition.limits.maxRepairRounds, initial.policy.maxRepairRounds), { [scope.id]: scope.maxRounds });
+        budget = allocateRepairRound(budget, payload.roundId, [scope.id], Math.min(flow.definition.limits.maxRepairRounds + repairRunExtensions, initial.policy.maxRepairRounds), { [scope.id]: scope.maxRounds + (repairExtensions[scope.id] ?? 0) });
         if ([...attempts.values()].some(attempt => attempt.status === 'unresolved')) throw new Error('Cannot repair while attempts are unresolved');
         scheduler.repair(scope.id);
         priorOutputs.set(scope.targetReviewId, outputs.filter(item => item.result.baselineHash === payload.baselineHash));
@@ -562,7 +578,7 @@ export function replayRun(events: RunEvent[]): RecoveryReport {
     }
   }
   const list = [...attempts.values()];
-  return { nodeData: structuredClone([...nodeData.values()]), ...(runtimeContext ? { runtimeContext } : {}), ...(runtimeState ? { runtimeState } : {}), graph: scheduler.snapshot(), bindingSelections, timeExtensionsMs, tokenExtensions, usage: { totalTokens: usageAttempts.size ? Object.values(usageBySession).reduce((sum, usage) => sum + usage.totalTokens, 0) : null, partial: usageReset || usageAttempts.size < list.filter(item => !item.core).length, reportedAttemptIds: [...usageAttempts], bySession: usageBySession, costUSD: null }, reviewValidationRetries, planRevisions, artifacts, continuationBaselines, repairRounds: structuredClone(repairRounds), plans: structuredClone([...plans.values()]), approvals: structuredClone(approvals), reviewerOutputs: structuredClone(reviewerOutputs), acceptedReviews: [...acceptedReviews].map(([nodeId, baselineHash]) => ({ nodeId, baselineHash })), checks: structuredClone([...checks.values()]), unresolvedCheckIds: [...checks.values()].filter(item => item.status === 'unresolved').map(item => item.checkId), attempts: structuredClone(list),
+  return { nodeData: structuredClone([...nodeData.values()]), ...(runtimeContext ? { runtimeContext } : {}), ...(runtimeState ? { runtimeState } : {}), graph: scheduler.snapshot(), bindingSelections, timeExtensionsMs, tokenExtensions, repairExtensions, repairRunExtensions, usage: { totalTokens: usageAttempts.size ? Object.values(usageBySession).reduce((sum, usage) => sum + usage.totalTokens, 0) : null, partial: usageReset || usageAttempts.size < list.filter(item => !item.core).length, reportedAttemptIds: [...usageAttempts], bySession: usageBySession, costUSD: null }, reviewValidationRetries, planRevisions, artifacts, continuationBaselines, repairRounds: structuredClone(repairRounds), plans: structuredClone([...plans.values()]), approvals: structuredClone(approvals), reviewerOutputs: structuredClone(reviewerOutputs), acceptedReviews: [...acceptedReviews].map(([nodeId, baselineHash]) => ({ nodeId, baselineHash })), checks: structuredClone([...checks.values()]), unresolvedCheckIds: [...checks.values()].filter(item => item.status === 'unresolved').map(item => item.checkId), attempts: structuredClone(list),
     unresolvedAttemptIds: list.filter(a => a.status === 'unresolved').map(a => a.attemptId),
     commits: structuredClone([...commits.values()]), unresolvedCommitNodeIds: [...commits.values()].filter(c => !c.confirmed).map(c => c.nodeId),
     branchWorkspaces: structuredClone([...branchWorkspaces.values()]), integrations: structuredClone([...integrations.values()]),

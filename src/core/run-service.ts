@@ -81,6 +81,7 @@ export class RunService {
   initializeRuntime(context: RuntimeContext) { return this.serialize(() => this.append('runtime_context', runtimeContextSchema.parse(context))); }
   checkpointRuntime(state: RuntimeState) { return this.serialize(() => this.append('runtime_state', runtimeStateSchema.parse(state))); }
   extendRuntimeTime(seconds: number) { return this.serialize(() => this.append('runtime_time_extended', { seconds })); }
+  extendRuntimeRepairs(scopeId: string, rounds: number) { return this.serialize(() => this.append('runtime_repairs_extended', { scopeId, rounds })); }
   extendRuntimeTokens(tokens: number) { return this.serialize(() => this.append('runtime_tokens_extended', { tokens })); }
   selectAllowedFallback(key: string, values: BindingValues, reason: string) { return this.serialize(() => this.append('binding_fallback_selected', { key, values, reason })); }
   recordNodeInput(input: unknown) { return this.serialize(() => this.append('node_input', input)); }
@@ -126,6 +127,12 @@ export class RunService {
   includeImportedInCommit(nodeId: string) { return this.serialize(() => this.append('commit_scope_selected', { nodeId, includeImported: true })); }
   requeueStoppedNode(nodeId: string) { return this.serialize(() => { this.requireContinue(); return this.append('node_requeued', { nodeId }); }); }
   retryReview(nodeId: string, reason: 'user' | 'validation' = 'user', reviewerIds?: string[]) { return this.serialize(() => { this.requireContinue(); return this.append('review_retry_requested', { nodeId, reason, ...(reviewerIds ? { reviewerIds } : {}) }); }); }
+  claimReview(nodeId: string) { return this.serialize(async () => {
+    this.requireContinue();
+    if (this.flow.definition.nodes.find(node => node.id === nodeId)?.type !== 'review_group') throw new Error('Not a review group');
+    const report = replayRun(await this.journal.read());
+    if (report.graph.nodes[nodeId]?.status === 'ready') await this.append('node_claimed', { nodeId });
+  }); }
   updateProducerBaseline(attemptId: string, baselineHash: string) {
     return this.serialize(async () => {
       this.requireContinue();
@@ -139,6 +146,16 @@ export class RunService {
       const attempt = replayRun(await this.journal.read()).attempts.find(item => item.attemptId === attemptId);
       if (!attempt || attempt.status !== 'unresolved' || !attempt.workerUnit || !attempt.workerControlGroup) throw new Error('No persisted worker scope to reconcile');
       if (!await stopExistingWorkerScope({ unit: attempt.workerUnit, controlGroup: attempt.workerControlGroup })) throw new Error('Worker stop is unconfirmed');
+      await this.append('attempt_finished', { attemptId, status: 'stopped' });
+    });
+  }
+  /** A failed turn is stopped only after its exact persisted worker is confirmed stopped. */
+  stopFailedTurn(attemptId: string, result: TurnResult, scope: RunnerScope) {
+    return this.serialize(async () => {
+      const report = replayRun(await this.journal.read()), attempt = report.attempts.find(item => item.attemptId === attemptId);
+      if (!attempt || attempt.status !== 'unresolved' || result.status === 'completed' || attempt.sessionId !== result.threadId || attempt.runnerTurnId !== result.turnId ||
+          attempt.workerUnit !== scope.identity.unit || attempt.workerControlGroup !== scope.identity.controlGroup) throw new Error('Failed turn does not match its worker scope');
+      if (!await scope.stop()) throw new Error('Reviewer worker stop unconfirmed');
       await this.append('attempt_finished', { attemptId, status: 'stopped' });
     });
   }
