@@ -1,0 +1,7 @@
+{
+  "name": "fixture-wire-guard",
+  "private": true,
+  "type": "module",
+  "exports": {".": "./index.js"},
+  "dependencies": {"@opencode/plugin": "2.2.7"}
+}

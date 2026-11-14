@@ -1,0 +1,21 @@
+diff --git a/backend/tools/native_tools.py b/backend/tools/native_tools.py
+index 1158b20..f666299 100644
+--- a/backend/tools/native_tools.py
++++ b/backend/tools/native_tools.py
+@@ -1878,6 +1878,8 @@ def load_native_tools(
+     # Available tools registry (DeepAgents standard naming)
+     # See: https://docs.langchain.com/oss/python/deepagents/harness
++    from tools.opencode_review import opencode_review
+     available_tools = {
++        "opencode_review": opencode_review,
+         # Web tools
+         "web_search": web_search,
+         "web_fetch": web_fetch,
+@@ -1984,6 +1986,7 @@ def get_available_tool_names() -> List[str]:
+         List of tool names that can be loaded
+     """
+     return [
++        "opencode_review",
+         # Web tools
+         "web_search",
+         "web_fetch",
