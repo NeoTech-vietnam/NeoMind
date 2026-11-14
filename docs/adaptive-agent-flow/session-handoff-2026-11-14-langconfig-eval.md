@@ -1,0 +1,9 @@
+# Bàn giao đánh giá LangConfig — 14/11/2026
+
+Xem [báo cáo](research-langconfig-vs-neomind-2026-11-14.md). Đã chạy A/B tài liệu: LangConfig gọi tool đọc/sửa thật qua model giả, NeoMind chạy runtime và fake runner trên hai fixture riêng; cùng sửa hai lỗi nhưng graph/repair khác nhau và verdict LangConfig giả định sẵn. Chưa kết luận chất lượng AI hay xếp hạng tốc độ. Quan sát về approval, trạng thái lỗi, skill sau restart và hai crash mặc định có điều kiện, chi tiết và bằng chứng trong report.
+
+Evidence `/home/hieu-tran/.local/share/langconfig-eval-20261114`; server/DB thử nghiệm đã dừng, không model thật. Việc còn lại: kiểm approval/UI và crash trước/sau side effect, skill filesystem/attach/update, dependency/secret portability; không chạy test trên repo thật. `npm test` baseline lượt trước 357 đạt, 12 skip, không chạy lại khi chỉ sửa tài liệu; kiểm `git diff --check` trong lượt này.
+
+Preflight model thật free: catalog `opencode/deepseek-v4.1-flash-free#high` giá 0; chưa chạy inference (0 request, 0 run) vì chưa có hard cap 40 physical requests bao gồm retry/title và chưa loại trừ model phụ trả phí. Không gọi trực tiếp free endpoint từ LangConfig. Xem hướng guard chính thức và các giới hạn trong report; không nới policy runner để thử.
+
+Prototype tại `langconfig-opencode-review-prototype` dưới eval root, clone SHA gốc riêng: native tool và transport HTTP loopback đã nối TOOL_NODE với OpenCode 2.2.7 thật và upstream fake; 17 test đạt, 1 warning. Prompt ID được lưu trước gửi, hỗ trợ pagination/reconcile và cache terminal. Plugin giả đã thử 429/retry, compaction và ngưỡng chặn; chưa đủ guard live xuyên process/aux/variant, chưa kiểm stop proof hoặc isolation đầy đủ. HTTP transport cố ý từ chối model thật; không chạy model thật (0 requests/runs). Chi tiết/evidence trong report, server riêng đã dừng.

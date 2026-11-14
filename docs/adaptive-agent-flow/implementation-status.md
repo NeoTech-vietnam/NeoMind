@@ -1,5 +1,19 @@
 # NeoMind v1 — trạng thái implementation
 
+## Đóng gói LangConfig × OpenCode — 15/11/2026
+
+Nhánh `research/langconfig-opencode` từ `6306c8b`: [hồ sơ tích hợp](../langconfig/README.md), tài liệu ý tưởng/setup và prototype tái lập, tách biệt runtime NeoMind. Người dùng duyệt commit/push nhánh riêng và tiếp tục nghiên cứu/test model free sau khi lưu nhánh; chưa mở gate inference chỉ vì wire giả chạy được. Xem [bàn giao 15/11](session-handoff-2026-11-15-langconfig-package.md).
+
+Kiểm chứng Linux: `npm test` mặc định gặp quota `/tmp` (253 đạt, 104 lỗi, 12 skip); chạy lại với `TMPDIR` trên filesystem của lab: **369 test, 357 đạt, 0 lỗi, 12 skip**. Không sửa/nới test hoặc runtime. Parent replay gói trên clone staging mới: **17 test adapter đạt, 1 warning; 4 test lifecycle đạt**; wire OpenCode 2.2.7 thật → upstream giả thành công với 1 request giả. `pip check` environment có sẵn đạt; chưa thử cài mới dependencies từ môi trường trống. Không inference model thật; không coi suite NeoMind hoặc wire fake là benchmark chất lượng AI.
+
+## Nghiên cứu LangConfig — 14/11/2026
+
+Chỉ nghiên cứu, không thay runtime: [báo cáo](research-langconfig-vs-neomind-2026-11-14.md), [bàn giao](session-handoff-2026-11-14-langconfig-eval.md). Đã chạy chu trình tài liệu trên hai fixture với LangConfig tool thật + model giả và NeoMind runtime + fake runner; graph và cơ chế repair khác nhau, không chứng minh chất lượng AI. Approval, lỗi node và skill có kết quả bất thường trong cấu hình thử, cần đối chứng thêm; crash quanh ghi và skill filesystem chưa thử. Suite NeoMind baseline lượt trước: 369 test, 357 đạt, 12 skip, 0 lỗi; không chạy lại suite, không gọi model thật.
+
+Preflight model thật free: catalog xác nhận `opencode/deepseek-v4.1-flash-free` có variant high và giá 0, nhưng runner hiện chưa bảo đảm trần 40 physical requests hoặc loại trừ model phụ trả phí. Dừng trước inference: 0 run, 0 request model trong đợt này; xem báo cáo để phân biệt blocker và hướng guard.
+
+Prototype LangConfig copy: native `opencode_review`, adapter/attempt journal, transport HTTP loopback và plugin guard fake. Đã chạy TOOL_NODE → OpenCode 2.2.7 thật → upstream giả; 17 test đạt, 1 warning. Guard chưa đủ chứng minh quota live/isolation, transport chỉ cho model fake, không gọi model thật; không thay runtime checkout NeoMind. Xem báo cáo để biết giới hạn reconcile, cancellation và isolation.
+
 ## OpenCode V2 — 13/11/2026
 
 Chưa hỗ trợ V2: OpenCode 2.2.7 không nhận `serve --pure`, ngoài ra API và cấu hình đã thay đổi. Transport nhận diện lỗi cờ này mà không tiết lộ stderr. Chưa kiểm chứng cô lập plugin/MCP và quyền V2; giữ nguyên cơ chế từ chối an toàn. Kiểm chứng Linux: `npm test` 354 test, 342 đạt, 0 lỗi, 12 skip. Xem [bàn giao](session-handoff-2026-11-13-opencode-v2.md).

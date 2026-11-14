@@ -6,6 +6,10 @@ Hiện đã chạy end-to-end trong worktree riêng (khảo sát → duyệt k�
 
 Người (hoặc agent) mới tiếp tục phát triển: đọc [AGENTS.md](AGENTS.md), rồi [bàn giao mới nhất](docs/adaptive-agent-flow/session-handoff-2026-11-12.md) và [tiến độ hiện tại](docs/adaptive-agent-flow/implementation-status.md). [Thiết kế v1](docs/adaptive-agent-flow/design-v1.md) vẫn là phạm vi mục tiêu.
 
+## Thử nghiệm LangConfig × OpenCode
+
+Nhánh `research/langconfig-opencode` lưu [ý tưởng tích hợp, hướng dẫn setup/test và báo cáo đánh giá](docs/langconfig/README.md), cùng [prototype tái lập](experiments/langconfig-opencode/README.md). Đây là nghiên cứu tách biệt, không thay runtime NeoMind; đường nối đã thử với OpenCode thật và model giả, chưa phải tích hợp production hay benchmark chất lượng AI thật.
+
 ## Chạy Flow Studio
 
 Cần Node >=22.16, Codex CLI đã đăng nhập và một cơ chế worker scope: Linux user-systemd, hoặc Windows job objects (cần .NET Framework 4 có sẵn trên Windows 10/11 để biên dịch helper lần đầu). Runtime đã được thử với Node 22.22.1 và Codex CLI 0.165.0 trên Linux; Node 24.18.0 và Codex CLI 0.160.1 trên Windows 11.
