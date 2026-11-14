@@ -1,5 +1,9 @@
 # NeoMind v1 — trạng thái implementation
 
+## OpenCode V2 trên Windows — 14/11/2026
+
+OpenCode CLI 2.2.7 được cài bằng `@opencode/cli`. Runner chọn binary npm trước bản V1 cũ trong `~/.local/bin`, cho phép Windows khi không có `%ProgramData%\opencode`, và vẫn kiểm tra nguồn cấu hình, plugin, MCP, phiên bản server và Windows Job. Probe `models()` với server thật trả danh sách model. Flow `fast` trong repo thử `demo/opencode-v2-flow-user` hoàn tất plan → duyệt tự động → implement → finish bằng `glm-5.3-flash-free`; run `run-78e92851-48bd-486f-8b83-b8c380cd2e1e`, README được thêm một dòng trong worktree, `handoff.applied=false`. Hai Windows Job của plan và implement đều trả `absent` sau run. Lượt đầu trong sandbox thất bại ở plan vì không kết nối được endpoint model; lượt hoàn tất chạy ngoài sandbox bằng tài khoản Windows của người dùng. `npm run build` và 14/14 test OpenCode V2 đạt; suite `npm test` đầy đủ có lỗi ở test Claude/CLI khác trong sandbox và được dừng trước khi hoàn tất. Chưa kiểm chứng extension hoặc flow `dev` có review/check/commit trên Windows. Xem [bàn giao](session-handoff-2026-11-14-opencode-v2-windows.md).
+
 ## OpenCode V2 — 13/11/2026
 
 Chưa hỗ trợ V2: OpenCode 2.2.7 không nhận `serve --pure`, ngoài ra API và cấu hình đã thay đổi. Transport nhận diện lỗi cờ này mà không tiết lộ stderr. Chưa kiểm chứng cô lập plugin/MCP và quyền V2; giữ nguyên cơ chế từ chối an toàn. Kiểm chứng Linux: `npm test` 354 test, 342 đạt, 0 lỗi, 12 skip. Xem [bàn giao](session-handoff-2026-11-13-opencode-v2.md).

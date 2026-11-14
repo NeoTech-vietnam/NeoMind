@@ -21,8 +21,11 @@ const base = (options: Options) => options.stateDir ?? path.join(stateBase(), 'n
 function command(env: NodeJS.ProcessEnv): string {
   const value = Object.entries(env).find(([key]) => key.toUpperCase() === 'PATH')?.[1] ?? '';
   const name = process.platform === 'win32' ? 'opencode.exe' : 'opencode';
-  const found = [path.join(homedir(), '.local', 'bin'), ...value.split(path.delimiter)].filter(Boolean)
-    .map(dir => path.join(dir, name)).find(file => path.isAbsolute(file) && existsSync(file));
+  const directories = value.split(path.delimiter).filter(Boolean);
+  const candidates = process.platform === 'win32'
+    ? [...directories.map(dir => path.join(dir, 'node_modules', '@opencode', 'cli', 'bin', name)), ...directories.map(dir => path.join(dir, name)), path.join(homedir(), '.local', 'bin', name)]
+    : [path.join(homedir(), '.local', 'bin', name), ...directories.map(dir => path.join(dir, name))];
+  const found = candidates.find(file => path.isAbsolute(file) && existsSync(file));
   if (!found) throw new Error('OpenCode executable not found');
   return found;
 }
@@ -44,7 +47,8 @@ class Scope implements RunnerScope {
 
 async function serverFor(scope: Scope, workspace: string, options: Options): Promise<OpenCodeServer> {
   // System policy can override user policy, and must not be allowed to load plugins before inspection.
-  if (process.platform !== 'linux' || existsSync('/etc/opencode')) throw new Error('OpenCode V2 system configuration isolation is not verified on this host');
+  const systemConfig = process.platform === 'win32' ? path.join(options.env?.ProgramData ?? process.env.ProgramData ?? 'C:\\ProgramData', 'opencode') : '/etc/opencode';
+  if (!['linux', 'win32'].includes(process.platform) || existsSync(systemConfig)) throw new Error('OpenCode V2 system configuration isolation is not verified on this host');
   const env = options.env ?? workerEnvironment(), root = base(options);
   await mkdir(root, { recursive: true });
   const instance = await mkdtemp(path.join(root, 'instance-'));

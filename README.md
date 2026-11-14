@@ -224,7 +224,7 @@ args = ["/duong/dan/neomind/dist/src/cli/main.js", "mcp", "/duong/dan/project"]
 
 ## Runner OpenCode (thử nghiệm)
 
-Runner `opencode` thử nghiệm chỉ nhận OpenCode **2.2.7**, hiện chỉ hỗ trợ Linux khi không có cấu hình hệ thống `/etc/opencode`. Model lấy từ provider OpenCode khả dụng trên máy (`GET /api/runners/opencode`). Mỗi lượt chạy một `opencode serve` riêng trong worker scope, từ chối MCP, plugin ngoài và cấu hình có thể thay đổi quyền; quyền mặc định chỉ cho `read/glob/grep`, thêm `edit` cho bước sửa và web khi flow bật `webAccess`. Session OpenCode V1 cũ không được hỗ trợ tiếp tục bằng runner này; journal NeoMind vẫn được giữ.
+Runner `opencode` thử nghiệm chỉ nhận OpenCode **2.2.7** trên Linux hoặc Windows, khi không có cấu hình hệ thống `/etc/opencode` hoặc `%ProgramData%\opencode` tương ứng. Trên Windows, runner ưu tiên binary của gói npm `@opencode/cli` trước bản cũ trong `~/.local/bin`. Model lấy từ provider OpenCode khả dụng trên máy (`GET /api/runners/opencode`). Mỗi lượt chạy một `opencode serve` riêng trong worker scope, từ chối MCP, plugin ngoài và cấu hình có thể thay đổi quyền; quyền mặc định chỉ cho `read/glob/grep`, thêm `edit` cho bước sửa và web khi flow bật `webAccess`. Session OpenCode V1 cũ không được hỗ trợ tiếp tục bằng runner này; journal NeoMind vẫn được giữ.
 
 OpenCode V2 không cung cấp chế độ JSON schema native qua API prompt được dùng ở đây. NeoMind gửi schema trong prompt và kiểm tra kết quả bằng JSON Schema cục bộ; JSON không hợp lệ hoặc sai schema bị từ chối. Cách này không bảo đảm model luôn trả đúng định dạng như structured output native.
 

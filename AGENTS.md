@@ -12,6 +12,7 @@ Công cụ cấu hình và chạy *agent flow* trên một Git repo: lập kế 
 
 ## Đọc theo thứ tự
 
+- [Bàn giao OpenCode V2 trên Windows 14/11](docs/adaptive-agent-flow/session-handoff-2026-11-14-opencode-v2-windows.md).
 - [Khảo sát OpenCode V2 13/11](docs/adaptive-agent-flow/session-handoff-2026-11-13-opencode-v2.md).
 - [Bàn giao phục hồi OpenCode và vòng sửa 13/11](docs/adaptive-agent-flow/session-handoff-2026-11-13-opencode-recovery.md).
 - [Bàn giao quyền web của OpenCode 12/11](docs/adaptive-agent-flow/session-handoff-2026-11-12-opencode-web.md).
