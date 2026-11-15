@@ -9,8 +9,9 @@ Tài liệu này dành cho lab Linux riêng, không phải hướng dẫn triể
 | NeoMind baseline | Node, npm; chạy ở checkout NeoMind | Suite NeoMind, không phải test LangConfig. |
 | Prototype unit/graph giả | Python và dependency LangConfig chọn lọc; **không cần DB server** | Test adapter với transport giả và graph gọi tool node thật. Lượt trước 17 test đạt, 1 warning. |
 | Wire giả | Thêm OpenCode **2.2.7** và fake upstream loopback | `StateGraph` → LangConfig `execute_tool_node` → OpenCode server thật → upstream giả. Verdict được lập trình sẵn; đây là phép thử riêng, không nằm trong 17 test. |
+| Guard và NeoMind thử nghiệm | Linux namespace, user-systemd, NeoMind đã build | Đã chạy runner contract và LocalRun chỉ đọc thật với upstream giả, kiểm journal và dừng scope; không phải model AI thật hoặc production runner được sửa. |
 | UI/backend LangConfig | Thêm PostgreSQL 16 và pgvector, frontend và fake endpoint | UI/backend/DB từng chạy với model giả; graph prototype ở trên **không** đi qua toàn bộ HTTP backend hay `WorkflowExecutor`. |
-| Model free thật | Chưa đủ điều kiện an toàn | **0 workflow thật, 0 inference request thật**. Không suy ra model free hoạt động từ API native của LangConfig. |
+| Model free thật | Đang pause vì quota OpenCode | Đã thử 1 workflow, 0 lượt hoàn thành; 1 reservation là cận trên 1 physical request. OpenCode trả `Free usage limit reached`, chưa có review AI thật. |
 
 ## Điều kiện và cách ly
 
@@ -101,11 +102,11 @@ export TEST_RUN="$(mktemp -d "$LAB/pytest-run-XXXXXXXX")"
   --python "$PYTHON" --opencode "$(command -v opencode)"
 ```
 
-Giữ `set -euo pipefail` của shell lab. `--basetemp` phải là thư mục mới vì pytest có thể xóa đích đó. OpenCode 2.2.7 cần được chuẩn bị trước theo hướng dẫn phát hành chính thức; harness kiểm version và dừng nếu không khớp, không tự cài hoặc đổi bản OpenCode toàn cục. Wire cài dependency plugin đúng 2.2.7 trong work directory riêng bằng npm, kiểm config ancestor và không dùng service chung. Lượt đóng gói đã replay unit và wire trên clone staging mới với Python environment có sẵn; không khẳng định đã kiểm cài Python dependencies từ môi trường trống. Test harness cleanup chạy riêng, không nằm trong 17 test adapter.
+Giữ `set -euo pipefail` của shell lab. `--basetemp` phải là thư mục mới vì pytest có thể xóa đích đó. OpenCode 2.2.7 cần được chuẩn bị trước theo hướng dẫn phát hành chính thức; harness kiểm version và dừng nếu không khớp, không tự cài hoặc đổi bản OpenCode toàn cục. Wire cài dependency plugin đúng 2.2.7 trong work directory riêng bằng npm, kiểm config ancestor và không dùng service chung. Sau lượt replay environment cũ, đã cài lại Python dependencies từ **venv 3.12 mới, không system site-packages, cache pip riêng ban đầu trống**: cài đạt trong khoảng 887 giây, `pip check` đạt; 17 test adapter, 4 test lifecycle và wire 1 fake request đều đạt. Test harness cleanup chạy riêng, không nằm trong 17 test adapter. Chưa kiểm cold install toàn bộ UI/backend hoặc Windows.
 
 Kỳ vọng unit lịch sử: `17 passed, 1 warning`; test dùng `DATABASE_URL` dummy để import cấu hình nhưng **không kết nối DB**. Wire lịch sử dùng model giả `fixture/fake-review#high`, source fixture tổng hợp, server OpenCode riêng và upstream IPv4 loopback giả; kết quả `needs_changes` với `Fixture fake finding`. Adapter HTTP cố ý từ chối model thật. Session permissions deny tool không phải OS sandbox. Guard giả đã thử 429/retry, compaction và ngưỡng từ chối, nhưng không phải quota guard production.
 
-Lần trước cài dependency **chọn lọc**, không phải full requirements: FastAPI 0.136.3, LangGraph 1.2.22, checkpoint-postgres 3.2.1, DeepAgents 0.6.12, langchain-openai 1.8.0. File `requirements-selected.txt` và `pip-freeze.txt` ở evidence lab cũ là chứng cứ cục bộ, không phải lockfile portable; một số dependency có khoảng version. Full requirements có các thành phần ML/audio nặng bị bỏ khỏi yêu cầu trực tiếp, vì vậy không kết luận các tính năng đó đã được kiểm chứng. Lệnh cài từ môi trường mới có thể resolve phiên bản khác; không khẳng định đã tái lập fresh install.
+Dependency vẫn là **chọn lọc**, không phải full requirements: FastAPI 0.136.3, LangGraph 1.2.22, checkpoint-postgres 3.2.1, DeepAgents 0.6.12, langchain-openai 1.8.0. Manifest trực tiếp đã lưu trong gói; cold install ghi nhận 191 dependency, nhưng transitive vẫn không được khóa. `pip-freeze.txt` là chứng cứ cục bộ, không phải lockfile portable. Các thành phần ML/audio nặng bị bỏ khỏi yêu cầu trực tiếp, vì vậy không kết luận các tính năng đó đã được kiểm chứng. Lần cài tương lai có thể resolve transitive khác dù lượt Linux hiện tại đã thành công.
 
 ## 4. Full UI/backend: tham chiếu lượt đã chạy
 
@@ -184,4 +185,8 @@ Fake server lịch sử `mock_openai.py` trả câu cố định; `benchmark_moc
 
 ## Gate trước model thật
 
-Không gỡ khóa fake vì wire đã qua. Còn thiếu guard fail-closed, durable/atomic trên mọi physical request và process; pin đúng model **và variant**; bao phủ retry, title, compaction, auxiliary/fallback, WebSocket và mất plugin/config; xác minh auth, instructions, plugin/MCP và isolation; kiểm cancellation/stop proof và no-resubmit với server thật. Catalog giá 0 không xác nhận billing hay khả dụng. Người dùng từng duyệt tối đa **4 workflow / 40 physical requests** cho model free cụ thể trong báo cáo, nhưng gate chưa đạt và không có lệnh live trong tài liệu này. Không gọi model khác hoặc fallback trả phí.
+Overlay ban đầu vẫn khóa fake, không gỡ khóa chỉ vì wire đã qua. Harness riêng ở [live/README](../../experiments/langconfig-opencode/live/README.md) đã kiểm guard SQLite nhiều process và retry thực với upstream giả, rồi thử một workflow DeepSeek Free: **`Free usage limit reached`**. Worker đã dừng; không retry hoặc đổi model. Không có lệnh live trong tài liệu setup này.
+
+Giữ `LIVE_PAUSED`, DB quota gốc và owner anchor ngoài checkout; không sao chép/tạo mới DB để chạy tiếp. Catalog giá 0 không xác nhận billing, auth hoặc khả dụng inference. Tổng đã dùng: **1 workflow thử / 1 reservation**, trong trần 4 workflow/40 physical requests. Reservation chỉ là cận trên request, không phải bằng chứng độc lập số POST tới dịch vụ. Để tiếp tục cần chủ tài khoản xử lý giới hạn qua giao diện OpenCode chính thức (`/connect` hoặc lệnh auth được bản cài hỗ trợ); không gửi key/token vào chat và không tự đăng ký gói trả phí. Không cam kết đăng nhập sẽ giải quyết được quota, vì lỗi hiện tại không xác định riêng trạng thái auth.
+
+Trước production vẫn cần đối chứng guard unload/config, WebSocket thật, isolation và hợp đồng quyền theo use case; không coi permissions là OS sandbox. Phần NeoMind hiện là factory thử nghiệm, không thay guard của production runner; LocalRun/model thật chưa được xác nhận hoàn tất.

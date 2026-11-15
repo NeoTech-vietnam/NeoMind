@@ -2,9 +2,11 @@
 
 ## Đóng gói LangConfig × OpenCode — 15/11/2026
 
+Tiếp tục sau lần push đầu: harness guard SQLite đã kiểm concurrency nhiều process và retry HTTP thực với upstream giả (2 POST / 2 reservation khi cho retry). Factory qua `RunnerRegistry` và LocalRun read-only hoàn chỉnh của NeoMind đều chạy với OpenCode 2.2.7 thật + upstream giả; journal và scope dừng được kiểm. Một workflow `opencode/deepseek-v4.1-flash-free#high` thật đã thử nhưng nhận **`Free usage limit reached`**: 0 workflow live hoàn thành, 1 reservation là cận trên 1 request. Đã pause, không fallback hoặc reset budget; cần chủ tài khoản xử lý giới hạn chính thức trước khi thử tiếp. Không coi fake LocalRun là bằng chứng live hoặc guard production.
+
 Nhánh `research/langconfig-opencode` từ `6306c8b`: [hồ sơ tích hợp](../langconfig/README.md), tài liệu ý tưởng/setup và prototype tái lập, tách biệt runtime NeoMind. Người dùng duyệt commit/push nhánh riêng và tiếp tục nghiên cứu/test model free sau khi lưu nhánh; chưa mở gate inference chỉ vì wire giả chạy được. Xem [bàn giao 15/11](session-handoff-2026-11-15-langconfig-package.md).
 
-Kiểm chứng Linux: `npm test` mặc định gặp quota `/tmp` (253 đạt, 104 lỗi, 12 skip); chạy lại với `TMPDIR` trên filesystem của lab: **369 test, 357 đạt, 0 lỗi, 12 skip**. Không sửa/nới test hoặc runtime. Parent replay gói trên clone staging mới: **17 test adapter đạt, 1 warning; 4 test lifecycle đạt**; wire OpenCode 2.2.7 thật → upstream giả thành công với 1 request giả. `pip check` environment có sẵn đạt; chưa thử cài mới dependencies từ môi trường trống. Không inference model thật; không coi suite NeoMind hoặc wire fake là benchmark chất lượng AI.
+Kiểm chứng Linux: `npm test` mặc định gặp quota `/tmp` (253 đạt, 104 lỗi, 12 skip); chạy lại với `TMPDIR` trên filesystem của lab: **369 test, 357 đạt, 0 lỗi, 12 skip**. Không sửa/nới test hoặc runtime. Parent replay gói trên clone staging mới: **17 test adapter đạt, 1 warning; 4 test lifecycle đạt**; wire OpenCode 2.2.7 thật → upstream giả thành công với 1 request giả. Sau đó cold install venv Python 3.12/cache pip mới đạt trong 887 giây, `pip check` đạt, replay 17 + 4 test và wire đạt; không đổi manifest, transitive chưa lock. Suite NeoMind và wire fake không phải benchmark chất lượng AI; lượt live quota nêu trên không có verdict.
 
 ## Nghiên cứu LangConfig — 14/11/2026
 

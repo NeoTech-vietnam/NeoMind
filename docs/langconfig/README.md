@@ -20,7 +20,9 @@ LangConfig TOOL_NODE → adapter HTTP loopback → OpenCode 2.2.7 → model gi�
 - Graph thử dùng implementation `TOOL_NODE` thật, chưa phải toàn bộ backend HTTP/WorkflowExecutor hoặc canvas UI của LangConfig.
 - LangConfig đọc fixture rồi truyền nội dung vào prompt; session OpenCode của prototype bị từ chối mọi tool. Đây không phải kiểm chứng OpenCode tự đọc/sửa file hay OS sandbox.
 - Model giả chỉ kiểm tra đường thực thi, không chứng minh chất lượng AI. Benchmark A/B trước đó cũng dùng fake runner/model và chưa hoàn toàn đối xứng.
-- **Chưa gọi model thật cho bài đánh giá LangConfig.** Việc thử `opencode/deepseek-v4.1-flash-free#high` đã được duyệt với trần 4 workflow/40 request; chỉ được mở sau khi kiểm chứng guard, isolation và auth. Không tự chuyển model trả phí.
+- **Đã thử 1 workflow model free nhưng OpenCode trả `Free usage limit reached`; 0 lượt live hoàn thành.** Một reservation là cận trên 1 physical request, chưa có review AI thật hoặc số POST được đối chứng ở dịch vụ. Đã pause, giữ nguyên DB budget và không fallback trả phí. Trần được duyệt vẫn là 4 workflow/40 request, không reset DB để vượt giới hạn.
+- Harness mới đã kiểm quota nhiều process và retry qua OpenCode thật với upstream giả; factory thử nghiệm qua `RunnerRegistry` và **LocalRun read-only hoàn chỉnh** của NeoMind đã chạy đạt, kiểm journal và scope dừng. Đây chưa phải bằng chứng LocalRun live hoặc production runner đã tích hợp guard; xem [harness và blocker](../../experiments/langconfig-opencode/live/README.md).
+- Đã kiểm cài sạch Python dependencies chọn lọc: venv 3.12 mới, cache riêng trống, `pip check`, 17 test adapter, 4 test lifecycle và wire đều đạt. Điều này không bao phủ full backend/UI hoặc Windows; dependency transitive chưa được khóa.
 
 ## Những gì không nằm trong Git
 
