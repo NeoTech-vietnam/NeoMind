@@ -13,6 +13,8 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field
 
 MODEL = {"providerID": "opencode", "id": "deepseek-v4.1-flash-free", "variant": "high"}
+GLM_MODEL = {"providerID": "opencode", "id": "glm-5.3-flash-free", "variant": "high"}
+ROUTER_MODEL = {"providerID": "openrouter", "id": "openrouter/free"}
 PERMISSIONS = [{"action": "*", "resource": "*", "effect": "deny"}]
 
 
@@ -47,7 +49,7 @@ class Adapter:
         if not self.workspace.is_relative_to(root):
             raise ReviewError("workspace outside fixture root")
         self.model = model or MODEL
-        if self.model != MODEL and self.model != {"providerID": "fixture", "id": "fake-review", "variant": "high"}:
+        if self.model not in (MODEL, GLM_MODEL, ROUTER_MODEL, {"providerID": "fixture", "id": "fake-review", "variant": "high"}):
             raise ReviewError("model not permitted")
         if getattr(transport, "fixture_only", False) and self.model != {"providerID": "fixture", "id": "fake-review", "variant": "high"}:
             raise ReviewError("HTTP transport only permits the local fake model until live guard is verified")
@@ -71,8 +73,9 @@ class Adapter:
 
     def _verify(self, response, sid=None, attempt=None):
         data = response["data"]
+        model_matches = data.get("model") == self.model or (self.model == ROUTER_MODEL and data.get("model") == {**ROUTER_MODEL, "variant": "default"})
         if (not re.fullmatch(r"ses_[A-Za-z0-9]+", data["id"]) or (sid is not None and data["id"] != sid)
-                or data.get("parentID") or data.get("agent") != "build" or data.get("model") != self.model
+                or data.get("parentID") or data.get("agent") != "build" or not model_matches
                 or Path(data["location"]["directory"]).resolve() != self.workspace
                 or data.get("permissions") != PERMISSIONS or data.get("title") != "Fixture review"
                 or (attempt is not None and data.get("metadata", {}).get("fixtureAttempt") != attempt)):

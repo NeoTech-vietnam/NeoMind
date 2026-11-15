@@ -21,6 +21,7 @@ from pathlib import Path
 
 import quota
 from runtime_paths import require_data_root
+from live_models import live_model
 
 CODE_ROOT = Path(__file__).resolve().parent
 ROOT = require_data_root()
@@ -34,6 +35,12 @@ PERMISSIONS = [{'action': '*', 'resource': '*', 'effect': 'deny'}]
 def require(value, message):
     if not value:
         raise AssertionError(message)
+
+
+def session_model_matches(actual, expected):
+    if expected in ({'providerID': 'openrouter', 'id': 'openrouter/free'}, {'providerID': 'fixture', 'id': 'router-free'}):
+        return actual in (expected, {**expected, 'variant': 'default'})
+    return actual == expected
 
 
 def get_line(proc, timeout=30):
@@ -52,11 +59,18 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class Worker:
-    def __init__(self, root, fake_port, retry=False, cap=20, workspace=None, guard=True, live_db=None, websocket=False):
+    def __init__(self, root, fake_port, retry=False, cap=20, workspace=None, guard=True, live_db=None, websocket=False, live_model_id=None, account_db=None, router_test=False):
         self.root = root
         require(OPENCODE is not None and Path(OPENCODE).is_absolute(), 'absolute OPENCODE_BIN required')
         self.live = live_db is not None
-        self.model = LIVE_MODEL if self.live else MODEL
+        self.model = live_model(live_model_id) if self.live else ({'providerID': 'fixture', 'id': 'router-free'} if router_test else MODEL)
+        require(not router_test or not self.live, 'router fake cannot use live budget')
+        router = self.live and self.model['providerID'] == 'openrouter'
+        if router:
+            require(account_db is not None and Path(account_db).is_absolute() and Path(account_db).resolve(strict=True).is_file(), 'official account database required')
+        else:
+            require(account_db is None, 'unexpected account database')
+        require(self.live or live_model_id is None, 'fake worker cannot select a live model')
         require(not self.live or (guard and not retry and fake_port is None), 'invalid live configuration')
         for name in ['home', 'config/opencode', 'data', 'cache', 'workspace', 'tmp', 'runtime']:
             (root / name).mkdir(parents=True)
@@ -71,9 +85,9 @@ class Worker:
         self.trace = root / 'trace.jsonl'
         self.password = secrets.token_hex(24)
         plugin = str(CODE_ROOT / 'guard')
-        options = {'mode': 'live' if self.live else 'fake', 'database': str(self.db), 'helper': str(CODE_ROOT / 'quota.py'), 'python': PYTHON,
-                   'trace': str(self.trace), 'origin': 'https://opencode.ai' if self.live else f'http://127.0.0.1:{fake_port}', 'home': str(root / 'home'),
-                   'tmp': str(root / 'tmp'), 'testRetry': retry}
+        options = {'mode': 'live' if self.live else ('fake-router' if router_test else 'fake'), 'database': str(self.db), 'helper': str(CODE_ROOT / 'quota.py'), 'python': PYTHON,
+                   'trace': str(self.trace), 'origin': ('https://openrouter.ai' if router else 'https://opencode.ai') if self.live else f'http://127.0.0.1:{fake_port}', 'home': str(root / 'home'),
+                   'tmp': str(root / 'tmp'), 'testRetry': retry, 'providerID': self.model['providerID'], 'modelID': self.model['id']}
         config = {'model': 'fixture/fake-review', 'compaction': {'auto': False}, 'warming': False, 'update': 'disable',
                   'plugins': [{'package': plugin, 'options': options}] if guard else [],
                   'providers': {'fixture': {'name': 'Fake fixture', 'package': '@opencode/ai/providers/openai-compatible',
@@ -86,9 +100,16 @@ class Worker:
                     {'action': 'plugin.use', 'resource': plugin, 'effect': 'allow'},
                     {'action': 'skill.use', 'resource': '*', 'effect': 'deny'}]}
         if self.live:
-            config['model'] = 'opencode/deepseek-v4.1-flash-free'
-            config['providers'] = {'opencode': {'settings': {'transport': 'http', 'cache': {'warming': False}}}}
-            config['policies'][1]['resource'] = 'opencode'
+            config['model'] = self.model['providerID'] + '/' + self.model['id']
+            config['providers'] = {self.model['providerID']: {'settings': {'transport': 'http', 'cache': {'warming': False}}}}
+            if router:
+                config['providers']['openrouter']['body'] = {'provider': {'max_price': {'prompt': 0, 'completion': 0}, 'allow_fallbacks': False}}
+            config['policies'][1]['resource'] = self.model['providerID']
+        elif router_test:
+            config['model'] = 'fixture/router-free'
+            config['providers']['fixture']['package'] = '@opencode/ai/providers/openrouter'
+            config['providers']['fixture']['models'] = {'router-free': {'modelID': 'openrouter/free', 'name': 'Synthetic Router', 'limit': {'context': 16384, 'output': 2048}, 'variants': []}}
+            config['providers']['fixture']['body'] = {'provider': {'max_price': {'prompt': 0, 'completion': 0}, 'allow_fallbacks': False}}
         elif websocket:
             config['providers']['fixture']['settings']['transport'] = 'websocket'
         (root / 'config/opencode/opencode.json').write_text(json.dumps(config))
@@ -99,6 +120,8 @@ class Worker:
                'OPENCODE_SERVER_USERNAME': 'opencode', 'OPENCODE_SERVER_PASSWORD': self.password,
                'OPENCODE_DISABLE_PROJECT_CONFIG': '1', 'OPENCODE_DISABLE_EXTERNAL_SKILLS': '1',
                'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'}
+        if router:
+            env['OPENCODE_DB'] = str(Path(account_db).resolve(strict=True))
         self.stderr = (root / 'worker.stderr').open('wb')
         self.proc = subprocess.Popen([OPENCODE, 'serve', '--hostname', '127.0.0.1', '--port', '0'], cwd=self.workspace, env=env,
                                      stdout=subprocess.PIPE, stderr=self.stderr, text=True, start_new_session=True)
@@ -141,23 +164,32 @@ class Worker:
         require(len(external) == 1 and external[0]['id'] == 'fixture-live-guard' and external[0]['source']['path'] == plugin and external[0]['state']['status'] == 'active', 'guard missing')
         require(not self.request('GET', '/api/mcp')['data'], 'MCP not empty')
         enabled = [m for m in models if m['enabled']]
+        (self.root / 'model-summary.json').write_text(json.dumps([{'providerID': m.get('providerID'), 'id': m.get('id'), 'variants': [v.get('id') for v in m.get('variants', [])]} for m in enabled]))
         require(len(enabled) == 1 and (enabled[0]['providerID'], enabled[0]['id']) == (self.model['providerID'], self.model['id']), 'model isolation failed')
+        if self.model == {'providerID': 'fixture', 'id': 'router-free'}:
+            require(not enabled[0].get('variants'), 'fake router unexpectedly has variants')
         if self.live:
-            require(any(v.get('id') == 'high' for v in enabled[0].get('variants', [])), 'high variant unavailable')
+            if self.model['providerID'] == 'openrouter':
+                require(not enabled[0].get('variants'), 'router unexpectedly has variants')
+            else:
+                require(any(v.get('id') == 'high' for v in enabled[0].get('variants', [])), 'high variant unavailable')
             costs = enabled[0].get('cost')
             require(isinstance(costs, list) and len(costs) > 0 and all(c.get('input') == 0 and c.get('output') == 0 and c.get('cache', {}).get('read') == 0 and c.get('cache', {}).get('write') == 0 for c in costs), 'target cost not confirmed free')
         require(self.trace.exists() and '"ready"' in self.trace.read_text(), 'guard not ready')
         (self.root / 'preflight-summary.json').write_text(json.dumps({'version': info['version'], 'config_sources': [e.get('path') for e in config], 'builtin_count': len(plugins)-1, 'external_plugin': external[0]['id'], 'mcp_count': 0, 'enabled_models': [self.model['providerID'] + '/' + self.model['id']]}))
 
-    def session(self, workflow, model=None, cap=20, title='Fixture review'):
+    def session(self, workflow, model=None, cap=20, title='Fixture review', logical_id=None):
         model = model or self.model
         if self.live:
-            require(model == LIVE_MODEL and 1 <= cap <= 10, 'invalid live session')
-        body = {'agent': 'build', 'model': model, 'location': {'directory': str(self.workspace)}, 'permissions': PERMISSIONS, 'metadata': {'workflow': workflow}}
+            require(model == self.model and 1 <= cap <= 10, 'invalid live session')
+        metadata = {'workflow': workflow}
+        if logical_id is not None:
+            metadata['neomindSession'] = logical_id
+        body = {'agent': 'build', 'model': model, 'location': {'directory': str(self.workspace)}, 'permissions': PERMISSIONS, 'metadata': metadata}
         if title is not None:
             body['title'] = title
         created = self.request('POST', '/api/session', body)['data']
-        require(created.get('model') == model and created.get('permissions') == PERMISSIONS and created.get('location', {}).get('directory') == str(self.workspace), 'session mismatch')
+        require(session_model_matches(created.get('model'), model) and created.get('permissions') == PERMISSIONS and created.get('location', {}).get('directory') == str(self.workspace), f'session mismatch: model={created.get("model")}')
         sid = created['id']
         quota.bind(str(self.db), sid, workflow, cap)
         entries = self.request('GET', f'/api/experimental/session/{sid}/instructions/entries')

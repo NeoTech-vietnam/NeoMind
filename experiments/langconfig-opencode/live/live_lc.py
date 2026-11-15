@@ -8,7 +8,8 @@ import uuid
 from pathlib import Path
 from typing import TypedDict
 
-from fake_acceptance import ROOT, CODE_ROOT, LIVE_MODEL, Worker
+from fake_acceptance import ROOT, CODE_ROOT, Worker
+from live_models import live_model
 import quota
 from runtime_paths import verify_live_budget
 
@@ -54,17 +55,19 @@ async def main():
         raise RuntimeError('live authorization gate is closed')
     if (ROOT / 'LIVE_PAUSED').exists() or (CODE_ROOT / 'LIVE_PAUSED').exists():
         raise RuntimeError('live evaluation is paused')
+    model = live_model(os.environ.get('LIVE_MODEL_ID'))
+    if model != {'providerID': 'openrouter', 'id': 'openrouter/free'}:
+        raise RuntimeError('explicit OpenRouter free router selection required')
     workflow = os.environ.get('LIVE_WORKFLOW_ID', '')
     try:
         if not workflow.startswith('lc-') or str(uuid.UUID(workflow[3:])) != workflow[3:]:
             raise ValueError('bad workflow ID')
         metadata = json.loads((ROOT / 'live-attempts' / f'{workflow}.json').read_text())
-        if metadata.get('workflow') != workflow:
+        if metadata.get('workflow') != workflow or metadata.get('model') != model:
             raise ValueError('attempt metadata mismatch')
     except (ValueError, OSError, TypeError) as exc:
         raise RuntimeError('new workflow attempt metadata required') from exc
     budget = verify_live_budget(ROOT, os.environ.get('LIVE_BUDGET_PATH'))
-    quota.start_workflow(str(budget), workflow, 10)
     run = Path(tempfile.mkdtemp(prefix='live-lc-', dir=ROOT / 'runs'))
     workspace = run / 'fixture'
     workspace.mkdir()
@@ -72,8 +75,9 @@ async def main():
     fixture.write_text('SOURCE DOCUMENT\nThe audit log retention period is 30 days. Production releases require approval from two reviewers.\n\nDRAFT TO REVIEW\nThe audit log retention period is 90 days. Production releases require approval from one reviewer.\n')
     worker = None
     try:
-        worker = Worker(run / 'worker', None, workspace=workspace, live_db=budget)
-        adapter = Adapter(LiveTransport(worker, workflow), workspace, run / 'attempts.sqlite', fixture_root=workspace, model=LIVE_MODEL)
+        worker = Worker(run / 'worker', None, workspace=workspace, live_db=budget, live_model_id=os.environ['LIVE_MODEL_ID'], account_db=os.environ.get('OPENCODE_ACCOUNT_DB'))
+        quota.start_workflow(str(budget), workflow, 10)
+        adapter = Adapter(LiveTransport(worker, workflow), workspace, run / 'attempts.sqlite', fixture_root=workspace, model=model)
         async def no_events(*args, **kwargs):
             pass
         nodes._emit_node_event = no_events

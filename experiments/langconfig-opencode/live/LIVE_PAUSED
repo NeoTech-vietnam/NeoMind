@@ -1,3 +1,4 @@
-Live LC attempt 2026-11-15: OpenCode reported Free usage limit reached.
-Do not retry until this condition is resolved and the session owner explicitly clears this pause.
-Persistent budget: one workflow and one reservation (a physical-request upper bound of one).
+Evaluation workflow budget exhausted on 2026-11-15: four of four workflow attempts used.
+Persistent original budget: four reservations of forty; the workflow cap still prevents another run.
+The final NeoMind LocalRun via OpenRouter Free Router completed; prior DeepSeek and GLM attempts hit quota.
+Do not clear this pause or run more inference without a new explicit owner-approved budget.

@@ -6,7 +6,7 @@ import pytest
 from langgraph.graph import StateGraph, START, END
 from typing import TypedDict
 
-from tools.opencode_review import Adapter, MODEL, PERMISSIONS, ReviewError, install_test_adapter
+from tools.opencode_review import Adapter, MODEL, GLM_MODEL, ROUTER_MODEL, PERMISSIONS, ReviewError, install_test_adapter
 
 
 class Fake:
@@ -35,6 +35,77 @@ class Fake:
             return {'data':user+[{'id':'reply','type':'assistant','agent':'build','model':MODEL,'finish':'stop','content':[{'type':'text','text':self.response}]}], 'cursor':{'next':None}}
         if path.startswith('/api/session/'): return {'data':session}
         raise AssertionError(path)
+
+
+def test_glm_identity_is_exact_and_fixture_http_stays_locked(tmp_path):
+    from tools.opencode_http import LoopbackTransport
+    workspace = tmp_path / 'fixture'; workspace.mkdir()
+    transport = Fake(workspace)
+    assert Adapter(transport, workspace, tmp_path / 'glm.sqlite', model=GLM_MODEL).model == GLM_MODEL
+    for bad in ({**GLM_MODEL, 'variant': 'low'}, {'providerID': 'opencode', 'id': 'glm-5.3-flash', 'variant': 'high'},
+                {'providerID': 'opencode', 'id': 'glm-5.3-flash-free'}, {'providerID': 'other', 'id': GLM_MODEL['id'], 'variant': 'high'}):
+        with pytest.raises(ReviewError): Adapter(transport, workspace, tmp_path / 'bad.sqlite', model=bad)
+    with pytest.raises(ReviewError):
+        Adapter(LoopbackTransport('http://127.0.0.1:1234', 'fixture', 'dummy'), workspace, tmp_path / 'blocked.sqlite', model=GLM_MODEL)
+
+
+def test_router_exact_identity_and_fixture_http_stays_locked(tmp_path):
+    from tools.opencode_http import LoopbackTransport
+    workspace = tmp_path / 'fixture'; workspace.mkdir()
+    assert Adapter(Fake(workspace), workspace, tmp_path / 'router.sqlite', model=ROUTER_MODEL).model == ROUTER_MODEL
+    for bad in ({**ROUTER_MODEL, 'variant': 'default'}, {**ROUTER_MODEL, 'variant': 'high'}, {**ROUTER_MODEL, 'id': 'paid/model'}, {**ROUTER_MODEL, 'providerID': 'other'}):
+        with pytest.raises(ReviewError): Adapter(Fake(workspace), workspace, tmp_path / 'bad-router.sqlite', model=bad)
+    with pytest.raises(ReviewError):
+        Adapter(LoopbackTransport('http://127.0.0.1:1234', 'fixture', 'dummy'), workspace, tmp_path / 'blocked-router.sqlite', model=ROUTER_MODEL)
+
+
+@pytest.mark.asyncio
+async def test_glm_session_and_assistant_identity_pinned(tmp_path):
+    import copy
+    workspace = tmp_path / 'fixture'; workspace.mkdir()
+    class GLMFake(Fake):
+        missing_variant = False
+        async def request(self, method, path, body=None):
+            result = copy.deepcopy(await super().request(method, path, body))
+            if path == '/api/session' or (path.startswith('/api/session/') and all(x not in path for x in ('/prompt', '/wait', '/message?', '/interrupt'))):
+                result['data']['model'] = dict(GLM_MODEL)
+                if self.missing_variant: result['data']['model'].pop('variant')
+            if '/message?' in path:
+                for message in result['data']:
+                    if message.get('type') == 'assistant': message['model'] = dict(GLM_MODEL)
+            return result
+    transport = GLMFake(workspace)
+    adapter = Adapter(transport, workspace, tmp_path / 'ok.sqlite', model=GLM_MODEL)
+    assert (await adapter.start('glm', 'Review fixture'))['verdict'] == 'needs_changes'
+    rejected = GLMFake(workspace); rejected.missing_variant = True
+    with pytest.raises(ReviewError): await Adapter(rejected, workspace, tmp_path / 'reject.sqlite', model=GLM_MODEL).start('bad', 'Review fixture')
+    assert not any(path.endswith('/prompt') for _, path, _ in rejected.calls)
+
+
+@pytest.mark.asyncio
+async def test_router_session_default_sentinel_never_relaxes_assistant_identity(tmp_path):
+    import copy
+    workspace = tmp_path / 'fixture'; workspace.mkdir()
+    class RouterFake(Fake):
+        session_variant = 'default'
+        assistant_variant = None
+        async def request(self, method, path, body=None):
+            result = copy.deepcopy(await super().request(method, path, body))
+            if path == '/api/session' or (path.startswith('/api/session/') and all(x not in path for x in ('/prompt', '/wait', '/message?', '/interrupt'))):
+                result['data']['model'] = {**ROUTER_MODEL, 'variant': self.session_variant}
+            if '/message?' in path:
+                for message in result['data']:
+                    if message.get('type') == 'assistant':
+                        message['model'] = dict(ROUTER_MODEL)
+                        if self.assistant_variant is not None: message['model']['variant'] = self.assistant_variant
+            return result
+    transport = RouterFake(workspace)
+    assert (await Adapter(transport, workspace, tmp_path / 'ok-router.sqlite', model=ROUTER_MODEL).start('router', 'Review fixture'))['verdict'] == 'needs_changes'
+    bad_session = RouterFake(workspace); bad_session.session_variant = 'high'
+    with pytest.raises(ReviewError): await Adapter(bad_session, workspace, tmp_path / 'bad-session.sqlite', model=ROUTER_MODEL).start('router', 'Review fixture')
+    assert not any(path.endswith('/prompt') for _, path, _ in bad_session.calls)
+    bad_reply = RouterFake(workspace); bad_reply.assistant_variant = 'default'
+    with pytest.raises(ReviewError): await Adapter(bad_reply, workspace, tmp_path / 'bad-reply.sqlite', model=ROUTER_MODEL).start('router', 'Review fixture')
 
 
 @pytest.fixture

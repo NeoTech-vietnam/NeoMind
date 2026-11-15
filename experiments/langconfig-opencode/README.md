@@ -7,9 +7,10 @@ lệnh gọi model thật trong các bước unit/wire ở dưới. Harness th�
 dùng service OpenCode đang chia sẻ.
 
 Giai đoạn tiếp theo được lưu riêng ở [live/README.md](live/README.md): guard và
-factory thử nghiệm NeoMind, fake acceptance với server thật, cùng bằng chứng
-lượt DeepSeek Free bị `Free usage limit reached`. Không dùng đường live đó để
-gỡ khóa overlay này; giữ `LIVE_PAUSED` và budget gốc, không tự thử lại.
+factory thử nghiệm NeoMind, fake acceptance với server thật và **LocalRun thật
+qua OpenRouter Free Router** đã phát hiện đúng hai lỗi inline. Ba lượt LC trước
+bị quota; chưa có LC live thành công. Budget đã hết 4/4 workflow (4/40 reservations).
+Không dùng kết quả đó để gỡ khóa HTTP fixture; giữ `LIVE_PAUSED` và DB gốc.
 
 ## Chuẩn bị clone và dependency
 
@@ -45,7 +46,7 @@ không bảo đảm các chức năng còn lại của LangConfig hoạt động
 15/11 đã cài thành công từ venv Python 3.12 mới, không dùng system site-packages,
 với cache pip riêng ban đầu trống; mất khoảng 887 giây. Đây không phải bảo đảm
 cho mọi nền tảng hoặc phiên bản transitive trong tương lai.
-Không cần khởi động PostgreSQL hay nhập credential để chạy 17 test này.
+Không cần khởi động PostgreSQL hay nhập credential để chạy các unit test này.
 
 ## Unit + graph giả
 
@@ -62,10 +63,11 @@ export TEST_RUN="$(mktemp -d "$LAB/pytest-run-XXXXXXXX")"
 ```
 
 Nếu cần lấy exit code qua pipe trong bash, bật `set -o pipefail` trước lệnh.
-Trên Linux ngày 15/11, clone staging mới dùng venv Python 3.12 vừa cài sạch:
-**17 passed, 1 warning** (ngoài ra pytest-asyncio in cảnh báo cấu hình khi
-khởi động). Test graph gọi registry và `execute_tool_node` thực, nhưng transport
-trong 17 test là fake; không phải full HTTP backend hoặc WorkflowExecutor.
+Trên Linux ngày 15/11, clone staging mới dùng cold venv Python 3.12 đã cài trước đó:
+**21 passed, 1 warning** sau mở rộng GLM/router và kiểm sentinel session; lịch sử
+trước mở rộng là 17. Ngoài ra pytest-asyncio in cảnh báo cấu hình khi khởi động.
+Test graph gọi registry và `execute_tool_node` thực, nhưng transport trong unit
+là fake; không phải full HTTP backend hoặc WorkflowExecutor.
 
 Test lifecycle của harness chạy riêng từ gốc NeoMind, không cần OpenCode hoặc DB:
 
