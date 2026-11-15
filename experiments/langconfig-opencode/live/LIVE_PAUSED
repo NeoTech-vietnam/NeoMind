@@ -1,0 +1,3 @@
+Live LC attempt 2026-11-15: OpenCode reported Free usage limit reached.
+Do not retry until this condition is resolved and the session owner explicitly clears this pause.
+Persistent budget: one workflow and one reservation (a physical-request upper bound of one).

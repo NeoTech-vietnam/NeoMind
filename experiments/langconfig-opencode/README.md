@@ -1,9 +1,15 @@
 # Thử nghiệm LangConfig + OpenCode
 
-Prototype fixture, **không phải tích hợp production**. Mặc định tool bị khóa;
-HTTP transport chỉ chấp nhận `fixture/fake-review#high`. Đề xuất
-`opencode/deepseek-v4.1-flash-free#high` **chưa bật live**, không có lệnh gọi
-model thật. Không sửa NeoMind runtime hoặc dùng service OpenCode đang chia sẻ.
+Prototype fixture, **không phải tích hợp production**. Overlay mặc định bị khóa;
+HTTP transport của overlay chỉ chấp nhận `fixture/fake-review#high`, không có
+lệnh gọi model thật trong các bước unit/wire ở dưới. Harness thử model thật
+được tách riêng và đang pause như mục kế tiếp; không sửa NeoMind runtime hoặc
+dùng service OpenCode đang chia sẻ.
+
+Giai đoạn tiếp theo được lưu riêng ở [live/README.md](live/README.md): guard và
+factory thử nghiệm NeoMind, fake acceptance với server thật, cùng bằng chứng
+lượt DeepSeek Free bị `Free usage limit reached`. Không dùng đường live đó để
+gỡ khóa overlay này; giữ `LIVE_PAUSED` và budget gốc, không tự thử lại.
 
 ## Chuẩn bị clone và dependency
 
@@ -35,8 +41,10 @@ chọn tên khác thay vì xóa/ghi đè. Nếu đã chuẩn bị một lab/pref
 `requirements-selected.txt` ghi các dependency trực tiếp từ môi trường đã dùng,
 không phải lockfile đầy đủ: transitive dependency vẫn có thể thay đổi. Nó bỏ
 stack ML/audio lớn, không phải toàn bộ `backend/requirements.txt` của upstream;
-không bảo đảm các chức năng còn lại của LangConfig hoạt động. **Chưa kiểm chứng
-cài từ environment rỗng**: lượt replay bên dưới dùng environment đã có sẵn.
+không bảo đảm các chức năng còn lại của LangConfig hoạt động. Lượt Linux ngày
+15/11 đã cài thành công từ venv Python 3.12 mới, không dùng system site-packages,
+với cache pip riêng ban đầu trống; mất khoảng 887 giây. Đây không phải bảo đảm
+cho mọi nền tảng hoặc phiên bản transitive trong tương lai.
 Không cần khởi động PostgreSQL hay nhập credential để chạy 17 test này.
 
 ## Unit + graph giả
@@ -54,7 +62,7 @@ export TEST_RUN="$(mktemp -d "$LAB/pytest-run-XXXXXXXX")"
 ```
 
 Nếu cần lấy exit code qua pipe trong bash, bật `set -o pipefail` trước lệnh.
-Trên Linux ngày 15/11, clone staging mới dùng Python 3.12 environment có sẵn:
+Trên Linux ngày 15/11, clone staging mới dùng venv Python 3.12 vừa cài sạch:
 **17 passed, 1 warning** (ngoài ra pytest-asyncio in cảnh báo cấu hình khi
 khởi động). Test graph gọi registry và `execute_tool_node` thực, nhưng transport
 trong 17 test là fake; không phải full HTTP backend hoặc WorkflowExecutor.
@@ -69,8 +77,8 @@ Test lifecycle của harness chạy riêng từ gốc NeoMind, không cần Open
 Các test này kiểm cleanup từng process khi lỗi, SIGTERM và escalation; không
 thay cho xác nhận OS scope/stop proof khi dùng model thật. Lượt đóng gói ngày
 15/11 chạy **4 test đạt**; parent cũng replay 17 test adapter và wire thành công
-trên staging mới sau sửa cleanup và bỏ password khỏi argv. `pip check` trên
-environment có sẵn không thấy dependency hỏng; chưa cài thử từ environment rỗng.
+trên staging mới sau sửa cleanup và bỏ password khỏi argv. Replay bằng venv
+mới: **4 test đạt**; `pip check` không thấy dependency hỏng.
 
 ## Wire giả — phép thử riêng
 
@@ -89,7 +97,7 @@ network policy hoặc service ngoài dự kiến, dừng và điều tra trướ
   --python "$PYTHON" --opencode "$(command -v opencode)"
 ```
 
-Lượt Linux ngày 15/11 dùng environment có sẵn đã chạy thành công: graph thật
+Lượt Linux ngày 15/11 dùng venv mới đã chạy thành công: graph thật
 `read_file → opencode_review`, một physical request tới fake upstream và
 verdict `needs_changes` cùng finding cố định. Không tính wire vào 17 test;
 không đánh giá chất lượng AI. Xem `e2e.log`, `guard-trace.jsonl` và
