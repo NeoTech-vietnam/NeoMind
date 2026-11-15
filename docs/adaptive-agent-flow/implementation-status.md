@@ -1,5 +1,11 @@
 # NeoMind v1 — trạng thái implementation
 
+## LangConfig với Z.ai GLM-5.3-Flash trả phí — 15/11/2026
+
+Người dùng duyệt thêm hai workflow LC trả phí, mỗi lượt tối đa 5 request và 8.192 output token/request; nâng cap workflow DB gốc 5→7, không đổi rows lịch sử; anchor giữ sáu reservation cũ và `workflowCap: 7`. Model ghim đúng `zai/glm-5.3-flash` variant `high` (không phải FlashX); guard Zai đạt: chỉ endpoint native, không tools/fallback, trần 8.192 output, cap 5 request, veto retry, không fetch. **Lượt 6** (draft mâu thuẫn) model thật trả `needs_changes` đúng cả hai lỗi — retention 90 vs 30 ngày, một vs hai reviewer — nhưng JSON bọc trong khối Markdown nên graph ghi lỗi; parent reconcile offline trên response đã có, 0 prompt mới, số đếm giữ 6/6. Adapter nay chấp nhận đúng một khối `json` bao kín, vẫn kiểm schema. **Lượt 7** (control) completed, verdict `pass`, findings rỗng; `model-usage.json` xác nhận `glm-5.3-flash`/`zai`/`high`, cost báo 5,56e-05 USD. Budget cuối **7/7 workflow, 7/40 reservations**, hai pause khóa lại, scope inactive. [Bàn giao và evidence](session-handoff-2026-11-15-langconfig-live-router.md).
+
+Linux sau sửa cuối: `npm test` **369 test, 357 đạt, 0 lỗi, 12 skip** (`paid-zai-20261115/neomind-final-tests.log`); Python quota/path/model/reconcile/probe **15 đạt**; overlay LangConfig **27 đạt, 1 warning**; guard Zai đạt. Vẫn là TOOL_NODE prototype, chưa phải full HTTP backend/WorkflowExecutor/UI hay chu trình writer/review/repair; một draft mâu thuẫn và một control không đủ xếp hạng chất lượng model hoặc công cụ.
+
 ## LangConfig với model router thật — 15/11/2026
 
 Người dùng duyệt thêm một workflow LC, tối đa 5 request, tổng **5 workflow/40 request**. Nâng cap workflow ngay DB gốc 4→5, không đổi rows lịch sử; anchor pin cap mới. Graph LC thật `read_file → opencode_review` đã dispatch đúng OpenRouter Free Router nhưng upstream trả `Provider returned error` / `AI.Error.RateLimit`; retry bị veto, scope inactive. **Chưa có review LC thật**. Budget cuối **5/5 workflow, 5/40 reservations**, anchor floor 5/5 và hai pause được khôi phục. [Bàn giao và evidence](session-handoff-2026-11-15-langconfig-live-router.md).

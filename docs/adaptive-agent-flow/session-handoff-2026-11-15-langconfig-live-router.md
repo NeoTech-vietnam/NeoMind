@@ -32,4 +32,20 @@ Trong `E=/home/hieu-tran/.local/share/langconfig-eval-20261114`:
 - `live-guard-20261115/runs/live-lc-0aocy2jv/attempts.sqlite`: admission/receipt, không terminal; fixture tổng hợp trong `fixture/source.txt`.
 - `parent-router-replay-20261115/runs/lc-fake-6038omto`: fake graph thành công và message user xác nhận source/draft thực được đọc vào prompt.
 
-**Chưa thể nói LangConfig model thật đã tích hợp thành công.** Đường graph/adapter/server đã dispatch được, nhưng lần này upstream rate limit chặn kết quả. Không lặp lại lỗi bằng lượt mới khi chưa xử lý điều kiện và có quyền cụ thể. Không có budget còn lại, không tự gỡ pause, đổi DB/model hoặc nạp credits. Phép thử vẫn là TOOL_NODE prototype, chưa phải full HTTP backend/WorkflowExecutor/UI hay chu trình writer/review/repair.
+**Lượt router này chưa tích hợp LangConfig model thật thành công.** Đường graph/adapter/server đã dispatch được, nhưng lần này upstream rate limit chặn kết quả. Không lặp lại lỗi bằng lượt mới khi chưa xử lý điều kiện và có quyền cụ thể. Sau đó người dùng duyệt thêm hai lượt trả phí, ghi ở phần dưới. Phép thử vẫn là TOOL_NODE prototype, chưa phải full HTTP backend/WorkflowExecutor/UI hay chu trình writer/review/repair.
+
+## Lượt trả phí Z.ai GLM-5.3-Flash high — 15/11/2026
+
+Người dùng duyệt **thêm hai workflow LC trả phí**, mỗi lượt tối đa 5 request và 8.192 output token/request; trần chung giữ 40 request. Parent nâng `limits.workflow_cap` DB gốc 5→7 trong transaction; so sánh toàn bộ rows `workflows`/`sessions`/`reservations` trước/sau không đổi. Anchor giữ path/device/inode, sáu reservation cũ và `workflowCap: 7`; bản ghi `live-guard-20261115/zai-paid-extension-20261115.json` giữ cap trước/sau, `perWorkflowRequestCap: 5`, `maxOutputTokens: 8192` và hash lịch sử không đổi.
+
+Model ghim đúng **`zai/glm-5.3-flash` variant `high`**, không phải FlashX. Catalog Z.ai có model này nhưng bộ lọc "chỉ bản mới nhất" ẩn nó; lượt kiểm đầu đã bỏ sót. Preflight worker xác nhận session dùng đúng provider/model/variant; guard `test_guard_zai.mjs` đạt: chỉ endpoint native Z.ai, không tools/fallback, trần 8.192 output, cap 5 request/workflow, veto retry, không fetch. Không nạp credits, không đổi tài khoản.
+
+**Lượt 6 — draft mâu thuẫn** (`lc-bc7e3a11-7a0e-4e78-9186-5538c63e253a`): model thật trả lời đúng, verdict `needs_changes`, hai finding đúng (retention 90 vs 30 ngày; một vs hai reviewer), nhưng JSON nằm trong khối Markdown nên graph ghi lượt là lỗi. Parent reconcile **offline trên response đã có**, 0 prompt mới (`newPrompts: 0`, `jsonFenceNormalized: true`), số đếm giữ 6/6; kết quả ở `runs/live-lc-z7qup2s5/reconciliation.json`. Adapter nay chấp nhận đúng một khối `json` được bao kín, vẫn kiểm schema nghiêm ngặt và từ chối mọi dạng khác.
+
+**Lượt 7 — draft control** (`lc-1542c848-b8ac-4132-84b8-503b565f338b`): completed, verdict `pass`, findings rỗng; `model-usage.json` xác nhận `glm-5.3-flash`/`zai`/`high`, 154 input/56 output/9 reasoning token, cost báo 5,56e-05 USD. Kết quả ở `runs/live-lc-dgd9impb/review.json`.
+
+Budget cuối **7/7 workflow, 7/40 reservations**; cả hai `LIVE_PAUSED` khóa lại, không còn lượt được duyệt. Scope cả hai lượt trả `stoppedVerified: true`, parent kiểm inactive và cgroup rỗng. Không retry, không fallback, không gửi request thứ ba.
+
+Kiểm chứng sau sửa cuối: `npm test` **369 test, 357 đạt, 0 lỗi, 12 skip** (`paid-zai-20261115/neomind-final-tests.log`); Python quota/path/model/reconcile/probe **15 đạt**; overlay LangConfig **27 đạt, 1 warning**; guard Zai đạt.
+
+Giới hạn: vẫn là TOOL_NODE prototype, chưa phải full HTTP backend/WorkflowExecutor/UI hay chu trình writer/review/repair. Chỉ một draft mâu thuẫn và một control, không phải benchmark chất lượng hay phép thử false-positive trên diện rộng; cost chỉ từ một lượt nên không suy ra giá các lượt khác. Findings tham chiếu dòng trong draft inline, không phải file thật được kiểm.

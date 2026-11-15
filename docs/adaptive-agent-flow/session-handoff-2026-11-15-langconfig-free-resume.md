@@ -59,6 +59,6 @@ Parent review/replay cuối trên Linux, dữ liệu ngoài repo ở `parent-rou
 
 ## Phần còn lại
 
-Không còn workflow budget. Chưa có LC live thành công, control false-positive, actual routed-model identity, writer hoặc production integration. Lượt router duy nhất chứng minh được đường LocalRun và phát hiện hai sai lệch inline, không đủ kết luận chất lượng model ổn định hay LangConfig tốt/kém hơn NeoMind. Muốn chạy thêm phải xin budget mới cụ thể; không xóa pause, đổi DB hoặc reset lịch sử để tiếp tục.
+Không còn workflow budget ở lượt router. Sau đó người dùng duyệt thêm hai lượt trả phí Z.ai GLM-5.3-Flash `high`; hai lượt đã chạy xong (draft mâu thuẫn `needs_changes` đúng hai lỗi sau reconcile offline, control `pass`), budget kết thúc **7/7 workflow, 7/40 reservations** — xem [bàn giao LC live](session-handoff-2026-11-15-langconfig-live-router.md). Vẫn chưa có LC router live thành công, actual routed-model identity, writer hoặc production integration. Lượt router duy nhất chứng minh được đường LocalRun và phát hiện hai sai lệch inline, không đủ kết luận chất lượng model ổn định hay LangConfig tốt/kém hơn NeoMind. Muốn chạy thêm phải xin budget mới cụ thể; không xóa pause, đổi DB hoặc reset lịch sử để tiếp tục.
 
 Code/guard/tests và README thử nghiệm được lưu ở commit `21ceeda` (`feat: add guarded OpenRouter free router experiment`) trên nhánh nghiên cứu đã duyệt; báo cáo resume đi thành commit tài liệu riêng. Không PR, không đổi production core hoặc đưa dữ liệu lab/credential vào Git.
