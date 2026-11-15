@@ -17,6 +17,8 @@ from langgraph.graph import StateGraph, START, END
 from core.workflows import nodes
 from tools.opencode_review import Adapter, review_runtime
 
+REQUEST_CAP = 5
+
 class State(TypedDict, total=False):
     task_id: int
     tool_result: object
@@ -46,7 +48,7 @@ class LiveTransport:
         response = await asyncio.to_thread(self.worker.request, method, path, body, 180)
         if method == 'POST' and path == '/api/session':
             sid = response['data']['id']
-            quota.bind(str(self.worker.db), sid, self.workflow, 10)
+            quota.bind(str(self.worker.db), sid, self.workflow, REQUEST_CAP)
             self.bound.add(sid)
         return response
 
@@ -63,7 +65,7 @@ async def main():
         if not workflow.startswith('lc-') or str(uuid.UUID(workflow[3:])) != workflow[3:]:
             raise ValueError('bad workflow ID')
         metadata = json.loads((ROOT / 'live-attempts' / f'{workflow}.json').read_text())
-        if metadata.get('workflow') != workflow or metadata.get('model') != model:
+        if metadata.get('workflow') != workflow or metadata.get('model') != model or metadata.get('requestCap') != REQUEST_CAP:
             raise ValueError('attempt metadata mismatch')
     except (ValueError, OSError, TypeError) as exc:
         raise RuntimeError('new workflow attempt metadata required') from exc
@@ -76,27 +78,13 @@ async def main():
     worker = None
     try:
         worker = Worker(run / 'worker', None, workspace=workspace, live_db=budget, live_model_id=os.environ['LIVE_MODEL_ID'], account_db=os.environ.get('OPENCODE_ACCOUNT_DB'))
-        quota.start_workflow(str(budget), workflow, 10)
-        adapter = Adapter(LiveTransport(worker, workflow), workspace, run / 'attempts.sqlite', fixture_root=workspace, model=model)
-        async def no_events(*args, **kwargs):
-            pass
-        nodes._emit_node_event = no_events
-        async def read(state):
-            return await nodes.execute_tool_node(state, {}, {'node_id': 'read', 'tool_type': 'mcp', 'tool_id': 'read_file', 'tool_params': {'file_path': str(fixture)}})
-        async def review(state):
-            return await nodes.execute_tool_node(state, {}, {'node_id': 'review', 'tool_type': 'mcp', 'tool_id': 'opencode_review', 'tool_params': {'attempt_id': 'lc-live-1', 'instruction': 'Compare the draft with the source and report unsupported or contradictory claims.\n{{previous_output}}'}})
-        graph = StateGraph(State)
-        graph.add_node('read', read)
-        graph.add_node('review', review)
-        graph.add_edge(START, 'read')
-        graph.add_edge('read', 'review')
-        graph.add_edge('review', END)
-        with review_runtime(adapter):
-            result = await graph.compile().ainvoke({'task_id': 0})
-        if result.get('execution_failed'):
-            raise RuntimeError('LC TOOL_NODE did not complete')
-        review_result = json.loads(result['tool_result'])
+        quota.start_workflow(str(budget), workflow, REQUEST_CAP)
+        review_result = await execute_graph(worker, workflow, workspace, run, model, fixture)
         (run / 'review.json').write_text(json.dumps(review_result, indent=2))
+        replies = [message for message in worker.timeline(review_result['session_id']) if message.get('type') == 'assistant']
+        reply = replies[-1]
+        (run / 'model-usage.json').write_text(json.dumps({'requestedModel': model, 'assistantModel': reply.get('model'),
+            'routedModel': None, 'tokens': reply.get('tokens'), 'reportedCost': reply.get('cost')}))
         print(json.dumps({'status': 'completed', 'result': review_result, 'artifacts': str(run)}), flush=True)
     finally:
         if worker:
@@ -104,6 +92,33 @@ async def main():
     # Keep the scope alive until its owner has observed completion and stops it.
     print('LIVE_HOST_DONE', flush=True)
     threading.Event().wait(300)
+
+
+async def execute_graph(worker, workflow, workspace, run, model, fixture):
+    adapter = Adapter(LiveTransport(worker, workflow), workspace, run / 'attempts.sqlite', fixture_root=workspace, model=model)
+    async def no_events(*args, **kwargs):
+        pass
+    previous_emitter = nodes._emit_node_event
+    nodes._emit_node_event = no_events
+    async def read(state):
+        return await nodes.execute_tool_node(state, {}, {'node_id': 'read', 'tool_type': 'mcp', 'tool_id': 'read_file', 'tool_params': {'file_path': str(fixture)}})
+    async def review(state):
+        return await nodes.execute_tool_node(state, {}, {'node_id': 'review', 'tool_type': 'mcp', 'tool_id': 'opencode_review', 'tool_params': {'attempt_id': 'lc-live-1', 'instruction': 'Compare the draft with the source and report unsupported or contradictory claims.\n{{previous_output}}'}})
+    graph = StateGraph(State)
+    graph.add_node('read', read)
+    graph.add_node('review', review)
+    graph.add_edge(START, 'read')
+    graph.add_edge('read', 'review')
+    graph.add_edge('review', END)
+    try:
+        with review_runtime(adapter):
+            result = await graph.compile().ainvoke({'task_id': 0})
+        if result.get('execution_failed'):
+            raise RuntimeError('LC TOOL_NODE did not complete')
+        return json.loads(result['tool_result'])
+    finally:
+        nodes._emit_node_event = previous_emitter
+
 
 if __name__ == '__main__':
     asyncio.run(main())

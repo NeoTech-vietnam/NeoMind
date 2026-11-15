@@ -1,5 +1,11 @@
 # NeoMind v1 — trạng thái implementation
 
+## LangConfig với model router thật — 15/11/2026
+
+Người dùng duyệt thêm một workflow LC, tối đa 5 request, tổng **5 workflow/40 request**. Nâng cap workflow ngay DB gốc 4→5, không đổi rows lịch sử; anchor pin cap mới. Graph LC thật `read_file → opencode_review` đã dispatch đúng OpenRouter Free Router nhưng upstream trả `Provider returned error` / `AI.Error.RateLimit`; retry bị veto, scope inactive. **Chưa có review LC thật**. Budget cuối **5/5 workflow, 5/40 reservations**, anchor floor 5/5 và hai pause được khôi phục. [Bàn giao và evidence](session-handoff-2026-11-15-langconfig-live-router.md).
+
+Linux: `npm test` **369 test, 357 đạt, 0 lỗi, 12 skip**; Python quota/path/model/reconcile/probe **15 đạt**, guard router đạt, graph LC + OpenCode thật + upstream giả đạt 1 POST/reservation và kiểm nội dung file có trong prompt. Không thay production core hoặc chạy thêm inference sau rate limit.
+
 ## Tiếp tục model free — 15/11/2026
 
 [Bàn giao resume](session-handoff-2026-11-15-langconfig-free-resume.md): DeepSeek thử lại và GLM Free được duyệt đều lỗi quota; lượt cuối đổi sang **OpenRouter Free Router qua NeoMind LocalRun thật đã completed**, JSON `needs_changes` chỉ ra đúng retention 30/90 ngày và hai/một reviewer. Một outbound reservation, không variant hoặc paid fallback; model nền router không capture. Findings tham chiếu inline, không phải file citations được kiểm. Budget gốc kết thúc **4/4 workflow attempts, 4/40 reservations**; owner anchor floor 4/4, cả hai pause khóa vì hết budget. Không có LC live thành công hoặc control false-positive; không dùng kết quả một lượt để xếp hạng công cụ/model.

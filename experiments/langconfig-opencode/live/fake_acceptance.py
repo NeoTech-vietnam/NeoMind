@@ -20,7 +20,7 @@ from contextlib import closing
 from pathlib import Path
 
 import quota
-from runtime_paths import require_data_root
+from runtime_paths import require_data_root, verify_live_budget
 from live_models import live_model
 
 CODE_ROOT = Path(__file__).resolve().parent
@@ -80,8 +80,7 @@ class Worker:
         if not self.live:
             quota.initialize(str(self.db), cap, workflow_limit=40)
         else:
-            with closing(quota.connect(str(self.db))) as db:
-                require(db.execute('SELECT cap, workflow_cap FROM limits WHERE id=1').fetchone() == (40, 4), 'invalid persistent live budget')
+            verify_live_budget(ROOT, str(self.db))
         self.trace = root / 'trace.jsonl'
         self.password = secrets.token_hex(24)
         plugin = str(CODE_ROOT / 'guard')

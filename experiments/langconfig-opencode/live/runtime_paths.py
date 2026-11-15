@@ -26,6 +26,9 @@ def verify_live_budget(root, value):
     if not value or not Path(value).is_absolute():
         raise ValueError('existing absolute shared live budget path required')
     anchor = json.loads((root / 'live-budget.anchor.json').read_text(encoding='utf-8'))
+    workflow_cap = anchor.get('workflowCap', 4)
+    if type(workflow_cap) is not int or workflow_cap not in (4, 5):
+        raise ValueError('invalid owner-approved workflow cap')
     ids = anchor.get('requiredReservationIds')
     if (type(anchor.get('schemaVersion')) is not int or anchor['schemaVersion'] != 1 or not isinstance(anchor.get('database'), str)
             or not Path(anchor['database']).is_absolute()
@@ -41,7 +44,7 @@ def verify_live_budget(root, value):
         raise ValueError('live budget does not match owner anchor')
     db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
     try:
-        if db.execute('SELECT cap, workflow_cap FROM limits WHERE id=1').fetchone() != (40, 4):
+        if db.execute('SELECT cap, workflow_cap FROM limits WHERE id=1').fetchone() != (40, workflow_cap):
             raise ValueError('invalid live budget limits')
         workflows = db.execute('SELECT count(*) FROM workflows').fetchone()[0]
         reservations = db.execute('SELECT count(*) FROM reservations').fetchone()[0]

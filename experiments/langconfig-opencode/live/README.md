@@ -1,11 +1,12 @@
 # Thử nghiệm guard OpenCode — chưa sẵn sàng dùng production
 
-Đây là harness riêng, không thay đổi production runner hoặc khóa fake của overlay LangConfig. Không tạo lại hay sao chép DB quota live. **Đã hết 4/4 workflow attempts**, dù mới dùng 4/40 reservations; cả hai `LIVE_PAUSED` khóa inference. Muốn chạy thêm cần budget mới được chủ lượt duyệt, không chỉ gỡ pause hoặc đổi DB.
+Đây là harness riêng, không thay đổi production runner hoặc khóa fake của overlay LangConfig. Không tạo lại hay sao chép DB quota live. **Đã hết 5/5 workflow attempts**, dù mới dùng 5/40 reservations; cả hai `LIVE_PAUSED` khóa inference. Lượt thứ năm được duyệt riêng cho LC với cap 5 request, không tự tăng budget. Muốn chạy thêm cần quyền mới, không chỉ gỡ pause hoặc đổi DB.
 
 Trong các đường dẫn dưới đây, `E` là `/home/hieu-tran/.local/share/langconfig-eval-20261114` trên máy đã chạy thử.
 
 ## Bằng chứng 15/11/2026
 
+- Sau lượt NeoMind dưới đây, người dùng duyệt thêm một workflow LC, tối đa 5 request, tổng cap 5 workflow/40 request. Graph LC đã dispatch thật đúng router, có receipt, nhưng upstream trả `Provider returned error` / `AI.Error.RateLimit`; retry bị veto, scope dừng. Chưa có review LC thật. Budget hiện **5/5 workflow, 5/40 reservations**, anchor giữ cả năm lượt và cap mới; các số 4/4 dưới đây là lịch sử. [Bàn giao LC live](../../../docs/adaptive-agent-flow/session-handoff-2026-11-15-langconfig-live-router.md).
 - **NeoMind LocalRun thật qua OpenRouter Free Router completed**: run `run-d10b500e-cb22-4947-a57d-0bcafa6742da`, một attempt và một reservation outbound; JSON `needs_changes` tìm đúng retention 30/90 ngày và hai/một reviewer. Scope inactive, cgroup không còn, parent đã kiểm journal/output. Chỉ đối chiếu source/draft inline trong task; `task_description:SOURCE_line_*` là nhãn model đặt, không phải citations file đã xác minh. Không phải writer hoặc A/B model thật với LangConfig.
 - Full model ID `openrouter/openrouter/free`, native provider `openrouter`, model `openrouter/free`, không variant. OpenCode session có sentinel `default`; hook chỉ chuẩn hóa đúng router, outbound/assistant vẫn không variant. Nhãn binding NeoMind `medium` không ghim reasoning router. Model nền router chọn không capture; OpenCode báo cost 0, 327 input/140 output/221 reasoning token, không phải xác nhận billing. Guard kiểm body giá tối đa prompt/completion 0, không provider fallback, plugins hoặc tools; chỉ endpoint native, không redirect. Fanout nội bộ OpenRouter không quan sát được.
 - OpenCode tự dùng tài khoản đã lưu qua `OPENCODE_DB`: **DB tài khoản dùng chung, server/config/HOME/cache/log riêng**. Agent không đọc/copy raw credential hoặc DB; không đọc/sửa session cũ hay restart shared service. Các session fixture mới và session preflight không prompt được ghi vào DB chính thức; không tuyên bố không đụng state dùng chung hoặc có OS sandbox.
@@ -56,6 +57,11 @@ guard router và GLM đạt; fake native-router LocalRun completed với 1 POST 
 unit inactive và cgroup rỗng. SIGTERM cleanup đạt. Probe unit dùng mock, không gọi auth
 hoặc inference thật; lỗi probe phát `PROBE_FAILED` để wrapper exit khác 0, không báo giả thành công.
 Các test Node path và signal cleanup, fake acceptance và runner contract trước đó cũng đạt.
+Sau khi được duyệt thêm lượt LC: **15 test Python đạt**, thêm test cap extension khớp
+anchor và chặn vượt cap. `test_live_lc_fake.py` replay chính graph LC thật với upstream
+giả trong namespace, kiểm source được đọc vào prompt, 1 fake POST/reservation; chạy bằng
+Python LangConfig đã cài, `PYTHONPATH` tới backend staging và `FIXTURE_NETNS=1` trong
+namespace chỉ loopback. Không dùng script fake này để gửi inference thật.
 Các fake DB không dùng hoặc sửa DB quota live gốc. Script LocalRun đòi baseline
 đúng ba file tổng hợp, từ chối repo dữ liệu thật; không kiểm writer/approval/commit
 kết quả và không phải production runner đã tích hợp guard.
@@ -68,7 +74,7 @@ Mỗi lệnh fake tạo run directory mới dưới `LIVE_GUARD_DATA/runs`; khô
 
 `live_lc.py` dùng adapter overlay với transport thử nghiệm riêng. Overlay cho phép đúng các identity đã duyệt khi transport không phải fixture-only; HTTP transport mặc định **vẫn chỉ cho fake model**. Adapter chấp nhận session sentinel `default` riêng cho router nhưng assistant phải không variant; ca này mới kiểm fake, **chưa có LC router live**. Script live yêu cầu LC backend/Python, budget gốc đã tồn tại, DB tài khoản chính thức, opt-in và không pause; không tự tạo budget mới. Giá trị opt-in công khai không chứng minh người dùng đồng ý. Budget hiện đã hết, không tự gỡ pause.
 
-Để ngăn nhầm DB, chủ sở hữu chuẩn bị riêng `$LIVE_GUARD_DATA/live-budget.anchor.json`, từ DB gốc hiện có, không ghi hay sao chép DB. Anchor có `schemaVersion: 1`, `database` là đường dẫn tuyệt đối canonical, `device` và `inode` là số từ `stat`, `minimumWorkflows`, `minimumReservations` ít nhất 1, và `requiredReservationIds` là mảng ID reservation gốc. Runtime chỉ đọc anchor và DB, kiểm tra identity, lịch sử tối thiểu, reservation và cap 40/4 trước khi tạo workflow attempt mới; metadata UUID lưu dưới `live-attempts/`. Attempt lỗi vẫn có thể tiêu thụ một slot; không hỗ trợ resume. Anchor chỉ giảm nhầm lẫn, **không chống người vận hành cố ý sửa** anchor/DB. Không tạo anchor hay DB mới để chạy lại lượt đã dùng budget.
+Để ngăn nhầm DB, chủ sở hữu chuẩn bị riêng `$LIVE_GUARD_DATA/live-budget.anchor.json`, từ DB gốc hiện có, không sao chép DB. Anchor có `schemaVersion: 1`, `database` là đường dẫn canonical, `device`/`inode` từ `stat`, floor `minimumWorkflows`/`minimumReservations` ít nhất 1 và `requiredReservationIds` gốc. Trường `workflowCap` mặc định 4 cho anchor cũ; chỉ giá trị 4/5 được hỗ trợ, cap request vẫn 40. Sau đồng thuận người dùng, owner đã đổi riêng cap workflow DB gốc 4→5 và anchor thành 5, giữ mọi row lịch sử. Runtime **không tự nâng cap**, chỉ kiểm anchor/DB phải khớp; metadata UUID lưu dưới `live-attempts/`, có `requestCap: 5` cho LC mới. Attempt lỗi vẫn tiêu slot, không hỗ trợ resume. Anchor giảm nhầm lẫn, **không chống cố ý sửa** anchor/DB. Không tạo anchor/DB khác để né lịch sử.
 
 Có khả năng plugin bị unload giữa preflight và dispatch; thử nghiệm chưa chứng minh đó là ranh giới an toàn production. Một LocalRun router thật đã có kết quả nội dung đúng, nhưng không có control false-positive, identity model nền hoặc verdict LC thật. Không suy ra chất lượng ổn định hoặc khả dụng mọi tài khoản. OpenCode V2 lưu account trong SQLite cùng server state: dùng DB chính thức chỉ qua ứng dụng OpenCode và phải hiểu session mới sẽ ghi vào đó, không copy/query credential. Cách kết nối chính thức là `/connect` hoặc `opencode auth login` trong context do chủ tài khoản kiểm soát, không đưa token vào chat.
 

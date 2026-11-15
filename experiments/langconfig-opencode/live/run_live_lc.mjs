@@ -22,7 +22,7 @@ await mkdir(attempts, { recursive: true, mode: 0o700 });
 await mkdir(path.join(root, 'runs'), { recursive: true, mode: 0o700 });
 const metadata = await open(path.join(attempts, `${workflow}.json`), 'wx', 0o600);
 try {
-  await metadata.writeFile(JSON.stringify({ workflow, budget: process.env.LIVE_BUDGET_PATH, model: { providerID: 'openrouter', id: 'openrouter/free' }, created: new Date().toISOString() }) + '\n');
+  await metadata.writeFile(JSON.stringify({ workflow, budget: process.env.LIVE_BUDGET_PATH, model: { providerID: 'openrouter', id: 'openrouter/free' }, requestCap: 5, created: new Date().toISOString() }) + '\n');
   await metadata.sync();
 } finally { await metadata.close(); }
 const attemptDirectory = await open(attempts, 'r');

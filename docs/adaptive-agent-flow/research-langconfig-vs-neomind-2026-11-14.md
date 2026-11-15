@@ -4,6 +4,8 @@
 
 ## Tiếp tục model free — 15/11/2026
 
+**Cập nhật cuối:** người dùng duyệt thêm một workflow LangConfig, tối đa 5 request, nâng cap tổng 5 workflow/40 request ngay DB gốc và giữ lịch sử. LC đã dispatch đúng OpenRouter Free Router nhưng gặp `Provider returned error` / `AI.Error.RateLimit`, retry bị veto, scope dừng; không có review JSON. Tổng cuối **5/5 workflow, 5/40 reservations**, giữ pause. [Evidence lượt LC](session-handoff-2026-11-15-langconfig-live-router.md). Vẫn chưa có LC live thành công/A-B model thật; số 4/4 bên dưới là giai đoạn trước khi cấp thêm quyền.
+
 Xem [bàn giao resume](session-handoff-2026-11-15-langconfig-free-resume.md). Sau lần đầu bên dưới, thử lại DeepSeek ngày mới và thử GLM Free `high` được người dùng duyệt đều nhận `Free usage limit reached`. Chưa có review AI; cả ba lượt cộng dồn **3/4 workflow attempts, 3/40 reservations**, không reset DB hay bỏ lịch sử khi đổi model. Scope đã dừng và retry bị veto.
 
 Theo yêu cầu chuyển sang **OpenRouter Free Router**, lượt cuối qua factory thử nghiệm và **NeoMind LocalRun thật completed**: JSON `needs_changes` phát hiện đúng retention 30/90 ngày và hai/một reviewer từ task inline. OpenCode ID `openrouter/openrouter/free`, không variant outbound; một reservation, không retry hoặc paid fallback. Model nền router không capture; OpenCode báo cost 0 và 327 input/140 output/221 reasoning token, không phải đối chứng hóa đơn. Findings dùng nhãn `task_description:SOURCE_line_*`, không phải file citations đã xác minh. Đây là một review fixture nội dung inline, không phải khả năng tự đọc/sửa repo hay benchmark cùng model cố định.

@@ -9,7 +9,8 @@ dùng service OpenCode đang chia sẻ.
 Giai đoạn tiếp theo được lưu riêng ở [live/README.md](live/README.md): guard và
 factory thử nghiệm NeoMind, fake acceptance với server thật và **LocalRun thật
 qua OpenRouter Free Router** đã phát hiện đúng hai lỗi inline. Ba lượt LC trước
-bị quota; chưa có LC live thành công. Budget đã hết 4/4 workflow (4/40 reservations).
+bị quota; lượt LC router được duyệt thêm bị upstream rate limit sau dispatch,
+chưa có LC live thành công. Budget hiện đã hết **5/5 workflow (5/40 reservations)**.
 Không dùng kết quả đó để gỡ khóa HTTP fixture; giữ `LIVE_PAUSED` và DB gốc.
 
 ## Chuẩn bị clone và dependency

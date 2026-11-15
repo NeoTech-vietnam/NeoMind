@@ -11,7 +11,7 @@ Tài liệu này dành cho lab Linux riêng, không phải hướng dẫn triể
 | Wire giả | Thêm OpenCode **2.2.7** và fake upstream loopback | `StateGraph` → LangConfig `execute_tool_node` → OpenCode server thật → upstream giả. Verdict được lập trình sẵn; đây là phép thử riêng, không nằm trong 17 test. |
 | Guard và NeoMind thử nghiệm | Linux namespace, user-systemd, NeoMind đã build | Đã chạy runner contract và LocalRun chỉ đọc thật với upstream giả, kiểm journal và dừng scope; không phải model AI thật hoặc production runner được sửa. |
 | UI/backend LangConfig | Thêm PostgreSQL 16 và pgvector, frontend và fake endpoint | UI/backend/DB từng chạy với model giả; graph prototype ở trên **không** đi qua toàn bộ HTTP backend hay `WorkflowExecutor`. |
-| Model free thật | Hết budget, giữ pause | NeoMind LocalRun qua OpenRouter Free Router completed và tìm đúng hai lỗi inline; ba lượt LC trước bị quota. Tổng 4/4 workflow, 4/40 reservations; không còn slot LC hoặc control. Không capture model nền thực, không xác minh citations file/billing; xem [bàn giao resume](../adaptive-agent-flow/session-handoff-2026-11-15-langconfig-free-resume.md). |
+| Model free thật | Hết budget, giữ pause | NeoMind LocalRun router completed; ba lượt LC đầu bị quota, lượt LC router được duyệt thêm bị rate limit sau dispatch. Tổng **5/5 workflow, 5/40 reservations**; chưa có review LC thật. Không capture model nền thực, không xác minh citations file/billing; xem [bàn giao LC live](../adaptive-agent-flow/session-handoff-2026-11-15-langconfig-live-router.md). |
 
 ## Điều kiện và cách ly
 

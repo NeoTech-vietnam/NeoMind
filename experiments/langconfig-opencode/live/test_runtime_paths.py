@@ -12,6 +12,38 @@ DATA = require_data_root()
 
 
 class RuntimePathsTests(unittest.TestCase):
+    def test_cap_extension_requires_matching_explicit_anchor_and_preserves_history(self):
+        with tempfile.TemporaryDirectory(dir=DATA / 'tmp') as directory:
+            root = Path(directory); db = root / 'fixture.sqlite'
+            quota.initialize(str(db), 40)
+            for index in range(4):
+                workflow = f'original-{index}'
+                quota.start_workflow(str(db), workflow, 5)
+                quota.bind(str(db), f'ses_{index}', workflow, 5)
+                quota.reserve(str(db), f'ses_{index}', f'reservation-{index}')
+            stat = db.stat()
+            anchor = {'schemaVersion': 1, 'database': str(db.resolve()), 'device': stat.st_dev, 'inode': stat.st_ino,
+                      'minimumWorkflows': 4, 'minimumReservations': 4, 'requiredReservationIds': [f'reservation-{index}' for index in range(4)]}
+            anchor_path = root / 'live-budget.anchor.json'
+            anchor_path.write_text(json.dumps(anchor))
+            verify_live_budget(root, str(db))
+            with self.assertRaises(ValueError): quota.start_workflow(str(db), 'extra', 5)
+            with closing(quota.connect(str(db))) as conn:
+                conn.execute('UPDATE limits SET workflow_cap=5 WHERE id=1')
+            with self.assertRaises(ValueError): verify_live_budget(root, str(db))
+            anchor['workflowCap'] = 5
+            anchor_path.write_text(json.dumps(anchor))
+            verify_live_budget(root, str(db))
+            quota.start_workflow(str(db), 'extra', 5)
+            quota.bind(str(db), 'ses_extra', 'extra', 5)
+            for index in range(5): quota.reserve(str(db), 'ses_extra', f'new-{index}')
+            with self.assertRaises(ValueError): quota.reserve(str(db), 'ses_extra', 'sixth')
+            with self.assertRaises(ValueError): quota.start_workflow(str(db), 'another', 5)
+            for bad in (True, '5', 6):
+                anchor['workflowCap'] = bad
+                anchor_path.write_text(json.dumps(anchor))
+                with self.assertRaises(ValueError): verify_live_budget(root, str(db))
+
     def test_reject_missing_relative_checkout_ancestor_and_symlink_escape(self):
         with self.assertRaises(ValueError):
             require_data_root('')

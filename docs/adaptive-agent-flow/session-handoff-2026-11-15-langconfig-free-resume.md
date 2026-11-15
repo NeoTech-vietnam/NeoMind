@@ -1,5 +1,7 @@
 # Tiếp tục kiểm thử model free — 15/11/2026
 
+**Cập nhật sau mốc này:** người dùng duyệt thêm một workflow LC, cap tổng 5/40; lượt đó bị rate limit. Xem [bàn giao LC live](session-handoff-2026-11-15-langconfig-live-router.md). Các số 4/4 dưới đây là lịch sử trước lần cấp thêm quyền, không phải budget hiện tại.
+
 ## Phạm vi và quyền đã duyệt
 
 Tiếp tục nhánh `research/langconfig-opencode` sau `2468310`, theo mục tiêu tích hợp thử nghiệm chỉ đọc LangConfig và NeoMind với model free của OpenCode. Không thay production runner, không thêm writer, không tự dùng model có phí hoặc tạo PR. Parent kiểm kết quả và xử lý commit/push; session Terra 6.1 `xhigh` triển khai và kiểm thử.

@@ -1,4 +1,4 @@
-Evaluation workflow budget exhausted on 2026-11-15: four of four workflow attempts used.
-Persistent original budget: four reservations of forty; the workflow cap still prevents another run.
-The final NeoMind LocalRun via OpenRouter Free Router completed; prior DeepSeek and GLM attempts hit quota.
-Do not clear this pause or run more inference without a new explicit owner-approved budget.
+Evaluation workflow budget exhausted on 2026-11-15: five of five approved attempts used.
+Persistent original budget: five reservations of forty; the latest LangConfig workflow cap was five requests.
+The LangConfig OpenRouter attempt hit a provider rate limit; retry was vetoed and its scope stopped.
+Do not clear this pause or run more inference without new explicit owner authorization.
