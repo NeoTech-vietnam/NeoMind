@@ -12,6 +12,7 @@ Công cụ cấu hình và chạy *agent flow* trên một Git repo: lập kế 
 
 ## Đọc theo thứ tự
 
+- [Tiếp tục kiểm thử model free 15/11](docs/adaptive-agent-flow/session-handoff-2026-11-15-langconfig-free-resume.md).
 - [Bàn giao nhánh LangConfig và gói tái lập 15/11](docs/adaptive-agent-flow/session-handoff-2026-11-15-langconfig-package.md); [hồ sơ LangConfig × OpenCode](docs/langconfig/README.md).
 - [Bàn giao đánh giá LangConfig 14/11](docs/adaptive-agent-flow/session-handoff-2026-11-14-langconfig-eval.md).
 - [Khảo sát OpenCode V2 13/11](docs/adaptive-agent-flow/session-handoff-2026-11-13-opencode-v2.md).

@@ -2,6 +2,14 @@
 
 **Lưu trữ và tiếp tục từ 15/11:** xem [hồ sơ tích hợp](../langconfig/README.md), [hướng dẫn setup/test](../langconfig/setup-and-tests.md) và [gói prototype tái lập](../../experiments/langconfig-opencode/README.md). Người dùng đã duyệt lưu phần nghiên cứu trên nhánh riêng `research/langconfig-opencode`, commit/push, rồi tiếp tục kiểm chứng với model free trong giới hạn đã duyệt. Các mục dưới giữ bằng chứng theo từng giai đoạn; kết quả đóng gói mới xem [bàn giao 15/11](session-handoff-2026-11-15-langconfig-package.md).
 
+## Tiếp tục model free — 15/11/2026
+
+Xem [bàn giao resume](session-handoff-2026-11-15-langconfig-free-resume.md). Sau lần đầu bên dưới, thử lại DeepSeek ngày mới và thử GLM Free `high` được người dùng duyệt đều nhận `Free usage limit reached`. Chưa có review AI; cả ba lượt cộng dồn **3/4 workflow attempts, 3/40 reservations**, không reset DB hay bỏ lịch sử khi đổi model. Scope đã dừng và retry bị veto.
+
+Theo yêu cầu chuyển sang **OpenRouter Free Router**, lượt cuối qua factory thử nghiệm và **NeoMind LocalRun thật completed**: JSON `needs_changes` phát hiện đúng retention 30/90 ngày và hai/một reviewer từ task inline. OpenCode ID `openrouter/openrouter/free`, không variant outbound; một reservation, không retry hoặc paid fallback. Model nền router không capture; OpenCode báo cost 0 và 327 input/140 output/221 reasoning token, không phải đối chứng hóa đơn. Findings dùng nhãn `task_description:SOURCE_line_*`, không phải file citations đã xác minh. Đây là một review fixture nội dung inline, không phải khả năng tự đọc/sửa repo hay benchmark cùng model cố định.
+
+Budget gốc kết thúc **4/4 workflow attempts, 4/40 reservations**, scope dừng, anchor floor 4/4 và cả hai pause khóa vì hết workflow cap. Không còn lượt LC hoặc control false-positive; chưa có LC live thành công nên **chưa có A/B model thật**. Auth qua chính OpenCode dùng DB tài khoản hiện có, không đọc/copy key và không restart service chính; server/config/log riêng không đồng nghĩa DB hoàn toàn cô lập. Parent replay fresh overlay 21 test (1 warning), lifecycle 4, Python guard-support 14, guard router/GLM, fake LocalRun và SIGTERM cleanup đạt. Các mục bên dưới giữ nguyên bằng chứng lịch sử theo giai đoạn.
+
 ## Lượt model free đầu tiên — 15/11/2026
 
 **Đã thử live nhưng chưa có kết quả review:** OpenCode trả `Free usage limit reached`. Một workflow LangConfig đã thử, **0 workflow live hoàn thành**, một reservation trước dispatch cho đúng `opencode/deepseek-v4.1-flash-free#high`; retry bị veto, không paid fallback. Reservation là cận trên **tối đa 1 physical request**, không phải số POST được đối chứng độc lập ở dịch vụ. Không có verdict/findings, token hoặc hóa đơn thực để dùng làm benchmark. Worker systemd scope đã được xác nhận dừng. Lỗi này không chứng minh adapter không kết nối được hoặc xác định riêng trạng thái auth/tài khoản.

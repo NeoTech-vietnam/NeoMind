@@ -8,7 +8,7 @@ Nhánh nghiên cứu: `research/langconfig-opencode`, tách từ NeoMind `6306c8
 2. [Setup và các tầng kiểm thử](setup-and-tests.md): môi trường cô lập, dependency, lệnh chạy và các lỗi setup đã gặp.
 3. [Gói prototype có thể tái lập](../../experiments/langconfig-opencode/README.md): overlay/patch lên LangConfig đã ghim, adapter, test và harness; không chứa bản cài LangConfig hay dữ liệu máy cá nhân.
 4. [Báo cáo đánh giá 14/11](../adaptive-agent-flow/research-langconfig-vs-neomind-2026-11-14.md): bằng chứng và giới hạn của từng lượt thử trước khi đóng gói.
-5. [Bàn giao đóng gói 15/11](../adaptive-agent-flow/session-handoff-2026-11-15-langconfig-package.md): kiểm chứng mới và công việc tiếp theo.
+5. [Bàn giao resume model free 15/11](../adaptive-agent-flow/session-handoff-2026-11-15-langconfig-free-resume.md): lượt OpenRouter thật, budget kết thúc và kiểm chứng mới; [đóng gói trước đó](../adaptive-agent-flow/session-handoff-2026-11-15-langconfig-package.md).
 
 ## Hiện đã chứng minh điều gì?
 
@@ -20,8 +20,8 @@ LangConfig TOOL_NODE → adapter HTTP loopback → OpenCode 2.2.7 → model gi�
 - Graph thử dùng implementation `TOOL_NODE` thật, chưa phải toàn bộ backend HTTP/WorkflowExecutor hoặc canvas UI của LangConfig.
 - LangConfig đọc fixture rồi truyền nội dung vào prompt; session OpenCode của prototype bị từ chối mọi tool. Đây không phải kiểm chứng OpenCode tự đọc/sửa file hay OS sandbox.
 - Model giả chỉ kiểm tra đường thực thi, không chứng minh chất lượng AI. Benchmark A/B trước đó cũng dùng fake runner/model và chưa hoàn toàn đối xứng.
-- **Đã thử 1 workflow model free nhưng OpenCode trả `Free usage limit reached`; 0 lượt live hoàn thành.** Một reservation là cận trên 1 physical request, chưa có review AI thật hoặc số POST được đối chứng ở dịch vụ. Đã pause, giữ nguyên DB budget và không fallback trả phí. Trần được duyệt vẫn là 4 workflow/40 request, không reset DB để vượt giới hạn.
-- Harness mới đã kiểm quota nhiều process và retry qua OpenCode thật với upstream giả; factory thử nghiệm qua `RunnerRegistry` và **LocalRun read-only hoàn chỉnh** của NeoMind đã chạy đạt, kiểm journal và scope dừng. Đây chưa phải bằng chứng LocalRun live hoặc production runner đã tích hợp guard; xem [harness và blocker](../../experiments/langconfig-opencode/live/README.md).
+- **NeoMind LocalRun thật qua OpenRouter Free Router đã completed**, JSON phát hiện đúng hai sai lệch trong task inline. Không capture được model nền thực; findings không phải citations file đã xác minh. Ba lượt LC trước (hai DeepSeek, một GLM) đều bị quota; **chưa có LC live thành công hoặc A/B model thật**. Budget kết thúc 4/4 workflow, 4/40 reservations; hai pause giữ khóa, không reset DB hay fallback trả phí.
+- Harness đã kiểm quota nhiều process và retry qua OpenCode thật với upstream giả; factory thử nghiệm qua `RunnerRegistry` và LocalRun read-only kiểm journal/scope dừng. Không thay policy hoặc production runner; xem [harness và giới hạn](../../experiments/langconfig-opencode/live/README.md). Parent replay cuối: 21 test adapter (1 warning), 4 lifecycle, 14 Python support và fake-router LocalRun đạt.
 - Đã kiểm cài sạch Python dependencies chọn lọc: venv 3.12 mới, cache riêng trống, `pip check`, 17 test adapter, 4 test lifecycle và wire đều đạt. Điều này không bao phủ full backend/UI hoặc Windows; dependency transitive chưa được khóa.
 
 ## Những gì không nằm trong Git

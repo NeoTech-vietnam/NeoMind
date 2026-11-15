@@ -7,11 +7,11 @@ Tài liệu này dành cho lab Linux riêng, không phải hướng dẫn triể
 | Mức | Cần gì | Kết luận được phép rút ra |
 | --- | --- | --- |
 | NeoMind baseline | Node, npm; chạy ở checkout NeoMind | Suite NeoMind, không phải test LangConfig. |
-| Prototype unit/graph giả | Python và dependency LangConfig chọn lọc; **không cần DB server** | Test adapter với transport giả và graph gọi tool node thật. Lượt trước 17 test đạt, 1 warning. |
+| Prototype unit/graph giả | Python và dependency LangConfig chọn lọc; **không cần DB server** | Test adapter với transport giả và graph gọi tool node thật. Overlay cuối 21 test đạt, 1 warning; lịch sử trước mở rộng model là 17. |
 | Wire giả | Thêm OpenCode **2.2.7** và fake upstream loopback | `StateGraph` → LangConfig `execute_tool_node` → OpenCode server thật → upstream giả. Verdict được lập trình sẵn; đây là phép thử riêng, không nằm trong 17 test. |
 | Guard và NeoMind thử nghiệm | Linux namespace, user-systemd, NeoMind đã build | Đã chạy runner contract và LocalRun chỉ đọc thật với upstream giả, kiểm journal và dừng scope; không phải model AI thật hoặc production runner được sửa. |
 | UI/backend LangConfig | Thêm PostgreSQL 16 và pgvector, frontend và fake endpoint | UI/backend/DB từng chạy với model giả; graph prototype ở trên **không** đi qua toàn bộ HTTP backend hay `WorkflowExecutor`. |
-| Model free thật | Đang pause vì quota OpenCode | Đã thử 1 workflow, 0 lượt hoàn thành; 1 reservation là cận trên 1 physical request. OpenCode trả `Free usage limit reached`, chưa có review AI thật. |
+| Model free thật | Hết budget, giữ pause | NeoMind LocalRun qua OpenRouter Free Router completed và tìm đúng hai lỗi inline; ba lượt LC trước bị quota. Tổng 4/4 workflow, 4/40 reservations; không còn slot LC hoặc control. Không capture model nền thực, không xác minh citations file/billing; xem [bàn giao resume](../adaptive-agent-flow/session-handoff-2026-11-15-langconfig-free-resume.md). |
 
 ## Điều kiện và cách ly
 

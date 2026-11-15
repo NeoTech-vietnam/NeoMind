@@ -1,5 +1,11 @@
 # NeoMind v1 — trạng thái implementation
 
+## Tiếp tục model free — 15/11/2026
+
+[Bàn giao resume](session-handoff-2026-11-15-langconfig-free-resume.md): DeepSeek thử lại và GLM Free được duyệt đều lỗi quota; lượt cuối đổi sang **OpenRouter Free Router qua NeoMind LocalRun thật đã completed**, JSON `needs_changes` chỉ ra đúng retention 30/90 ngày và hai/một reviewer. Một outbound reservation, không variant hoặc paid fallback; model nền router không capture. Findings tham chiếu inline, không phải file citations được kiểm. Budget gốc kết thúc **4/4 workflow attempts, 4/40 reservations**; owner anchor floor 4/4, cả hai pause khóa vì hết budget. Không có LC live thành công hoặc control false-positive; không dùng kết quả một lượt để xếp hạng công cụ/model.
+
+Parent chạy lại suite Linux với `TMPDIR` thuộc lab sau sửa cuối: **369 test, 357 đạt, 0 lỗi, 12 skip**, 74 giây (`parent-router-replay-20261115/neomind-tests.log`); các lượt resume/preflight trước đó cũng đạt. `pip check` cold venv vẫn đạt. Parent replay fresh overlay cuối **21 test đạt, 1 warning**, lifecycle **4 đạt**, Python quota/path/model/reconcile/probe **14 đạt**, guard router/GLM và fake-router LocalRun (1 POST/reservation) đạt; SIGTERM cleanup đạt. Sửa probe để lỗi không bị báo thành công. Không thay production runner hoặc policy; server thử nghiệm riêng dùng DB tài khoản chính thức qua OpenCode, không trích/copy credential. Scope live được parent xác nhận inactive/cgroup không còn.
+
 ## Đóng gói LangConfig × OpenCode — 15/11/2026
 
 Tiếp tục sau lần push đầu: harness guard SQLite đã kiểm concurrency nhiều process và retry HTTP thực với upstream giả (2 POST / 2 reservation khi cho retry). Factory qua `RunnerRegistry` và LocalRun read-only hoàn chỉnh của NeoMind đều chạy với OpenCode 2.2.7 thật + upstream giả; journal và scope dừng được kiểm. Một workflow `opencode/deepseek-v4.1-flash-free#high` thật đã thử nhưng nhận **`Free usage limit reached`**: 0 workflow live hoàn thành, 1 reservation là cận trên 1 request. Đã pause, không fallback hoặc reset budget; cần chủ tài khoản xử lý giới hạn chính thức trước khi thử tiếp. Không coi fake LocalRun là bằng chứng live hoặc guard production.
