@@ -14,12 +14,15 @@ def main():
     worker = None
     succeeded = False
     try:
+        model_id = os.environ.get('LIVE_MODEL_ID', 'openrouter/openrouter/free')
+        if model_id not in ('openrouter/openrouter/free', 'zai/glm-5.3-flash'):
+            raise ValueError('unapproved account probe model')
         worker = Worker(run / 'worker', None, workspace=workspace, live_db=budget,
-                        live_model_id='openrouter/openrouter/free', account_db=os.environ.get('OPENCODE_ACCOUNT_DB'))
-        integration = worker.request('GET', '/api/integration/openrouter')['data']
+                        live_model_id=model_id, account_db=os.environ.get('OPENCODE_ACCOUNT_DB'))
+        integration = worker.request('GET', '/api/integration/' + worker.model['providerID'])['data']
         usable = any(c.get('type') == 'credential' and not c.get('status') for c in integration.get('connections', []))
         if not usable:
-            raise ValueError('OpenRouter account not available in this worker')
+            raise ValueError('Selected provider account not available in this worker')
         session = worker.request('POST', '/api/session', {'title': 'Fixture review', 'agent': 'build', 'model': worker.model,
             'location': {'directory': str(workspace)}, 'permissions': PERMISSIONS, 'metadata': {'probe': 'synthetic-no-prompt'}})['data']
         if not session_model_matches(session.get('model'), worker.model):
@@ -29,7 +32,7 @@ def main():
         if not session_model_matches(session.get('model'), worker.model) or session.get('permissions') != PERMISSIONS or session.get('location', {}).get('directory') != str(workspace):
             observed = session.get('model', {})
             raise ValueError(f'probe session after explicit model switch: {observed.get("providerID")}/{observed.get("id")} variant={observed.get("variant")!r}')
-        print(json.dumps({'status': 'preflight-ok', 'accountAvailable': True, 'sessionModel': session['model'], 'catalogVariants': [], 'artifacts': str(run), 'inference': 0}), flush=True)
+        print(json.dumps({'status': 'preflight-ok', 'accountAvailable': True, 'sessionModel': session['model'], 'artifacts': str(run), 'inference': 0}), flush=True)
         succeeded = True
     except Exception as exc:
         print(json.dumps({'status': 'preflight-failed', 'error': type(exc).__name__, 'reason': str(exc)[:200], 'artifacts': str(run), 'inference': 0}), flush=True)

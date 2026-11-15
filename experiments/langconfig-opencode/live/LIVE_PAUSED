@@ -1,4 +1,3 @@
-Evaluation workflow budget exhausted on 2026-11-15: five of five approved attempts used.
-Persistent original budget: five reservations of forty; the latest LangConfig workflow cap was five requests.
-The LangConfig OpenRouter attempt hit a provider rate limit; retry was vetoed and its scope stopped.
-Do not clear this pause or run more inference without new explicit owner authorization.
+Evaluation workflow budget exhausted on 2026-11-15: seven of seven approved attempts used.
+The two owner-authorized paid Zai GLM-5.3-Flash high workflows have ended.
+No further workflow or paid fallback is authorized; keep the original database and all history.

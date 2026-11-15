@@ -5,12 +5,13 @@ import { randomUUID } from 'node:crypto';
 
 export default Plugin.define({ id: 'fixture-live-guard', async setup(ctx) {
   const o = ctx.options;
-  if (!['fake', 'fake-router', 'live'].includes(o.mode) || !o.database || !o.helper || !o.python || !o.trace || !o.origin) throw new Error('fixture guard configuration invalid');
-  if (o.mode === 'fake-router' && !/^http:\/\/127\.0\.0\.1:\d+$/.test(o.origin)) throw new Error('fake router must be loopback');
+  if (!['fake', 'fake-router', 'fake-zai', 'live'].includes(o.mode) || !o.database || !o.helper || !o.python || !o.trace || !o.origin) throw new Error('fixture guard configuration invalid');
+  if (['fake-router', 'fake-zai'].includes(o.mode) && !/^http:\/\/127\.0\.0\.1:\d+$/.test(o.origin)) throw new Error('fake provider must be loopback');
   const router = o.mode === 'fake-router' || (o.mode === 'live' && o.providerID === 'openrouter' && o.modelID === 'openrouter/free');
-  if (o.mode === 'live' && (o.origin !== (router ? 'https://openrouter.ai' : 'https://opencode.ai') || o.testRetry === true)) throw new Error('invalid live mode');
-  if (o.mode === 'live' && !router && (o.providerID !== 'opencode' || !['deepseek-v4.1-flash-free', 'glm-5.3-flash-free'].includes(o.modelID))) throw new Error('unapproved live model');
-  const selected = o.mode === 'fake' ? { provider: 'fixture', model: 'fake-review' } : o.mode === 'fake-router' ? { provider: 'fixture', model: 'router-free' } : { provider: o.providerID, model: o.modelID };
+  const zai = o.mode === 'fake-zai' || (o.mode === 'live' && o.providerID === 'zai' && o.modelID === 'glm-5.3-flash');
+  if (o.mode === 'live' && (o.origin !== (router ? 'https://openrouter.ai' : zai ? 'https://api.z.ai' : 'https://opencode.ai') || o.testRetry === true)) throw new Error('invalid live mode');
+  if (o.mode === 'live' && !router && !zai && (o.providerID !== 'opencode' || !['deepseek-v4.1-flash-free', 'glm-5.3-flash-free'].includes(o.modelID))) throw new Error('unapproved live model');
+  const selected = ['fake', 'fake-zai'].includes(o.mode) ? { provider: 'fixture', model: 'fake-review' } : o.mode === 'fake-router' ? { provider: 'fixture', model: 'router-free' } : { provider: o.providerID, model: o.modelID };
   const log = (event, fields = {}) => appendFileSync(o.trace, JSON.stringify({ event, ...fields }) + '\n');
   await ctx.model.transform(editor => {
     for (const model of editor.list()) if (model.providerID !== selected.provider || model.id !== selected.model) editor.remove(model.providerID, model.id);
@@ -43,7 +44,7 @@ export default Plugin.define({ id: 'fixture-live-guard', async setup(ctx) {
     const model = e.model || {};
     const target = new URL(e.request.url);
     const variantOK = router ? model.variant === undefined : model.variant === 'high';
-    const pathOK = o.mode === 'fake-router' ? target.pathname === '/v1/chat/completions' : o.mode !== 'live' || (router ? ['/api/v1/chat/completions', '/api/v1/responses'].includes(target.pathname) : target.pathname.startsWith('/inference/'));
+    const pathOK = ['fake-router', 'fake-zai'].includes(o.mode) ? target.pathname === '/v1/chat/completions' : o.mode !== 'live' || (router ? ['/api/v1/chat/completions', '/api/v1/responses'].includes(target.pathname) : zai ? target.pathname === '/api/paas/v4/chat/completions' : target.pathname.startsWith('/inference/'));
     if (model.providerID !== selected.provider || model.id !== selected.model || !variantOK || e.kind !== 'primary' || target.origin !== o.origin || !pathOK) {
       log('deny', { id, kind: e.kind, provider: model.providerID, model: model.id, variant: model.variant });
       throw new Error('Fixture dispatch denied');
@@ -59,6 +60,18 @@ export default Plugin.define({ id: 'fixture-live-guard', async setup(ctx) {
       if (body?.model !== 'openrouter/free' || body.models !== undefined || body.plugins !== undefined || body.tools !== undefined || body.web_search_options !== undefined ||
           !provider || Object.keys(provider).sort().join(',') !== 'allow_fallbacks,max_price' || provider.allow_fallbacks !== false ||
           !price || Object.keys(price).sort().join(',') !== 'completion,prompt' || price.prompt !== 0 || price.completion !== 0) throw new Error('unsafe router request');
+    }
+    if (zai) {
+      const raw = await e.request.clone().text();
+      if (raw.length > 20000 || e.request.method !== 'POST' || target.search) throw new Error('invalid Zai request');
+      const body = JSON.parse(raw);
+      log('paid-request-shape', { keys: Object.keys(body), model: body.model, maxTokens: body.max_tokens, maxCompletionTokens: body.max_completion_tokens, reasoningEffort: body.reasoning_effort, thinkingType: body.thinking?.type });
+      if (body.model !== 'glm-5.3-flash' || !Number.isInteger(body.max_tokens) || body.max_tokens < 1 || body.max_tokens > 8192 ||
+          (body.max_completion_tokens !== undefined && (!Number.isInteger(body.max_completion_tokens) || body.max_completion_tokens < 1 || body.max_completion_tokens > 8192)) ||
+          body.reasoning_effort !== 'high' || body.thinking?.type !== 'enabled' ||
+          ['models', 'provider', 'plugins', 'tools', 'web_search_options', 'search_parameters'].some(key => body[key] !== undefined)) throw new Error('unsafe Zai request');
+      if (!Array.isArray(body.messages) || body.messages.some(message => !['system', 'user'].includes(message.role) || typeof message.content !== 'string')) throw new Error('unsupported Zai content');
+      log('paid-request-checked', { maxTokens: body.max_tokens, reasoningEffort: body.reasoning_effort });
     }
     e.request = new Request(e.request, { redirect: 'error' });
     try {

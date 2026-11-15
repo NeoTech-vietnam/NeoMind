@@ -10,7 +10,7 @@ if (!path.isAbsolute(process.env.OPENCODE_ACCOUNT_DB ?? '') || !path.isAbsolute(
 const { allocateProcessScope } = await import(pathToFileURL(path.join(neomind, 'dist/src/adapters/worker-scope.js')));
 const scope = await allocateProcessScope();
 const env = { HOME: root, TMPDIR: path.join(root, 'tmp'), PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', PYTHONDONTWRITEBYTECODE: '1', LIVE_GUARD_DATA: root,
-  LIVE_BUDGET_PATH: process.env.LIVE_BUDGET_PATH, OPENCODE_ACCOUNT_DB: process.env.OPENCODE_ACCOUNT_DB, OPENCODE_BIN: process.env.OPENCODE_BIN,
+  LIVE_BUDGET_PATH: process.env.LIVE_BUDGET_PATH, OPENCODE_ACCOUNT_DB: process.env.OPENCODE_ACCOUNT_DB, OPENCODE_BIN: process.env.OPENCODE_BIN, ...(process.env.LIVE_MODEL_ID ? { LIVE_MODEL_ID: process.env.LIVE_MODEL_ID } : {}),
   ...(process.env.XDG_RUNTIME_DIR ? { XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR } : {}), ...(process.env.DBUS_SESSION_BUS_ADDRESS ? { DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS } : {}) };
 const result = await runScoped({ scope, launch: { command: '/usr/bin/python3', args: ['-u', path.join(code, 'router_account_probe.py')], cwd: root, env },
   onStop: stopped => console.log(JSON.stringify({ scope: scope.identity.unit, stoppedVerified: stopped })),

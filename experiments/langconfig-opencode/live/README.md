@@ -1,12 +1,13 @@
 # Thử nghiệm guard OpenCode — chưa sẵn sàng dùng production
 
-Đây là harness riêng, không thay đổi production runner hoặc khóa fake của overlay LangConfig. Không tạo lại hay sao chép DB quota live. **Đã hết 5/5 workflow attempts**, dù mới dùng 5/40 reservations; cả hai `LIVE_PAUSED` khóa inference. Lượt thứ năm được duyệt riêng cho LC với cap 5 request, không tự tăng budget. Muốn chạy thêm cần quyền mới, không chỉ gỡ pause hoặc đổi DB.
+Đây là harness riêng, không thay đổi production runner hoặc khóa fake của overlay LangConfig. Không tạo lại hay sao chép DB quota live. **Đã hết 7/7 workflow attempts**, dù mới dùng 7/40 reservations; cả hai `LIVE_PAUSED` khóa inference. Lượt thứ năm được duyệt riêng cho LC với cap 5 request; hai lượt 6–7 duyệt riêng cho Z.ai GLM-5.3-Flash `high` trả phí, mỗi lượt cap 5 request và 8.192 output token. Không tự tăng budget. Muốn chạy thêm cần quyền mới, không chỉ gỡ pause hoặc đổi DB.
 
 Trong các đường dẫn dưới đây, `E` là `/home/hieu-tran/.local/share/langconfig-eval-20261114` trên máy đã chạy thử.
 
 ## Bằng chứng 15/11/2026
 
-- Sau lượt NeoMind dưới đây, người dùng duyệt thêm một workflow LC, tối đa 5 request, tổng cap 5 workflow/40 request. Graph LC đã dispatch thật đúng router, có receipt, nhưng upstream trả `Provider returned error` / `AI.Error.RateLimit`; retry bị veto, scope dừng. Chưa có review LC thật. Budget hiện **5/5 workflow, 5/40 reservations**, anchor giữ cả năm lượt và cap mới; các số 4/4 dưới đây là lịch sử. [Bàn giao LC live](../../../docs/adaptive-agent-flow/session-handoff-2026-11-15-langconfig-live-router.md).
+- Hai lượt LC trả phí Z.ai **`zai/glm-5.3-flash` variant `high`** (không phải FlashX; bộ lọc "chỉ bản mới nhất" ẩn model này) đã chạy thật. Lượt 6 `lc-bc7e3a11-7a0e-4e78-9186-5538c63e253a` (draft mâu thuẫn) trả `needs_changes` đúng retention 90 vs 30 ngày và một vs hai reviewer, nhưng JSON bọc trong khối Markdown nên graph ghi lỗi; parent reconcile offline trên response đã có, `newPrompts: 0`, `jsonFenceNormalized: true`, số đếm giữ 6/6 (`runs/live-lc-z7qup2s5/reconciliation.json`). Lượt 7 `lc-1542c848-b8ac-4132-84b8-503b565f338b` (control) completed, verdict `pass`, findings rỗng; `model-usage.json` xác nhận đúng model/variant, cost báo 5,56e-05 USD (`runs/live-lc-dgd9impb/review.json`). Budget cuối **7/7 workflow, 7/40 reservations**, anchor `workflowCap: 7`, hai pause khóa lại. [Bàn giao LC live](../../../docs/adaptive-agent-flow/session-handoff-2026-11-15-langconfig-live-router.md).
+- Sau lượt NeoMind dưới đây, người dùng duyệt thêm một workflow LC, tối đa 5 request, tổng cap 5 workflow/40 request. Graph LC đã dispatch thật đúng router, có receipt, nhưng upstream trả `Provider returned error` / `AI.Error.RateLimit`; retry bị veto, scope dừng. Chưa có review LC thật. Budget lúc đó **5/5 workflow, 5/40 reservations**, anchor giữ cả năm lượt và cap mới; các số 4/4 dưới đây là lịch sử. [Bàn giao LC live](../../../docs/adaptive-agent-flow/session-handoff-2026-11-15-langconfig-live-router.md).
 - **NeoMind LocalRun thật qua OpenRouter Free Router completed**: run `run-d10b500e-cb22-4947-a57d-0bcafa6742da`, một attempt và một reservation outbound; JSON `needs_changes` tìm đúng retention 30/90 ngày và hai/một reviewer. Scope inactive, cgroup không còn, parent đã kiểm journal/output. Chỉ đối chiếu source/draft inline trong task; `task_description:SOURCE_line_*` là nhãn model đặt, không phải citations file đã xác minh. Không phải writer hoặc A/B model thật với LangConfig.
 - Full model ID `openrouter/openrouter/free`, native provider `openrouter`, model `openrouter/free`, không variant. OpenCode session có sentinel `default`; hook chỉ chuẩn hóa đúng router, outbound/assistant vẫn không variant. Nhãn binding NeoMind `medium` không ghim reasoning router. Model nền router chọn không capture; OpenCode báo cost 0, 327 input/140 output/221 reasoning token, không phải xác nhận billing. Guard kiểm body giá tối đa prompt/completion 0, không provider fallback, plugins hoặc tools; chỉ endpoint native, không redirect. Fanout nội bộ OpenRouter không quan sát được.
 - OpenCode tự dùng tài khoản đã lưu qua `OPENCODE_DB`: **DB tài khoản dùng chung, server/config/HOME/cache/log riêng**. Agent không đọc/copy raw credential hoặc DB; không đọc/sửa session cũ hay restart shared service. Các session fixture mới và session preflight không prompt được ghi vào DB chính thức; không tuyên bố không đụng state dùng chung hoặc có OS sandbox.
@@ -33,6 +34,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test_runtime_paths
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test_live_models test_runner_turn test_router_account_probe
 node test_guard_router.mjs
 node test_guard_glm.mjs
+node test_guard_zai.mjs
 node test_runtime_paths.mjs
 node test_scoped_run.mjs
 node test_runner.mjs
@@ -52,10 +54,12 @@ NEOMIND_EXPERIMENT_MODE=fake-router node test_live_local_run.mjs
 node test_live_runner_signal.mjs
 ```
 
-Kết quả parent cuối ngày 15/11: **14 test Python quota/path/model/reconcile/probe đạt**;
-guard router và GLM đạt; fake native-router LocalRun completed với 1 POST giả/1 reservation,
-unit inactive và cgroup rỗng. SIGTERM cleanup đạt. Probe unit dùng mock, không gọi auth
-hoặc inference thật; lỗi probe phát `PROBE_FAILED` để wrapper exit khác 0, không báo giả thành công.
+Kết quả parent cuối ngày 15/11: **15 test Python quota/path/model/reconcile/probe đạt**;
+guard router, GLM và Zai đạt; overlay LangConfig **27 đạt, 1 warning**; fake native-router LocalRun
+completed với 1 POST giả/1 reservation, unit inactive và cgroup rỗng. SIGTERM cleanup đạt. Probe
+unit dùng mock, không gọi auth hoặc inference thật; lỗi probe phát `PROBE_FAILED` để wrapper exit
+khác 0, không báo giả thành công. Guard Zai kiểm đúng `zai/glm-5.3-flash` variant `high`, endpoint
+native, trần 8.192 output, cap 5 request, veto retry và không fetch.
 Các test Node path và signal cleanup, fake acceptance và runner contract trước đó cũng đạt.
 Sau khi được duyệt thêm lượt LC: **15 test Python đạt**, thêm test cap extension khớp
 anchor và chặn vượt cap. `test_live_lc_fake.py` replay chính graph LC thật với upstream
@@ -72,7 +76,7 @@ Mỗi lệnh fake tạo run directory mới dưới `LIVE_GUARD_DATA/runs`; khô
 
 `runner.mjs` chỉ fake; `live_runner.mjs` là factory read-only thử nghiệm riêng, có mode `fake`, `fake-router` và `live`, từ chối resume/write/web và không tuyên bố OS sandbox. Mode live chỉ router đã chọn. `models()`/`verifyCapabilities()` của factory cố ý từ chối probe chung: inventory được kiểm trong owned worker; vì vậy đây chưa phải factory production có thể thay thế trực tiếp mọi code path.
 
-`live_lc.py` dùng adapter overlay với transport thử nghiệm riêng. Overlay cho phép đúng các identity đã duyệt khi transport không phải fixture-only; HTTP transport mặc định **vẫn chỉ cho fake model**. Adapter chấp nhận session sentinel `default` riêng cho router nhưng assistant phải không variant; ca này mới kiểm fake, **chưa có LC router live**. Script live yêu cầu LC backend/Python, budget gốc đã tồn tại, DB tài khoản chính thức, opt-in và không pause; không tự tạo budget mới. Giá trị opt-in công khai không chứng minh người dùng đồng ý. Budget hiện đã hết, không tự gỡ pause.
+`live_lc.py` dùng adapter overlay với transport thử nghiệm riêng. Overlay cho phép đúng các identity đã duyệt khi transport không phải fixture-only; HTTP transport mặc định **vẫn chỉ cho fake model**. Adapter chấp nhận session sentinel `default` riêng cho router nhưng assistant phải không variant; ca này mới kiểm fake, **chưa có LC router live thành công**. Adapter cũng chấp nhận đúng một khối `json` bao kín quanh object review (thêm sau lượt Z.ai 6) và vẫn kiểm schema nghiêm ngặt, từ chối mọi dạng khác. Script live yêu cầu LC backend/Python, budget gốc đã tồn tại, DB tài khoản chính thức, opt-in và không pause; không tự tạo budget mới. Giá trị opt-in công khai không chứng minh người dùng đồng ý. Budget hiện đã hết, không tự gỡ pause.
 
 Để ngăn nhầm DB, chủ sở hữu chuẩn bị riêng `$LIVE_GUARD_DATA/live-budget.anchor.json`, từ DB gốc hiện có, không sao chép DB. Anchor có `schemaVersion: 1`, `database` là đường dẫn canonical, `device`/`inode` từ `stat`, floor `minimumWorkflows`/`minimumReservations` ít nhất 1 và `requiredReservationIds` gốc. Trường `workflowCap` mặc định 4 cho anchor cũ; chỉ giá trị 4/5 được hỗ trợ, cap request vẫn 40. Sau đồng thuận người dùng, owner đã đổi riêng cap workflow DB gốc 4→5 và anchor thành 5, giữ mọi row lịch sử. Runtime **không tự nâng cap**, chỉ kiểm anchor/DB phải khớp; metadata UUID lưu dưới `live-attempts/`, có `requestCap: 5` cho LC mới. Attempt lỗi vẫn tiêu slot, không hỗ trợ resume. Anchor giảm nhầm lẫn, **không chống cố ý sửa** anchor/DB. Không tạo anchor/DB khác để né lịch sử.
 

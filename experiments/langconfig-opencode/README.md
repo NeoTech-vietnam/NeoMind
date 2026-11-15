@@ -9,8 +9,12 @@ dùng service OpenCode đang chia sẻ.
 Giai đoạn tiếp theo được lưu riêng ở [live/README.md](live/README.md): guard và
 factory thử nghiệm NeoMind, fake acceptance với server thật và **LocalRun thật
 qua OpenRouter Free Router** đã phát hiện đúng hai lỗi inline. Ba lượt LC trước
-bị quota; lượt LC router được duyệt thêm bị upstream rate limit sau dispatch,
-chưa có LC live thành công. Budget hiện đã hết **5/5 workflow (5/40 reservations)**.
+bị quota; lượt LC router được duyệt thêm bị upstream rate limit sau dispatch.
+Hai lượt LC trả phí sau đó dùng **`zai/glm-5.3-flash` variant `high`**: draft
+mâu thuẫn nhận `needs_changes` đúng retention 90 vs 30 ngày và một vs hai
+reviewer (reconcile offline một response bọc khối Markdown, 0 prompt mới),
+draft control nhận `pass`, findings rỗng. Đó là phép thử TOOL_NODE, chưa phải
+full backend/UI. Budget hiện đã hết **7/7 workflow (7/40 reservations)**.
 Không dùng kết quả đó để gỡ khóa HTTP fixture; giữ `LIVE_PAUSED` và DB gốc.
 
 ## Chuẩn bị clone và dependency

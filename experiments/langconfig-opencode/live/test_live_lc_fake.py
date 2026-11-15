@@ -24,11 +24,15 @@ async def main():
                                 stderr=subprocess.DEVNULL, text=True, start_new_session=True)
     worker = None
     try:
-        worker = Worker(run / 'worker', int(get_line(upstream)), workspace=workspace)
+        zai_test = os.environ.get('TEST_ZAI_BODY') == '1'
+        worker = Worker(run / 'worker', int(get_line(upstream)), workspace=workspace, zai_test=zai_test)
         quota.start_workflow(str(worker.db), 'lc-fake', REQUEST_CAP)
         result = await execute_graph(worker, 'lc-fake', workspace, run, MODEL, fixture)
         require(result['verdict'] == 'needs_changes' and result['summary'] == 'Synthetic fake review', 'unexpected fake result')
         require(worker.reservations() == 1 and len((run / 'upstream.jsonl').read_text().splitlines()) == 1, 'request count mismatch')
+        if zai_test:
+            require(json.loads((run / 'upstream.jsonl').read_text())['model'] == 'glm-5.3-flash', 'fake Zai model mismatch')
+            require('paid-request-checked' in worker.trace.read_text(), 'Zai body guard not exercised')
         user = next(message for message in worker.timeline(result['session_id']) if message.get('type') == 'user')
         (run / 'user-message.json').write_text(json.dumps(user, indent=2))
         prompt = user['text']

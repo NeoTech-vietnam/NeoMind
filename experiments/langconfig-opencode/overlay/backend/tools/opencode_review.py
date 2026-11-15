@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 MODEL = {"providerID": "opencode", "id": "deepseek-v4.1-flash-free", "variant": "high"}
 GLM_MODEL = {"providerID": "opencode", "id": "glm-5.3-flash-free", "variant": "high"}
 ROUTER_MODEL = {"providerID": "openrouter", "id": "openrouter/free"}
+ZAI_MODEL = {"providerID": "zai", "id": "glm-5.3-flash", "variant": "high"}
 PERMISSIONS = [{"action": "*", "resource": "*", "effect": "deny"}]
 
 
@@ -49,7 +50,7 @@ class Adapter:
         if not self.workspace.is_relative_to(root):
             raise ReviewError("workspace outside fixture root")
         self.model = model or MODEL
-        if self.model not in (MODEL, GLM_MODEL, ROUTER_MODEL, {"providerID": "fixture", "id": "fake-review", "variant": "high"}):
+        if self.model not in (MODEL, GLM_MODEL, ROUTER_MODEL, ZAI_MODEL, {"providerID": "fixture", "id": "fake-review", "variant": "high"}):
             raise ReviewError("model not permitted")
         if getattr(transport, "fixture_only", False) and self.model != {"providerID": "fixture", "id": "fake-review", "variant": "high"}:
             raise ReviewError("HTTP transport only permits the local fake model until live guard is verified")
@@ -96,7 +97,7 @@ class Adapter:
             self._verify(await self.transport.request("GET", f"/api/session/{sid}"), sid, attempt_id)
             prompt_id = "msg_" + hashlib.sha256((str(self.workspace) + "\0" + attempt_id).encode()).hexdigest()[:24]
             self._set(attempt_id, "prompt_intent", prompt_id=prompt_id)
-            prompt = instruction + '\nReturn exactly JSON: {"verdict":"pass|needs_changes","findings":[{"description":"...","path":"..."}],"summary":"..."}. Read only.'
+            prompt = instruction + '\nReturn exactly JSON: {"verdict":"pass|needs_changes","findings":[{"description":"...","path":"..."}],"summary":"..."}. No Markdown fences or commentary. Read only.'
             receipt = (await self.transport.request("POST", f"/api/session/{sid}/prompt", {"id": prompt_id, "text": prompt}))["data"]
             if receipt.get("sessionID") != sid or receipt.get("type") != "user" or receipt.get("id") != prompt_id:
                 raise ReviewError("invalid prompt receipt")
@@ -149,7 +150,10 @@ class Adapter:
         if len(texts) != 1:
             raise ReviewError("ambiguous review output")
         try:
-            review = Review.model_validate_json(texts[0])
+            text = texts[0].strip()
+            fenced = re.fullmatch(r'```json[ \t]*\r?\n(.*)\r?\n```', text, re.DOTALL | re.IGNORECASE)
+            # A single JSON fence is presentation, not permission to accept commentary or invalid data.
+            review = Review.model_validate_json(fenced.group(1) if fenced else text)
         except Exception as exc:
             raise ReviewError("invalid review JSON or schema") from exc
         if (review.verdict == "pass") != (not review.findings):

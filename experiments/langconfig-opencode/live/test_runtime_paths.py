@@ -39,7 +39,16 @@ class RuntimePathsTests(unittest.TestCase):
             for index in range(5): quota.reserve(str(db), 'ses_extra', f'new-{index}')
             with self.assertRaises(ValueError): quota.reserve(str(db), 'ses_extra', 'sixth')
             with self.assertRaises(ValueError): quota.start_workflow(str(db), 'another', 5)
-            for bad in (True, '5', 6):
+            anchor['workflowCap'] = 7
+            anchor_path.write_text(json.dumps(anchor))
+            with self.assertRaises(ValueError): verify_live_budget(root, str(db))
+            with closing(quota.connect(str(db))) as conn:
+                conn.execute('UPDATE limits SET workflow_cap=7 WHERE id=1')
+            verify_live_budget(root, str(db))
+            quota.start_workflow(str(db), 'paid-positive', 5)
+            quota.start_workflow(str(db), 'paid-control', 5)
+            with self.assertRaises(ValueError): quota.start_workflow(str(db), 'eighth', 5)
+            for bad in (True, '5', 6, 8):
                 anchor['workflowCap'] = bad
                 anchor_path.write_text(json.dumps(anchor))
                 with self.assertRaises(ValueError): verify_live_budget(root, str(db))

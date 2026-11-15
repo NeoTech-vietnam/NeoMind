@@ -1,0 +1,25 @@
+// Paid model admission tests only: no HTTP request is sent.
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { requireDataRoot } from './runtime_paths.mjs';
+const code = path.dirname(fileURLToPath(import.meta.url)), root = requireDataRoot();
+const dir = await mkdtemp(path.join(root, 'tmp', 'zai-guard-')), db = path.join(dir, 'fake.sqlite');
+execFileSync('/usr/bin/python3', ['-c', 'import quota,sys; quota.initialize(sys.argv[1],40); quota.start_workflow(sys.argv[1],"wf",5); quota.bind(sys.argv[1],"ses_test","wf",5)', db], { cwd: code, env: { PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1' } });
+const source = (await readFile(path.join(code, 'guard/index.js'), 'utf8')).replace("import { Plugin } from '@opencode/plugin';", 'const Plugin = { define: value => value };');
+const plugin = (await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'))).default;
+const hooks = new Map(), ref = { providerID: 'zai', id: 'glm-5.3-flash', variant: 'high' };
+const ctx = { options: { mode: 'live', providerID: ref.providerID, modelID: ref.id, origin: 'https://api.z.ai', database: db, helper: path.join(code, 'quota.py'), python: '/usr/bin/python3', trace: path.join(dir, 'trace'), home: dir, tmp: dir }, model: { transform: async fn => fn({ list: () => [ref], remove: () => {}, default: { set: () => {} } }) }, session: { hook: async (name, fn) => hooks.set(name, fn) } };
+await plugin.setup(ctx);
+const body = { model: 'glm-5.3-flash', max_tokens: 8192, reasoning_effort: 'high', thinking: { type: 'enabled' }, messages: [{ role: 'user', content: 'Synthetic fixture.' }] };
+const event = (data = body, model = ref, url = 'https://api.z.ai/api/paas/v4/chat/completions', kind = 'primary') => ({ sessionID: 'ses_test', model, kind, request: new Request(url, { method: 'POST', body: JSON.stringify(data) }) });
+for (const bad of [{ ...body, model: 'glm-5.3-flashx' }, { ...body, max_tokens: 8193 }, { ...body, max_tokens: undefined }, { ...body, reasoning_effort: 'max' }, { ...body, tools: [] }, { ...body, plugins: [] }, { ...body, max_completion_tokens: 8193 }, { ...body, messages: [{ role: 'user', content: [] }] }]) await assert.rejects(() => hooks.get('http.request')(event(bad)));
+for (const bad of [{ ...ref, variant: 'low' }, { ...ref, providerID: 'openrouter' }, { ...ref, id: 'glm-5.3-flashx' }]) await assert.rejects(() => hooks.get('http.request')(event(body, bad)));
+await assert.rejects(() => hooks.get('http.request')(event(body, ref, 'https://api.z.ai/api/coding/paas/v4/chat/completions')));
+await assert.rejects(() => hooks.get('http.request')(event(body, ref, undefined, 'title')));
+for (let i = 0; i < 5; i++) await hooks.get('http.request')(event());
+await assert.rejects(() => hooks.get('http.request')(event()));
+const retry = { attempt: 2 }; hooks.get('retry')(retry); assert.equal(retry.decision.retry, false);
+console.log('PASS exact Zai Flash high, native endpoint, 8192 output cap, no tools/fallbacks, five-request cap, retry veto; no fetch');

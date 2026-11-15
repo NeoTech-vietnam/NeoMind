@@ -59,14 +59,16 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class Worker:
-    def __init__(self, root, fake_port, retry=False, cap=20, workspace=None, guard=True, live_db=None, websocket=False, live_model_id=None, account_db=None, router_test=False):
+    def __init__(self, root, fake_port, retry=False, cap=20, workspace=None, guard=True, live_db=None, websocket=False, live_model_id=None, account_db=None, router_test=False, zai_test=False):
         self.root = root
         require(OPENCODE is not None and Path(OPENCODE).is_absolute(), 'absolute OPENCODE_BIN required')
         self.live = live_db is not None
         self.model = live_model(live_model_id) if self.live else ({'providerID': 'fixture', 'id': 'router-free'} if router_test else MODEL)
         require(not router_test or not self.live, 'router fake cannot use live budget')
         router = self.live and self.model['providerID'] == 'openrouter'
-        if router:
+        zai = self.live and self.model['providerID'] == 'zai'
+        require(not zai_test or (not self.live and not router_test), 'invalid fake Zai mode')
+        if router or zai:
             require(account_db is not None and Path(account_db).is_absolute() and Path(account_db).resolve(strict=True).is_file(), 'official account database required')
         else:
             require(account_db is None, 'unexpected account database')
@@ -84,8 +86,8 @@ class Worker:
         self.trace = root / 'trace.jsonl'
         self.password = secrets.token_hex(24)
         plugin = str(CODE_ROOT / 'guard')
-        options = {'mode': 'live' if self.live else ('fake-router' if router_test else 'fake'), 'database': str(self.db), 'helper': str(CODE_ROOT / 'quota.py'), 'python': PYTHON,
-                   'trace': str(self.trace), 'origin': ('https://openrouter.ai' if router else 'https://opencode.ai') if self.live else f'http://127.0.0.1:{fake_port}', 'home': str(root / 'home'),
+        options = {'mode': 'live' if self.live else ('fake-router' if router_test else 'fake-zai' if zai_test else 'fake'), 'database': str(self.db), 'helper': str(CODE_ROOT / 'quota.py'), 'python': PYTHON,
+                   'trace': str(self.trace), 'origin': ('https://openrouter.ai' if router else 'https://api.z.ai' if zai else 'https://opencode.ai') if self.live else f'http://127.0.0.1:{fake_port}', 'home': str(root / 'home'),
                    'tmp': str(root / 'tmp'), 'testRetry': retry, 'providerID': self.model['providerID'], 'modelID': self.model['id']}
         config = {'model': 'fixture/fake-review', 'compaction': {'auto': False}, 'warming': False, 'update': 'disable',
                   'plugins': [{'package': plugin, 'options': options}] if guard else [],
@@ -103,12 +105,18 @@ class Worker:
             config['providers'] = {self.model['providerID']: {'settings': {'transport': 'http', 'cache': {'warming': False}}}}
             if router:
                 config['providers']['openrouter']['body'] = {'provider': {'max_price': {'prompt': 0, 'completion': 0}, 'allow_fallbacks': False}}
+            if zai:
+                config['providers']['zai']['body'] = {'max_tokens': 8192, 'reasoning_effort': 'high', 'thinking': {'type': 'enabled'}}
+                config['providers']['zai']['models'] = {'glm-5.3-flash': {'limit': {'output': 8192}}}
             config['policies'][1]['resource'] = self.model['providerID']
         elif router_test:
             config['model'] = 'fixture/router-free'
             config['providers']['fixture']['package'] = '@opencode/ai/providers/openrouter'
             config['providers']['fixture']['models'] = {'router-free': {'modelID': 'openrouter/free', 'name': 'Synthetic Router', 'limit': {'context': 16384, 'output': 2048}, 'variants': []}}
             config['providers']['fixture']['body'] = {'provider': {'max_price': {'prompt': 0, 'completion': 0}, 'allow_fallbacks': False}}
+        elif zai_test:
+            config['providers']['fixture']['models']['fake-review']['modelID'] = 'glm-5.3-flash'
+            config['providers']['fixture']['body'] = {'max_tokens': 8192, 'reasoning_effort': 'high', 'thinking': {'type': 'enabled'}}
         elif websocket:
             config['providers']['fixture']['settings']['transport'] = 'websocket'
         (root / 'config/opencode/opencode.json').write_text(json.dumps(config))
@@ -119,7 +127,7 @@ class Worker:
                'OPENCODE_SERVER_USERNAME': 'opencode', 'OPENCODE_SERVER_PASSWORD': self.password,
                'OPENCODE_DISABLE_PROJECT_CONFIG': '1', 'OPENCODE_DISABLE_EXTERNAL_SKILLS': '1',
                'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'}
-        if router:
+        if router or zai:
             env['OPENCODE_DB'] = str(Path(account_db).resolve(strict=True))
         self.stderr = (root / 'worker.stderr').open('wb')
         self.proc = subprocess.Popen([OPENCODE, 'serve', '--hostname', '127.0.0.1', '--port', '0'], cwd=self.workspace, env=env,
@@ -173,7 +181,14 @@ class Worker:
             else:
                 require(any(v.get('id') == 'high' for v in enabled[0].get('variants', [])), 'high variant unavailable')
             costs = enabled[0].get('cost')
-            require(isinstance(costs, list) and len(costs) > 0 and all(c.get('input') == 0 and c.get('output') == 0 and c.get('cache', {}).get('read') == 0 and c.get('cache', {}).get('write') == 0 for c in costs), 'target cost not confirmed free')
+            if self.model['providerID'] == 'zai':
+                require(enabled[0].get('limit', {}).get('output') == 8192, 'Zai output cap not configured')
+                require(isinstance(costs, list) and len(costs) > 0 and all(
+                    all(type(value) in (int, float) and 0 <= value <= maximum for value, maximum in
+                        ((c.get('input'), 0.15), (c.get('output'), 0.5), (c.get('cache', {}).get('read'), 0.03), (c.get('cache', {}).get('write'), 0)))
+                    for c in costs), 'Zai catalog price exceeds approved metadata')
+            else:
+                require(isinstance(costs, list) and len(costs) > 0 and all(c.get('input') == 0 and c.get('output') == 0 and c.get('cache', {}).get('read') == 0 and c.get('cache', {}).get('write') == 0 for c in costs), 'target cost not confirmed free')
         require(self.trace.exists() and '"ready"' in self.trace.read_text(), 'guard not ready')
         (self.root / 'preflight-summary.json').write_text(json.dumps({'version': info['version'], 'config_sources': [e.get('path') for e in config], 'builtin_count': len(plugins)-1, 'external_plugin': external[0]['id'], 'mcp_count': 0, 'enabled_models': [self.model['providerID'] + '/' + self.model['id']]}))
 

@@ -6,7 +6,7 @@ import pytest
 from langgraph.graph import StateGraph, START, END
 from typing import TypedDict
 
-from tools.opencode_review import Adapter, MODEL, GLM_MODEL, ROUTER_MODEL, PERMISSIONS, ReviewError, install_test_adapter
+from tools.opencode_review import Adapter, MODEL, GLM_MODEL, ROUTER_MODEL, ZAI_MODEL, PERMISSIONS, ReviewError, install_test_adapter
 
 
 class Fake:
@@ -47,6 +47,15 @@ def test_glm_identity_is_exact_and_fixture_http_stays_locked(tmp_path):
         with pytest.raises(ReviewError): Adapter(transport, workspace, tmp_path / 'bad.sqlite', model=bad)
     with pytest.raises(ReviewError):
         Adapter(LoopbackTransport('http://127.0.0.1:1234', 'fixture', 'dummy'), workspace, tmp_path / 'blocked.sqlite', model=GLM_MODEL)
+
+
+def test_zai_exact_identity_and_fixture_http_stays_locked(tmp_path):
+    from tools.opencode_http import LoopbackTransport
+    workspace = tmp_path / 'fixture'; workspace.mkdir()
+    assert Adapter(Fake(workspace), workspace, tmp_path / 'zai.sqlite', model=ZAI_MODEL).model == ZAI_MODEL
+    for bad in ({**ZAI_MODEL, 'id': 'glm-5.3-flashx'}, {**ZAI_MODEL, 'variant': 'low'}, {**ZAI_MODEL, 'providerID': 'openrouter'}):
+        with pytest.raises(ReviewError): Adapter(Fake(workspace), workspace, tmp_path / 'bad-zai.sqlite', model=bad)
+    with pytest.raises(ReviewError): Adapter(LoopbackTransport('http://127.0.0.1:1234', 'fixture', 'dummy'), workspace, tmp_path / 'blocked-zai.sqlite', model=ZAI_MODEL)
 
 
 def test_router_exact_identity_and_fixture_http_stays_locked(tmp_path):
@@ -119,6 +128,25 @@ async def test_success_and_receipt(fixture):
     a,f,_=fixture; result=await a.start('one','Review source.txt'); assert result['verdict']=='needs_changes'; assert result['session_id']=='ses_123'; assert a._row('one')['stage']=='completed'; assert len([c for c in f.calls if c[1].endswith('/prompt')])==1
     assert f.calls[0][2]['title']=='Fixture review'; assert f.calls[0][2]['permissions']==PERMISSIONS
     before=len(f.calls); assert await a.reconcile('one') == result; assert len(f.calls)==before
+
+
+@pytest.mark.asyncio
+async def test_single_json_fence_is_normalized_without_resubmit(fixture):
+    a,f,_=fixture
+    f.response='```json\n'+f.response+'\n```'
+    assert (await a.start('one','Review fixture'))['verdict']=='needs_changes'
+    assert len([call for call in f.calls if call[1].endswith('/prompt')])==1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('response', [
+    'Commentary\n```json\n{}\n```', '```json\n{}\n```\nCommentary',
+    '```json\n{}\n```\n```json\n{}\n```',
+    '```json\n{"verdict":"pass","findings":[{"description":"issue","path":"x"}],"summary":"bad"}\n```',
+])
+async def test_fence_does_not_relax_schema_or_allow_other_text(fixture,response):
+    a,f,_=fixture; f.response=response
+    with pytest.raises(ReviewError): await a.start('one','Review fixture')
 
 
 @pytest.mark.asyncio

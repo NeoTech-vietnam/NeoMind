@@ -58,14 +58,18 @@ async def main():
     if (ROOT / 'LIVE_PAUSED').exists() or (CODE_ROOT / 'LIVE_PAUSED').exists():
         raise RuntimeError('live evaluation is paused')
     model = live_model(os.environ.get('LIVE_MODEL_ID'))
-    if model != {'providerID': 'openrouter', 'id': 'openrouter/free'}:
-        raise RuntimeError('explicit OpenRouter free router selection required')
+    if model not in ({'providerID': 'openrouter', 'id': 'openrouter/free'}, {'providerID': 'zai', 'id': 'glm-5.3-flash', 'variant': 'high'}):
+        raise RuntimeError('explicit approved model selection required')
+    fixture_case = os.environ.get('LIVE_FIXTURE_CASE', 'contradictory')
+    if fixture_case not in ('contradictory', 'matching'):
+        raise RuntimeError('unknown fixture case')
     workflow = os.environ.get('LIVE_WORKFLOW_ID', '')
     try:
         if not workflow.startswith('lc-') or str(uuid.UUID(workflow[3:])) != workflow[3:]:
             raise ValueError('bad workflow ID')
         metadata = json.loads((ROOT / 'live-attempts' / f'{workflow}.json').read_text())
-        if metadata.get('workflow') != workflow or metadata.get('model') != model or metadata.get('requestCap') != REQUEST_CAP:
+        if (metadata.get('workflow') != workflow or metadata.get('model') != model or metadata.get('requestCap') != REQUEST_CAP
+                or metadata.get('fixtureCase') != fixture_case or metadata.get('maxOutputTokens') != 8192):
             raise ValueError('attempt metadata mismatch')
     except (ValueError, OSError, TypeError) as exc:
         raise RuntimeError('new workflow attempt metadata required') from exc
@@ -74,7 +78,9 @@ async def main():
     workspace = run / 'fixture'
     workspace.mkdir()
     fixture = workspace / 'source.txt'
-    fixture.write_text('SOURCE DOCUMENT\nThe audit log retention period is 30 days. Production releases require approval from two reviewers.\n\nDRAFT TO REVIEW\nThe audit log retention period is 90 days. Production releases require approval from one reviewer.\n')
+    source = 'The audit log retention period is 30 days. Production releases require approval from two reviewers.'
+    draft = source if fixture_case == 'matching' else 'The audit log retention period is 90 days. Production releases require approval from one reviewer.'
+    fixture.write_text(f'SOURCE DOCUMENT\n{source}\n\nDRAFT TO REVIEW\n{draft}\n')
     worker = None
     try:
         worker = Worker(run / 'worker', None, workspace=workspace, live_db=budget, live_model_id=os.environ['LIVE_MODEL_ID'], account_db=os.environ.get('OPENCODE_ACCOUNT_DB'))
