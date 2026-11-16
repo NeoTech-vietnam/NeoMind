@@ -27,6 +27,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { ProfilePanel } from './ProfilePanel';
 import { MemoryPanel } from './MemoryPanel';
 import { modelLabel, reasoningLabel, runnerLabel, useRunners, type RunnerModels } from './runners';
+import { LangConfigPreview } from './LangConfigPreview';
 
 type Bootstrap = { projectName: string; projectRoot: string; flows: FlowMeta[]; templates: string[]; runtimeAvailable: boolean };
 // Omitted severity is an error; warnings do not block saving a version.
@@ -217,6 +218,7 @@ function Workspace({ shell }: { shell: ShellKind }) {
   const pastedSelection = useRef<string[] | null>(null);
   const [paletteQuery, setPaletteQuery] = useState('');
   const [versionsOpen, setVersionsOpen] = useState(false);
+  const [langConfigOpen, setLangConfigOpen] = useState(false);
   const [latestAuthor, setLatestAuthor] = useState<'human' | 'ai' | null>(null), [versionsReload, setVersionsReload] = useState(0);
   const [addOpen, setAddOpen] = useState(false), [problemOpen, setProblemOpen] = useState(false), [inspectorOpen, setInspectorOpen] = useState(false);
   const [connectMenu, setConnectMenu] = useState<{ source: string; x: number; y: number; position: { x: number; y: number } } | null>(null);
@@ -526,7 +528,7 @@ function Workspace({ shell }: { shell: ShellKind }) {
       {error && <Callout tone="danger" icon={<CircleAlert />} className={cn('mb-3', view === 'runs' && 'mx-6 mt-3')}><div className="flex items-start"><span className="flex-1">{error}</span>{dismiss(() => setError(''))}</div></Callout>}
       {message && <Callout tone="success" icon={<CircleCheck />} className={cn('mb-3', view === 'runs' && 'mx-6 mt-3')}><div className="flex items-start"><span className="flex-1">{message}</span>{dismiss(() => setMessage(''))}</div></Callout>}
       {view === 'memory' ? <MemoryPanel /> : view === 'profiles' ? <ProfilePanel onOpenSkill={openSkills} /> : view === 'skills' ? <SkillsPanel focus={skillFocus} /> : view === 'runs' ? <div className="min-h-0 flex-1"><RunPanel {...(flow ? { flowId: flow.flowId } : {})} flows={flows} flowsChanged={refresh} /></div>
-        : !flow ? (boot && !hasFlows ? <NoFlows onPick={openCreate} /> : null) : <>
+        : !flow ? <>{boot && !hasFlows && <NoFlows onPick={openCreate} />}<div className="px-6 py-3"><Button onClick={() => setLangConfigOpen(true)}>Xem trước LangConfig…</Button></div></> : <>
         <div className="studio-header"><div className="studio-heading"><div className="studio-title"><h1>{flow.name}</h1>{latestAuthor === 'ai' && <Tag>AI</Tag>}<span className="studio-draft">Bản nháp{dirty ? ' · chưa lưu' : ''}</span></div><p>dựa trên {flow.version ? `v${flow.version}` : 'bản mới'} · {flow.definition.nodes.length} bước · {flow.definition.edges.length} kết nối</p></div>
           <div className="studio-actions"><Tooltip label="Hoàn tác"><Button variant="ghost" size="icon" aria-label="Hoàn tác" disabled={!past.length} onClick={undo}><Undo2 /></Button></Tooltip><Tooltip label="Làm lại"><Button variant="ghost" size="icon" aria-label="Làm lại" disabled={!future.length} onClick={redo}><Redo2 /></Button></Tooltip>
             {compact && <Tooltip label="Thuộc tính"><Button variant="ghost" size="icon" aria-label="Thuộc tính" onClick={() => setInspectorOpen(true)}><PanelRight /></Button></Tooltip>}
@@ -534,6 +536,7 @@ function Workspace({ shell }: { shell: ShellKind }) {
             <Button variant="primary" disabled={busy} onClick={() => void action(async () => { if (!(await validate(flow)).valid) return; const expectedRevision = await saveDraft(); const saved = await api<{ version: { version: number } }>(`/api/flows/${encodeURIComponent(flow.flowId)}/publish`, 'POST', { expectedRevision, author: { kind: 'human' } }); setVersionsReload(value => value + 1); setMessage(`Đã lưu phiên bản ${saved.version.version}.`); })}>Lưu phiên bản</Button>
             <DropdownMenu><Tooltip label="Quản lý flow"><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Quản lý flow"><Ellipsis /></Button></DropdownMenuTrigger></Tooltip><DropdownMenuContent>
               <DropdownMenuItem onSelect={() => setVersionsOpen(true)}>So sánh phiên bản</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setLangConfigOpen(true)}>Xem trước LangConfig…</DropdownMenuItem>
               <DropdownMenuItem shortcut="Ctrl S" onSelect={() => void action(async () => { await saveDraft(); setMessage('Đã lưu bản nháp.'); })}>Lưu nháp</DropdownMenuItem><DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => void exportCanvas()}>Xuất ra .canvas</DropdownMenuItem><DropdownMenuItem onSelect={() => void importCanvas()}>Nhập từ .canvas</DropdownMenuItem><DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => void manageFlow('rename')}>Đổi tên</DropdownMenuItem><DropdownMenuItem onSelect={() => void manageFlow('clone')}>Sao chép</DropdownMenuItem>
@@ -565,5 +568,6 @@ function Workspace({ shell }: { shell: ShellKind }) {
       </>}
     </div>
     <CreateFlowDialog open={createOpen} onOpenChange={setCreateOpen} initialTemplate={createTemplate} busy={busy} onCreate={input => void createFlow(input)} />
+    <LangConfigPreview open={langConfigOpen} onOpenChange={setLangConfigOpen} />
   </Shell>;
 }

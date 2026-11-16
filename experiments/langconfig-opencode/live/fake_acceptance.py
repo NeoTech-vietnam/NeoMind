@@ -59,16 +59,21 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class Worker:
-    def __init__(self, root, fake_port, retry=False, cap=20, workspace=None, guard=True, live_db=None, websocket=False, live_model_id=None, account_db=None, router_test=False, zai_test=False):
+    def __init__(self, root, fake_port, retry=False, cap=20, workspace=None, guard=True, live_db=None, websocket=False, live_model_id=None, account_db=None, router_test=False, zai_test=False, luna_test=False, probe_luna=False):
         self.root = root
         require(OPENCODE is not None and Path(OPENCODE).is_absolute(), 'absolute OPENCODE_BIN required')
         self.live = live_db is not None
-        self.model = live_model(live_model_id) if self.live else ({'providerID': 'fixture', 'id': 'router-free'} if router_test else MODEL)
+        self.model = live_model(live_model_id) if self.live else ({'providerID': 'openai', 'id': 'gpt-6-luna', 'variant': 'high'} if probe_luna else {'providerID': 'fixture', 'id': 'router-free'} if router_test else MODEL)
         require(not router_test or not self.live, 'router fake cannot use live budget')
         router = self.live and self.model['providerID'] == 'openrouter'
         zai = self.live and self.model['providerID'] == 'zai'
+        luna = self.live and self.model['providerID'] == 'openai'
         require(not zai_test or (not self.live and not router_test), 'invalid fake Zai mode')
-        if router or zai:
+        require(not luna_test or (not self.live and not router_test and not zai_test), 'invalid fake Luna mode')
+        require(not probe_luna or (os.environ.get('FIXTURE_NETNS') == '1' and not self.live and not router_test and not zai_test and not luna_test and guard and not retry and fake_port is None), 'invalid offline Luna probe')
+        if probe_luna:
+            require({name for _, name in socket.if_nameindex()} == {'lo'}, 'Luna probe requires a loopback-only network namespace')
+        if router or zai or luna or probe_luna:
             require(account_db is not None and Path(account_db).is_absolute() and Path(account_db).resolve(strict=True).is_file(), 'official account database required')
         else:
             require(account_db is None, 'unexpected account database')
@@ -86,8 +91,8 @@ class Worker:
         self.trace = root / 'trace.jsonl'
         self.password = secrets.token_hex(24)
         plugin = str(CODE_ROOT / 'guard')
-        options = {'mode': 'live' if self.live else ('fake-router' if router_test else 'fake-zai' if zai_test else 'fake'), 'database': str(self.db), 'helper': str(CODE_ROOT / 'quota.py'), 'python': PYTHON,
-                   'trace': str(self.trace), 'origin': ('https://openrouter.ai' if router else 'https://api.z.ai' if zai else 'https://opencode.ai') if self.live else f'http://127.0.0.1:{fake_port}', 'home': str(root / 'home'),
+        options = {'mode': 'live' if self.live else ('fake-router' if router_test else 'fake-zai' if zai_test else 'fake-luna' if luna_test else 'probe-luna' if probe_luna else 'fake'), 'database': str(self.db), 'helper': str(CODE_ROOT / 'quota.py'), 'python': PYTHON,
+                   'trace': str(self.trace), 'origin': 'https://chatgpt.com' if probe_luna else ('https://openrouter.ai' if router else 'https://api.z.ai' if zai else 'https://chatgpt.com' if luna else 'https://opencode.ai') if self.live else f'http://127.0.0.1:{fake_port}', 'home': str(root / 'home'),
                    'tmp': str(root / 'tmp'), 'testRetry': retry, 'providerID': self.model['providerID'], 'modelID': self.model['id']}
         config = {'model': 'fixture/fake-review', 'compaction': {'auto': False}, 'warming': False, 'update': 'disable',
                   'plugins': [{'package': plugin, 'options': options}] if guard else [],
@@ -108,6 +113,10 @@ class Worker:
             if zai:
                 config['providers']['zai']['body'] = {'max_tokens': 8192, 'reasoning_effort': 'high', 'thinking': {'type': 'enabled'}}
                 config['providers']['zai']['models'] = {'glm-5.3-flash': {'limit': {'output': 8192}}}
+            if luna:
+                config['providers']['openai']['settings']['encoding'] = 'none'
+                config['providers']['openai']['body'] = {'max_output_tokens': 8192}
+                config['providers']['openai']['models'] = {'gpt-6-luna': {'limit': {'output': 8192}}}
             config['policies'][1]['resource'] = self.model['providerID']
         elif router_test:
             config['model'] = 'fixture/router-free'
@@ -117,6 +126,16 @@ class Worker:
         elif zai_test:
             config['providers']['fixture']['models']['fake-review']['modelID'] = 'glm-5.3-flash'
             config['providers']['fixture']['body'] = {'max_tokens': 8192, 'reasoning_effort': 'high', 'thinking': {'type': 'enabled'}}
+        elif luna_test:
+            config['providers']['fixture']['package'] = '@opencode/ai/providers/openai/responses'
+            config['providers']['fixture']['models']['fake-review']['modelID'] = 'gpt-6-luna'
+            config['providers']['fixture']['models']['fake-review']['limit']['output'] = 8192
+            config['providers']['fixture']['body'] = {'max_output_tokens': 8192, 'reasoning': {'effort': 'high'}}
+        elif probe_luna:
+            config['model'] = 'openai/gpt-6-luna'
+            config['providers'] = {'openai': {'settings': {'transport': 'http', 'encoding': 'none', 'cache': {'warming': False}},
+                'body': {'max_output_tokens': 8192}, 'models': {'gpt-6-luna': {'limit': {'output': 8192}}}}}
+            config['policies'][1]['resource'] = 'openai'
         elif websocket:
             config['providers']['fixture']['settings']['transport'] = 'websocket'
         (root / 'config/opencode/opencode.json').write_text(json.dumps(config))
@@ -127,7 +146,7 @@ class Worker:
                'OPENCODE_SERVER_USERNAME': 'opencode', 'OPENCODE_SERVER_PASSWORD': self.password,
                'OPENCODE_DISABLE_PROJECT_CONFIG': '1', 'OPENCODE_DISABLE_EXTERNAL_SKILLS': '1',
                'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'}
-        if router or zai:
+        if router or zai or luna or probe_luna:
             env['OPENCODE_DB'] = str(Path(account_db).resolve(strict=True))
         self.stderr = (root / 'worker.stderr').open('wb')
         self.proc = subprocess.Popen([OPENCODE, 'serve', '--hostname', '127.0.0.1', '--port', '0'], cwd=self.workspace, env=env,
@@ -187,6 +206,8 @@ class Worker:
                     all(type(value) in (int, float) and 0 <= value <= maximum for value, maximum in
                         ((c.get('input'), 0.15), (c.get('output'), 0.5), (c.get('cache', {}).get('read'), 0.03), (c.get('cache', {}).get('write'), 0)))
                     for c in costs), 'Zai catalog price exceeds approved metadata')
+            elif self.model['providerID'] == 'openai':
+                require(enabled[0].get('limit', {}).get('output') == 8192, 'Luna output cap not configured')
             else:
                 require(isinstance(costs, list) and len(costs) > 0 and all(c.get('input') == 0 and c.get('output') == 0 and c.get('cache', {}).get('read') == 0 and c.get('cache', {}).get('write') == 0 for c in costs), 'target cost not confirmed free')
         require(self.trace.exists() and '"ready"' in self.trace.read_text(), 'guard not ready')

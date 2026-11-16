@@ -1,5 +1,83 @@
 # NeoMind v1 — trạng thái implementation
 
+## Tích hợp LangConfig: ngăn tool lỗi chạy tiếp — 15/11/2026
+
+Theo kế hoạch được duyệt, overlay thử nghiệm vá executor dừng graph khi tool lỗi hoặc duyệt không hợp lệ, thay eval condition bằng evaluator giới hạn và bổ sung UI chọn tool review fixture. Đã chạy ba workflow `openai/gpt-6-luna#high` thật: draft sai `needs_changes`, control `pass`, và HTTP ASGI → duyệt giả → writer fixture → review → repair fixture → review lại `pass`; lượt thứ ba dùng fake storage/checkpointer, không phải server production. Budget cuối **10/10 workflow, 11/40 reservation**, anchor giữ đủ 11 ID, hai pause khóa lại. LangConfig stage mới: **63 pytest đạt, 235 warning**; build UI đạt. NeoMind `npm test` trước sửa guard đạt **357/369, 12 skip**; hai lượt sau timeout rồi có 2 lỗi, lượt mới nhất **356 đạt, 1 lỗi, 12 skip**, các test lỗi chạy riêng đạt. Chưa chứng minh UI browser, PostgreSQL, concurrent approval, recovery sau crash hay writer thật. [Bàn giao](session-handoff-2026-11-15-langconfig-luna-integration.md).
+
+Tiếp tục: policy do process tin cậy cài bind adapter fixture theo background task, mặc định không mở live; stage ghim đạt **71 pytest, 271 warning**. HTTP ASGI với storage giả → policy → OpenCode loopback → upstream giả đạt 1 POST/reservation giả, 0 live. Chrome browser smoke bị timeout khi tải trang, chưa xác nhận UI; lần `npm test` NeoMind mới nhất timeout sau 240 giây, không tính đạt. Chưa chứng minh approval atomic, recovery bền hoặc writer production; chi tiết và giới hạn trong bàn giao trên.
+
+Sau khi duyệt kế hoạch tích hợp: prototype broker ba runner giả đạt **5 Node + 2 Python**, graph preview đạt **6** test; approval fixture đạt **12 test** gồm 6 PostgreSQL và 6 SQLite. PostgreSQL dùng cluster disposable, kiểm race/transaction/fencing DB, chưa kiểm checkpoint thật hay side effect. Policy fixture chặn kế thừa adapter ngoài task và thu hồi binding với task con khi scope thoát; stage mới đạt **71 pytest** trong network namespace cô lập. Việc thu hồi không chứng minh dừng request đã bắt đầu. `npm test` mới nhất timeout 360 giây; chưa nối các prototype vào runtime production, chưa mở live hay writer.
+
+Executor graph LangConfig thật → broker giả đạt **12 test** cho ba runner ID. Browser smoke component `NodeConfigPanel` với Chrome thật/API giả đã chọn và lưu tham số `opencode_review`, không có request ngoài origin; chưa kiểm toàn bộ canvas hoặc backend thật. Cả hai vẫn là fixture, không chứng minh authority/recovery production.
+
+Fixture approval + LangGraph `PostgresSaver` thật qua nhiều process đạt **20 test** tổng cộng; kiểm pause/restart/resume, sai checkpoint và cạnh tranh resume với advisory lock hợp tác. Transaction saver và receipt vẫn tách rời, mất session/lease không fence process hay side effect; không coi là production recovery. Đường graph thật → stdio → `RunnerRegistry` thật → factory giả đạt **12 test**; preview export v1.0/blueprint chỉ đọc đạt **10 test**, không tạo Flow thực thi. NeoMind `npm test -- --test-concurrency=1 'dist/test/*.test.js'` trên Linux: **357 đạt, 12 skip, 0 lỗi**; các lượt timeout trước vẫn được ghi nhận.
+
+Kiểm thử bổ sung: preview sau giới hạn input đạt **17 test**; `LocalRun`/journal thật với ba fake runner đạt **15 test**. Graph LangConfig và LocalRun vẫn là hai đường thử riêng, chưa cấp authority task hay chứng minh OS stop/live.
+
+Approval suite mới nhất **29 test đạt**, gồm sink PostgreSQL giả với receipt trong cùng transaction và authorization fixture. Fencing này không bảo vệ file, network hay worker ngoài DB, lease chưa được chứng minh còn hiệu lực tới commit, principal là giả và validate/action vẫn có TOCTOU.
+
+Tiếp tục: transactional authority và effect giả trong cùng PostgreSQL transaction; toàn bộ approval suite **35 test đạt**. Lease có thể hết hạn sau admission trong lúc transaction giữ khóa; không có atomicity với saver/journal/file/network hay fence OS worker, không dùng làm authority production.
+
+Suite approval mới nhất **39 test đạt**; proof xác nhận revoke ở một store không lan sang job/sink độc lập, nên cần authority thống nhất và reconciliation trước writer. Admission SQLite fixture đã ghép graph → LocalRun fake: **18 graph test đạt**, cộng một test crash cho cả ba runner; journal và admission không cùng transaction.
+
+Unified authority PostgreSQL fixture nối receipt/job/sink giả, saver vẫn connection riêng; approval suite mở rộng **45 test đạt**. Advisory lock hợp tác và reconciliation quan sát không chứng minh fencing OS/file/network hay production recovery.
+
+CLI `neomind langconfig preview <file>` dùng cùng parser preview chỉ đọc, giới hạn 1 MiB/UTF-8, không lưu hay chạy; build và **7 test CLI/parser đạt**. Toàn bộ suite 380 test ở trên chạy trước khi thêm CLI này.
+
+NeoMind sau thêm CLI: suite Linux tuần tự **381 test, 369 đạt, 12 skip, 0 lỗi**. Chưa mở tích hợp runtime production hoặc runner/model live.
+
+Session tool `langconfig_preview` đã nối cùng API chỉ đọc; build đạt, test session/CLI/API và session-tools **12 đạt**, extension build đạt kèm cảnh báo đã ghi. Suite 381 test trước đó chạy trước thay đổi session tool này.
+
+Suite NeoMind Linux sau session tool chạy tuần tự: **382 test, 370 đạt, 12 skip, 0 lỗi**.
+
+16/11: test thống nhất authority fixture **7 đạt**, trong đó cố ý ngắt session giữ advisory lock sau admission; worker vẫn chạy và ghi effect giả. Toàn bộ approval suite **46 đạt** trước biến thể test sink dùng cùng connection. Đây là blocker thực nghiệm đối với stop proof/fencing writer, không phải production recovery. Xem [bàn giao 16/11](session-handoff-2026-11-16-langconfig-integration.md).
+
+Biến thể sink PostgreSQL giả sử dụng cùng connection giữ lock: khi session bị ngắt sau admission, sink không commit và outcome `unknown`; thành công/revoke cũng được kiểm, **10 test unified đạt**. Không fence filesystem/network hoặc dừng process; saver vẫn tách transaction.
+
+Fixture bổ sung completion receipt gắn checkpoint; crash trước receipt hoặc checkpoint bị thay trả `unknown`. Toàn bộ approval suite sau sửa **51 test đạt** trên Linux; không chứng minh recovery production hoặc OS stop.
+
+Linux: thử PostgreSQL session bị cắt, test host chuyển tiếp thông báo tới supervisor fixture để dừng user-systemd scope thật: **1 test đạt** sau sửa lỗi harness stdin. Tại mốc đó chưa có monitor tự phát hiện mất session và chưa chứng minh ngăn effect trước stop.
+
+Monitor fixture hiện tự phát hiện session mất, crash hoặc heartbeat timeout và yêu cầu dừng scope; bốn test watchdog đạt, toàn bộ approval Python suite **55 test đạt** trên Linux. Chưa nối graph/writer production, chưa chứng minh ngăn effect trước stop hay xử lý mọi split-brain.
+
+Bridge fixture authority/checkpoint → durable admission → `LocalRun` thật với ba runner giả chỉ đọc: **4 test đạt**, suite approval Python **59 test đạt** trên Linux. Không nối approval/lease/journal thực giữa các store; synthetic marker không phải receipt của LocalRun. Writer, watchdog và quarantine production chưa được kiểm chứng trên đường ghép này.
+
+Bridge fixture bổ sung đường `RunService`/`CodexWriteDispatch` thật với journal approval và workspace lease: stop giả không xác nhận làm SQLite quarantine, attempt unresolved, không dispatch lại kể cả client mới; suite approval Python **60 test đạt**. Chưa gắn hai approval bằng binding plan/lease/journal, chưa chạy toàn bộ LocalRun writer hoặc kiểm watchdog/OS stop; vẫn không mở production.
+
+Binding fixture hiện hash request chứa evidence journal/plan/approval/workspace/fence/baseline và checkpoint; kiểm lại trước writer, test revoke/baseline/crash/no replay. Suite approval Python **61 test đạt** trên Linux. Crash trong `startTurn` để lại lease và journal intent nhưng cờ quarantine chưa được đặt; chưa chạy recovery thật. Authority, check-dispatch và các store vẫn tách biệt, chưa kiểm chứng writer production.
+
+Test riêng `LocalRun.recover` sau crash scheduler trong writer: scope giả không xác nhận dừng làm run blocked, lease giữ nguyên, owner khác bị từ chối và không replay qua hai lần recovery; approval suite Python **62 test đạt**. Chưa kiểm worker OS còn sống, cờ quarantine sau crash hoặc authority/checkpoint bridge cùng đường này.
+
+Đã thử authority/checkpoint fixture → `LocalRun` writer với worker tổng hợp trong systemd scope thật: sau scheduler crash, recovery không thể gọi systemctl giữ lease và không replay; recovery tiếp theo xác nhận dừng, run chờ tiếp tục. Approval suite Python **63 test đạt** trên Linux. Authority và journal chưa nối production, watchdog/revoke khi chạy và side effect trước stop chưa được chứng minh.
+
+Bridge fixture kiểm lại authority/checkpoint ngay trước callback; test đối chứng vẫn dispatch giả chỉ đọc khi revoke sau kiểm tra. **10 test bridge đạt**, approval suite **66 test đạt** trước assertion tăng cường cuối. Race check-to-dispatch và revoke khi worker chạy vẫn là blocker; watchdog chưa nối writer production.
+
+Monitor revoke fixture đã thử cùng writer `LocalRun`/systemd scope thật với fake runner; stop không xác nhận giữ lease, sau stop xác nhận recovery chờ tiếp tục và authority `unknown` không replay. Test host tự giết scheduler; monitor chưa phải lifecycle production và không fence effect trước stop. Approval suite Linux **67 test đạt**.
+
+Core có `prepareLangConfigWriterBinding`: fingerprint từ journal approval/plan, workspace admission/lease/baseline và external checkpoint/receipt identity do caller cung cấp; test admission mục tiêu **3 đạt**, suite NeoMind Linux **382 test, 370 đạt, 12 skip, 0 lỗi**. Hàm chưa nối runtime, không xác thực identity bên ngoài, không atomic hay cấp quyền; writer LangConfig production vẫn đóng.
+
+`observeLangConfigWriterBinding` bổ sung đối chiếu hai lần qua reader do host cung cấp; khớp vẫn `unknown`, mismatch/revoke/reader lỗi hoặc lease quarantine trả `unknown/unavailable`. Test admission **3 đạt**, suite NeoMind Linux **382 test, 370 đạt, 12 skip, 0 lỗi**. Chưa có reader xác thực production, chưa nối runtime/watchdog hay fence effect; không mở writer.
+
+`LangConfigReservations` thêm marker SQLite bền cho fingerprint/run/attempt/request/receipt: test bốn process cạnh tranh và crash sau commit giữ `unknown` khi mở lại; test admission **3 đạt**, suite NeoMind Linux **382 test, 370 đạt, 12 skip, 0 lỗi**. Marker chưa nối journal/runtime/authority, không cấp quyền, không chứng minh atomicity hay fencing.
+
+`SignedLangConfigAuthorityReader` xác minh observation Ed25519 theo khóa/issuer ghim và thời hạn ngắn, ghép thử vào fingerprint bằng key tổng hợp; revoke ký hợp lệ, chữ ký sai, expiry và timeout đều fail closed. Test admission **3 đạt**, suite NeoMind Linux **382 test, 370 đạt, 12 skip, 0 lỗi**. Chưa có issuer/transport/key provisioning production hay nối runtime/reservation; chữ ký không chứng minh authority còn hiệu lực sau lần đọc, không mở writer.
+
+Issuer Ed25519 process riêng và transport HTTP loopback tổng hợp đã thử với fingerprint journal/admission thật và reservation SQLite: revoke/kill issuer giữ `unknown`, reservation mở lại không replay; test admission **3 đạt**, suite NeoMind Linux **382 test, 370 đạt, 12 skip, 0 lỗi**. Chưa có issuer/transport LangConfig hay trust bootstrap production, transaction chung journal/reservation hoặc watchdog writer; không mở writer.
+
+Signed observation contract **v2** yêu cầu challenge ngẫu nhiên cho từng lần đọc; test phát lại response cũ bị từ chối, test admission **3 đạt**, suite NeoMind Linux **382 test, 370 đạt, 12 skip, 0 lỗi**. Chỉ là issuer loopback tổng hợp; challenge không giải quyết stale authority, revoke sau check hay fencing.
+
+Graph LangConfig → host grant fixture → LocalRun/journal thật → ba factory giả đạt **18 test**; một lượt replay trước timeout. Grant, scope và stop proof giả; flow read-only không có approval. Module TypeScript preview mới build đạt và **6 test đạt**, chưa nối API/UI. Sau lượt approval timeout có lỗi chưa đủ báo cáo, 5 test sink chạy riêng lại đạt; không kết luận nguyên nhân.
+
+`POST /api/langconfig/preview` đã nối module preview vào editor, chỉ đọc và giới hạn input; build và test API/module/editor **11 đạt**. Chưa có import, publish hay chạy graph qua API này; chưa có UI preview tại mốc này.
+
+Flow Studio nay có hộp thoại xem trước file LangConfig qua API nói trên; build UI đạt (cảnh báo chunk >500 kB), test UI model/API/converter **11 đạt**. Chưa kiểm browser mới hoặc import/chạy flow; suite 357/12 lịch sử chạy trước sửa source/UI mới.
+
+Browser smoke UI mới đã đạt với editor HTTP/UI build thật, project fixture và bốn GET nền mock: một POST preview, file quá 1 MiB không được gửi, project/HEAD không đổi. Chưa chứng minh host Nimbalyst hay mọi side effect OS; không chạy model thật.
+
+NeoMind sau thay đổi preview: suite Linux chạy tuần tự **380 test, 368 đạt, 12 skip, 0 lỗi**. Session Terra làm unified authority gặp giới hạn sử dụng; chưa coi phần này hoàn tất.
+
+Extension Nimbalyst build panel/backend đạt sau sửa UI/API, với cảnh báo sourcemap Tailwind và `dist-ui` resolve runtime; chưa kiểm host thật.
+
 ## LangConfig với Z.ai GLM-5.3-Flash trả phí — 15/11/2026
 
 Người dùng duyệt thêm hai workflow LC trả phí, mỗi lượt tối đa 5 request và 8.192 output token/request; nâng cap workflow DB gốc 5→7, không đổi rows lịch sử; anchor giữ sáu reservation cũ và `workflowCap: 7`. Model ghim đúng `zai/glm-5.3-flash` variant `high` (không phải FlashX); guard Zai đạt: chỉ endpoint native, không tools/fallback, trần 8.192 output, cap 5 request, veto retry, không fetch. **Lượt 6** (draft mâu thuẫn) model thật trả `needs_changes` đúng cả hai lỗi — retention 90 vs 30 ngày, một vs hai reviewer — nhưng JSON bọc trong khối Markdown nên graph ghi lỗi; parent reconcile offline trên response đã có, 0 prompt mới, số đếm giữ 6/6. Adapter nay chấp nhận đúng một khối `json` bao kín, vẫn kiểm schema. **Lượt 7** (control) completed, verdict `pass`, findings rỗng; `model-usage.json` xác nhận `glm-5.3-flash`/`zai`/`high`, cost báo 5,56e-05 USD. Budget cuối **7/7 workflow, 7/40 reservations**, hai pause khóa lại, scope inactive. [Bàn giao và evidence](session-handoff-2026-11-15-langconfig-live-router.md).

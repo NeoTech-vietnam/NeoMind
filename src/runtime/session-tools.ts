@@ -41,6 +41,7 @@ export const SESSION_TOOLS: SessionTool[] = [
   { name: 'skill_usage', description: 'Profiles and flow steps that pin a skill, and whether each pin is older than the current file.',
     inputSchema: object({ skillId: { type: 'string' }, source: { type: 'string', enum: ['neomind', 'agents', 'claude'] } }, ['skillId']) },
   { name: 'flow_blocks', description: 'List available node types, templates, profiles, bindings and project policy for authoring a flow.', inputSchema: object() },
+  { name: 'langconfig_preview', description: 'Preview a LangConfig blueprint or workflow export from raw JSON text. Returns only structural suggestions and diagnostics; does not import, publish or run a flow. A preview is not proof of compatibility or safety.', inputSchema: object({ json: { type: 'string', description: 'Raw JSON text, at most 1 MiB; do not send credentials' } }, ['json']) },
   { name: 'flow_get', description: 'Read a flow draft, revision and published versions with their authors.', inputSchema: object({ flowId: { type: 'string' } }, ['flowId']) },
   { name: 'flow_draft', description: 'Create or update an AI flow draft from a template, another flow or a full draft. Updates require the revision previously read. Returns policy diagnostics.' + readGuide + inEnglish, inputSchema: object({ flowId: { type: 'string' }, name: { type: 'string' }, from: { oneOf: [object({ template: { type: 'string', enum: ['fast', 'dev', 'parallel', 'research'] } }, ['template']), object({ flowId: { type: 'string' } }, ['flowId'])] }, draft: { type: 'object', description: 'Full flow draft; compiler returns diagnostics for incomplete drafts' }, expectedRevision: { type: 'string', description: 'Required for updates, from flow_get or flow_draft' } }, ['flowId']) },
   { name: 'flow_validate', description: 'Validate an AI flow draft against project policy and what a run preview would refuse (runner, model, profiles, skills), and return its diff from the latest published version. Diagnostics with severity "warning" do not block publishing.' + readGuide, inputSchema: object({ flowId: { type: 'string' } }, ['flowId']) },
@@ -203,6 +204,10 @@ export function sessionToolHandlers(runs: () => Promise<RunManager>, api: Editor
     },
     skill_usage: async args => authoringApi('GET', `${skillPath(args)}/usage${sourceQuery(args)}`),
     flow_blocks: async () => authoringApi('GET', '/api/flow-blocks'),
+    langconfig_preview: async args => {
+      if (typeof args.json !== 'string') throw new Error('json is required');
+      return authoringApi('POST', '/api/langconfig/preview', args.json);
+    },
     flow_get: async args => authoringApi('GET', `${flowPath(args)}/authoring`),
     flow_draft: async args => authoringApi('POST', '/api/flow-draft', args),
     flow_validate: async args => authoringApi('POST', `${flowPath(args)}/author-validate`, {}),

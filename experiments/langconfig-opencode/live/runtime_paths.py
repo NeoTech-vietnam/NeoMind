@@ -27,7 +27,7 @@ def verify_live_budget(root, value):
         raise ValueError('existing absolute shared live budget path required')
     anchor = json.loads((root / 'live-budget.anchor.json').read_text(encoding='utf-8'))
     workflow_cap = anchor.get('workflowCap', 4)
-    if type(workflow_cap) is not int or workflow_cap not in (4, 5, 7):
+    if type(workflow_cap) is not int or workflow_cap not in (4, 5, 7, 10):
         raise ValueError('invalid owner-approved workflow cap')
     ids = anchor.get('requiredReservationIds')
     if (type(anchor.get('schemaVersion')) is not int or anchor['schemaVersion'] != 1 or not isinstance(anchor.get('database'), str)

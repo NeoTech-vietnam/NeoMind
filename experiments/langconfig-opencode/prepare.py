@@ -12,7 +12,16 @@ OVERLAY = (
     "backend/tools/fixture_request_guard.py",
     "backend/tools/opencode_http.py",
     "backend/tools/opencode_review.py",
+    "backend/tools/fixture_review_runtime.py",
+    "backend/core/workflows/safe_condition.py",
     "tests/prototype/test_opencode_review.py",
+    "tests/prototype/test_tool_failure.py",
+    "tests/prototype/test_task_failure.py",
+    "tests/prototype/test_approval_safety.py",
+    "tests/prototype/test_http_review_flow.py",
+    "tests/prototype/test_review_repair_flow.py",
+    "tests/prototype/test_safe_condition.py",
+    "tests/prototype/test_fixture_review_runtime.py",
 )
 
 

@@ -10,6 +10,16 @@ Người (hoặc agent) mới tiếp tục phát triển: đọc [AGENTS.md](AGE
 
 Nhánh `research/langconfig-opencode` lưu [ý tưởng tích hợp, hướng dẫn setup/test và báo cáo đánh giá](docs/langconfig/README.md), cùng [prototype tái lập](experiments/langconfig-opencode/README.md). Đây là nghiên cứu tách biệt, không thay runtime NeoMind; đường nối đã thử với OpenCode thật và model giả, chưa phải tích hợp production hay benchmark chất lượng AI thật.
 
+Flow Studio có **Xem trước LangConfig…** để xem cấu trúc và cảnh báo từ blueprint hoặc workflow export `.langconfig` v1.0. Cũng có thể xem JSON từ CLI:
+
+```bash
+npm run neomind -- langconfig preview workflow.langconfig
+```
+
+Đầu vào tối đa 1 MiB, phải là UTF-8 hợp lệ. Bản xem trước chỉ có alias và diagnostics, **không import, lưu, publish hoặc chạy flow**; loại node hay kết nối chưa ánh xạ được báo rõ. Mã thoát 0 chỉ nghĩa là đã tạo báo cáo, không chứng minh tương thích hoặc an toàn; JSON sai và input vượt giới hạn trả mã 2.
+
+Session tool `neomind_langconfig_preview` nhận JSON text qua trường `json` và trả cùng bản xem trước chỉ đọc; không gửi credential trong nội dung.
+
 ## Chạy Flow Studio
 
 Cần Node >=22.16, Codex CLI đã đăng nhập và một cơ chế worker scope: Linux user-systemd, hoặc Windows job objects (cần .NET Framework 4 có sẵn trên Windows 10/11 để biên dịch helper lần đầu). Runtime đã được thử với Node 22.22.1 và Codex CLI 0.165.0 trên Linux; Node 24.18.0 và Codex CLI 0.160.1 trên Windows 11.

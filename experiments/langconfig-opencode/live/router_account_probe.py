@@ -15,7 +15,7 @@ def main():
     succeeded = False
     try:
         model_id = os.environ.get('LIVE_MODEL_ID', 'openrouter/openrouter/free')
-        if model_id not in ('openrouter/openrouter/free', 'zai/glm-5.3-flash'):
+        if model_id not in ('openrouter/openrouter/free', 'zai/glm-5.3-flash', 'openai/gpt-6-luna'):
             raise ValueError('unapproved account probe model')
         worker = Worker(run / 'worker', None, workspace=workspace, live_db=budget,
                         live_model_id=model_id, account_db=os.environ.get('OPENCODE_ACCOUNT_DB'))

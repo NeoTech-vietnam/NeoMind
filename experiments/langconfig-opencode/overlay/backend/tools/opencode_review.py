@@ -16,6 +16,7 @@ MODEL = {"providerID": "opencode", "id": "deepseek-v4.1-flash-free", "variant": 
 GLM_MODEL = {"providerID": "opencode", "id": "glm-5.3-flash-free", "variant": "high"}
 ROUTER_MODEL = {"providerID": "openrouter", "id": "openrouter/free"}
 ZAI_MODEL = {"providerID": "zai", "id": "glm-5.3-flash", "variant": "high"}
+LUNA_MODEL = {"providerID": "openai", "id": "gpt-6-luna", "variant": "high"}
 PERMISSIONS = [{"action": "*", "resource": "*", "effect": "deny"}]
 
 
@@ -50,7 +51,7 @@ class Adapter:
         if not self.workspace.is_relative_to(root):
             raise ReviewError("workspace outside fixture root")
         self.model = model or MODEL
-        if self.model not in (MODEL, GLM_MODEL, ROUTER_MODEL, ZAI_MODEL, {"providerID": "fixture", "id": "fake-review", "variant": "high"}):
+        if self.model not in (MODEL, GLM_MODEL, ROUTER_MODEL, ZAI_MODEL, LUNA_MODEL, {"providerID": "fixture", "id": "fake-review", "variant": "high"}):
             raise ReviewError("model not permitted")
         if getattr(transport, "fixture_only", False) and self.model != {"providerID": "fixture", "id": "fake-review", "variant": "high"}:
             raise ReviewError("HTTP transport only permits the local fake model until live guard is verified")
@@ -174,26 +175,34 @@ class Adapter:
 _adapter = ContextVar("fixture_opencode_adapter", default=None)
 
 
+class _ReviewBinding:
+    def __init__(self, adapter):
+        self.adapter = adapter
+        self.active = True
+
+
 @contextmanager
 def review_runtime(adapter):
     """Bind one trusted fixture adapter to the current async execution context."""
-    token = _adapter.set(adapter)
+    binding = _ReviewBinding(adapter)
+    token = _adapter.set(binding)
     try:
         yield
     finally:
+        binding.active = False
         _adapter.reset(token)
 
 
 def install_test_adapter(adapter):
     """Install a fake transport in an isolated test process, never from workflow input."""
-    _adapter.set(adapter)
+    _adapter.set(_ReviewBinding(adapter) if adapter is not None else None)
 
 
 async def _review(attempt_id: str, instruction: str) -> str:
-    adapter = _adapter.get()
-    if adapter is None:
+    binding = _adapter.get()
+    if binding is None or not binding.active or binding.adapter is None:
         raise ReviewError("OpenCode review unavailable: real transport and quota guard not enabled")
-    return json.dumps(await adapter.start(attempt_id, instruction))
+    return json.dumps(await binding.adapter.start(attempt_id, instruction))
 
 
 opencode_review = StructuredTool.from_function(coroutine=_review, name="opencode_review", description="Read-only fixture review through a verified OpenCode session.", args_schema=ReviewInput)

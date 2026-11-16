@@ -13,8 +13,10 @@ bị quota; lượt LC router được duyệt thêm bị upstream rate limit sa
 Hai lượt LC trả phí sau đó dùng **`zai/glm-5.3-flash` variant `high`**: draft
 mâu thuẫn nhận `needs_changes` đúng retention 90 vs 30 ngày và một vs hai
 reviewer (reconcile offline một response bọc khối Markdown, 0 prompt mới),
-draft control nhận `pass`, findings rỗng. Đó là phép thử TOOL_NODE, chưa phải
-full backend/UI. Budget hiện đã hết **7/7 workflow (7/40 reservations)**.
+draft control nhận `pass`, findings rỗng. Ba lượt Luna mới sau đó gồm review
+draft sai, control và vòng ASGI/approval/writer fixture/review/repair/review;
+đều completed trong giới hạn đã duyệt. Vòng ASGI dùng storage và writer giả,
+không phải full production backend/UI. Budget đã hết **10/10 workflow (11/40 reservations)**.
 Không dùng kết quả đó để gỡ khóa HTTP fixture; giữ `LIVE_PAUSED` và DB gốc.
 
 ## Chuẩn bị clone và dependency

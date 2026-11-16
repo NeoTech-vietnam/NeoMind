@@ -12,6 +12,8 @@ Công cụ cấu hình và chạy *agent flow* trên một Git repo: lập kế 
 
 ## Đọc theo thứ tự
 
+- [Bàn giao tiếp tục tích hợp LangConfig 16/11](docs/adaptive-agent-flow/session-handoff-2026-11-16-langconfig-integration.md).
+- [Bàn giao tích hợp LangConfig và Luna 15/11](docs/adaptive-agent-flow/session-handoff-2026-11-15-langconfig-luna-integration.md).
 - [LangConfig với OpenRouter thật 15/11](docs/adaptive-agent-flow/session-handoff-2026-11-15-langconfig-live-router.md).
 - [Tiếp tục kiểm thử model free 15/11](docs/adaptive-agent-flow/session-handoff-2026-11-15-langconfig-free-resume.md).
 - [Bàn giao nhánh LangConfig và gói tái lập 15/11](docs/adaptive-agent-flow/session-handoff-2026-11-15-langconfig-package.md); [hồ sơ LangConfig × OpenCode](docs/langconfig/README.md).

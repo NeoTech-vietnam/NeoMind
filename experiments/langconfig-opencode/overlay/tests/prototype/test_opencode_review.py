@@ -6,7 +6,7 @@ import pytest
 from langgraph.graph import StateGraph, START, END
 from typing import TypedDict
 
-from tools.opencode_review import Adapter, MODEL, GLM_MODEL, ROUTER_MODEL, ZAI_MODEL, PERMISSIONS, ReviewError, install_test_adapter
+from tools.opencode_review import Adapter, MODEL, GLM_MODEL, ROUTER_MODEL, ZAI_MODEL, LUNA_MODEL, PERMISSIONS, ReviewError, install_test_adapter
 
 
 class Fake:
@@ -56,6 +56,39 @@ def test_zai_exact_identity_and_fixture_http_stays_locked(tmp_path):
     for bad in ({**ZAI_MODEL, 'id': 'glm-5.3-flashx'}, {**ZAI_MODEL, 'variant': 'low'}, {**ZAI_MODEL, 'providerID': 'openrouter'}):
         with pytest.raises(ReviewError): Adapter(Fake(workspace), workspace, tmp_path / 'bad-zai.sqlite', model=bad)
     with pytest.raises(ReviewError): Adapter(LoopbackTransport('http://127.0.0.1:1234', 'fixture', 'dummy'), workspace, tmp_path / 'blocked-zai.sqlite', model=ZAI_MODEL)
+
+
+def test_luna_exact_identity_and_fixture_http_stays_locked(tmp_path):
+    from tools.opencode_http import LoopbackTransport
+    workspace = tmp_path / 'fixture'; workspace.mkdir()
+    assert Adapter(Fake(workspace), workspace, tmp_path / 'luna.sqlite', model=LUNA_MODEL).model == LUNA_MODEL
+    for bad in ({**LUNA_MODEL, 'id': 'gpt-6.1-luna'}, {**LUNA_MODEL, 'variant': 'low'}, {**LUNA_MODEL, 'providerID': 'other'}):
+        with pytest.raises(ReviewError): Adapter(Fake(workspace), workspace, tmp_path / 'bad-luna.sqlite', model=bad)
+    with pytest.raises(ReviewError): Adapter(LoopbackTransport('http://127.0.0.1:1234', 'fixture', 'dummy'), workspace, tmp_path / 'blocked-luna.sqlite', model=LUNA_MODEL)
+
+
+@pytest.mark.asyncio
+async def test_luna_session_and_response_require_exact_high_identity(tmp_path):
+    import copy
+    workspace = tmp_path / 'fixture'; workspace.mkdir()
+
+    class LunaFake(Fake):
+        wrong_reply = False
+
+        async def request(self, method, path, body=None):
+            result = copy.deepcopy(await super().request(method, path, body))
+            if path == '/api/session' or (path.startswith('/api/session/') and all(x not in path for x in ('/prompt', '/wait', '/message?', '/interrupt'))):
+                result['data']['model'] = dict(LUNA_MODEL)
+            if '/message?' in path:
+                for message in result['data']:
+                    if message.get('type') == 'assistant':
+                        message['model'] = {**LUNA_MODEL, 'variant': 'low' if self.wrong_reply else 'high'}
+            return result
+
+    assert (await Adapter(LunaFake(workspace), workspace, tmp_path / 'luna-ok.sqlite', model=LUNA_MODEL).start('luna', 'Review fixture'))['verdict'] == 'needs_changes'
+    rejected = LunaFake(workspace); rejected.wrong_reply = True
+    with pytest.raises(ReviewError):
+        await Adapter(rejected, workspace, tmp_path / 'luna-bad.sqlite', model=LUNA_MODEL).start('bad', 'Review fixture')
 
 
 def test_router_exact_identity_and_fixture_http_stays_locked(tmp_path):

@@ -4,11 +4,17 @@ export type ApiTransport = (endpoint: string, method: string, body?: unknown) =>
 const http: ApiTransport = async (endpoint, method, body) => {
   const token = document.querySelector<HTMLMetaElement>('meta[name="neomind-token"]')?.content ?? '';
   const headers: Record<string, string> = method === 'GET' ? {} : { 'X-NeoMind-Token': token, 'Content-Type': 'application/json' };
-  const response = await fetch(endpoint, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const rawPreview = endpoint === '/api/langconfig/preview' && method === 'POST' && typeof body === 'string';
+  const response = await fetch(endpoint, { method, headers, ...(body === undefined ? {} : { body: rawPreview ? body : JSON.stringify(body) }) });
   return { status: response.status, body: await response.json() as unknown };
 };
 let transport: ApiTransport = http;
 export function setApiTransport(next: ApiTransport): void { transport = next; }
+
+/** Preview accepts raw JSON text so the server can detect duplicate keys. */
+export function requestLangConfigPreview(text: string): Promise<{ status: number; body: unknown }> {
+  return transport('/api/langconfig/preview', 'POST', text);
+}
 
 export async function api<T>(endpoint: string, method = 'GET', body?: unknown): Promise<T> {
   const response = await transport(endpoint, method, body), data = response.body as T & { error?: string };

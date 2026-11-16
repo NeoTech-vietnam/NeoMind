@@ -58,7 +58,7 @@ async def main():
     if (ROOT / 'LIVE_PAUSED').exists() or (CODE_ROOT / 'LIVE_PAUSED').exists():
         raise RuntimeError('live evaluation is paused')
     model = live_model(os.environ.get('LIVE_MODEL_ID'))
-    if model not in ({'providerID': 'openrouter', 'id': 'openrouter/free'}, {'providerID': 'zai', 'id': 'glm-5.3-flash', 'variant': 'high'}):
+    if model not in ({'providerID': 'openrouter', 'id': 'openrouter/free'}, {'providerID': 'zai', 'id': 'glm-5.3-flash', 'variant': 'high'}, {'providerID': 'openai', 'id': 'gpt-6-luna', 'variant': 'high'}):
         raise RuntimeError('explicit approved model selection required')
     fixture_case = os.environ.get('LIVE_FIXTURE_CASE', 'contradictory')
     if fixture_case not in ('contradictory', 'matching'):

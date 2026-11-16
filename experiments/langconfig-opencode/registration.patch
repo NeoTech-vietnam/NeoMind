@@ -19,3 +19,245 @@ index 1158b20..f666299 100644
          # Web tools
          "web_search",
          "web_fetch",
+diff --git a/backend/core/workflows/executor.py b/backend/core/workflows/executor.py
+--- a/backend/core/workflows/executor.py
++++ b/backend/core/workflows/executor.py
+@@ -198,6 +198,5 @@ class SimpleWorkflowExecutor:
+             task = db.query(Task).filter(Task.id == task_id).first()
+             if not task:
+-                logger.warning(f"Cannot persist HITL state - task {task_id} not found")
+-                return
++                raise RuntimeError(f"Cannot persist HITL state - task {task_id} not found")
+
+             # Reassign the JSON column so SQLAlchemy detects the change
+@@ -213,5 +213,6 @@ class SimpleWorkflowExecutor:
+         except Exception as e:
+             logger.error(f"Failed to persist HITL state for task {task_id}: {e}")
+             db.rollback()
++            raise
+         finally:
+             db.close()
+@@ -241,3 +241,4 @@ class SimpleWorkflowExecutor:
+         from services.event_bus import get_event_bus
++        from core.workflows.events.progress import set_execution_context, clear_execution_context
+         event_bus = get_event_bus()
+         channel = f"workflow:{workflow.id}"
+@@ -351,6 +351,4 @@ class SimpleWorkflowExecutor:
+             if has_approval_node and checkpointer is None:
+-                logger.error(
+-                    f"Workflow '{workflow.name}' contains an APPROVAL_NODE but no checkpointer "
+-                    f"is available - HITL pause/resume disabled (approval will be informational only). "
+-                    f"Ensure setup_checkpointing() ran during application startup."
++                raise RuntimeError(
++                    f"Workflow '{workflow.name}' contains an APPROVAL_NODE but no checkpointer is available"
+                 )
+@@ -455,4 +454,3 @@ class SimpleWorkflowExecutor:
+             # This allows tools to emit progress updates via the event bus
+-            from core.workflows.events.progress import set_execution_context, clear_execution_context
+             set_execution_context({
+                 'workflow_id': workflow.id,
+@@ -511,3 +510,5 @@ class SimpleWorkflowExecutor:
+-                decision = "reject" if resume_command.get("decision") == "reject" else "approve"
++                decision = resume_command.get("decision")
++                if decision not in ("approve", "reject"):
++                    raise ValueError("Invalid approval decision")
+                 stream_input = Command(resume=decision)
+                 logger.info(
+@@ -1166,6 +1167,10 @@ class SimpleWorkflowExecutor:
+                     state_snapshot = await compiled_graph.aget_state(config)
+                 except Exception as e:
+                     logger.error(f"Failed to read checkpoint state for HITL pause detection: {e}")
++                    if has_approval_node:
++                        raise RuntimeError("Cannot verify approval checkpoint state") from e
++                if has_approval_node and state_snapshot is None:
++                    raise RuntimeError("Approval checkpoint state is missing")
+
+                 interrupt_payload = detect_pending_interrupt(state_snapshot)
+                 if interrupt_payload is not None:
+@@ -1799,5 +1799,7 @@ class SimpleWorkflowExecutor:
+                         # Get the route from state (set by CONDITIONAL_NODE executor)
+                         route_key = state.get("conditional_route", "default")
+-                        target = route_map.get(route_key, route_map.get("default", END))
++                        target = route_map.get(route_key, route_map.get("default"))
++                        if target is None:
++                            raise ValueError(f"No conditional route for '{route_key}'")
+                         logger.debug(f"[Router] CONDITIONAL_NODE {node_id_capture} routing '{route_key}' to {target}")
+                         return target
+@@ -1828,6 +1830,8 @@ class SimpleWorkflowExecutor:
+                     def route_loop(state: SimpleWorkflowState) -> str:
+                         # Get the route from state (set by LOOP_NODE executor)
+                         route_key = state.get("loop_route", "continue")
+-                        target = route_map.get(route_key, route_map.get("continue", END))
++                        target = route_map.get(route_key)
++                        if target is None:
++                            raise ValueError(f"No loop route for '{route_key}'")
+                         logger.debug(f"[Router] LOOP_NODE {node_id_capture} routing '{route_key}' to {target}")
+                         return target
+@@ -2873,7 +2877,8 @@ class SimpleWorkflowExecutor:
+                         # Supports expressions like: state.get("retry_count", 0) < 3
+                         #                           state.get("validation_passed") == True
+                         #                           len(state.get("messages", [])) > 0
+-                        result = eval(condition_expr, {"__builtins__": {}}, eval_context)
++                        from core.workflows.safe_condition import evaluate_condition
++                        result = evaluate_condition(condition_expr, state)
+
+                         # Convert to boolean
+                         condition_met = bool(result)
+@@ -2901,12 +2902,5 @@ class SimpleWorkflowExecutor:
+                     except Exception as e:
+                         logger.error(f"[CONDITIONAL_NODE] Failed to evaluate condition '{condition_expr}': {e}")
+-                        # Fallback to default route on error
+-                        fallback_route = routing_map.get("default", "default")
+-                        logger.warning(f"[CONDITIONAL_NODE] Using fallback route: {fallback_route}")
+-                        return {
+-                            "current_step": node_id,
+-                            "conditional_route": fallback_route,
+-                            "condition_error": str(e)
+-                        }
++                        raise RuntimeError("Conditional routing failed") from e
+
+                 elif control_type == 'LOOP_NODE':
+@@ -2957,7 +2951,9 @@ class SimpleWorkflowExecutor:
+                             }
+
+                             # Evaluate exit condition
+-                            result = eval(exit_condition, {"__builtins__": {}}, eval_context)
++                            from core.workflows.safe_condition import evaluate_condition
++                            result = evaluate_condition(exit_condition, {
++                                **state, "iteration": current_iteration, "max_iterations": max_iterations})
+                             should_exit = bool(result)
+
+                             if should_exit:
+@@ -2967,5 +2963,4 @@ class SimpleWorkflowExecutor:
+                         except Exception as e:
+                             logger.error(f"[LOOP_NODE] Failed to evaluate exit condition '{exit_condition}': {e}")
+-                            # Don't exit on error, continue looping (safer than infinite loop)
+-                            should_exit = False
++                            raise RuntimeError("Loop routing failed") from e
+
+@@ -3003,20 +2998,12 @@ class SimpleWorkflowExecutor:
+                         if decision == "reject":
+-                            return {
+-                                "current_step": node_id,
+-                                "workflow_status": "REJECTED",
+-                                "error_message": "Rejected by human reviewer"
+-                            }
++                            raise RuntimeError("Rejected by human reviewer")
++                        if decision != "approve":
++                            raise RuntimeError("Invalid approval decision")
+                         return {
+                             "current_step": node_id,
+                             "workflow_status": "APPROVED"
+                         }
+                     else:
+-                        logger.debug(f"[APPROVAL_NODE] This node requires 'interrupt_before' compilation config")
++                        raise RuntimeError("Approval interrupt is unavailable")
+-                        return {
+-                            "current_step": node_id,
+-                            "workflow_status": "AWAITING_APPROVAL",
+-                            "requires_human_approval": True,
+-                            "approval_context": approval_context
+-                        }
+
+                 else:
+@@ -3033,4 +3023,6 @@ class SimpleWorkflowExecutor:
+             except Exception as e:
++                if control_type in ('APPROVAL_NODE', 'CONDITIONAL_NODE', 'LOOP_NODE'):
++                    raise
+                 logger.error(f"[Control Node: {node_id}] Execution failed: {e}", exc_info=True)
+                 return {
+                     "error_message": str(e),
+@@ -3079,3 +3076,8 @@ class SimpleWorkflowExecutor:
++            # A failed tool must stop the graph before subsequent side effects.
++            if result.get("execution_failed"):
++                detail = result.get("tool_error") or result.get("error_message") or "Tool execution failed"
++                raise RuntimeError(f"Tool node {node_id} failed: {detail}")
++
+             return {
+                 "current_step": node_id,
+                 **result
+@@ -3262,13 +3259,8 @@ def get_executor() -> SimpleWorkflowExecutor:
+-# Global executor instance
+-_executor: Optional[SimpleWorkflowExecutor] = None
+
+
+ def get_executor() -> SimpleWorkflowExecutor:
+-    """Get or create the global executor instance."""
+-    global _executor
+-    if _executor is None:
+-        _executor = SimpleWorkflowExecutor()
+-    return _executor
++    """Keep mutable workflow metadata isolated between concurrent runs."""
++    return SimpleWorkflowExecutor()
+
+
+ async def execute_workflow_sync(
+diff --git a/backend/api/workflows/execution.py b/backend/api/workflows/execution.py
+--- a/backend/api/workflows/execution.py
++++ b/backend/api/workflows/execution.py
+@@ -260,10 +260,12 @@ async def execute_workflow_background(
+         # Execute the workflow
+         logger.info(f"Executing workflow '{workflow.name}' (id={workflow_id}) for task {task_id}")
+-        result = await executor.execute_workflow(
+-            workflow=workflow,
+-            input_data=input_data,
+-            project_id=project_id,
+-            task_id=task_id
+-        )
++        from tools.fixture_review_runtime import bind_fixture_task
++        with bind_fixture_task(task_id, workflow_id, project_id):
++            result = await executor.execute_workflow(
++                workflow=workflow,
++                input_data=input_data,
++                project_id=project_id,
++                task_id=task_id
++            )
+
+         # Sum tokens from all execution events
+@@ -283,6 +283,7 @@ async def execute_workflow_background(
+         # Update task status based on execution result
+         if result and "error" in result:
+             task.status = TaskStatus.FAILED
++            task.error_message = str(result["error"])
+             logger.error(f"Task {task_id} failed: {result['error']}")
+         elif result and result.get("status") == "awaiting_approval":
+             # Paused at an APPROVAL_NODE - the graph is checkpointed and will be
+@@ -294,7 +295,9 @@ async def execute_workflow_background(
+             logger.info(f"Task {task_id} completed successfully")
+
+         task.tokens_used = total_tokens
+-        if result and "formatted_output" in result:
++        if result and "error" in result:
++            task.result = {"error": str(result["error"]), "workflow_status": result.get("workflow_status", "FAILED")}
++        elif result and "formatted_output" in result:
+             formatted_out = result["formatted_output"]
+
+             # Extract clean message data (content + tool_calls + metadata)
+@@ -335,6 +338,6 @@ async def execute_workflow_background(
+             }
+         else:
+             task.result = {"formatted_content": "Workflow completed with no output"}
+-        task.completed_at = datetime.utcnow()
++        task.completed_at = None if task.status == TaskStatus.IN_PROGRESS else datetime.utcnow()
+         task.updated_at = datetime.utcnow()
+         db.commit()
+diff --git a/src/features/workflows/node-config/NodeConfigPanel.tsx b/src/features/workflows/node-config/NodeConfigPanel.tsx
+--- a/src/features/workflows/node-config/NodeConfigPanel.tsx
++++ b/src/features/workflows/node-config/NodeConfigPanel.tsx
+@@ -294,3 +294,11 @@ function NodeConfigPanel(
++        opencode_review: {
++          type: 'object',
++          properties: {
++            attempt_id: { type: 'string', description: 'ID duy nhất cho mỗi lần thử; không dùng lại' },
++            instruction: { type: 'string', description: 'Nội dung cần review (chỉ fixture)' }
++          },
++          required: ['attempt_id', 'instruction']
++        },
+         read_file: {
+           type: 'object',
+           properties: {
+@@ -468,3 +476,4 @@ function NodeConfigPanel(
++          { tool_id: 'opencode_review', name: 'OpenCode Review (fixture)', description: 'Thử nghiệm: cần adapter tin cậy được cấu hình; không bật model thật từ UI' },
+           { tool_id: 'read_file', name: 'Read File', description: 'Read file contents with line numbers' },
+           { tool_id: 'write_file', name: 'Write File', description: 'Create new files' },
+           { tool_id: 'ls', name: 'List Directory', description: 'List directory contents with metadata' },

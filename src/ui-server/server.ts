@@ -28,6 +28,7 @@ import { archiveProfile, createProfileFromTemplate, deleteProfile } from '../run
 import { createSkill, deleteSkill, deleteSkillFile, getSkill, readSkillFile, repinSkill, skillActorSchema, SkillInUse, skillLibrary, skillTemplates, skillUsage, sourceSkillPath, updateSkill, writeSkillFile } from '../storage/skill-library.js';
 import { profileTemplateIds, profileTemplates, type ProfileTemplateId } from '../domain/profile-templates.js';
 import { initProject } from '../runtime/project-init.js';
+import { LANGCONFIG_PREVIEW_LIMITS, previewLangConfigJson } from '../domain/langconfig-preview.js';
 
 /** Static model allowlist per runner, first model is the default. Host availability is checked by the runtime, not here. */
 export const runnerModels: { runner: RunnerId; provider: string; models: string[]; reasoning: string[] }[] = [
@@ -50,6 +51,24 @@ async function body(request: IncomingMessage): Promise<unknown> {
   const text = Buffer.concat(chunks).toString('utf8');
   return text.trim() ? JSON.parse(text) as unknown : {};
 }
+// Keep the original JSON text: parsing it here would hide duplicate keys from the preview parser.
+async function previewBody(request: IncomingMessage): Promise<string> {
+  const bytes = await new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = []; let size = 0;
+    const cleanup = () => { request.off('data', onData); request.off('end', onEnd); request.off('error', onError); request.off('aborted', onAborted); };
+    const onData = (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > LANGCONFIG_PREVIEW_LIMITS.bytes) { cleanup(); request.on('error', () => {}); request.resume(); reject(new Error('input_limit')); return; }
+      chunks.push(chunk);
+    };
+    const onEnd = () => { cleanup(); resolve(Buffer.concat(chunks, size)); };
+    const onError = () => { cleanup(); reject(new Error('invalid_input')); };
+    const onAborted = () => { cleanup(); reject(new Error('invalid_input')); };
+    request.on('data', onData); request.once('end', onEnd); request.once('error', onError); request.once('aborted', onAborted);
+  });
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  catch { throw new Error('invalid_input'); }
+}
 async function policyFor(projectRoot: string) {
   return (await authoringProject(projectRoot)).policy;
 }
@@ -68,6 +87,17 @@ export function createEditorApi(projectRoot: string, runs: () => Promise<RunMana
   const profiles = new ProfileLibrary(path.join(projectDir(projectRoot), 'profiles'));
   const reply = (status: number, body: unknown): EditorApiResponse => ({ status, body });
   const route = async (method: string, url: URL, payload: unknown): Promise<EditorApiResponse> => {
+    if (url.pathname === '/api/langconfig/preview') {
+      if (method !== 'POST') return reply(405, { error: 'Method not allowed' });
+      if (typeof payload !== 'string') return reply(400, { error: 'Expected JSON text' });
+      if (payload.length > LANGCONFIG_PREVIEW_LIMITS.bytes || Buffer.byteLength(payload, 'utf8') > LANGCONFIG_PREVIEW_LIMITS.bytes) return reply(413, { error: 'Input exceeds 1 MiB' });
+      // Never return exception text: it may contain untrusted input.
+      try {
+        const preview = previewLangConfigJson(payload);
+        const codes = preview.diagnostics.map(item => item.code);
+        return reply(codes.includes('input_limit') ? 413 : codes.includes('invalid_json') ? 400 : 200, preview);
+      } catch { return reply(400, { error: 'Invalid preview input' }); }
+    }
     if (url.pathname === '/api/bootstrap' && method === 'GET') {
       return reply(200, { projectName: path.basename(projectRoot), projectRoot, flows: await library.list(), templates: Object.keys(templates), runtimeAvailable: workerScopeSupported() });
     }
@@ -416,7 +446,12 @@ export async function startEditorServer(projectDirectory: string, port = 0, asse
         json(response, 403, { error: 'Invalid origin or session token' }); return;
       }
       if (url.pathname.startsWith('/api/')) {
-        const result = await handle({ method, path: `${url.pathname}${url.search}`, body: method === 'GET' ? {} : await body(request) });
+        let payload: unknown;
+        if (url.pathname === '/api/langconfig/preview' && method === 'POST') {
+          try { payload = await previewBody(request); }
+          catch (error) { const limit = error instanceof Error && error.message === 'input_limit'; json(response, limit ? 413 : 400, { error: limit ? 'Input exceeds 1 MiB' : 'Invalid preview input' }); return; }
+        } else payload = method === 'GET' ? {} : await body(request);
+        const result = await handle({ method, path: `${url.pathname}${url.search}`, body: payload });
         json(response, result.status, result.body); return;
       }
       if (method !== 'GET') { json(response, 405, { error: 'Method not allowed' }); return; }

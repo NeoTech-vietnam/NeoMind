@@ -13,9 +13,10 @@ const code = path.dirname(fileURLToPath(import.meta.url));
 const root = requireDataRoot();
 const neomind = path.resolve(process.env.NEOMIND_ROOT ?? path.join(code, '../../..'));
 if (process.env.NEOMIND_LIVE_AUTHORIZED !== 'f21c6cfacd571ede17407ad839d5ada908f2ced3' || !process.env.LIVE_BUDGET_PATH || !path.isAbsolute(process.env.LIVE_BUDGET_PATH) || !process.env.LANGCONFIG_BACKEND || !process.env.LANGCONFIG_PYTHON || !path.isAbsolute(process.env.LANGCONFIG_BACKEND) || !path.isAbsolute(process.env.LANGCONFIG_PYTHON)) throw Error('live opt-in, LC paths and existing absolute shared budget required');
-const model = process.env.LIVE_MODEL_ID === 'openrouter/openrouter/free' ? { providerID: 'openrouter', id: 'openrouter/free' } : process.env.LIVE_MODEL_ID === 'zai/glm-5.3-flash' ? { providerID: 'zai', id: 'glm-5.3-flash', variant: 'high' } : undefined;
+const model = process.env.LIVE_MODEL_ID === 'openrouter/openrouter/free' ? { providerID: 'openrouter', id: 'openrouter/free' } : process.env.LIVE_MODEL_ID === 'zai/glm-5.3-flash' ? { providerID: 'zai', id: 'glm-5.3-flash', variant: 'high' } : process.env.LIVE_MODEL_ID === 'openai/gpt-6-luna' ? { providerID: 'openai', id: 'gpt-6-luna', variant: 'high' } : undefined;
 const fixtureCase = process.env.LIVE_FIXTURE_CASE ?? 'contradictory';
-if (!model || !['contradictory', 'matching'].includes(fixtureCase) || !path.isAbsolute(process.env.OPENCODE_ACCOUNT_DB ?? '')) throw Error('explicit approved model, fixture case and official account database required');
+const experimentMode = process.env.LIVE_EXPERIMENT_MODE ?? 'review';
+if (!model || !['contradictory', 'matching'].includes(fixtureCase) || !['review', 'fixture-cycle'].includes(experimentMode) || (experimentMode === 'fixture-cycle' && (model.providerID !== 'openai' || fixtureCase !== 'contradictory')) || !path.isAbsolute(process.env.OPENCODE_ACCOUNT_DB ?? '')) throw Error('explicit approved model, fixture case and official account database required');
 if (existsSync(path.join(root, 'LIVE_PAUSED')) || existsSync(path.join(code, 'LIVE_PAUSED'))) throw Error('live evaluation is paused');
 const { allocateProcessScope } = await import(pathToFileURL(path.join(neomind, 'dist/src/adapters/worker-scope.js')));
 const workflow = `lc-${randomUUID()}`;
@@ -24,7 +25,7 @@ await mkdir(attempts, { recursive: true, mode: 0o700 });
 await mkdir(path.join(root, 'runs'), { recursive: true, mode: 0o700 });
 const metadata = await open(path.join(attempts, `${workflow}.json`), 'wx', 0o600);
 try {
-  await metadata.writeFile(JSON.stringify({ workflow, budget: process.env.LIVE_BUDGET_PATH, model, requestCap: 5, maxOutputTokens: 8192, fixtureCase, created: new Date().toISOString() }) + '\n');
+  await metadata.writeFile(JSON.stringify({ workflow, budget: process.env.LIVE_BUDGET_PATH, model, requestCap: 5, maxOutputTokens: 8192, fixtureCase, experimentMode, created: new Date().toISOString() }) + '\n');
   await metadata.sync();
 } finally { await metadata.close(); }
 const attemptDirectory = await open(attempts, 'r');
@@ -35,12 +36,12 @@ try {
   const env = { HOME: root, TMPDIR: path.join(root, 'tmp'), PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', PYTHONDONTWRITEBYTECODE: '1',
     PYTHONPATH: process.env.LANGCONFIG_BACKEND, LIVE_GUARD_DATA: root,
     DATABASE_URL: 'postgresql://fixture:dummy@127.0.0.1:1/fixture',
-    NEOMIND_LIVE_AUTHORIZED: process.env.NEOMIND_LIVE_AUTHORIZED, LIVE_BUDGET_PATH: process.env.LIVE_BUDGET_PATH, LIVE_WORKFLOW_ID: workflow, LIVE_MODEL_ID: process.env.LIVE_MODEL_ID, LIVE_FIXTURE_CASE: fixtureCase, OPENCODE_ACCOUNT_DB: process.env.OPENCODE_ACCOUNT_DB,
+    NEOMIND_LIVE_AUTHORIZED: process.env.NEOMIND_LIVE_AUTHORIZED, LIVE_BUDGET_PATH: process.env.LIVE_BUDGET_PATH, LIVE_WORKFLOW_ID: workflow, LIVE_MODEL_ID: process.env.LIVE_MODEL_ID, LIVE_FIXTURE_CASE: fixtureCase, LIVE_EXPERIMENT_MODE: experimentMode, OPENCODE_ACCOUNT_DB: process.env.OPENCODE_ACCOUNT_DB,
     ...(process.env.OPENCODE_BIN ? { OPENCODE_BIN: process.env.OPENCODE_BIN } : {}),
     ...(process.env.XDG_RUNTIME_DIR ? { XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR } : {}),
     ...(process.env.DBUS_SESSION_BUS_ADDRESS ? { DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS } : {}) };
   const result = await runScoped({ scope,
-    launch: { command: process.env.LANGCONFIG_PYTHON, args: ['-u', path.join(code, 'live_lc.py')], cwd: root, env },
+    launch: { command: process.env.LANGCONFIG_PYTHON, args: ['-u', path.join(code, experimentMode === 'fixture-cycle' ? 'live_full_lc.py' : 'live_lc.py')], cwd: root, env },
     onStop: stopped => console.log(JSON.stringify({ scope: scope.identity.unit, stoppedVerified: stopped })),
     runChild: async (child, signal) => {
       child.stderr.on('data', () => {});

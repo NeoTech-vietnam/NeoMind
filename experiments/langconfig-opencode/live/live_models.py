@@ -1,5 +1,5 @@
 """Owner-selected model identities for this bounded experiment."""
-APPROVED = frozenset({'deepseek-v4.1-flash-free', 'glm-5.3-flash-free', 'openrouter/openrouter/free', 'zai/glm-5.3-flash'})
+APPROVED = frozenset({'deepseek-v4.1-flash-free', 'glm-5.3-flash-free', 'openrouter/openrouter/free', 'zai/glm-5.3-flash', 'openai/gpt-6-luna'})
 
 
 def live_model(model_id):
@@ -9,4 +9,6 @@ def live_model(model_id):
         return {'providerID': 'openrouter', 'id': 'openrouter/free'}
     if model_id == 'zai/glm-5.3-flash':
         return {'providerID': 'zai', 'id': 'glm-5.3-flash', 'variant': 'high'}
+    if model_id == 'openai/gpt-6-luna':
+        return {'providerID': 'openai', 'id': 'gpt-6-luna', 'variant': 'high'}
     return {'providerID': 'opencode', 'id': model_id, 'variant': 'high'}

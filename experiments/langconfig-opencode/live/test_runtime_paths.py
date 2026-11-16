@@ -48,7 +48,19 @@ class RuntimePathsTests(unittest.TestCase):
             quota.start_workflow(str(db), 'paid-positive', 5)
             quota.start_workflow(str(db), 'paid-control', 5)
             with self.assertRaises(ValueError): quota.start_workflow(str(db), 'eighth', 5)
-            for bad in (True, '5', 6, 8):
+            anchor['workflowCap'] = 10
+            anchor_path.write_text(json.dumps(anchor))
+            with self.assertRaises(ValueError): verify_live_budget(root, str(db))
+            with closing(quota.connect(str(db))) as conn:
+                conn.execute('UPDATE limits SET workflow_cap=10 WHERE id=1')
+            verify_live_budget(root, str(db))
+            for index in range(3):
+                quota.start_workflow(str(db), f'luna-{index}', 5)
+                quota.bind(str(db), f'ses_luna_{index}', f'luna-{index}', 5)
+            for index in range(5): quota.reserve(str(db), 'ses_luna_0', f'luna-reservation-{index}')
+            with self.assertRaises(ValueError): quota.reserve(str(db), 'ses_luna_0', 'luna-sixth')
+            with self.assertRaises(ValueError): quota.start_workflow(str(db), 'eleventh', 5)
+            for bad in (True, '5', 6, 8, 11):
                 anchor['workflowCap'] = bad
                 anchor_path.write_text(json.dumps(anchor))
                 with self.assertRaises(ValueError): verify_live_budget(root, str(db))

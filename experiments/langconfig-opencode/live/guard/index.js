@@ -5,13 +5,15 @@ import { randomUUID } from 'node:crypto';
 
 export default Plugin.define({ id: 'fixture-live-guard', async setup(ctx) {
   const o = ctx.options;
-  if (!['fake', 'fake-router', 'fake-zai', 'live'].includes(o.mode) || !o.database || !o.helper || !o.python || !o.trace || !o.origin) throw new Error('fixture guard configuration invalid');
-  if (['fake-router', 'fake-zai'].includes(o.mode) && !/^http:\/\/127\.0\.0\.1:\d+$/.test(o.origin)) throw new Error('fake provider must be loopback');
+  if (!['fake', 'fake-router', 'fake-zai', 'fake-luna', 'probe-luna', 'live'].includes(o.mode) || !o.database || !o.helper || !o.python || !o.trace || !o.origin) throw new Error('fixture guard configuration invalid');
+  if (['fake-router', 'fake-zai', 'fake-luna'].includes(o.mode) && !/^http:\/\/127\.0\.0\.1:\d+$/.test(o.origin)) throw new Error('fake provider must be loopback');
+  if (o.mode === 'probe-luna' && (o.providerID !== 'openai' || o.modelID !== 'gpt-6-luna' || o.origin !== 'https://chatgpt.com')) throw new Error('invalid Luna probe');
   const router = o.mode === 'fake-router' || (o.mode === 'live' && o.providerID === 'openrouter' && o.modelID === 'openrouter/free');
   const zai = o.mode === 'fake-zai' || (o.mode === 'live' && o.providerID === 'zai' && o.modelID === 'glm-5.3-flash');
-  if (o.mode === 'live' && (o.origin !== (router ? 'https://openrouter.ai' : zai ? 'https://api.z.ai' : 'https://opencode.ai') || o.testRetry === true)) throw new Error('invalid live mode');
-  if (o.mode === 'live' && !router && !zai && (o.providerID !== 'opencode' || !['deepseek-v4.1-flash-free', 'glm-5.3-flash-free'].includes(o.modelID))) throw new Error('unapproved live model');
-  const selected = ['fake', 'fake-zai'].includes(o.mode) ? { provider: 'fixture', model: 'fake-review' } : o.mode === 'fake-router' ? { provider: 'fixture', model: 'router-free' } : { provider: o.providerID, model: o.modelID };
+  const luna = o.mode === 'fake-luna' || (o.mode === 'live' && o.providerID === 'openai' && o.modelID === 'gpt-6-luna');
+  if (o.mode === 'live' && (o.origin !== (router ? 'https://openrouter.ai' : zai ? 'https://api.z.ai' : luna ? 'https://chatgpt.com' : 'https://opencode.ai') || o.testRetry === true)) throw new Error('invalid live mode');
+  if (o.mode === 'live' && !router && !zai && !luna && (o.providerID !== 'opencode' || !['deepseek-v4.1-flash-free', 'glm-5.3-flash-free'].includes(o.modelID))) throw new Error('unapproved live model');
+  const selected = ['fake', 'fake-zai', 'fake-luna'].includes(o.mode) ? { provider: 'fixture', model: 'fake-review' } : o.mode === 'fake-router' ? { provider: 'fixture', model: 'router-free' } : { provider: o.providerID, model: o.modelID };
   const log = (event, fields = {}) => appendFileSync(o.trace, JSON.stringify({ event, ...fields }) + '\n');
   await ctx.model.transform(editor => {
     for (const model of editor.list()) if (model.providerID !== selected.provider || model.id !== selected.model) editor.remove(model.providerID, model.id);
@@ -43,8 +45,17 @@ export default Plugin.define({ id: 'fixture-live-guard', async setup(ctx) {
     const id = randomUUID();
     const model = e.model || {};
     const target = new URL(e.request.url);
+    if (o.mode === 'probe-luna') {
+      let body;
+      try { body = JSON.parse(await e.request.clone().text()); } catch { body = null; }
+      log('luna-probe-denied', { origin: target.origin, path: target.pathname, method: e.request.method, kind: e.kind,
+        provider: model.providerID, model: model.id, variant: model.variant, contentEncoding: e.request.headers.get('content-encoding'),
+        keys: body && typeof body === 'object' ? Object.keys(body) : [], bodyModel: body?.model,
+        maxOutputTokens: body?.max_output_tokens, reasoningEffort: body?.reasoning?.effort, toolCount: Array.isArray(body?.tools) ? body.tools.length : null });
+      throw new Error('Luna offline probe never dispatches');
+    }
     const variantOK = router ? model.variant === undefined : model.variant === 'high';
-    const pathOK = ['fake-router', 'fake-zai'].includes(o.mode) ? target.pathname === '/v1/chat/completions' : o.mode !== 'live' || (router ? ['/api/v1/chat/completions', '/api/v1/responses'].includes(target.pathname) : zai ? target.pathname === '/api/paas/v4/chat/completions' : target.pathname.startsWith('/inference/'));
+    const pathOK = o.mode === 'fake-luna' ? target.pathname === '/v1/responses' : ['fake-router', 'fake-zai'].includes(o.mode) ? target.pathname === '/v1/chat/completions' : o.mode !== 'live' || (router ? ['/api/v1/chat/completions', '/api/v1/responses'].includes(target.pathname) : zai ? target.pathname === '/api/paas/v4/chat/completions' : luna ? target.pathname === '/backend-api/codex/responses' : target.pathname.startsWith('/inference/'));
     if (model.providerID !== selected.provider || model.id !== selected.model || !variantOK || e.kind !== 'primary' || target.origin !== o.origin || !pathOK) {
       log('deny', { id, kind: e.kind, provider: model.providerID, model: model.id, variant: model.variant });
       throw new Error('Fixture dispatch denied');
@@ -72,6 +83,16 @@ export default Plugin.define({ id: 'fixture-live-guard', async setup(ctx) {
           ['models', 'provider', 'plugins', 'tools', 'web_search_options', 'search_parameters'].some(key => body[key] !== undefined)) throw new Error('unsafe Zai request');
       if (!Array.isArray(body.messages) || body.messages.some(message => !['system', 'user'].includes(message.role) || typeof message.content !== 'string')) throw new Error('unsupported Zai content');
       log('paid-request-checked', { maxTokens: body.max_tokens, reasoningEffort: body.reasoning_effort });
+    }
+    if (luna) {
+      const raw = await e.request.clone().text();
+      if (raw.length > 1000000 || e.request.method !== 'POST' || target.search || e.request.headers.has('content-encoding')) throw new Error('invalid Luna request');
+      let body;
+      try { body = JSON.parse(raw); } catch { throw new Error('unreadable Luna request'); }
+      if (body.model !== 'gpt-6-luna' || !Number.isInteger(body.max_output_tokens) || body.max_output_tokens < 1 || body.max_output_tokens > 8192 ||
+          body.reasoning?.effort !== 'high' || (body.tools !== undefined && (!Array.isArray(body.tools) || body.tools.length !== 0)) ||
+          ['models', 'provider', 'plugins', 'max_tokens', 'max_completion_tokens', 'web_search_options'].some(key => body[key] !== undefined)) throw new Error('unsafe Luna request');
+      log('luna-request-checked', { maxOutputTokens: body.max_output_tokens, reasoningEffort: body.reasoning.effort });
     }
     e.request = new Request(e.request, { redirect: 'error' });
     try {

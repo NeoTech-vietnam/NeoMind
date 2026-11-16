@@ -23,7 +23,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Content-Length', '0')
             self.end_headers()
             return
-        result = json.dumps({'verdict': 'needs_changes', 'findings': [{'description': 'Synthetic fake finding', 'path': 'source.txt'}], 'summary': 'Synthetic fake review'})
+        if mode == 'cycle' and '90 days' not in json.dumps(data.get('messages', [])):
+            result = json.dumps({'verdict': 'pass', 'findings': [], 'summary': 'Synthetic corrected draft'})
+        else:
+            result = json.dumps({'verdict': 'needs_changes', 'findings': [{'description': 'Synthetic fake finding', 'path': 'source.txt'}], 'summary': 'Synthetic fake review'})
         event = {'id': 'wire', 'object': 'chat.completion.chunk', 'created': 0, 'model': 'fake-review', 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': result}, 'finish_reason': 'stop'}]}
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')

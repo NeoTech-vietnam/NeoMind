@@ -1,0 +1,10 @@
+{
+  "strategy_type": "example",
+  "name": "Boundary example",
+  "nodes": [
+    {"node_id": "start", "display_name": "Start", "node_type": "start", "handler_function": "example.start"},
+    {"node_id": "end", "display_name": "End", "node_type": "end", "handler_function": "example.end"}
+  ],
+  "edges": [{"source_id": "start", "edge_type": "direct", "target_id": "end"}],
+  "entry_point_id": "start"
+}

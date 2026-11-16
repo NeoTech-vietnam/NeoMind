@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "langconfig_version": "fixture",
+  "export_type": "workflow",
+  "metadata": {"exported_at": "fixture"},
+  "workflow": {
+    "name": "SECRET_NAME",
+    "description": "SECRET_DESCRIPTION",
+    "strategy_type": "custom",
+    "blueprint": {"nodes": [{"node_id": "BLUEPRINT_NOT_CANVAS"}]},
+    "configuration": {
+      "nodes": [
+        {"id": "SECRET_ID_START", "type": "START_NODE", "data": {"agentType": "START_NODE", "label": "SECRET_LABEL"}, "position": {"x": 1, "y": 2}},
+        {"id": "writer", "type": "TOOL_NODE", "data": {"agentType": "TOOL_NODE", "config": {"secret": "SECRET_DATA"}}, "config": {"api_key": "SECRET_CONFIG"}},
+        {"id": "loop", "type": "LOOP_NODE", "data": {"agentType": "LOOP_NODE"}},
+        {"id": "end", "type": "END_NODE", "data": {"agentType": "END_NODE"}}
+      ],
+      "edges": [
+        {"source": "SECRET_ID_START", "target": "writer"},
+        {"source": "writer", "target": "loop"},
+        {"source": "loop", "target": "writer", "data": {"label": "SECRET_ROUTE"}},
+        {"source": "loop", "target": "end", "data": {"label": "exit"}}
+      ],
+      "SECRET_UNKNOWN_KEY": "SECRET_UNKNOWN_VALUE"
+    }
+  },
+  "custom_tools": [{"implementation_config": {"api_key": "SECRET_TOOL"}}],
+  "deepagents": [{"system_prompt": "SECRET_PROMPT"}]
+}

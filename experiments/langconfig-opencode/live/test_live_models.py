@@ -10,7 +10,8 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertEqual(live_model('glm-5.3-flash-free'), {'providerID': 'opencode', 'id': 'glm-5.3-flash-free', 'variant': 'high'})
         self.assertEqual(live_model('openrouter/openrouter/free'), {'providerID': 'openrouter', 'id': 'openrouter/free'})
         self.assertEqual(live_model('zai/glm-5.3-flash'), {'providerID': 'zai', 'id': 'glm-5.3-flash', 'variant': 'high'})
-        for candidate in (None, '', 'glm-5.3-flash', 'glm-5.3-flash-free#high', 'opencode/glm-5.3-flash-free', 'gpt-6.1-sol', 'openrouter/free', 'openrouter/openrouter/free#high'):
+        self.assertEqual(live_model('openai/gpt-6-luna'), {'providerID': 'openai', 'id': 'gpt-6-luna', 'variant': 'high'})
+        for candidate in (None, '', 'glm-5.3-flash', 'glm-5.3-flash-free#high', 'opencode/glm-5.3-flash-free', 'gpt-6.1-sol', 'openai/gpt-6.1-luna', 'openai/gpt-6-luna#high', 'openrouter/free', 'openrouter/openrouter/free#high'):
             with self.assertRaises(ValueError):
                 live_model(candidate)
 
@@ -50,6 +51,11 @@ class ModelSelectionTests(unittest.TestCase):
             model.update(providerID='zai', id='glm-5.3-flash', limit={'output': 8192}, cost=[{'input': 0.15, 'output': 0.5, 'cache': {'read': 0.03, 'write': 0}}])
             worker.preflight(plugin)
             model['cost'][0]['output'] = 0.51
+            with self.assertRaises(AssertionError): worker.preflight(plugin)
+            worker.model = live_model('openai/gpt-6-luna')
+            model.update(providerID='openai', id='gpt-6-luna', limit={'output': 8192}, cost=[])
+            worker.preflight(plugin)
+            model['limit']['output'] = 8193
             with self.assertRaises(AssertionError): worker.preflight(plugin)
 
 

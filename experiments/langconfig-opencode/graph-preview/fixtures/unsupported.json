@@ -1,0 +1,15 @@
+{
+  "name": "Unsupported example",
+  "nodes": [
+    {"node_id": "start", "display_name": "Start", "node_type": "start", "handler_function": "example.start"},
+    {"node_id": "loop", "display_name": "Loop", "node_type": "loop", "handler_function": "example.loop", "agent_config": {"token": "DO_NOT_COPY"}},
+    {"node_id": "end", "display_name": "End", "node_type": "end", "handler_function": "example.end"}
+  ],
+  "edges": [
+    {"source_id": "start", "target_id": "loop"},
+    {"source_id": "loop", "target_id": "start"},
+    {"source_id": "loop", "edge_type": "conditional", "condition_function": "example.route", "routing_map": {"done": "end"}},
+    {"source_id": "end", "target_id": "__END__"}
+  ],
+  "entry_point_id": "start"
+}

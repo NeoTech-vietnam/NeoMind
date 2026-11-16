@@ -1,5 +1,5 @@
 import { access, readFile, writeFile } from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { constants, createReadStream } from 'node:fs';
 import path from 'node:path';
 import { compileFlow } from '../domain/compiler.js';
 import { renderPlanMarkdown } from '../domain/plan-markdown.js';
@@ -15,6 +15,27 @@ import { parseRunCommand, readRunCommandInput, runUsage } from './run-command.js
 import { flowBlocks, draftFlow, getFlow, validateFlow, flowDiff, publishFlow, pinFlowBindings, assess } from '../runtime/flow-authoring.js';
 import { skillCatalog, skillSource, skillStatus } from '../storage/skill-catalog.js';
 import { draftProfile, getProfile, getProfileVersion, migrateProfile, profileSkillStatus, profileUsage, publishProfile } from '../runtime/profile-authoring.js';
+import { LANGCONFIG_PREVIEW_LIMITS, previewLangConfigJson } from '../domain/langconfig-preview.js';
+
+async function langConfigPreviewFile(file: string): Promise<number> {
+  const chunks: Buffer[] = []; let size = 0;
+  try {
+    for await (const chunk of createReadStream(file)) {
+      const bytes = chunk as Buffer;
+      size += bytes.length;
+      if (size > LANGCONFIG_PREVIEW_LIMITS.bytes) { console.error('Input exceeds 1 MiB'); return 2; }
+      chunks.push(bytes);
+    }
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size));
+    const preview = previewLangConfigJson(text);
+    console.log(JSON.stringify(preview, null, 2));
+    return preview.diagnostics.some(item => item.code === 'invalid_json' || item.code === 'input_limit') ? 2 : 0;
+  } catch {
+    // Do not print file contents or raw parser errors.
+    console.error('Cannot read LangConfig preview input as UTF-8');
+    return 2;
+  }
+}
 
 async function executableAvailable(name: string): Promise<boolean> {
   // Windows has no execute bit; a command resolves through PATHEXT (codex.cmd, codex.exe, ...).
@@ -54,6 +75,7 @@ async function profileTemplateCommand(args: string[]): Promise<unknown> {
 }
 
 async function main(args: string[]): Promise<number> {
+  if (args[0] === 'langconfig' && args[1] === 'preview' && args.length === 3) return langConfigPreviewFile(args[2]!);
   if (args[0] === 'mcp' && args.length === 2) {
     const { serveMcp } = await import('./mcp.js');
     await serveMcp(path.resolve(args[1]!));
@@ -383,6 +405,7 @@ async function main(args: string[]): Promise<number> {
     return 0;
   }
   console.error('Usage: neomind mcp <project> | rules <project> | program create <project> <program.json> | program list <project> | program status|next <project> <programId> | program deliver <project> <programId> <phaseId> <note> | skills <project> | skills status <project> <refs.json> | profile get|skills-status|usage <project> <id> | profile version <project> <id> <n> | profile migrate <project> <id> <n> <selection.json> | profile author-draft <project> <input.json> | profile author-publish <project> <id> <revision> <reason> | assess <project> --task-file <file>|<task> | flow blocks <project> | flow get|diff|author-validate <project> <id> | flow author-draft <project> <input.json> | flow author-publish <project> <id> <revision> <reason> | flow pin-bindings <project> <id> <values.json> [--save-as <name>] | editor <project-directory> [--port N] | schema <flow|profile> | template <fast|dev|parallel|research> | flow validate <flow.json> [policy.json] | flow|profile list|create|draft|publish|rename|archive|restore|clone|delete|export ... | flow canvas export|import <flows-dir> <flow-id> [file.canvas] | project migrate <project> | memory configure|project-search|search|get ... | memory list|pending|propose|approve|reject|note|expire|delete|feedback|remember|compact <project> ... | doctor capabilities | doctor paths <project>');
+  console.error('       neomind langconfig preview <file.json>');
   console.error('       neomind skill list <project> | skill get|usage <project> <id> [--source claude] | skill repin <project> <id> | skill create <project> <input.json> | skill update <project> <id> <input.json> | skill delete <project> <id> [--force] | profile templates | profile from-template <project> <id> <name> <template> | profile remove <project> <id>');
   return 2;
 }
