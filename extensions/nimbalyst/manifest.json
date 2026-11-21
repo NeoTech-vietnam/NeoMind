@@ -1,0 +1,35 @@
+{
+  "id": "local.langflow",
+  "name": "langflow",
+  "version": "0.1.0",
+  "author": "langflow",
+  "description": "Follow langflow runs (fixed, gated agent workflows) in a panel: run list, graph, live log, memory; answer a run's gate.",
+  "main": "dist/index.js",
+  "apiVersion": "1.0.0",
+  "contributions": {
+    "backendModules": [
+      {
+        "id": "langflow-web",
+        "entry": "dist/backend.js",
+        "runtime": "utility-process",
+        "permissions": ["mcp-server-register"],
+        "enablement": {
+          "default": "disabled",
+          "promptOn": "firstUse",
+          "purpose": "Start `langflow web --api-only` in this workspace (only when it has .langflow/config.toml) so the langflow panel can list runs and answer gates. The server binds 127.0.0.1 and stops with the workspace."
+        }
+      }
+    ],
+    "panels": [
+      {
+        "id": "langflow",
+        "title": "langflow",
+        "icon": "schema",
+        "placement": "fullscreen",
+        "order": 61,
+        "component": "LangflowPanel",
+        "tooltip": "langflow runs in this workspace"
+      }
+    ]
+  }
+}

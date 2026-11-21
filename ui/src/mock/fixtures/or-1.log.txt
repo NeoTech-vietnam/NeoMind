@@ -1,0 +1,35 @@
+15:14:37 run            run start
+15:14:37 plan           ai start {"agent": "claude"}
+15:14:39 plan           session 8d42418c-b663-4844-ae23-493acc4a2de5 model claude-haiku-5-5
+15:14:41 plan           says: 1. Heat moves; it isn't made: the refrigerant cycle and what it absorbs and releases 2. The four main components and their roles: compressor, condenser, expansi
+15:14:42 plan           answer ready
+15:14:44 plan           done in 7 s, hooks None (hooks not checked (hook_check.kind = none)), transcript C:\Users\user\.claude\projects\C--work-langflow-examples-demo\8d42418c-b663-4844-ae23-493acc4a2de5.jsonl
+15:14:44 plan           ai done {"seconds": 6.7, "session": "8d42418c-b663-4844-ae23-493acc4a2de5", "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\8d42418c-b663-4844-ae23-493acc4a2de5.jsonl"}
+15:14:44 research       fanout done {"items": 3}
+15:14:44 research[0]    ai start {"agent": "claude"}
+15:14:44 research[1]    ai start {"agent": "claude"}
+15:14:44 research[2]    ai start {"agent": "claude"}
+15:14:45 research[0]    session e8f8d138-ddbd-433e-9f13-bc481e53597a model claude-haiku-5-5
+15:14:45 research[1]    session 3f6a02f6-66cf-443f-ad9f-fe54e3e1f4e4 model claude-haiku-5-5
+15:14:45 research[2]    session 3d6bcc55-eee5-4052-b76e-15cb49e0fcb1 model claude-haiku-5-5
+15:14:47 research[0]    says: A heat pump doesn't generate heat; it moves existing heat from a cold source to a warmer destination. The refrigerant absorbs heat from the outside air, ground,
+15:14:48 research[1]    says: A heat pump circulates refrigerant in a closed loop: the compressor pressurizes it, raising its temperature, and the condenser releases that heat into the space
+15:14:48 research[2]    says: The reversing valve swaps the refrigerant's flow direction, so the indoor and outdoor coils trade roles: the indoor coil absorbs heat in cooling mode and releas
+15:14:48 research[0]    answer ready
+15:14:49 research[1]    answer ready
+15:14:50 research[0]    done in 6 s, hooks None (hooks not checked (hook_check.kind = none)), transcript C:\Users\user\.claude\projects\C--work-langflow-examples-demo\e8f8d138-ddbd-433e-9f13-bc481e53597a.jsonl
+15:14:50 research[0]    ai done {"seconds": 6.0, "session": "e8f8d138-ddbd-433e-9f13-bc481e53597a", "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\e8f8d138-ddbd-433e-9f13-bc481e53597a.jsonl"}
+15:14:50 research[2]    answer ready
+15:14:50 research[1]    done in 7 s, hooks None (hooks not checked (hook_check.kind = none)), transcript C:\Users\user\.claude\projects\C--work-langflow-examples-demo\3f6a02f6-66cf-443f-ad9f-fe54e3e1f4e4.jsonl
+15:14:50 research[1]    ai done {"seconds": 6.6, "session": "3f6a02f6-66cf-443f-ad9f-fe54e3e1f4e4", "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\3f6a02f6-66cf-443f-ad9f-fe54e3e1f4e4.jsonl"}
+15:14:51 research[2]    done in 7 s, hooks None (hooks not checked (hook_check.kind = none)), transcript C:\Users\user\.claude\projects\C--work-langflow-examples-demo\3d6bcc55-eee5-4052-b76e-15cb49e0fcb1.jsonl
+15:14:51 research[2]    ai done {"seconds": 7.1, "session": "3d6bcc55-eee5-4052-b76e-15cb49e0fcb1", "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\3d6bcc55-eee5-4052-b76e-15cb49e0fcb1.jsonl"}
+15:14:51 research_join  join done {"collected": 3}
+15:14:51 synthesize     ai start {"agent": "claude"}
+15:14:52 synthesize     session 3d431c43-4488-4c45-9c8c-f03301032cac model claude-haiku-5-5
+15:15:09 synthesize     says: A heat pump moves existing heat from a cold source to a warmer place. Refrigerant absorbs heat from outside air, ground, or water as it evaporates; the compress
+15:15:11 synthesize     answer ready
+15:15:12 synthesize     done in 21 s, hooks None (hooks not checked (hook_check.kind = none)), transcript C:\Users\user\.claude\projects\C--work-langflow-examples-demo\3d431c43-4488-4c45-9c8c-f03301032cac.jsonl
+15:15:12 synthesize     ai done {"seconds": 21.2, "session": "3d431c43-4488-4c45-9c8c-f03301032cac", "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\3d431c43-4488-4c45-9c8c-f03301032cac.jsonl"}
+15:15:12 explainer      write done {"path": "C:\\work\\langflow\\examples\\demo\\.langflow\\state\\out\\or-1 - explainer.md"}
+15:15:12 run            run done

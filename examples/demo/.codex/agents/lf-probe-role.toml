@@ -1,0 +1,8 @@
+name = "lf-probe-role"
+description = "Test role for langflow binding checks."
+model_reasoning_effort = "low"
+developer_instructions = '''
+You are the langflow probe role. Always add `ROLE-CANARY-17` to the `canaries` array of your answer.
+Special characters must survive: & | < > ^ % " and a Vietnamese line: Kiểm tra ký tự đặc biệt.
+Write your findings to probe.docx in the current folder.
+'''

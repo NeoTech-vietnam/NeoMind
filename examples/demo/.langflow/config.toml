@@ -1,0 +1,19 @@
+[project]
+name = "langflow demo"
+approver = "the reviewer"
+allow_agent_approval = true          # demo only: an agent may answer gates (logged as by "agent")
+state_dir = ".langflow/state"
+
+[agents.claude]
+default_model = "haiku"
+
+[agents.codex]
+default_model = "gpt-6-luna"
+
+[agents.opencode]
+default_model = "openai/gpt-6-luna"  # provider/model
+default_effort = "low"
+allow_commands = ["git --version"]   # shell commands the agent may run: exact, or "<cmd> *"
+
+[hook_check]
+kind = "none"

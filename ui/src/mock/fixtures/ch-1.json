@@ -1,0 +1,147 @@
+{
+  "workflow": "chain",
+  "args": {
+    "topic": "why unit tests matter"
+  },
+  "status": "done",
+  "started": "2026-11-17 15:14:37",
+  "approver": "the reviewer",
+  "passed": [
+    "outline_ok"
+  ],
+  "locks": [],
+  "graph": {
+    "nodes": [
+      {
+        "id": "__start__",
+        "kind": "start"
+      },
+      {
+        "id": "outline",
+        "kind": "ai"
+      },
+      {
+        "id": "outline_ok",
+        "kind": "gate"
+      },
+      {
+        "id": "expand",
+        "kind": "ai"
+      },
+      {
+        "id": "paragraph",
+        "kind": "write"
+      },
+      {
+        "id": "__end__",
+        "kind": "end"
+      }
+    ],
+    "edges": [
+      {
+        "source": "__start__",
+        "target": "outline",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "expand",
+        "target": "paragraph",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "outline",
+        "target": "outline_ok",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "outline_ok",
+        "target": "__end__",
+        "label": "reject",
+        "conditional": true
+      },
+      {
+        "source": "outline_ok",
+        "target": "expand",
+        "label": "approve",
+        "conditional": true
+      },
+      {
+        "source": "paragraph",
+        "target": "__end__",
+        "label": null,
+        "conditional": false
+      }
+    ]
+  },
+  "run": "ch-1",
+  "updated": "2026-11-17 15:19:21",
+  "history": [
+    {
+      "time": "2026-11-17 15:14:37",
+      "step": null,
+      "kind": "run",
+      "event": "start"
+    },
+    {
+      "time": "2026-11-17 15:14:37",
+      "step": "outline",
+      "kind": "ai",
+      "agent": "claude",
+      "event": "start"
+    },
+    {
+      "time": "2026-11-17 15:14:43",
+      "step": "outline",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 6.2,
+      "session": "9da40870-c99c-4bea-9e6a-212084e467ef",
+      "hooks": null,
+      "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\9da40870-c99c-4bea-9e6a-212084e467ef.jsonl"
+    },
+    {
+      "time": "2026-11-17 15:19:14",
+      "step": "outline_ok",
+      "kind": "gate",
+      "event": "approve",
+      "note": null,
+      "by": "user"
+    },
+    {
+      "time": "2026-11-17 15:19:14",
+      "step": "expand",
+      "kind": "ai",
+      "agent": "claude",
+      "event": "start"
+    },
+    {
+      "time": "2026-11-17 15:19:21",
+      "step": "expand",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 7.3,
+      "session": "e0d5a228-7a62-4845-aab9-502238561e2f",
+      "hooks": null,
+      "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\e0d5a228-7a62-4845-aab9-502238561e2f.jsonl"
+    },
+    {
+      "time": "2026-11-17 15:19:21",
+      "step": "paragraph",
+      "kind": "write",
+      "event": "done",
+      "path": "C:\\work\\langflow\\examples\\demo\\.langflow\\state\\out\\ch-1 - paragraph.md"
+    },
+    {
+      "time": "2026-11-17 15:19:21",
+      "step": null,
+      "kind": "run",
+      "event": "done"
+    }
+  ],
+  "step": null,
+  "gate": null,
+  "question": null
+}

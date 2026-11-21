@@ -1,0 +1,234 @@
+{
+  "workflow": "parallel",
+  "args": {
+    "topic": "weekly status emails",
+    "effort.*": "low",
+    "model.merge": "sonnet",
+    "effort.merge": "high"
+  },
+  "series": null,
+  "status": "done",
+  "started": "2026-11-17 17:11:22",
+  "approver": "the reviewer",
+  "passed": [],
+  "locks": [],
+  "graph": {
+    "nodes": [
+      {
+        "id": "__start__",
+        "kind": "start"
+      },
+      {
+        "id": "views",
+        "kind": "parallel"
+      },
+      {
+        "id": "cons",
+        "kind": "ai"
+      },
+      {
+        "id": "pros",
+        "kind": "ai"
+      },
+      {
+        "id": "risks",
+        "kind": "ai"
+      },
+      {
+        "id": "views_join",
+        "kind": "join"
+      },
+      {
+        "id": "merge",
+        "kind": "ai"
+      },
+      {
+        "id": "recommendation",
+        "kind": "write"
+      },
+      {
+        "id": "__end__",
+        "kind": "end"
+      }
+    ],
+    "edges": [
+      {
+        "source": "__start__",
+        "target": "views",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "cons",
+        "target": "views_join",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "merge",
+        "target": "recommendation",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "pros",
+        "target": "views_join",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "risks",
+        "target": "views_join",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "views",
+        "target": "cons",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "views",
+        "target": "pros",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "views",
+        "target": "risks",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "views_join",
+        "target": "merge",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "recommendation",
+        "target": "__end__",
+        "label": null,
+        "conditional": false
+      }
+    ]
+  },
+  "run": "pa-2",
+  "updated": "2026-11-17 17:11:40",
+  "history": [
+    {
+      "time": "2026-11-17 17:11:22",
+      "step": null,
+      "kind": "run",
+      "event": "start"
+    },
+    {
+      "time": "2026-11-17 17:11:22",
+      "step": "views",
+      "kind": "parallel",
+      "event": "done"
+    },
+    {
+      "time": "2026-11-17 17:11:22",
+      "step": "cons",
+      "kind": "ai",
+      "agent": "codex",
+      "event": "start",
+      "model": "gpt-6-luna",
+      "effort": "low"
+    },
+    {
+      "time": "2026-11-17 17:11:22",
+      "step": "pros",
+      "kind": "ai",
+      "agent": "claude",
+      "event": "start",
+      "model": "haiku",
+      "effort": "low"
+    },
+    {
+      "time": "2026-11-17 17:11:22",
+      "step": "risks",
+      "kind": "ai",
+      "agent": "claude",
+      "event": "start",
+      "model": "haiku",
+      "effort": "low"
+    },
+    {
+      "time": "2026-11-17 17:11:29",
+      "step": "cons",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 7.1,
+      "session": "01a1e8fd-6448-7ae0-8a18-9da9d4747b34",
+      "hooks": null,
+      "transcript": "C:\\Users\\user\\.codex\\sessions\\2026\\11\\17\\rollout-2026-11-17T17-11-23-01a1e8fd-6448-7ae0-8a18-9da9d4747b34.jsonl",
+      "memory": null
+    },
+    {
+      "time": "2026-11-17 17:11:30",
+      "step": "risks",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 8.2,
+      "session": "04f4f590-53f8-4590-a369-336b570f5c21",
+      "hooks": null,
+      "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\04f4f590-53f8-4590-a369-336b570f5c21.jsonl",
+      "memory": null
+    },
+    {
+      "time": "2026-11-17 17:11:33",
+      "step": "pros",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 10.9,
+      "session": "1dc3f543-2cb9-436b-9596-33c9f9657145",
+      "hooks": null,
+      "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\1dc3f543-2cb9-436b-9596-33c9f9657145.jsonl",
+      "memory": null
+    },
+    {
+      "time": "2026-11-17 17:11:33",
+      "step": "views_join",
+      "kind": "join",
+      "event": "done"
+    },
+    {
+      "time": "2026-11-17 17:11:33",
+      "step": "merge",
+      "kind": "ai",
+      "agent": "claude",
+      "event": "start",
+      "model": "sonnet",
+      "effort": "high"
+    },
+    {
+      "time": "2026-11-17 17:11:40",
+      "step": "merge",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 6.8,
+      "session": "083d6341-1849-4ab0-a0c1-1829baed3c50",
+      "hooks": null,
+      "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\083d6341-1849-4ab0-a0c1-1829baed3c50.jsonl",
+      "memory": null
+    },
+    {
+      "time": "2026-11-17 17:11:40",
+      "step": "recommendation",
+      "kind": "write",
+      "event": "done",
+      "path": "C:\\work\\langflow\\examples\\demo\\.langflow\\state\\out\\pa-2 - recommendation.md"
+    },
+    {
+      "time": "2026-11-17 17:11:40",
+      "step": null,
+      "kind": "run",
+      "event": "done"
+    }
+  ],
+  "step": null,
+  "gate": null
+}

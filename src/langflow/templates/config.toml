@@ -1,0 +1,78 @@
+# langflow project settings. Every key is optional; see langflow/project.py for the full list.
+
+[project]
+name = "My project"
+approver = "the approver"            # the person who answers gates
+allow_agent_approval = false         # true only in demo/test projects: agents may then answer gates
+state_dir = ".langflow/state"        # run state, logs, live pages: add it to .gitignore
+workflows = ".langflow/workflows"
+checks = ".langflow/checks"
+
+[agents.claude]
+default_model = "sonnet"
+# default_effort = "medium"           # low, medium, high, xhigh, max
+git_bash = "auto"                    # Windows only: Claude Code needs Git Bash, or its hooks may not run
+
+[agents.codex]
+# default_model = "gpt-6-luna"
+# default_effort = "medium"           # mapped: max -> xhigh
+
+# [agents.opencode]                   # OpenCode 2.2.7: an isolated `opencode serve` per step
+# default_model = "openai/gpt-6-luna" # provider/model
+# default_effort = "low"              # one of the model's variants
+# allow_commands = ["make build"]     # shell command patterns the agent may run (none by default)
+# role_channel = "prompt"            # role_mode append: "prompt" or "instructions" (experimental session instruction entry)
+
+[hook_check]
+# Confirm the project's hooks ran in each agent session. Needs a hook that appends one JSON line per call.
+kind = "none"
+# kind = "jsonl_log"
+# path = "logs/hook-calls.log"
+# session_field = "session"
+# client_field = "client"
+# event_field = "event"
+# required_event = "SessionStart"
+
+# [run]
+# max_concurrency = 4               # at most N steps at the same time (fan-out workers, parallel branches);
+#                                   # unset = no limit; one run: langflow start <wf> <run> concurrency=N
+
+[retry]
+# Transient agent errors (rate limit, 429, overloaded, 5xx, timeout, connection reset) are retried with the same
+# prompt after a wait; each retry is a `retry` event. ai(..., transient=N) overrides attempts for one step.
+attempts = 3
+delays = [15, 60, 180]               # seconds before retry 1, 2, 3 (the last one repeats)
+
+# [pricing."claude-sonnet-5-5"]      # USD per million tokens, used when the agent reports no cost (Codex, and
+# input = 3.0                        # OpenCode when it reports 0). Example numbers only: copy the provider's
+# output = 15.0                      # current prices. The key is the model name the agent reports or the one in
+# cache_read = 0.3                   # the workflow / default_model ("provider/model" also matches "model").
+# cache_write = 3.75                 # cache_read / cache_write default to the input price.
+
+# [catalog]
+# Skills (<dir>/<id>/SKILL.md) and roles (.claude/agents/<id>.md, .codex/agents/<id>.toml, .langflow/agents/<id>.md)
+# a step binds with ai(..., role=, skills=). Overrides per step: .langflow/bindings.toml. See `langflow skills`,
+# `langflow roles`, `langflow check <workflow>`.
+# skill_dirs = ["tools/skills"]      # more skill folders, after .langflow/skills, .agents/skills, .claude/skills
+# skill_mode = "inject"              # "inject": the SKILL.md text goes before the prompt; "name": only its id;
+#                                    # "system": the CLI's system/developer channel (Claude, Codex; else inject);
+#                                    # "native": the CLI loads it itself, checked after the call
+# native_fallback = "system"         # a skill that cannot be / was not loaded natively: "system", "inject", "fail"
+# retry_mode = "resume"              # guardrail retry: "resume" (default: same session, feedback only) or "fresh"
+#                                    # (new session with the whole prompt; costs more, see `langflow guide`)
+# role_mode = "append"               # unset = automatic (Claude: system prompt; Codex/OpenCode: before the prompt).
+#                                    # "append": the CLI's system/developer prompt; "agent": Claude --agent
+#                                    # (replaces its system prompt); "prompt"
+# contract = true                    # the step contract goes last in a bound step's prompt
+# contract_system = false            # also put it in the system prompt under Claude --agent
+# Per step: ai(role_mode=, contract=, skill_mode=, native_fallback=, retry_mode=), bindings.toml, run args
+# <key>.<step>= (e.g. skill_mode.draft=native retry_mode.*=resume)
+# [agents.claude] restrict_tools = true   # under --agent: --tools = step tools, --disallowedTools for read-only
+# [agents.claude] native_skills = "tool"  # skill_mode native: the Skill tool ("preload": agent skills: list)
+
+# [notify]
+# Runs when a gate starts waiting (argv list, no shell, in the project root). Placeholders {run} {gate} {question}
+# {workflow} {page}; the same values are in LANGFLOW_RUN, LANGFLOW_GATE, LANGFLOW_QUESTION, LANGFLOW_WORKFLOW,
+# LANGFLOW_PAGE. Failures are logged, never fatal. Windows toast example: INSTALL.md, "Gate notifications".
+# command = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".langflow/notify.ps1"]
+# timeout = 10

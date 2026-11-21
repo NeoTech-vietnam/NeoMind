@@ -1,0 +1,169 @@
+{
+  "workflow": "routing",
+  "args": {
+    "ticket": "The app crashes when I upload a 2 GB file"
+  },
+  "status": "done",
+  "started": "2026-11-17 15:14:37",
+  "approver": "the reviewer",
+  "passed": [],
+  "locks": [],
+  "graph": {
+    "nodes": [
+      {
+        "id": "__start__",
+        "kind": "start"
+      },
+      {
+        "id": "classify",
+        "kind": "ai"
+      },
+      {
+        "id": "by_type",
+        "kind": "route"
+      },
+      {
+        "id": "answer",
+        "kind": "ai"
+      },
+      {
+        "id": "bug_triage",
+        "kind": "ai"
+      },
+      {
+        "id": "feature_spec",
+        "kind": "ai"
+      },
+      {
+        "id": "reply",
+        "kind": "write"
+      },
+      {
+        "id": "__end__",
+        "kind": "end"
+      }
+    ],
+    "edges": [
+      {
+        "source": "__start__",
+        "target": "classify",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "answer",
+        "target": "reply",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "bug_triage",
+        "target": "reply",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "by_type",
+        "target": "answer",
+        "label": "question",
+        "conditional": true
+      },
+      {
+        "source": "by_type",
+        "target": "bug_triage",
+        "label": "bug",
+        "conditional": true
+      },
+      {
+        "source": "by_type",
+        "target": "feature_spec",
+        "label": "feature",
+        "conditional": true
+      },
+      {
+        "source": "classify",
+        "target": "by_type",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "feature_spec",
+        "target": "reply",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "reply",
+        "target": "__end__",
+        "label": null,
+        "conditional": false
+      }
+    ]
+  },
+  "run": "rt-1",
+  "updated": "2026-11-17 15:14:50",
+  "history": [
+    {
+      "time": "2026-11-17 15:14:37",
+      "step": null,
+      "kind": "run",
+      "event": "start"
+    },
+    {
+      "time": "2026-11-17 15:14:37",
+      "step": "classify",
+      "kind": "ai",
+      "agent": "claude",
+      "event": "start"
+    },
+    {
+      "time": "2026-11-17 15:14:44",
+      "step": "classify",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 6.9,
+      "session": "b14381cc-6ab5-416f-a9a7-bcdee67f1a6b",
+      "hooks": null,
+      "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\b14381cc-6ab5-416f-a9a7-bcdee67f1a6b.jsonl"
+    },
+    {
+      "time": "2026-11-17 15:14:44",
+      "step": "by_type",
+      "kind": "route",
+      "event": "done",
+      "route": "bug"
+    },
+    {
+      "time": "2026-11-17 15:14:44",
+      "step": "bug_triage",
+      "kind": "ai",
+      "agent": "claude",
+      "event": "start"
+    },
+    {
+      "time": "2026-11-17 15:14:50",
+      "step": "bug_triage",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 6.4,
+      "session": "41c3b838-36af-499d-9aa6-20d5668255bf",
+      "hooks": null,
+      "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\41c3b838-36af-499d-9aa6-20d5668255bf.jsonl"
+    },
+    {
+      "time": "2026-11-17 15:14:50",
+      "step": "reply",
+      "kind": "write",
+      "event": "done",
+      "path": "C:\\work\\langflow\\examples\\demo\\.langflow\\state\\out\\rt-1 - reply.md"
+    },
+    {
+      "time": "2026-11-17 15:14:50",
+      "step": null,
+      "kind": "run",
+      "event": "done"
+    }
+  ],
+  "step": null,
+  "gate": null
+}

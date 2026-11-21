@@ -1,0 +1,221 @@
+{
+  "workflow": "orchestrator",
+  "args": {
+    "topic": "how a heat pump works"
+  },
+  "status": "done",
+  "started": "2026-11-17 15:14:37",
+  "approver": "the reviewer",
+  "passed": [],
+  "locks": [],
+  "graph": {
+    "nodes": [
+      {
+        "id": "__start__",
+        "kind": "start"
+      },
+      {
+        "id": "plan",
+        "kind": "ai"
+      },
+      {
+        "id": "research",
+        "kind": "fanout"
+      },
+      {
+        "id": "research_join",
+        "kind": "join"
+      },
+      {
+        "id": "research_worker",
+        "kind": "worker"
+      },
+      {
+        "id": "synthesize",
+        "kind": "ai"
+      },
+      {
+        "id": "explainer",
+        "kind": "write"
+      },
+      {
+        "id": "__end__",
+        "kind": "end"
+      }
+    ],
+    "edges": [
+      {
+        "source": "__start__",
+        "target": "plan",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "plan",
+        "target": "research",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "research",
+        "target": "research_join",
+        "label": "empty",
+        "conditional": true
+      },
+      {
+        "source": "research",
+        "target": "research_worker",
+        "label": "items",
+        "conditional": true
+      },
+      {
+        "source": "research_join",
+        "target": "synthesize",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "research_worker",
+        "target": "research_join",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "synthesize",
+        "target": "explainer",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "explainer",
+        "target": "__end__",
+        "label": null,
+        "conditional": false
+      }
+    ]
+  },
+  "run": "or-1",
+  "updated": "2026-11-17 15:15:12",
+  "history": [
+    {
+      "time": "2026-11-17 15:14:37",
+      "step": null,
+      "kind": "run",
+      "event": "start"
+    },
+    {
+      "time": "2026-11-17 15:14:37",
+      "step": "plan",
+      "kind": "ai",
+      "agent": "claude",
+      "event": "start"
+    },
+    {
+      "time": "2026-11-17 15:14:44",
+      "step": "plan",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 6.7,
+      "session": "8d42418c-b663-4844-ae23-493acc4a2de5",
+      "hooks": null,
+      "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\8d42418c-b663-4844-ae23-493acc4a2de5.jsonl"
+    },
+    {
+      "time": "2026-11-17 15:14:44",
+      "step": "research",
+      "kind": "fanout",
+      "event": "done",
+      "items": 3
+    },
+    {
+      "time": "2026-11-17 15:14:44",
+      "step": "research[0]",
+      "kind": "ai",
+      "agent": "claude",
+      "event": "start"
+    },
+    {
+      "time": "2026-11-17 15:14:44",
+      "step": "research[1]",
+      "kind": "ai",
+      "agent": "claude",
+      "event": "start"
+    },
+    {
+      "time": "2026-11-17 15:14:44",
+      "step": "research[2]",
+      "kind": "ai",
+      "agent": "claude",
+      "event": "start"
+    },
+    {
+      "time": "2026-11-17 15:14:50",
+      "step": "research[0]",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 6.0,
+      "session": "e8f8d138-ddbd-433e-9f13-bc481e53597a",
+      "hooks": null,
+      "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\e8f8d138-ddbd-433e-9f13-bc481e53597a.jsonl"
+    },
+    {
+      "time": "2026-11-17 15:14:50",
+      "step": "research[1]",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 6.6,
+      "session": "3f6a02f6-66cf-443f-ad9f-fe54e3e1f4e4",
+      "hooks": null,
+      "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\3f6a02f6-66cf-443f-ad9f-fe54e3e1f4e4.jsonl"
+    },
+    {
+      "time": "2026-11-17 15:14:51",
+      "step": "research[2]",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 7.1,
+      "session": "3d6bcc55-eee5-4052-b76e-15cb49e0fcb1",
+      "hooks": null,
+      "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\3d6bcc55-eee5-4052-b76e-15cb49e0fcb1.jsonl"
+    },
+    {
+      "time": "2026-11-17 15:14:51",
+      "step": "research_join",
+      "kind": "join",
+      "event": "done",
+      "collected": 3
+    },
+    {
+      "time": "2026-11-17 15:14:51",
+      "step": "synthesize",
+      "kind": "ai",
+      "agent": "claude",
+      "event": "start"
+    },
+    {
+      "time": "2026-11-17 15:15:12",
+      "step": "synthesize",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 21.2,
+      "session": "3d431c43-4488-4c45-9c8c-f03301032cac",
+      "hooks": null,
+      "transcript": "C:\\Users\\user\\.claude\\projects\\C--work-langflow-examples-demo\\3d431c43-4488-4c45-9c8c-f03301032cac.jsonl"
+    },
+    {
+      "time": "2026-11-17 15:15:12",
+      "step": "explainer",
+      "kind": "write",
+      "event": "done",
+      "path": "C:\\work\\langflow\\examples\\demo\\.langflow\\state\\out\\or-1 - explainer.md"
+    },
+    {
+      "time": "2026-11-17 15:15:12",
+      "step": null,
+      "kind": "run",
+      "event": "done"
+    }
+  ],
+  "step": null,
+  "gate": null
+}

@@ -1,0 +1,19 @@
+{
+  "name": "langflow-nimbalyst-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "vite build --config vite.panel.config.ts && vite build --config vite.backend.config.ts"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.4",
+    "@types/node": "22.20.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "tailwindcss": "4.3.4",
+    "vite": "8.3.5"
+  }
+}

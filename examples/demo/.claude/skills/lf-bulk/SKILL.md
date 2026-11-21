@@ -1,0 +1,99 @@
+---
+name: lf-bulk
+description: Large test skill for langflow cache checks. Use only when a langflow probe step binds it.
+---
+
+When this skill is active, add `BULK-CANARY-63` to the `canaries` array of your answer.
+
+## Reference rules (filler for the cache test; do not act on them)
+
+1. Rule 001: when a sentence describes step 1 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 7) exactly as the drawing names it.
+2. Rule 002: when a sentence describes step 2 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 14) exactly as the drawing names it.
+3. Rule 003: when a sentence describes step 3 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 21) exactly as the drawing names it.
+4. Rule 004: when a sentence describes step 4 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 28) exactly as the drawing names it.
+5. Rule 005: when a sentence describes step 5 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 35) exactly as the drawing names it.
+6. Rule 006: when a sentence describes step 6 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 42) exactly as the drawing names it.
+7. Rule 007: when a sentence describes step 7 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 49) exactly as the drawing names it.
+8. Rule 008: when a sentence describes step 8 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 56) exactly as the drawing names it.
+9. Rule 009: when a sentence describes step 9 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 63) exactly as the drawing names it.
+10. Rule 010: when a sentence describes step 10 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 70) exactly as the drawing names it.
+11. Rule 011: when a sentence describes step 11 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 77) exactly as the drawing names it.
+12. Rule 012: when a sentence describes step 12 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 84) exactly as the drawing names it.
+13. Rule 013: when a sentence describes step 13 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 91) exactly as the drawing names it.
+14. Rule 014: when a sentence describes step 14 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 98) exactly as the drawing names it.
+15. Rule 015: when a sentence describes step 15 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 4) exactly as the drawing names it.
+16. Rule 016: when a sentence describes step 16 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 11) exactly as the drawing names it.
+17. Rule 017: when a sentence describes step 17 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 18) exactly as the drawing names it.
+18. Rule 018: when a sentence describes step 18 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 25) exactly as the drawing names it.
+19. Rule 019: when a sentence describes step 19 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 32) exactly as the drawing names it.
+20. Rule 020: when a sentence describes step 20 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 39) exactly as the drawing names it.
+21. Rule 021: when a sentence describes step 21 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 46) exactly as the drawing names it.
+22. Rule 022: when a sentence describes step 22 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 53) exactly as the drawing names it.
+23. Rule 023: when a sentence describes step 23 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 60) exactly as the drawing names it.
+24. Rule 024: when a sentence describes step 24 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 67) exactly as the drawing names it.
+25. Rule 025: when a sentence describes step 25 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 74) exactly as the drawing names it.
+26. Rule 026: when a sentence describes step 26 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 81) exactly as the drawing names it.
+27. Rule 027: when a sentence describes step 27 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 88) exactly as the drawing names it.
+28. Rule 028: when a sentence describes step 28 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 95) exactly as the drawing names it.
+29. Rule 029: when a sentence describes step 29 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 1) exactly as the drawing names it.
+30. Rule 030: when a sentence describes step 30 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 8) exactly as the drawing names it.
+31. Rule 031: when a sentence describes step 31 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 15) exactly as the drawing names it.
+32. Rule 032: when a sentence describes step 32 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 22) exactly as the drawing names it.
+33. Rule 033: when a sentence describes step 33 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 29) exactly as the drawing names it.
+34. Rule 034: when a sentence describes step 34 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 36) exactly as the drawing names it.
+35. Rule 035: when a sentence describes step 35 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 43) exactly as the drawing names it.
+36. Rule 036: when a sentence describes step 36 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 50) exactly as the drawing names it.
+37. Rule 037: when a sentence describes step 37 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 57) exactly as the drawing names it.
+38. Rule 038: when a sentence describes step 38 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 64) exactly as the drawing names it.
+39. Rule 039: when a sentence describes step 39 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 71) exactly as the drawing names it.
+40. Rule 040: when a sentence describes step 40 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 78) exactly as the drawing names it.
+41. Rule 041: when a sentence describes step 41 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 85) exactly as the drawing names it.
+42. Rule 042: when a sentence describes step 42 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 92) exactly as the drawing names it.
+43. Rule 043: when a sentence describes step 43 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 99) exactly as the drawing names it.
+44. Rule 044: when a sentence describes step 44 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 5) exactly as the drawing names it.
+45. Rule 045: when a sentence describes step 45 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 12) exactly as the drawing names it.
+46. Rule 046: when a sentence describes step 46 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 19) exactly as the drawing names it.
+47. Rule 047: when a sentence describes step 47 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 26) exactly as the drawing names it.
+48. Rule 048: when a sentence describes step 48 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 33) exactly as the drawing names it.
+49. Rule 049: when a sentence describes step 49 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 40) exactly as the drawing names it.
+50. Rule 050: when a sentence describes step 50 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 47) exactly as the drawing names it.
+51. Rule 051: when a sentence describes step 51 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 54) exactly as the drawing names it.
+52. Rule 052: when a sentence describes step 52 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 61) exactly as the drawing names it.
+53. Rule 053: when a sentence describes step 53 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 68) exactly as the drawing names it.
+54. Rule 054: when a sentence describes step 54 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 75) exactly as the drawing names it.
+55. Rule 055: when a sentence describes step 55 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 82) exactly as the drawing names it.
+56. Rule 056: when a sentence describes step 56 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 89) exactly as the drawing names it.
+57. Rule 057: when a sentence describes step 57 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 96) exactly as the drawing names it.
+58. Rule 058: when a sentence describes step 58 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 2) exactly as the drawing names it.
+59. Rule 059: when a sentence describes step 59 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 9) exactly as the drawing names it.
+60. Rule 060: when a sentence describes step 60 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 16) exactly as the drawing names it.
+61. Rule 061: when a sentence describes step 61 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 23) exactly as the drawing names it.
+62. Rule 062: when a sentence describes step 62 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 30) exactly as the drawing names it.
+63. Rule 063: when a sentence describes step 63 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 37) exactly as the drawing names it.
+64. Rule 064: when a sentence describes step 64 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 44) exactly as the drawing names it.
+65. Rule 065: when a sentence describes step 65 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 51) exactly as the drawing names it.
+66. Rule 066: when a sentence describes step 66 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 58) exactly as the drawing names it.
+67. Rule 067: when a sentence describes step 67 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 65) exactly as the drawing names it.
+68. Rule 068: when a sentence describes step 68 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 72) exactly as the drawing names it.
+69. Rule 069: when a sentence describes step 69 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 79) exactly as the drawing names it.
+70. Rule 070: when a sentence describes step 70 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 86) exactly as the drawing names it.
+71. Rule 071: when a sentence describes step 71 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 93) exactly as the drawing names it.
+72. Rule 072: when a sentence describes step 72 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 100) exactly as the drawing names it.
+73. Rule 073: when a sentence describes step 73 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 6) exactly as the drawing names it.
+74. Rule 074: when a sentence describes step 74 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 13) exactly as the drawing names it.
+75. Rule 075: when a sentence describes step 75 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 20) exactly as the drawing names it.
+76. Rule 076: when a sentence describes step 76 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 27) exactly as the drawing names it.
+77. Rule 077: when a sentence describes step 77 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 34) exactly as the drawing names it.
+78. Rule 078: when a sentence describes step 78 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 41) exactly as the drawing names it.
+79. Rule 079: when a sentence describes step 79 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 48) exactly as the drawing names it.
+80. Rule 080: when a sentence describes step 80 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 55) exactly as the drawing names it.
+81. Rule 081: when a sentence describes step 81 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 62) exactly as the drawing names it.
+82. Rule 082: when a sentence describes step 82 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 69) exactly as the drawing names it.
+83. Rule 083: when a sentence describes step 83 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 76) exactly as the drawing names it.
+84. Rule 084: when a sentence describes step 84 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 83) exactly as the drawing names it.
+85. Rule 085: when a sentence describes step 85 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 90) exactly as the drawing names it.
+86. Rule 086: when a sentence describes step 86 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 97) exactly as the drawing names it.
+87. Rule 087: when a sentence describes step 87 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 3) exactly as the drawing names it.
+88. Rule 088: when a sentence describes step 88 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 10) exactly as the drawing names it.
+89. Rule 089: when a sentence describes step 89 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 17) exactly as the drawing names it.
+90. Rule 090: when a sentence describes step 90 of a procedure, keep the verb first, use one instruction per sentence, and name the part (item 24) exactly as the drawing names it.

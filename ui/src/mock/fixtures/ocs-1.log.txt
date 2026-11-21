@@ -1,0 +1,17 @@
+18:28:54 run            run start
+18:28:54 look           ai start {"agent": "opencode", "model": "openai/gpt-6-luna", "effort": "low"}
+18:28:56 look           session ses_e16bb9abdffe2HA31C5tWN7hRF model openai/gpt-6-luna effort low, read-only
+18:29:01 look           done in 7 s, hooks None (guard: OpenCode session permissions (deny by default), verified), transcript C:\work\langflow\examples\demo\.langflow\state\opencode\ses_e16bb9abdffe2HA31C5tWN7hRF.json
+18:29:01 look           ai done {"seconds": 6.6, "session": "ses_e16bb9abdffe2HA31C5tWN7hRF", "transcript": "C:\\work\\langflow\\examples\\demo\\.langflow\\state\\opencode\\ses_e16bb9abdffe2HA31C5tWN7hRF.json"}
+18:29:01 edit_in        ai start {"agent": "opencode", "model": "openai/gpt-6-luna", "effort": "low"}
+18:29:02 edit_in        session ses_e16bb8039ffeRO2rmXsXsTXWkE model openai/gpt-6-luna effort low, edit
+18:29:07 edit_in        done in 6 s, hooks None (guard: OpenCode session permissions (deny by default), verified), transcript C:\work\langflow\examples\demo\.langflow\state\opencode\ses_e16bb8039ffeRO2rmXsXsTXWkE.json
+18:29:07 edit_in        ai done {"seconds": 5.6, "session": "ses_e16bb8039ffeRO2rmXsXsTXWkE", "transcript": "C:\\work\\langflow\\examples\\demo\\.langflow\\state\\opencode\\ses_e16bb8039ffeRO2rmXsXsTXWkE.json"}
+18:29:07 edit_out       ai start {"agent": "opencode", "model": "openai/gpt-6-luna", "effort": "low"}
+18:29:08 edit_out       session ses_e16bb6a24ffepawKR1Qc2JlfU1 model openai/gpt-6-luna effort low, edit
+18:29:13 edit_out       done in 6 s, hooks None (guard: OpenCode session permissions (deny by default), verified), transcript C:\work\langflow\examples\demo\.langflow\state\opencode\ses_e16bb6a24ffepawKR1Qc2JlfU1.json
+18:29:13 edit_out       ai done {"seconds": 6.3, "session": "ses_e16bb6a24ffepawKR1Qc2JlfU1", "transcript": "C:\\work\\langflow\\examples\\demo\\.langflow\\state\\opencode\\ses_e16bb6a24ffepawKR1Qc2JlfU1.json"}
+18:29:13 check_files    script start {"argv": ["C:\\Users\\user\\AppData\\Roaming\\uv\\tools\\langflow\\Scripts\\python.exe", "-c", "\nimport pathlib, sys\ninside, outside = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])\nok_in = inside.is_file() and \"hello from opencode\" in inside.read_text(encoding=\"utf-8\")\nok_out = no
+18:29:13 check_files    | inside written: True (.langflow\state\scratch\ocs-1 - opencode inside.txt)
+18:29:13 check_files    | outside absent: False (C:\work\langflow\examples\opencode-outside-ocs-1.txt)
+18:29:13 check_files    script failed {"exit": 1}

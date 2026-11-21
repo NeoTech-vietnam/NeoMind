@@ -1,0 +1,19 @@
+@layer xyflow, theme, base, components, utilities;
+@import "@xyflow/react/dist/style.css" layer(xyflow);
+@import "./theme.css";
+
+/* React Flow in the theme colours: background, controls and edge labels follow light/dark. */
+@layer components {
+  .lf-theme .react-flow { --xy-background-color: var(--background); --xy-background-pattern-dots-color-default: var(--border);
+    --xy-edge-label-background-color: var(--background); --xy-edge-label-color: var(--muted-foreground); }
+  .lf-theme .react-flow__controls { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; box-shadow: none; background: var(--card); }
+  .lf-theme .react-flow__controls-button { background: var(--card); border-bottom: 1px solid var(--border); fill: var(--muted-foreground); color: var(--muted-foreground); }
+  .lf-theme .react-flow__controls-button:hover { background: var(--accent); }
+  .lf-theme .react-flow__controls-button svg { fill: currentColor; }
+  .lf-theme .react-flow__node { cursor: pointer; }
+  .lf-theme .react-flow__attribution { background: transparent; }
+  .lf-theme .react-flow__attribution a { color: var(--faint); }
+  /* Code, paths and log lines must show the characters typed: no "->" or ">=" ligatures. */
+  .lf-theme .font-mono, .lf-theme code, .lf-theme pre { font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
+}
+

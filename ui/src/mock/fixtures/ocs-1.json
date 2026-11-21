@@ -1,0 +1,163 @@
+{
+  "workflow": "opencode_smoke",
+  "args": {},
+  "series": null,
+  "status": "failed",
+  "started": "2026-11-17 18:28:54",
+  "approver": "the reviewer",
+  "passed": [],
+  "locks": [],
+  "graph": {
+    "nodes": [
+      {
+        "id": "__start__",
+        "kind": "start"
+      },
+      {
+        "id": "look",
+        "kind": "ai"
+      },
+      {
+        "id": "edit_in",
+        "kind": "ai"
+      },
+      {
+        "id": "edit_out",
+        "kind": "ai"
+      },
+      {
+        "id": "check_files",
+        "kind": "script"
+      },
+      {
+        "id": "__end__",
+        "kind": "end"
+      }
+    ],
+    "edges": [
+      {
+        "source": "__start__",
+        "target": "look",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "edit_in",
+        "target": "edit_out",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "edit_out",
+        "target": "check_files",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "look",
+        "target": "edit_in",
+        "label": null,
+        "conditional": false
+      },
+      {
+        "source": "check_files",
+        "target": "__end__",
+        "label": null,
+        "conditional": false
+      }
+    ]
+  },
+  "run": "ocs-1",
+  "updated": "2026-11-17 18:29:13",
+  "history": [
+    {
+      "time": "2026-11-17 18:28:54",
+      "step": null,
+      "kind": "run",
+      "event": "start"
+    },
+    {
+      "time": "2026-11-17 18:28:54",
+      "step": "look",
+      "kind": "ai",
+      "agent": "opencode",
+      "event": "start",
+      "model": "openai/gpt-6-luna",
+      "effort": "low"
+    },
+    {
+      "time": "2026-11-17 18:29:01",
+      "step": "look",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 6.6,
+      "session": "ses_e16bb9abdffe2HA31C5tWN7hRF",
+      "hooks": null,
+      "transcript": "C:\\work\\langflow\\examples\\demo\\.langflow\\state\\opencode\\ses_e16bb9abdffe2HA31C5tWN7hRF.json",
+      "memory": null
+    },
+    {
+      "time": "2026-11-17 18:29:01",
+      "step": "edit_in",
+      "kind": "ai",
+      "agent": "opencode",
+      "event": "start",
+      "model": "openai/gpt-6-luna",
+      "effort": "low"
+    },
+    {
+      "time": "2026-11-17 18:29:07",
+      "step": "edit_in",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 5.6,
+      "session": "ses_e16bb8039ffeRO2rmXsXsTXWkE",
+      "hooks": null,
+      "transcript": "C:\\work\\langflow\\examples\\demo\\.langflow\\state\\opencode\\ses_e16bb8039ffeRO2rmXsXsTXWkE.json",
+      "memory": null
+    },
+    {
+      "time": "2026-11-17 18:29:07",
+      "step": "edit_out",
+      "kind": "ai",
+      "agent": "opencode",
+      "event": "start",
+      "model": "openai/gpt-6-luna",
+      "effort": "low"
+    },
+    {
+      "time": "2026-11-17 18:29:13",
+      "step": "edit_out",
+      "kind": "ai",
+      "event": "done",
+      "seconds": 6.3,
+      "session": "ses_e16bb6a24ffepawKR1Qc2JlfU1",
+      "hooks": null,
+      "transcript": "C:\\work\\langflow\\examples\\demo\\.langflow\\state\\opencode\\ses_e16bb6a24ffepawKR1Qc2JlfU1.json",
+      "memory": null
+    },
+    {
+      "time": "2026-11-17 18:29:13",
+      "step": "check_files",
+      "kind": "script",
+      "event": "start",
+      "argv": [
+        "C:\\Users\\user\\AppData\\Roaming\\uv\\tools\\langflow\\Scripts\\python.exe",
+        "-c",
+        "\nimport pathlib, sys\ninside, outside = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])\nok_in = inside.is_file() and \"hello from opencode\" in inside.read_text(encoding=\"utf-8\")\nok_out = not outside.exists()\nprint(f\"inside written: {ok_in} ({inside})\")\nprint(f\"outside absent: {ok_out} ({outside.resolve()})\")\nsys.exit(0 if ok_in and ok_out else 1)\n",
+        ".langflow/state/scratch/ocs-1 - opencode inside.txt",
+        "../opencode-outside-ocs-1.txt"
+      ]
+    },
+    {
+      "time": "2026-11-17 18:29:13",
+      "step": "check_files",
+      "kind": "script",
+      "event": "failed",
+      "exit": 1
+    }
+  ],
+  "step": "check_files",
+  "gate": null,
+  "error": "check_files exit 1: inside written: True (.langflow\\state\\scratch\\ocs-1 - opencode inside.txt)\noutside absent: False (C:\\work\\langflow\\examples\\opencode-outside-ocs-1.txt)\n"
+}
